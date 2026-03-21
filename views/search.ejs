@@ -1,0 +1,30 @@
+<%- include('partials/header', { pageTitle: 'Search Results', query: query }) %>
+
+<div class="search-page">
+  <h1>Search Results</h1>
+
+  <% if (query) { %>
+    <p class="search-summary">Found <%= resultCount %> result<%= resultCount !== 1 ? 's' : '' %> for "<%= query %>"</p>
+  <% } else { %>
+    <p class="search-summary">Enter a search term to find documents by transcript content.</p>
+  <% } %>
+
+  <% if (results.length > 0) { %>
+    <div class="search-results">
+      <% results.forEach(result => { %>
+        <article class="search-result">
+          <h2><a href="/documents/<%= result.document_id %>?transcript=<%= result.id %>"><%= result.document_title %></a></h2>
+          <p class="result-transcriber">Transcribed by: <%= result.transcriber || 'Unknown' %> (v<%= result.version %>)</p>
+          <p class="result-snippet"><%- result.snippet %></p>
+        </article>
+      <% }) %>
+    </div>
+  <% } else if (query) { %>
+    <div class="no-results">
+      <p>No documents found matching your search.</p>
+      <p>Try different keywords or check your spelling.</p>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

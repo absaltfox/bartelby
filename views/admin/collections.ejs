@@ -1,0 +1,188 @@
+<%- include('../partials/header', { pageTitle: 'Collections', query: '' }) %>
+
+<div class="admin-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Collections</h1>
+    <p class="subtitle">Organize documents and control access. Public collections are visible to all logged-in users; private collections require explicit access grants.</p>
+  </div>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Collection saved successfully.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <!-- Create new collection -->
+  <div class="settings-section">
+    <h2>New Collection</h2>
+    <form method="POST" action="/admin/collections" class="auth-form" style="max-width: 560px;">
+      <div class="form-group">
+        <label for="col-name">Name *</label>
+        <input type="text" id="col-name" name="name" required placeholder="e.g. Colonial Records">
+      </div>
+      <div class="form-group">
+        <label for="col-desc">Description <span class="field-hint-inline">(optional)</span></label>
+        <textarea id="col-desc" name="description" rows="2" placeholder="Brief description of this collection"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="is_public" value="1">
+          <span>Make this collection <strong>public</strong> — accessible to all logged-in users without explicit access grants</span>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Create Collection</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Existing collections -->
+  <% if (allCollections.length > 0) { %>
+    <div class="settings-section">
+      <h2>Existing Collections (<%= allCollections.length %>)</h2>
+      <div class="collections-list">
+        <% allCollections.forEach(function(c) { %>
+          <div class="collection-row" id="collection-<%= c.id %>">
+            <div class="collection-row-info">
+              <div class="collection-row-title">
+                <strong><%= c.name %></strong>
+                <% if (c.is_public) { %>
+                  <span class="badge-public">public</span>
+                <% } else { %>
+                  <span class="badge-private">private</span>
+                <% } %>
+              </div>
+              <% if (c.description) { %><p class="collection-row-desc"><%= c.description %></p><% } %>
+              <span class="collection-doc-count"><%= c.document_count %> document<%= c.document_count !== 1 ? 's' : '' %></span>
+            </div>
+            <div class="collection-row-actions">
+              <button class="btn-action btn-demote btn-sm" onclick="toggleEdit(<%= c.id %>)">Edit</button>
+              <% if (!c.is_public) { %>
+                <button class="btn-action btn-sm" onclick="toggleAccess(<%= c.id %>)">Access</button>
+              <% } %>
+              <form method="POST" action="/admin/collections/<%= c.id %>/delete" style="display:inline"
+                    onsubmit="return confirm('Delete collection &quot;<%= c.name %>&quot;? Documents will not be deleted.')">
+                <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Edit form -->
+          <div id="edit-<%= c.id %>" class="collection-edit-form" style="display:none;">
+            <form method="POST" action="/admin/collections/<%= c.id %>/edit">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Name</label>
+                  <input type="text" name="name" value="<%= c.name %>" required>
+                </div>
+                <div class="form-group">
+                  <label>Description</label>
+                  <input type="text" name="description" value="<%= c.description || '' %>">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="is_public" value="1" <%= c.is_public ? 'checked' : '' %>>
+                  <span>Public — accessible to all logged-in users</span>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn-primary">Save</button>
+                <button type="button" class="btn-secondary" onclick="toggleEdit(<%= c.id %>)">Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Access management panel (private collections only) -->
+          <% if (!c.is_public) { %>
+            <div id="access-<%= c.id %>" class="collection-access-panel" style="display:none;">
+              <h4>User Access</h4>
+
+              <% if (c.grantedUsers && c.grantedUsers.length > 0) { %>
+                <ul class="access-user-list">
+                  <% c.grantedUsers.forEach(function(u) { %>
+                    <li class="access-user-item">
+                      <span><strong><%= u.username %></strong><% if (u.email) { %> <small class="muted">&lt;<%= u.email %>&gt;</small><% } %></span>
+                      <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" style="display:inline">
+                        <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
+                      </form>
+                    </li>
+                  <% }) %>
+                </ul>
+              <% } else { %>
+                <p class="muted" style="font-size:0.9rem;">No users have been granted access to this collection.</p>
+              <% } %>
+
+              <% if (activeUsers.length > 0) { %>
+                <%
+                  var grantedIds = (c.grantedUsers || []).map(u => u.id);
+                  var eligible = activeUsers.filter(u => !grantedIds.includes(u.id));
+                %>
+                <% if (eligible.length > 0) { %>
+                  <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" class="access-grant-form">
+                    <select name="user_id" required>
+                      <option value="">— Grant access to a user —</option>
+                      <% eligible.forEach(function(u) { %>
+                        <option value="<%= u.id %>"><%= u.username %><% if (u.email) { %> (<%= u.email %>)<% } %></option>
+                      <% }) %>
+                    </select>
+                    <button type="submit" class="btn-primary btn-sm">Grant Access</button>
+                  </form>
+                <% } else { %>
+                  <p class="muted" style="font-size:0.9rem; margin-top:0.5rem;">All eligible users already have access.</p>
+                <% } %>
+              <% } else { %>
+                <p class="muted" style="font-size:0.9rem; margin-top:0.5rem;">No non-admin users to grant access to.</p>
+              <% } %>
+
+              <p class="field-hint" style="margin-top:0.75rem;">
+                Users with <em>Access All</em> or the <em>admin</em> role always have access to all collections regardless of these grants.
+              </p>
+            </div>
+          <% } %>
+
+        <% }) %>
+      </div>
+    </div>
+  <% } else { %>
+    <div class="empty-state" style="padding: 40px 20px;">
+      <div class="empty-icon">&#128193;</div>
+      <h2>No collections yet</h2>
+      <p>Create your first collection above to start organizing documents.</p>
+    </div>
+  <% } %>
+</div>
+
+<script>
+  function toggleEdit(id) {
+    var el = document.getElementById('edit-' + id);
+    var acc = document.getElementById('access-' + id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    if (acc) acc.style.display = 'none';
+  }
+
+  function toggleAccess(id) {
+    var el = document.getElementById('access-' + id);
+    var edit = document.getElementById('edit-' + id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    edit.style.display = 'none';
+  }
+
+  // Auto-open the access panel if the URL has a hash like #collection-123
+  (function() {
+    var hash = window.location.hash;
+    var m = hash.match(/^#collection-(\d+)$/);
+    if (m) {
+      var id = m[1];
+      var el = document.getElementById('access-' + id);
+      if (el) el.style.display = 'block';
+      var row = document.getElementById('collection-' + id);
+      if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  })();
+</script>
+
+<%- include('../partials/footer') %>

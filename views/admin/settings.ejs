@@ -1,0 +1,115 @@
+<%- include('../partials/header', { pageTitle: 'LLM Settings', query: '' }) %>
+
+<div class="admin-page settings-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>LLM Settings</h1>
+    <p class="subtitle">Configure AI providers for document transcription</p>
+  </div>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Settings saved successfully.</div>
+  <% } %>
+
+  <form method="POST" action="/admin/settings">
+
+    <section class="settings-section">
+      <h2>Default Provider</h2>
+      <div class="form-group">
+        <label for="default_provider">Use this provider when none is specified</label>
+        <select id="default_provider" name="default_provider">
+          <% providers.forEach(p => { %>
+            <option value="<%= p %>" <%= cfg.default_provider === p ? 'selected' : '' %>>
+              <%= p.charAt(0).toUpperCase() + p.slice(1) %>
+            </option>
+          <% }) %>
+        </select>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>OpenAI</h2>
+      <div class="form-group">
+        <label for="openai_api_key">API Key</label>
+        <% if (cfg.openai_api_key) { %>
+          <p class="key-set-indicator">&#10003; Key saved &mdash; enter a new value to replace it</p>
+        <% } %>
+        <input type="password" id="openai_api_key" name="openai_api_key"
+               value=""
+               placeholder="<%= cfg.openai_api_key ? '••••••••••••••••' : 'sk-…' %>" autocomplete="off">
+        <p class="field-hint">Leave blank to keep the existing key, or to use the <code>OPENAI_API_KEY</code> environment variable.</p>
+      </div>
+      <div class="form-group">
+        <label for="openai_model">Model</label>
+        <input type="text" id="openai_model" name="openai_model"
+               value="<%= cfg.openai_model || 'gpt-4o' %>"
+               placeholder="gpt-4o">
+        <p class="field-hint">Must support vision (image input). Recommended: <code>gpt-4o</code></p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Claude (Anthropic)</h2>
+      <div class="form-group">
+        <label for="anthropic_api_key">API Key</label>
+        <% if (cfg.anthropic_api_key) { %>
+          <p class="key-set-indicator">&#10003; Key saved &mdash; enter a new value to replace it</p>
+        <% } %>
+        <input type="password" id="anthropic_api_key" name="anthropic_api_key"
+               value=""
+               placeholder="<%= cfg.anthropic_api_key ? '••••••••••••••••' : 'sk-ant-…' %>" autocomplete="off">
+        <p class="field-hint">Leave blank to keep the existing key, or to use the <code>ANTHROPIC_API_KEY</code> environment variable.</p>
+      </div>
+      <div class="form-group">
+        <label for="anthropic_model">Model</label>
+        <input type="text" id="anthropic_model" name="anthropic_model"
+               value="<%= cfg.anthropic_model || 'claude-3-5-sonnet-20241022' %>"
+               placeholder="claude-3-5-sonnet-20241022">
+        <p class="field-hint">Must support vision. Recommended: <code>claude-3-5-sonnet-20241022</code></p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Ollama <span class="badge-local">Local</span></h2>
+      <div class="form-group">
+        <label for="ollama_base_url">Base URL</label>
+        <input type="text" id="ollama_base_url" name="ollama_base_url"
+               value="<%= cfg.ollama_base_url || 'http://localhost:11434' %>"
+               placeholder="http://localhost:11434">
+      </div>
+      <div class="form-group">
+        <label for="ollama_model">Model</label>
+        <input type="text" id="ollama_model" name="ollama_model"
+               value="<%= cfg.ollama_model || 'llava' %>"
+               placeholder="llava">
+        <p class="field-hint">Must be a vision-capable model. Examples: <code>llava</code>, <code>llava:13b</code>, <code>llama3.2-vision</code></p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>LM Studio <span class="badge-local">Local</span></h2>
+      <div class="form-group">
+        <label for="lmstudio_base_url">Base URL</label>
+        <input type="text" id="lmstudio_base_url" name="lmstudio_base_url"
+               value="<%= cfg.lmstudio_base_url || 'http://localhost:1234/v1' %>"
+               placeholder="http://localhost:1234/v1">
+        <p class="field-hint">Enable the local server in LM Studio (port 1234 by default).</p>
+      </div>
+      <div class="form-group">
+        <label for="lmstudio_model">Model identifier</label>
+        <input type="text" id="lmstudio_model" name="lmstudio_model"
+               value="<%= cfg.lmstudio_model || 'local-model' %>"
+               placeholder="local-model">
+        <p class="field-hint">Copy the model identifier shown in LM Studio's server log, e.g. <code>lmstudio-community/Llama-3.2-11B-Vision-Instruct-GGUF</code></p>
+      </div>
+    </section>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">Save Settings</button>
+    </div>
+
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

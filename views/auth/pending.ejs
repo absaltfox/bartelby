@@ -1,0 +1,27 @@
+<%- include('../partials/header', { pageTitle: 'Account Pending', query: '' }) %>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <svg class="auth-quill" viewBox="0 0 22 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M19 1 C 22 5, 21 15, 14 24 C 11 28, 8 33, 6 39 C 4 35, 3 33, 1 35 C -1 31, 2 27, 6 25 C 3 18, 3 9, 8 4 C 12 0, 18 -1, 19 1 Z" fill="#c9906a" opacity="0.8"/>
+        <path d="M16 7 L12 11M13 13 L9 17M10 19 L7 22" stroke="#a06830" stroke-width="0.7" stroke-linecap="round"/>
+        <path d="M19 1 L6 39" stroke="#a06830" stroke-width="1.1" stroke-linecap="round"/>
+        <path d="M6 39 L4 43 M6 39 L8 42" stroke="#a06830" stroke-width="0.9" stroke-linecap="round"/>
+      </svg>
+      <h1>Awaiting Approval</h1>
+      <p>your account is under review</p>
+    </div>
+
+    <div class="pending-message">
+      <p>Your account request has been received. A Bartelby administrator will review it and grant access to the appropriate collections shortly.</p>
+      <p>You will be able to sign in once your account has been approved.</p>
+    </div>
+
+    <form method="POST" action="/logout" style="text-align:center; margin-top: 24px;">
+      <button type="submit" class="btn-secondary">Back to Sign In</button>
+    </form>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

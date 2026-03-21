@@ -1,0 +1,139 @@
+<%- include('../partials/header', { pageTitle: 'User Management', query: '' }) %>
+
+<div class="admin-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>User Management</h1>
+  </div>
+
+  <% if (typeof flash !== 'undefined' && flash) { %>
+    <div class="alert alert-success"><%= flash %></div>
+  <% } %>
+
+  <!-- Pending approvals -->
+  <% if (pending.length > 0) { %>
+    <div class="settings-section pending-section">
+      <h2>
+        Pending Approval
+        <span class="pending-badge"><%= pending.length %></span>
+      </h2>
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Requested</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% pending.forEach(function(u) { %>
+              <tr>
+                <td class="user-name-cell"><span class="username-text"><%= u.username %></span></td>
+                <td class="user-email-cell"><% if (u.email) { %><%= u.email %><% } else { %><span class="muted">&mdash;</span><% } %></td>
+                <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
+                <td class="user-actions-cell">
+                  <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Review &amp; Approve</a>
+                  <form method="POST" action="/admin/users/<%= u.id %>/reject" class="inline-form"
+                        onsubmit="return confirm('Reject <%= u.username %>\'s request?')">
+                    <button type="submit" class="btn-action btn-delete">Reject</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  <% } %>
+
+  <!-- Active users -->
+  <div class="settings-section">
+    <h2>Active Users (<%= active.length %>)</h2>
+    <% if (active.length === 0) { %>
+      <p class="muted" style="font-style:italic;">No active users.</p>
+    <% } else { %>
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Access</th>
+              <th>Joined</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% active.forEach(function(u) { %>
+              <tr class="<%= u.id === currentUserId ? 'row-self' : '' %>">
+                <td class="user-name-cell">
+                  <span class="username-text"><%= u.username %></span>
+                  <% if (u.id === currentUserId) { %><span class="badge-you">you</span><% } %>
+                </td>
+                <td class="user-email-cell"><% if (u.email) { %><%= u.email %><% } else { %><span class="muted">&mdash;</span><% } %></td>
+                <td><span class="role-badge role-<%= u.role %>"><%= u.role %></span></td>
+                <td>
+                  <% if (u.role === 'admin') { %>
+                    <span class="access-badge access-all">Full (admin)</span>
+                  <% } else if (u.access_all) { %>
+                    <span class="access-badge access-all">All collections</span>
+                  <% } else { %>
+                    <span class="access-badge access-restricted">Restricted</span>
+                  <% } %>
+                </td>
+                <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
+                <td class="user-actions-cell">
+                  <% if (u.id !== currentUserId) { %>
+                    <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote">Edit Access</a>
+                    <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
+                          onsubmit="return confirm('Delete user <%= u.username %>?')">
+                      <button type="submit" class="btn-action btn-delete">Delete</button>
+                    </form>
+                  <% } else { %>
+                    <span class="muted" style="font-size:0.8125rem; font-style:italic;">Current user</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </div>
+
+  <!-- Rejected -->
+  <% if (rejected.length > 0) { %>
+    <div class="settings-section">
+      <h2>Rejected (<%= rejected.length %>)</h2>
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr><th>Username</th><th>Email</th><th>Requested</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            <% rejected.forEach(function(u) { %>
+              <tr>
+                <td class="user-name-cell"><span class="username-text"><%= u.username %></span></td>
+                <td class="user-email-cell"><% if (u.email) { %><%= u.email %><% } else { %><span class="muted">&mdash;</span><% } %></td>
+                <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
+                <td class="user-actions-cell">
+                  <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Approve</a>
+                  <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
+                        onsubmit="return confirm('Permanently delete <%= u.username %>?')">
+                    <button type="submit" class="btn-action btn-delete">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

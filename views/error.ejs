@@ -1,0 +1,12 @@
+<%- include('partials/header', { pageTitle: 'Error', query: '' }) %>
+
+<div class="error-page">
+  <h1>Error</h1>
+  <p class="error-message"><%= message %></p>
+  <% if (error && error.stack) { %>
+    <pre class="error-stack"><%= error.stack %></pre>
+  <% } %>
+  <a href="/" class="btn-primary">Go to Home</a>
+</div>
+
+<%- include('partials/footer') %>

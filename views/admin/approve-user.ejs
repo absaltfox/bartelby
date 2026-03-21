@@ -1,0 +1,106 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page">
+  <div class="admin-header">
+    <a href="/admin/users" class="back-link">&larr; Back to Users</a>
+    <h1><%= editMode ? 'Edit Access' : 'Approve Account' %></h1>
+    <p class="subtitle">
+      <% if (editMode) { %>
+        Update role and collection access for <strong><%= approveUser.username %></strong>
+      <% } else { %>
+        Review and approve the account request from <strong><%= approveUser.username %></strong>
+        <% if (approveUser.email) { %><span class="muted"> &lt;<%= approveUser.email %>&gt;</span><% } %>
+      <% } %>
+    </p>
+  </div>
+
+  <div class="settings-section">
+    <form method="POST" action="/admin/users/<%= approveUser.id %>/<%= editMode ? 'access' : 'approve' %>">
+
+      <h2>Role</h2>
+      <div class="role-choice">
+        <label class="role-option">
+          <input type="radio" name="role" value="user"
+            <%= (!editMode || approveUser.role !== 'admin') ? 'checked' : '' %>>
+          <span class="role-option-label">
+            <strong>User</strong>
+            <small>Can view documents, read transcripts, and add annotations.</small>
+          </span>
+        </label>
+        <label class="role-option">
+          <input type="radio" name="role" value="admin"
+            <%= (editMode && approveUser.role === 'admin') ? 'checked' : '' %>>
+          <span class="role-option-label">
+            <strong>Admin</strong>
+            <small>Full access: import documents, manage settings, approve users.</small>
+          </span>
+        </label>
+      </div>
+
+      <h2 style="margin-top: 28px;">Collection Access</h2>
+
+      <% if (allCollections.length === 0) { %>
+        <p class="field-hint" style="margin-bottom:18px;">
+          No collections exist yet. <a href="/admin/collections">Create collections first</a>, then return to set access.
+          Granting "All collections" will give access to everything including future collections.
+        </p>
+      <% } %>
+
+      <label class="role-option access-all-option">
+        <input type="checkbox" name="access_all" value="1" id="access-all-cb"
+          <%= (editMode && approveUser.access_all) ? 'checked' : '' %>>
+        <span class="role-option-label">
+          <strong>All collections</strong>
+          <small>Grants access to every current and future collection.</small>
+        </span>
+      </label>
+
+      <% if (allCollections.length > 0) { %>
+        <div id="collection-list" class="collection-access-list">
+          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections:</p>
+          <% allCollections.forEach(function(c) { %>
+            <% const isGranted = editMode && grantedIds && grantedIds.includes(c.id); %>
+            <label class="collection-access-item">
+              <input type="checkbox" name="collections" value="<%= c.id %>" <%= isGranted ? 'checked' : '' %>>
+              <span>
+                <strong><%= c.name %></strong>
+                <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
+                <small class="muted"> (<%= c.document_count %> doc<%= c.document_count !== 1 ? 's' : '' %>)</small>
+              </span>
+            </label>
+          <% }) %>
+        </div>
+      <% } %>
+
+      <div class="form-actions" style="margin-top: 28px;">
+        <a href="/admin/users" class="btn-secondary">Cancel</a>
+        <button type="submit" class="btn-primary">
+          <%= editMode ? 'Save Changes' : 'Approve Account' %>
+        </button>
+        <% if (!editMode) { %>
+          <button type="submit" form="reject-form" class="btn-action btn-delete" style="margin-left: auto;">
+            Reject Request
+          </button>
+        <% } %>
+      </div>
+    </form>
+
+    <% if (!editMode) { %>
+      <form id="reject-form" method="POST" action="/admin/users/<%= approveUser.id %>/reject"
+            onsubmit="return confirm('Reject <%= approveUser.username %>\'s account request?')"></form>
+    <% } %>
+  </div>
+</div>
+
+<script>
+  // Toggle collection checkboxes when "All collections" is checked
+  const allCb = document.getElementById('access-all-cb');
+  const collList = document.getElementById('collection-list');
+  function toggleCollList() {
+    if (collList) collList.style.opacity = allCb.checked ? '0.4' : '1';
+    if (collList) collList.querySelectorAll('input').forEach(cb => cb.disabled = allCb.checked);
+  }
+  if (allCb) { allCb.addEventListener('change', toggleCollList); toggleCollList(); }
+</script>
+
+<%- include('../partials/footer') %>

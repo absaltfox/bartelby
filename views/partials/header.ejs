@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %>Bartelby</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a href="/" class="logo">
+        <svg class="logo-quill" viewBox="0 0 22 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <!-- Feather vane -->
+          <path d="M19 1 C 22 5, 21 15, 14 24 C 11 28, 8 33, 6 39 C 4 35, 3 33, 1 35 C -1 31, 2 27, 6 25 C 3 18, 3 9, 8 4 C 12 0, 18 -1, 19 1 Z" fill="#f0d8b4"/>
+          <!-- Feather highlight -->
+          <path d="M19 1 C 21 6, 18 16, 12 24" stroke="#e8c890" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+          <!-- Barb lines -->
+          <path d="M16 7 L12 11" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
+          <path d="M13 13 L9 17" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
+          <path d="M10 19 L7 22" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
+          <!-- Spine -->
+          <path d="M19 1 L6 39" stroke="#c08840" stroke-width="1.1" stroke-linecap="round"/>
+          <!-- Nib split -->
+          <path d="M6 39 L4 43 M6 39 L8 42" stroke="#c08840" stroke-width="0.9" stroke-linecap="round"/>
+        </svg>
+        Bartelby
+      </a>
+      <nav class="main-nav">
+        <a href="/" class="nav-pill" data-section="collection">Collections</a>
+        <% if (isAdmin) { %>
+          <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
+        <% } %>
+        <form action="/search" method="GET" class="search-form">
+          <input type="search" name="q" placeholder="Search transcripts…" value="<%= typeof query !== 'undefined' ? query : '' %>">
+          <button type="submit">Search</button>
+        </form>
+        <% if (currentUser) { %>
+          <div class="user-chip">
+            <strong><%= currentUser.username %></strong>
+            <form method="POST" action="/logout" style="display:inline">
+              <button type="submit" class="btn-logout">Sign out</button>
+            </form>
+          </div>
+        <% } else { %>
+          <a href="/login" class="nav-login-link">Sign in</a>
+        <% } %>
+      </nav>
+    </div>
+  </header>
+  <main class="container">
+  <script>
+    (function() {
+      var path = window.location.pathname;
+      document.querySelectorAll('.nav-pill[data-section]').forEach(function(link) {
+        var section = link.dataset.section;
+        if (section === 'admin' && path.startsWith('/admin')) {
+          link.classList.add('active');
+        } else if (section === 'collection' && !path.startsWith('/admin') && !path.startsWith('/search')) {
+          link.classList.add('active');
+        }
+      });
+    })();
+  </script>

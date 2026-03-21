@@ -1,0 +1,20 @@
+<nav class="admin-subnav">
+  <a href="/admin" class="admin-subnav-link" data-page="dashboard">Dashboard</a>
+  <a href="/admin/import" class="admin-subnav-link" data-page="import">Import</a>
+  <a href="/admin/documents" class="admin-subnav-link" data-page="documents">Documents</a>
+  <a href="/admin/collections" class="admin-subnav-link" data-page="collections">Collections</a>
+  <a href="/admin/users" class="admin-subnav-link" data-page="users">Users</a>
+  <a href="/admin/jobs" class="admin-subnav-link" data-page="jobs">Jobs</a>
+  <a href="/admin/settings" class="admin-subnav-link" data-page="settings">Settings</a>
+</nav>
+<script>
+(function() {
+  var p = window.location.pathname;
+  document.querySelectorAll('.admin-subnav-link').forEach(function(a) {
+    var page = a.dataset.page;
+    if (page === 'dashboard' && p === '/admin') a.classList.add('active');
+    else if (page === 'dashboard') return;
+    else if (p.startsWith('/admin/' + page)) a.classList.add('active');
+  });
+})();
+</script>

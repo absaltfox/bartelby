@@ -1,0 +1,196 @@
+<%- include('partials/header', { pageTitle: document.title, query: '' }) %>
+
+<div class="document-detail">
+  <div class="document-header">
+    <a href="/" class="back-link">&larr; Back to Documents</a>
+    <h1><%= document.title %></h1>
+    <% if (document.date_created) { %>
+      <p class="document-date">Date: <%= document.date_created %></p>
+    <% } %>
+  </div>
+
+  <% if (document.description || (document.metadata && Object.keys(document.metadata).length > 0)) { %>
+    <details class="metadata-panel" open>
+      <summary>Document Information</summary>
+      <div class="metadata-content">
+        <% if (document.description) { %>
+          <p><strong>Description:</strong> <%= document.description %></p>
+        <% } %>
+        <% if (document.metadata && Object.keys(document.metadata).length > 0) { %>
+          <dl class="metadata-list">
+            <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
+              <dt><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></dt>
+              <dd><%= value %></dd>
+            <% }) %>
+          </dl>
+        <% } %>
+      </div>
+    </details>
+  <% } %>
+
+  <% if (docCollections && docCollections.length > 0) { %>
+    <div class="doc-collections">
+      <% docCollections.forEach(c => { %><span class="collection-tag"><%= c.name %></span><% }) %>
+    </div>
+  <% } %>
+
+  <% if (pendingJob) { %>
+    <div class="transcription-pending-banner" id="transcription-pending-banner">
+      <span class="pending-icon">&#9203;</span>
+      <strong>Transcription <%= pendingJob.status === 'running' ? 'in progress' : 'queued' %>.</strong>
+      This document is being transcribed in the background.
+      <a href="/admin/workflows">View workflows</a>
+    </div>
+    <script>
+    (function() {
+      var jobId = <%= pendingJob.id %>;
+      var banner = document.getElementById('transcription-pending-banner');
+      var interval = setInterval(async function() {
+        try {
+          var res = await fetch('/admin/workflows/api/' + jobId);
+          var job = await res.json();
+          if (job.status === 'done') {
+            clearInterval(interval);
+            window.location.reload();
+          } else if (job.status === 'failed') {
+            clearInterval(interval);
+            banner.innerHTML = '<span style="color:var(--red)">&#9888; Transcription failed.</span> <a href="/admin/workflows">View details</a>';
+          }
+        } catch(e) {}
+      }, 4000);
+    })();
+    </script>
+  <% } %>
+
+  <div class="side-by-side">
+    <div class="image-panel">
+      <h2>Original Document</h2>
+      <div class="image-container">
+        <% if (document.image_path) { %>
+          <img src="<%= document.image_path %>" alt="<%= document.title %>" class="document-image" onerror="this.parentElement.innerHTML='<div class=\'no-image\'>Image not available</div>'">
+        <% } else { %>
+          <div class="no-image">No image available</div>
+        <% } %>
+      </div>
+      <% if (document.metadata && document.metadata.additional_pages && document.metadata.additional_pages.length > 0) { %>
+        <div class="additional-pages">
+          <p class="additional-pages-label">Additional pages:</p>
+          <% document.metadata.additional_pages.forEach(function(pagePath, i) { %>
+            <div class="image-container">
+              <img src="<%= pagePath %>" alt="Page <%= i + 2 %>" class="document-image">
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="transcript-panel">
+      <div class="transcript-header">
+        <h2>Transcript</h2>
+        <% if (transcripts.length > 1) { %>
+          <div class="transcript-selector">
+            <label for="transcript-select">Version:</label>
+            <select id="transcript-select" onchange="window.location.href='?transcript='+this.value">
+              <% transcripts.forEach(t => { %>
+                <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
+                  v<%= t.version %> by <%= t.transcriber || 'Unknown' %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+        <% } %>
+      </div>
+
+      <% if (selectedTranscript) { %>
+        <div class="transcript-info">
+          <p><strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %></p>
+          <p><strong>Version:</strong> <%= selectedTranscript.version %></p>
+          <% if (selectedTranscript.notes) { %>
+            <p><strong>Notes:</strong> <%= selectedTranscript.notes %></p>
+          <% } %>
+        </div>
+
+        <% if (selectedTranscript.provider || selectedTranscript.model || selectedTranscript.initiated_by) { %>
+          <details class="paradata-panel">
+            <summary>Transcription Run Details</summary>
+            <dl class="metadata-list paradata-list">
+              <% if (selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
+              <% if (selectedTranscript.provider) { %><dt>Provider</dt><dd><%= selectedTranscript.provider %></dd><% } %>
+              <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
+              <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
+              <% if (selectedTranscript.run_duration_ms) { %><dt>Duration</dt><dd><%= (selectedTranscript.run_duration_ms / 1000).toFixed(1) %>s</dd><% } %>
+              <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
+            </dl>
+            <% if (selectedTranscript.prompt) { %>
+              <details class="prompt-detail">
+                <summary>System prompt used</summary>
+                <pre class="prompt-text"><%= selectedTranscript.prompt %></pre>
+              </details>
+            <% } %>
+          </details>
+        <% } %>
+
+        <div class="transcript-content" id="transcript-content" data-transcript-id="<%= selectedTranscript.id %>">
+          <pre><%= selectedTranscript.content %></pre>
+        </div>
+
+        <div class="annotation-section">
+          <h3>Annotations (<span id="annotation-count"><%= annotations.length %></span>)</h3>
+
+          <div id="annotation-list" class="annotation-list">
+            <% if (annotations.length === 0) { %>
+              <p class="no-annotations">No annotations yet.<% if (currentUser) { %> Select text in the transcript to add one.<% } %></p>
+            <% } else { %>
+              <% annotations.forEach(ann => { %>
+                <div class="annotation-item" data-id="<%= ann.id %>" data-start="<%= ann.position_start %>" data-end="<%= ann.position_end %>">
+                  <div class="annotation-header">
+                    <strong><%= ann.user_name %></strong>
+                    <span class="annotation-date"><%= new Date(ann.created_at).toLocaleDateString() %></span>
+                    <% if (currentUser) { %>
+                      <button class="delete-annotation" data-id="<%= ann.id %>" title="Delete annotation">&times;</button>
+                    <% } %>
+                  </div>
+                  <p class="annotation-content"><%= ann.content %></p>
+                  <% if (ann.position_start !== null && ann.position_end !== null) { %>
+                    <p class="annotation-position">Characters <%= ann.position_start %>-<%= ann.position_end %></p>
+                  <% } %>
+                </div>
+              <% }) %>
+            <% } %>
+          </div>
+
+          <% if (currentUser) { %>
+            <div id="annotation-form-container" class="annotation-form-container" style="display: none;">
+              <form id="annotation-form" class="annotation-form">
+                <input type="hidden" name="transcript_id" value="<%= selectedTranscript.id %>">
+                <input type="hidden" name="position_start" id="position-start">
+                <input type="hidden" name="position_end" id="position-end">
+                <input type="hidden" name="user_name" value="<%= currentUser.username %>">
+
+                <div class="form-group">
+                  <label for="annotation-content">Annotation <span class="field-hint-inline">as <%= currentUser.username %></span></label>
+                  <textarea id="annotation-content" name="content" required rows="3"></textarea>
+                </div>
+
+                <p class="selected-text-preview">Selected text: "<span id="selected-text"></span>"</p>
+
+                <div class="form-actions">
+                  <button type="submit" class="btn-primary">Add Annotation</button>
+                  <button type="button" class="btn-secondary" onclick="hideAnnotationForm()">Cancel</button>
+                </div>
+              </form>
+            </div>
+          <% } else { %>
+            <div class="auth-gate">
+              <a href="/login">Sign in</a> to add annotations to this transcript.
+            </div>
+          <% } %>
+        </div>
+      <% } else { %>
+        <p class="no-transcript">No transcripts available for this document.</p>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

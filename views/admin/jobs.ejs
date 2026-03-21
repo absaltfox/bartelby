@@ -1,0 +1,319 @@
+<%- include('../partials/header', { pageTitle: 'Jobs', query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Jobs</h1>
+    <p class="subtitle">Background import and transcription jobs</p>
+  </div>
+
+  <!-- Filter tabs: status -->
+  <div class="filter-tabs">
+    <%
+      function filterHref(f, t) {
+        var params = [];
+        if (f !== 'all') params.push('filter=' + f);
+        if (t !== 'all') params.push('type=' + t);
+        return '/admin/jobs' + (params.length ? '?' + params.join('&') : '');
+      }
+    %>
+    <a href="<%= filterHref('all', typeFilter) %>" class="filter-tab <%= filter === 'all' ? 'active' : '' %>">
+      All <span class="filter-count"><%= counts.total %></span>
+    </a>
+    <a href="<%= filterHref('queued', typeFilter) %>" class="filter-tab <%= filter === 'queued' ? 'active' : '' %>">
+      Queued <span class="filter-count"><%= counts.queued %></span>
+    </a>
+    <a href="<%= filterHref('running', typeFilter) %>" class="filter-tab filter-tab-running <%= filter === 'running' ? 'active' : '' %>">
+      Running <span class="filter-count"><%= counts.running %></span>
+    </a>
+    <a href="<%= filterHref('done', typeFilter) %>" class="filter-tab filter-tab-done <%= filter === 'done' ? 'active' : '' %>">
+      Done <span class="filter-count"><%= counts.done %></span>
+    </a>
+    <a href="<%= filterHref('failed', typeFilter) %>" class="filter-tab filter-tab-failed <%= filter === 'failed' ? 'active' : '' %>">
+      Failed <span class="filter-count"><%= counts.failed %></span>
+    </a>
+
+    <span class="filter-separator"></span>
+
+    <a href="<%= filterHref(filter, 'all') %>" class="filter-tab filter-tab-type <%= typeFilter === 'all' ? 'active' : '' %>">
+      All Types
+    </a>
+    <a href="<%= filterHref(filter, 'import') %>" class="filter-tab filter-tab-type <%= typeFilter === 'import' ? 'active' : '' %>">
+      Import <span class="filter-count"><%= typeCounts.import %></span>
+    </a>
+    <a href="<%= filterHref(filter, 'transcription') %>" class="filter-tab filter-tab-type <%= typeFilter === 'transcription' ? 'active' : '' %>">
+      Transcription <span class="filter-count"><%= typeCounts.transcription %></span>
+    </a>
+  </div>
+
+  <!-- Bulk action bar -->
+  <div class="jobs-toolbar" id="jobs-toolbar" style="display:none;">
+    <label class="jobs-toolbar-select-all">
+      <input type="checkbox" id="select-all-jobs">
+      <span id="select-all-label">Select all</span>
+    </label>
+    <span id="jobs-bulk-count" class="bulk-count">0 selected</span>
+    <div class="jobs-toolbar-actions">
+      <button type="button" class="btn-action btn-sm" id="bulk-retry-btn" style="display:none;">Retry Selected</button>
+      <button type="button" class="btn-action btn-delete btn-sm" id="bulk-delete-btn">Delete Selected</button>
+    </div>
+  </div>
+
+  <% if (jobs.length === 0) { %>
+    <div class="empty-state">
+      <p>No jobs<% if (filter !== 'all') { %> with status "<%= filter %>"<% } %><% if (typeFilter !== 'all') { %> of type "<%= typeFilter %>"<% } %>.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th class="th-cb"><input type="checkbox" id="header-select-all"></th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Document</th>
+            <th>Provider</th>
+            <th>Queued</th>
+            <th>Duration</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody">
+          <% jobs.forEach(function(job) { %>
+            <%
+              let durationStr = '—';
+              if (job.started_at && job.completed_at) {
+                const ms = new Date(job.completed_at) - new Date(job.started_at);
+                durationStr = (ms / 1000).toFixed(1) + 's';
+              } else if (job.started_at && job.status === 'running') {
+                durationStr = 'running…';
+              } else if (job.status === 'processing') {
+                durationStr = 'processing…';
+              }
+
+              const isImport = job.job_type === 'import';
+              const canDelete = job.status === 'done' || job.status === 'failed';
+              const canRetry = !isImport && job.status === 'failed';
+            %>
+            <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
+                data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
+              <td class="td-cb">
+                <input type="checkbox" class="job-cb" value="<%= job.id %>" data-type="<%= job.job_type %>"
+                       data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
+              </td>
+              <td>
+                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImport ? 'Import' : 'Transcription' %></span>
+              </td>
+              <td>
+                <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
+              </td>
+              <td>
+                <% if (isImport) { %>
+                  <span><%= job.original_name || 'PDF Import' %></span>
+                  <% if (job.status === 'processing' && job.page_count) { %>
+                    <div class="import-progress">
+                      <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
+                    </div>
+                    <small class="muted">Rendering page <%= job.pages_rendered || 0 %> of <%= job.page_count %></small>
+                  <% } else if (job.status === 'processing') { %>
+                    <small class="muted">Starting...</small>
+                  <% } else if (job.page_count) { %>
+                    <small class="muted"> (<%= job.page_count %> pages)</small>
+                  <% } %>
+                <% } else if (job.document_title) { %>
+                  <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
+                <% } else { %>
+                  <span class="muted">Document #<%= job.document_id %></span>
+                <% } %>
+              </td>
+              <td><%= job.provider || '—' %></td>
+              <td class="muted"><%= new Date(job.created_at).toLocaleString() %></td>
+              <td><%= durationStr %></td>
+              <td class="job-actions">
+                <% if (!isImport) { %>
+                  <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
+                <% } %>
+                <% if (isImport && job.status === 'done' && !job.submitted) { %>
+                  <a href="/admin/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-primary">Continue</a>
+                <% } %>
+                <% if (canRetry) { %>
+                  <button type="button" class="btn-action btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
+                <% } %>
+                <% if (canDelete) { %>
+                  <button type="button" class="btn-action btn-delete btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>
+                <% } %>
+              </td>
+            </tr>
+            <% if (!isImport) { %>
+              <tr class="log-row" id="log-row-<%= job.id %>" style="display:none;">
+                <td colspan="8">
+                  <% if (job.error) { %>
+                    <div class="job-error">Error: <%= job.error %></div>
+                  <% } %>
+                  <pre class="job-log" id="job-log-<%= job.id %>"><%= job.log || '(no log yet)' %></pre>
+                </td>
+              </tr>
+            <% } %>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<script>
+(function() {
+  // Toggle log rows
+  document.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var id = btn.dataset.id;
+      var row = document.getElementById('log-row-' + id);
+      row.style.display = row.style.display === 'none' ? '' : 'none';
+    });
+  });
+
+  // Single retry
+  document.querySelectorAll('.retry-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      btn.disabled = true;
+      try {
+        await fetch('/admin/jobs/api/' + btn.dataset.id + '/retry', { method: 'POST' });
+        window.location.reload();
+      } catch(e) { btn.disabled = false; }
+    });
+  });
+
+  // Single delete
+  document.querySelectorAll('.delete-job-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      if (!confirm('Delete this job record?')) return;
+      btn.disabled = true;
+      var type = btn.dataset.type;
+      var apiBase = type === 'import' ? '/admin/jobs/api/import/' : '/admin/jobs/api/';
+      try {
+        await fetch(apiBase + btn.dataset.id, { method: 'DELETE' });
+        window.location.reload();
+      } catch(e) { btn.disabled = false; }
+    });
+  });
+
+  // ── Bulk selection ──────────────────────────────────────────────
+  var checkboxes = Array.from(document.querySelectorAll('.job-cb'));
+  var headerCb = document.getElementById('header-select-all');
+  var toolbar = document.getElementById('jobs-toolbar');
+  var bulkCount = document.getElementById('jobs-bulk-count');
+  var bulkRetryBtn = document.getElementById('bulk-retry-btn');
+  var bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+
+  function getSelected() {
+    return checkboxes.filter(function(cb) { return cb.checked; });
+  }
+
+  function updateBulkUI() {
+    var sel = getSelected();
+    var count = sel.length;
+
+    if (count > 0) {
+      toolbar.style.display = '';
+      bulkCount.textContent = count + ' selected';
+    } else {
+      toolbar.style.display = 'none';
+    }
+
+    // Show retry button only if any selected are retryable
+    var hasRetryable = sel.some(function(cb) { return cb.dataset.canRetry === 'true'; });
+    bulkRetryBtn.style.display = hasRetryable ? '' : 'none';
+
+    // Show delete button only if any selected are deletable
+    var hasDeletable = sel.some(function(cb) { return cb.dataset.canDelete === 'true'; });
+    bulkDeleteBtn.style.display = hasDeletable ? '' : 'none';
+
+    // Update header checkbox state
+    if (headerCb) {
+      headerCb.checked = checkboxes.length > 0 && count === checkboxes.length;
+      headerCb.indeterminate = count > 0 && count < checkboxes.length;
+    }
+
+    // Highlight selected rows
+    checkboxes.forEach(function(cb) {
+      var row = cb.closest('.job-row');
+      if (row) row.classList.toggle('selected', cb.checked);
+    });
+  }
+
+  checkboxes.forEach(function(cb) {
+    cb.addEventListener('change', updateBulkUI);
+  });
+
+  if (headerCb) {
+    headerCb.addEventListener('change', function() {
+      checkboxes.forEach(function(cb) { cb.checked = headerCb.checked; });
+      updateBulkUI();
+    });
+  }
+
+  // Bulk retry
+  bulkRetryBtn.addEventListener('click', async function() {
+    var sel = getSelected().filter(function(cb) { return cb.dataset.canRetry === 'true'; });
+    if (sel.length === 0) return;
+    bulkRetryBtn.disabled = true;
+    bulkRetryBtn.textContent = 'Retrying...';
+    try {
+      await fetch('/admin/jobs/api/bulk/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: sel.map(function(cb) { return cb.value; }) })
+      });
+      window.location.reload();
+    } catch(e) {
+      bulkRetryBtn.disabled = false;
+      bulkRetryBtn.textContent = 'Retry Selected';
+    }
+  });
+
+  // Bulk delete
+  bulkDeleteBtn.addEventListener('click', async function() {
+    var sel = getSelected().filter(function(cb) { return cb.dataset.canDelete === 'true'; });
+    if (sel.length === 0) return;
+    if (!confirm('Delete ' + sel.length + ' job(s)? This cannot be undone.')) return;
+    bulkDeleteBtn.disabled = true;
+    bulkDeleteBtn.textContent = 'Deleting...';
+    try {
+      var jobs = sel.map(function(cb) { return { id: cb.value, type: cb.dataset.type }; });
+      await fetch('/admin/jobs/api/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs: jobs })
+      });
+      window.location.reload();
+    } catch(e) {
+      bulkDeleteBtn.disabled = false;
+      bulkDeleteBtn.textContent = 'Delete Selected';
+    }
+  });
+
+  // Auto-refresh every 4s when queued/running/processing jobs exist
+  var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
+  if (hasActive) {
+    setTimeout(function() { window.location.reload(); }, 4000);
+  }
+
+  // Live-update log for running transcription jobs
+  document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"]').forEach(function(row) {
+    var id = row.dataset.id;
+    var logEl = document.getElementById('job-log-' + id);
+    if (!logEl) return;
+    setInterval(async function() {
+      try {
+        var res = await fetch('/admin/jobs/api/' + id);
+        var job = await res.json();
+        logEl.textContent = job.log || '(no log yet)';
+        if (job.status !== 'running') window.location.reload();
+      } catch(e) {}
+    }, 2000);
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>
