@@ -77,6 +77,9 @@ if (config.storage.driver === 's3') {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies work behind TLS termination
+app.set('trust proxy', 1);
+
 // ── Sessions ───────────────────────────────────────────────────────────────
 if (!process.env.SESSION_SECRET) {
   console.warn('[security] SESSION_SECRET is not set — using a random secret. Sessions will not persist across restarts. Set SESSION_SECRET in .env for production.');
