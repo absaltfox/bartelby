@@ -10,11 +10,15 @@ process.on('message', async (msg) => {
   try {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
     const { createCanvas } = require('canvas');
+    const { NodeCanvasFactory } = require('./pdf-canvas-factory');
 
     const pdfBuffer = storage.readTempFile(pdfTempFile);
     try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
 
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+    const pdf = await pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      canvasFactory: new NodeCanvasFactory()
+    }).promise;
 
     // Report page count
     process.send({ type: 'progress', dbJobId, pageCount: pdf.numPages, pagesRendered: 0 });

@@ -1,8 +1,9 @@
 'use strict';
 
-const { createCanvas } = require('canvas');
+const { createCanvas, Image } = require('canvas');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
 const storage = require('./storage');
+const { NodeCanvasFactory } = require('./pdf-canvas-factory');
 
 const RENDER_SCALE = 2.0; // 2x for decent quality page images
 
@@ -13,7 +14,10 @@ const RENDER_SCALE = 2.0; // 2x for decent quality page images
 async function pdfToImages(pdfBuffer, opts = {}) {
   const scale = opts.scale || RENDER_SCALE;
 
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    canvasFactory: new NodeCanvasFactory()
+  });
   const pdf = await loadingTask.promise;
   const pageCount = pdf.numPages;
   const pages = [];

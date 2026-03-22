@@ -163,8 +163,12 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
     if (fileSize < FILE_SIZE_THRESHOLD) {
       try {
         const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
+        const { NodeCanvasFactory } = require('../utils/pdf-canvas-factory');
         const pdfBuffer = storage.readTempFile(pdfTempFile);
-        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+        const pdf = await pdfjsLib.getDocument({
+          data: new Uint8Array(pdfBuffer),
+          canvasFactory: new NodeCanvasFactory()
+        }).promise;
         numPages = pdf.numPages;
         pdf.destroy();
       } catch (e) {
@@ -256,8 +260,12 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
 
           const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
           const { createCanvas } = require('canvas');
+          const { NodeCanvasFactory } = require('../utils/pdf-canvas-factory');
 
-          const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+          const pdf = await pdfjsLib.getDocument({
+            data: new Uint8Array(pdfBuffer),
+            canvasFactory: new NodeCanvasFactory()
+          }).promise;
           job.pageCount = pdf.numPages;
 
           const prefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
