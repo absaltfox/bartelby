@@ -97,14 +97,22 @@ function validateCsrf(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   const token = req.body?._csrf || req.headers['x-csrf-token'];
-  if (!token || !req.session.csrfToken) {
-    return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
-  }
-  const tokenBuf = Buffer.from(String(token));
-  const expectedBuf = Buffer.from(req.session.csrfToken);
-  if (tokenBuf.length !== expectedBuf.length ||
-      !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
-    return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
+  const valid = token && req.session.csrfToken &&
+    (() => {
+      const tokenBuf = Buffer.from(String(token));
+      const expectedBuf = Buffer.from(req.session.csrfToken);
+      return tokenBuf.length === expectedBuf.length &&
+        crypto.timingSafeEqual(tokenBuf, expectedBuf);
+    })();
+
+  if (!valid) {
+    // API requests get JSON error
+    if (req.path.startsWith('/api/')) {
+      return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
+    }
+    // Form submissions: redirect back so the user gets a fresh token
+    req.session.authError = 'Your session expired. Please try again.';
+    return res.redirect('back');
   }
   next();
 }

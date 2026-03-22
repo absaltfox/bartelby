@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Install system dependencies for canvas, sharp, and pdfjs-dist
+# Install system dependencies for canvas, sharp, pdfjs-dist, and poppler (pdftoppm)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libcairo2-dev \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpixman-1-dev \
     pkg-config \
     python3 \
+    poppler-utils \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

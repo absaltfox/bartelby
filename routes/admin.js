@@ -256,35 +256,70 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
           const pdfBuffer = storage.readTempFile(pdfTempFile);
           try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
 
-          const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-          const { createCanvas } = require('canvas');
-
-          const pdf = await pdfjsLib.getDocument({
-            data: new Uint8Array(pdfBuffer)
-          }).promise;
-          job.pageCount = pdf.numPages;
-
+          const { execFileSync } = require('child_process');
           const prefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 2.0 });
-            const canvas = createCanvas(viewport.width, viewport.height);
-            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            page.cleanup();
+          // Try pdftoppm first (reliable on Linux), fall back to pdfjs+canvas
+          let usePdftoppm = false;
+          try { execFileSync('pdftoppm', ['-v'], { stdio: 'pipe' }); usePdftoppm = true; } catch {}
 
-            const filename = `${prefix}_page${i}.png`;
-            storage.writeTempFile(filename, canvas.toBuffer('image/png'));
+          if (usePdftoppm) {
+            const pdfTmpName = `inline_${Date.now()}.pdf`;
+            storage.writeTempFile(pdfTmpName, pdfBuffer);
+            const pdfPath = storage.getTempFilePath(pdfTmpName);
+            const outDir = require('path').dirname(pdfPath);
+            const outPrefix = require('path').join(outDir, prefix);
 
-            job.pages.push({
-              pageNumber: i,
-              filename,
-              previewUrl: storage.getTempPreviewUrl(filename)
-            });
-            job.progress = Math.round((i / pdf.numPages) * 100);
+            try {
+              execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
+                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024
+              });
+            } finally {
+              try { require('fs').unlinkSync(pdfPath); } catch {}
+            }
+
+            const outputFiles = require('fs').readdirSync(outDir)
+              .filter(f => f.startsWith(prefix) && f.endsWith('.png'))
+              .sort();
+            job.pageCount = outputFiles.length;
+
+            for (let i = 0; i < outputFiles.length; i++) {
+              const srcPath = require('path').join(outDir, outputFiles[i]);
+              const filename = `${prefix}_page${i + 1}.png`;
+              const pngBuf = require('fs').readFileSync(srcPath);
+              require('fs').unlinkSync(srcPath);
+              storage.writeTempFile(filename, pngBuf);
+              job.pages.push({
+                pageNumber: i + 1,
+                filename,
+                previewUrl: storage.getTempPreviewUrl(filename)
+              });
+              job.progress = Math.round(((i + 1) / outputFiles.length) * 100);
+            }
+          } else {
+            const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+            const { createCanvas } = require('canvas');
+            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
+            job.pageCount = pdf.numPages;
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const viewport = page.getViewport({ scale: 2.0 });
+              const canvas = createCanvas(viewport.width, viewport.height);
+              await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+              page.cleanup();
+              const filename = `${prefix}_page${i}.png`;
+              storage.writeTempFile(filename, canvas.toBuffer('image/png'));
+              job.pages.push({
+                pageNumber: i,
+                filename,
+                previewUrl: storage.getTempPreviewUrl(filename)
+              });
+              job.progress = Math.round((i / pdf.numPages) * 100);
+            }
+            pdf.destroy();
           }
 
-          pdf.destroy();
           job.status = 'done';
           job.progress = 100;
         } catch (err) {
