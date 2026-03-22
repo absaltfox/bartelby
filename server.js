@@ -112,7 +112,7 @@ function validateCsrf(req, res, next) {
     }
     // Form submissions: redirect back so the user gets a fresh token
     req.session.authError = 'Your session expired. Please try again.';
-    return res.redirect('back');
+    return res.redirect(req.get('Referrer') || '/login');
   }
   next();
 }

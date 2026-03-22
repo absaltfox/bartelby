@@ -44,7 +44,7 @@ function attachTempPreview(page) {
 // Configure multer for temporary file uploads (images + PDFs)
 const upload = multer({
   dest: config.app.tempDir,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for PDFs
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff',
@@ -272,7 +272,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
 
             try {
               execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
-                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024
+                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024, timeout: 4 * 60 * 1000
               });
             } finally {
               try { require('fs').unlinkSync(pdfPath); } catch {}
