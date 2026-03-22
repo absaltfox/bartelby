@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { annotations } = require('../database/db');
+const { annotationsAsync } = require('../database/db');
 
 // Create annotation
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { transcript_id, content, position_start, position_end } = req.body;
 
   if (!transcript_id || !content) {
@@ -12,7 +12,7 @@ router.post('/', (req, res) => {
 
   try {
     // Use authenticated user's username, not client-supplied value
-    const id = annotations.create({
+    const id = await annotationsAsync.create({
       transcript_id: parseInt(transcript_id, 10),
       user_name: req.user.username,
       content,
@@ -28,9 +28,9 @@ router.post('/', (req, res) => {
 });
 
 // Delete annotation — only the author or an admin can delete
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const annotation = annotations.getById(parseInt(req.params.id, 10));
+    const annotation = await annotationsAsync.getById(parseInt(req.params.id, 10));
     if (!annotation) {
       return res.status(404).json({ error: 'Annotation not found' });
     }
@@ -40,7 +40,7 @@ router.delete('/:id', (req, res) => {
       return res.status(403).json({ error: 'You can only delete your own annotations' });
     }
 
-    annotations.delete(annotation.id);
+    await annotationsAsync.delete(annotation.id);
     res.json({ message: 'Annotation deleted successfully' });
   } catch (err) {
     console.error('Error deleting annotation:', err);

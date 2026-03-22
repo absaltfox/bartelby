@@ -62,17 +62,17 @@ function parseResponse(text) {
 }
 
 // Load config from DB settings, falling back to env vars
-function loadConfig() {
+async function loadConfig() {
   try {
-    const { settings } = require('../database/db');
-    return settings.getAll();
+    const { settingsAsync } = require('../database/db');
+    return await settingsAsync.getAll();
   } catch {
     return {};
   }
 }
 
-function mergeConfig(overrides = {}) {
-  return { ...loadConfig(), ...overrides };
+async function mergeConfig(overrides = {}) {
+  return { ...(await loadConfig()), ...overrides };
 }
 
 async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType) {
@@ -101,7 +101,7 @@ const PROVIDERS = {
   openai: {
     name: 'openai',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
-      const cfg = mergeConfig(runtimeConfig);
+      const cfg = await mergeConfig(runtimeConfig);
       const apiKey = runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY;
       const model = opts.model || runtimeConfig.model || cfg.openai_model || 'gpt-4o';
       const temperature = opts.temperature != null ? opts.temperature : null;
@@ -113,7 +113,7 @@ const PROVIDERS = {
   claude: {
     name: 'claude',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
-      const cfg = mergeConfig(runtimeConfig);
+      const cfg = await mergeConfig(runtimeConfig);
       const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
       const model = opts.model || runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
       const temperature = opts.temperature != null ? opts.temperature : null;
@@ -125,7 +125,7 @@ const PROVIDERS = {
   ollama: {
     name: 'ollama',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
-      const cfg = mergeConfig(runtimeConfig);
+      const cfg = await mergeConfig(runtimeConfig);
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
       const model = opts.model || runtimeConfig.model || cfg.ollama_model || 'llava';
       const temperature = opts.temperature != null ? opts.temperature : null;
@@ -137,7 +137,7 @@ const PROVIDERS = {
   lmstudio: {
     name: 'lmstudio',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
-      const cfg = mergeConfig(runtimeConfig);
+      const cfg = await mergeConfig(runtimeConfig);
       const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
       const model = opts.model || runtimeConfig.model || cfg.lmstudio_model || 'local-model';
       const temperature = opts.temperature != null ? opts.temperature : null;
@@ -152,12 +152,12 @@ function providerNeedsApiKey(name) {
   return name === 'openai' || name === 'claude';
 }
 
-function createProvider(name, runtimeConfig = {}) {
+async function createProvider(name, runtimeConfig = {}) {
   const provider = PROVIDERS[name];
   if (!provider) {
     throw new Error(`Unknown provider: "${name}". Available: ${listProviders().join(', ')}`);
   }
-  const cfg = mergeConfig(runtimeConfig);
+  const cfg = await mergeConfig(runtimeConfig);
   if (name === 'openai' && !runtimeConfig.apiKey && !cfg.openai_api_key && !process.env.OPENAI_API_KEY) {
     throw new Error('OpenAI API key is not configured. Set it in Admin → Settings.');
   }
@@ -176,8 +176,8 @@ function listProviders() {
   return Object.keys(PROVIDERS);
 }
 
-function listConfiguredProviders() {
-  const cfg = loadConfig();
+async function listConfiguredProviders() {
+  const cfg = await loadConfig();
   return Object.keys(PROVIDERS).filter(name => {
     if (name === 'openai')   return !!(cfg.openai_api_key    || process.env.OPENAI_API_KEY);
     if (name === 'claude')   return !!(cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY);
@@ -187,8 +187,8 @@ function listConfiguredProviders() {
 }
 
 // Create a model instance for text-only calls (title/summary generation)
-function getModelInstance(providerName) {
-  const cfg = loadConfig();
+async function getModelInstance(providerName) {
+  const cfg = await loadConfig();
   switch (providerName) {
     case 'openai': {
       const apiKey = cfg.openai_api_key || process.env.OPENAI_API_KEY;
@@ -222,7 +222,7 @@ Instead, capture the substance (e.g. "Request for Military Pension Disbursement"
 Respond with ONLY the title — no quotes, no explanation, no trailing punctuation.`;
 
 async function generateDocumentTitle(providerName, transcription) {
-  const modelInstance = getModelInstance(providerName);
+  const modelInstance = await getModelInstance(providerName);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);
@@ -244,7 +244,7 @@ Write in a neutral, informative tone suitable for a library catalog entry.
 Respond with ONLY the summary — no quotes, no labels, no preamble.`;
 
 async function generateDocumentSummary(providerName, transcription) {
-  const modelInstance = getModelInstance(providerName);
+  const modelInstance = await getModelInstance(providerName);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);

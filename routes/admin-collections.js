@@ -2,28 +2,32 @@
 
 const express = require('express');
 const router = express.Router();
-const { collections, users, userCollectionAccess, documentCollections, documents, saveDatabase } = require('../database/db');
+const { collectionsAsync, usersAsync, userCollectionAccessAsync, documentCollectionsAsync, documentsAsync } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
+const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
 
 router.use(requireAdmin);
 
 // List collections
-router.get('/', (req, res) => {
-  const allCollections = collections.getAllWithThumbnails();
+router.get('/', async (req, res) => {
+  const allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
 
   // Attach per-collection user access list + documents for preview picker
-  const collectionsWithAccess = allCollections.map(c => {
-    const docIds = documentCollections.getByCollectionId(c.id).map(dc => dc.document_id);
-    const collectionDocs = docIds.length > 0 ? documents.getByIds(docIds, 100, 0) : [];
-    return {
+  const collectionsWithAccess = [];
+  for (const c of allCollections) {
+    const docIds = (await documentCollectionsAsync.getByCollectionId(c.id)).map(dc => dc.document_id);
+    const collectionDocs = docIds.length > 0
+      ? (await documentsAsync.getByIds(docIds, 100, 0)).map(normalizeDocumentAssets)
+      : [];
+    collectionsWithAccess.push({
       ...c,
-      grantedUsers: userCollectionAccess.getByCollectionId(c.id),
+      grantedUsers: await userCollectionAccessAsync.getByCollectionId(c.id),
       documents: collectionDocs
-    };
-  });
+    });
+  }
 
   // Non-admin, non-access_all active users (candidates for access grants)
-  const activeUsers = users.getAll().filter(u =>
+  const activeUsers = (await usersAsync.getAll()).filter(u =>
     u.status === 'active' && u.role !== 'admin' && !u.access_all
   );
 
@@ -37,7 +41,7 @@ router.get('/', (req, res) => {
 });
 
 // Create
-router.post('/', express.urlencoded({ extended: false }), (req, res) => {
+router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
   const is_public = req.body.is_public === '1';
@@ -45,8 +49,7 @@ router.post('/', express.urlencoded({ extended: false }), (req, res) => {
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
-    collections.create({ name, description, is_public, createdBy: req.user.id });
-    saveDatabase();
+    await collectionsAsync.create({ name, description, is_public, createdBy: req.user.id });
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE')) {
@@ -58,7 +61,7 @@ router.post('/', express.urlencoded({ extended: false }), (req, res) => {
 });
 
 // Update
-router.post('/:id/edit', express.urlencoded({ extended: false }), (req, res) => {
+router.post('/:id/edit', express.urlencoded({ extended: false }), async (req, res) => {
   const id = parseInt(req.params.id);
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
@@ -67,8 +70,7 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), (req, res) => 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
-    collections.update(id, { name, description, is_public });
-    saveDatabase();
+    await collectionsAsync.update(id, { name, description, is_public });
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));
@@ -76,34 +78,31 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), (req, res) => 
 });
 
 // Grant access to a user
-router.post('/:id/access/grant', express.urlencoded({ extended: false }), (req, res) => {
+router.post('/:id/access/grant', express.urlencoded({ extended: false }), async (req, res) => {
   const collectionId = parseInt(req.params.id);
   const userId = parseInt(req.body.user_id);
   if (!isNaN(userId) && !isNaN(collectionId)) {
-    userCollectionAccess.grant(userId, collectionId);
-    saveDatabase();
+    await userCollectionAccessAsync.grant(userId, collectionId);
   }
   res.redirect('/admin/collections?saved=1#collection-' + collectionId);
 });
 
 // Revoke access from a user
-router.post('/:id/access/revoke/:userId', (req, res) => {
+router.post('/:id/access/revoke/:userId', async (req, res) => {
   const collectionId = parseInt(req.params.id);
   const userId = parseInt(req.params.userId);
   if (!isNaN(userId) && !isNaN(collectionId)) {
-    userCollectionAccess.revoke(userId, collectionId);
-    saveDatabase();
+    await userCollectionAccessAsync.revoke(userId, collectionId);
   }
   res.redirect('/admin/collections#collection-' + collectionId);
 });
 
 // Set preview image
-router.post('/:id/preview', express.urlencoded({ extended: false }), (req, res) => {
+router.post('/:id/preview', express.urlencoded({ extended: false }), async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   const documentId = req.body.preview_document_id ? parseInt(req.body.preview_document_id, 10) : null;
   try {
-    collections.setPreviewDocument(collectionId, documentId);
-    saveDatabase();
+    await collectionsAsync.setPreviewDocument(collectionId, documentId);
     res.redirect('/admin/collections?saved=1#collection-' + collectionId);
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
@@ -111,9 +110,8 @@ router.post('/:id/preview', express.urlencoded({ extended: false }), (req, res) 
 });
 
 // Delete
-router.post('/:id/delete', (req, res) => {
-  collections.delete(parseInt(req.params.id));
-  saveDatabase();
+router.post('/:id/delete', async (req, res) => {
+  await collectionsAsync.delete(parseInt(req.params.id));
   res.redirect('/admin/collections');
 });
 

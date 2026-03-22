@@ -6,11 +6,15 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node database/seed.js",
-    "import": "node utils/import.js"
+    "import": "node utils/import.js",
+    "migrate:turso": "node scripts/migrate-to-turso.js",
+    "migrate:s3": "node scripts/migrate-uploads-to-s3.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
     "@ai-sdk/openai": "^3.0.41",
+    "@aws-sdk/client-s3": "^3.1014.0",
+    "@libsql/client": "^0.17.2",
     "ai": "^6.0.116",
     "bcryptjs": "^3.0.3",
     "canvas": "^3.2.1",

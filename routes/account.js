@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const { requireAuth } = require('../middleware/auth');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { isSmtpConfigured } = require('../utils/email');
-const { userApiKeys, users, saveDatabase } = require('../database/db');
+const { userApiKeysAsync, usersAsync } = require('../database/db');
 const {
   buildOtpAuthUrl,
   generateTotpSecret,
@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
     pageTitle: 'My Account',
     saved: req.query.saved === '1',
     error: req.query.error || null,
-    userApiKeys: userApiKeys.getByUserId(req.user.id),
+    userApiKeys: await userApiKeysAsync.getByUserId(req.user.id),
     canEncryptSecrets: canEncryptSecrets(),
     smtpConfigured: isSmtpConfigured(),
     pendingTotpSecret,
@@ -49,19 +49,18 @@ router.get('/', async (req, res) => {
   });
 });
 
-router.post('/profile', (req, res) => {
+router.post('/profile', async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase() || null;
-  const existing = email ? users.findByEmail(email) : null;
+  const existing = email ? await usersAsync.findByEmail(email) : null;
   if (existing && existing.id !== req.user.id) {
     return res.redirect('/account?error=' + encodeURIComponent('That email address is already in use.'));
   }
 
-  users.updateEmail(req.user.id, email);
-  saveDatabase();
+  await usersAsync.updateEmail(req.user.id, email);
   res.redirect('/account?saved=1');
 });
 
-router.post('/api-keys', (req, res) => {
+router.post('/api-keys', async (req, res) => {
   if (!canEncryptSecrets()) {
     return res.redirect('/account?error=' + encodeURIComponent('DATA_ENCRYPTION_KEY must be configured before saving personal API keys.'));
   }
@@ -74,32 +73,29 @@ router.post('/api-keys', (req, res) => {
     return res.redirect('/account?error=' + encodeURIComponent('Provider, label, and API key are required.'));
   }
 
-  userApiKeys.create({
+  await userApiKeysAsync.create({
     userId: req.user.id,
     provider,
     label,
     apiKey
   });
-  saveDatabase();
   res.redirect('/account?saved=1');
 });
 
-router.post('/api-keys/:id/delete', (req, res) => {
-  userApiKeys.delete(parseInt(req.params.id, 10), req.user.id);
-  saveDatabase();
+router.post('/api-keys/:id/delete', async (req, res) => {
+  await userApiKeysAsync.delete(parseInt(req.params.id, 10), req.user.id);
   res.redirect('/account?saved=1');
 });
 
-router.post('/mfa/disable', (req, res) => {
-  users.setMfaMethod(req.user.id, 'none');
-  users.setTotpSecret(req.user.id, null);
-  users.clearEmailOtp(req.user.id);
+router.post('/mfa/disable', async (req, res) => {
+  await usersAsync.setMfaMethod(req.user.id, 'none');
+  await usersAsync.setTotpSecret(req.user.id, null);
+  await usersAsync.clearEmailOtp(req.user.id);
   delete req.session.pendingTotpSecret;
-  saveDatabase();
   res.redirect('/account?saved=1');
 });
 
-router.post('/mfa/email/enable', (req, res) => {
+router.post('/mfa/email/enable', async (req, res) => {
   if (!req.user.email) {
     return res.redirect('/account?error=' + encodeURIComponent('Add an email address before enabling email MFA.'));
   }
@@ -107,8 +103,7 @@ router.post('/mfa/email/enable', (req, res) => {
     return res.redirect('/account?error=' + encodeURIComponent('SMTP is not configured yet, so email MFA is unavailable.'));
   }
 
-  users.setMfaMethod(req.user.id, 'email');
-  saveDatabase();
+  await usersAsync.setMfaMethod(req.user.id, 'email');
   res.redirect('/account?saved=1');
 });
 
@@ -121,7 +116,7 @@ router.post('/mfa/totp/setup', (req, res) => {
   res.redirect('/account');
 });
 
-router.post('/mfa/totp/confirm', (req, res) => {
+router.post('/mfa/totp/confirm', async (req, res) => {
   const secret = req.session.pendingTotpSecret;
   const code = (req.body.code || '').trim();
 
@@ -132,11 +127,10 @@ router.post('/mfa/totp/confirm', (req, res) => {
     return res.redirect('/account?error=' + encodeURIComponent('That authenticator code was not valid.'));
   }
 
-  users.setTotpSecret(req.user.id, secret);
-  users.setMfaMethod(req.user.id, 'totp');
-  users.clearEmailOtp(req.user.id);
+  await usersAsync.setTotpSecret(req.user.id, secret);
+  await usersAsync.setMfaMethod(req.user.id, 'totp');
+  await usersAsync.clearEmailOtp(req.user.id);
   delete req.session.pendingTotpSecret;
-  saveDatabase();
   res.redirect('/account?saved=1');
 });
 

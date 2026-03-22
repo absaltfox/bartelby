@@ -1,4 +1,4 @@
-const { initializeSchema, documents, transcripts, annotations, getDb } = require('./db');
+const { initializeSchema, documentsAsync, transcriptsAsync, annotationsAsync, getDb, saveDatabase } = require('./db');
 
 // Sample historical documents
 const sampleDocuments = [
@@ -169,33 +169,31 @@ async function seed() {
   // Initialize schema first
   await initializeSchema();
 
-  const { saveDatabase } = require('./db');
-
   // Clear existing data (ignore errors if tables are empty)
   const database = getDb();
-  try { database.run('DELETE FROM annotations'); } catch (e) {}
-  try { database.run('DELETE FROM transcripts'); } catch (e) {}
-  try { database.run('DELETE FROM documents'); } catch (e) {}
-  saveDatabase();
+  try { await database.run('DELETE FROM annotations'); } catch (e) {}
+  try { await database.run('DELETE FROM transcripts'); } catch (e) {}
+  try { await database.run('DELETE FROM documents'); } catch (e) {}
+  await saveDatabase();
 
   console.log('Seeding database...');
 
-  sampleDocuments.forEach(doc => {
-    documents.create(doc);
-  });
+  for (const doc of sampleDocuments) {
+    await documentsAsync.create(doc);
+  }
   console.log(`Inserted ${sampleDocuments.length} documents`);
 
-  sampleTranscripts.forEach(transcript => {
-    transcripts.create(transcript);
-  });
+  for (const transcript of sampleTranscripts) {
+    await transcriptsAsync.create(transcript);
+  }
   console.log(`Inserted ${sampleTranscripts.length} transcripts`);
 
-  sampleAnnotations.forEach(annotation => {
-    annotations.create(annotation);
-  });
+  for (const annotation of sampleAnnotations) {
+    await annotationsAsync.create(annotation);
+  }
   console.log(`Inserted ${sampleAnnotations.length} annotations`);
 
-  saveDatabase();
+  await saveDatabase();
   console.log('Database seeded successfully!');
 }
 

@@ -3,15 +3,15 @@
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const bcrypt = require('bcryptjs');
-const { users } = require('../database/db');
+const { usersAsync } = require('../database/db');
 
 // ── Passport strategy ──────────────────────────────────────────────────────
 
 passport.use(new LocalStrategy(
   { usernameField: 'username', passwordField: 'password' },
-  (username, password, done) => {
+  async (username, password, done) => {
     try {
-      const user = users.findByUsername(username.trim().toLowerCase());
+      const user = await usersAsync.findByUsername(username.trim().toLowerCase());
       if (!user) {
         return done(null, false, { message: 'Invalid username or password.' });
       }
@@ -34,9 +34,9 @@ passport.use(new LocalStrategy(
 
 passport.serializeUser((user, done) => done(null, user.id));
 
-passport.deserializeUser((id, done) => {
+passport.deserializeUser(async (id, done) => {
   try {
-    const user = users.findById(id);
+    const user = await usersAsync.findById(id);
     done(null, user || false);
   } catch (err) {
     done(err);

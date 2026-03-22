@@ -1,8 +1,7 @@
 // Background transcription worker — polls the jobs queue every 5 seconds
 // and processes one job at a time, with retry for transient errors.
 
-const path = require('path');
-const fs = require('fs');
+const storage = require('./storage');
 
 let busy = false;
 
@@ -36,45 +35,45 @@ function startWorker() {
 async function tick() {
   if (busy) return;
 
-  const { transcriptionJobs, transcripts } = require('../database/db');
-  const job = transcriptionJobs.getNextQueued();
+  const { transcriptionJobsAsync, transcriptsAsync } = require('../database/db');
+  const job = await transcriptionJobsAsync.getNextQueued();
   if (!job) return;
 
   busy = true;
-  transcriptionJobs.markRunning(job.id);
+  await transcriptionJobsAsync.markRunning(job.id);
 
   const ts = () => new Date().toISOString();
-  const logLine = (msg) => {
+  const logLine = async (msg) => {
     const line = `[${ts()}] ${msg}\n`;
-    transcriptionJobs.appendLog(job.id, line);
+    await transcriptionJobsAsync.appendLog(job.id, line);
     console.log(`[worker] job ${job.id}: ${msg}`);
   };
 
   try {
-    logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
+    await logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
 
     const { createProvider } = require('./llm');
-    const { settings, userApiKeys } = require('../database/db');
-    const cfg = settings.getAll();
+    const { settingsAsync, userApiKeysAsync } = require('../database/db');
+    const cfg = await settingsAsync.getAll();
 
     const providerName = job.provider || cfg.default_provider || 'openai';
     const temperature = job.temperature != null ? job.temperature : null;
     const runtimeConfig = {};
 
     if (job.provider_key_scope === 'user') {
-      const key = userApiKeys.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
+      const key = await userApiKeysAsync.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
       if (!key) {
         throw new Error('The personal API key for this transcription job is no longer available.');
       }
       runtimeConfig.apiKey = key.api_key;
-      logLine(`Using personal API key: ${key.label}`);
+      await logLine(`Using personal API key: ${key.label}`);
     } else if (job.provider_key_scope === 'system') {
-      logLine('Using system AI credentials');
+      await logLine('Using system AI credentials');
     }
 
-    logLine(`Provider: ${providerName}, Model: ${job.model || 'default'}`);
+    await logLine(`Provider: ${providerName}, Model: ${job.model || 'default'}`);
 
-    const provider = createProvider(providerName, runtimeConfig);
+    const provider = await createProvider(providerName, runtimeConfig);
     const opts = { temperature };
 
     // Collect all image paths for this job
@@ -89,14 +88,9 @@ async function tick() {
     const results = [];
     for (let i = 0; i < imagePaths.length; i++) {
       const relPath = imagePaths[i];
-      const absPath = path.join(__dirname, '..', 'public', relPath);
-      logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
+      await logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
 
-      if (!fs.existsSync(absPath)) {
-        throw new Error(`Image file not found: ${relPath}`);
-      }
-
-      const imageBuffer = fs.readFileSync(absPath);
+      const imageBuffer = await storage.readUploadByUrl(relPath);
 
       // Retry individual page transcription with exponential backoff
       let result;
@@ -109,7 +103,7 @@ async function tick() {
           lastErr = pageErr;
           if (isTransientError(pageErr) && attempt < 2) {
             const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
-            logLine(`Transient error on page ${i + 1} (attempt ${attempt + 1}/3): ${pageErr.message}. Retrying in ${delay / 1000}s...`);
+            await logLine(`Transient error on page ${i + 1} (attempt ${attempt + 1}/3): ${pageErr.message}. Retrying in ${delay / 1000}s...`);
             await sleep(delay);
           } else {
             throw pageErr;
@@ -119,7 +113,7 @@ async function tick() {
 
       results.push(result);
       const dur = result.paradata?.run_duration_ms;
-      logLine(`Page ${i + 1} transcribed${dur ? ` (${(dur / 1000).toFixed(1)}s)` : ''}`);
+      await logLine(`Page ${i + 1} transcribed${dur ? ` (${(dur / 1000).toFixed(1)}s)` : ''}`);
     }
 
     // Combine multi-page results
@@ -139,10 +133,10 @@ async function tick() {
     }
 
     // Merge LLM-extracted metadata into the document record
-    const { documents } = require('../database/db');
+    const { documentsAsync } = require('../database/db');
     const llmMeta = combined.metadata || {};
     if (Object.keys(llmMeta).length > 0) {
-      const doc = documents.getById(job.document_id);
+      const doc = await documentsAsync.getById(job.document_id);
       if (doc) {
         let existing = doc.metadata;
         if (typeof existing === 'string') {
@@ -184,10 +178,10 @@ async function tick() {
               const generated = await generateDocumentTitle(providerName, combined.transcription);
               if (generated) {
                 updates.title = generated;
-                logLine(`Generated title: "${generated}"`);
+                await logLine(`Generated title: "${generated}"`);
               }
             } catch (titleErr) {
-              logLine(`Title generation failed (non-fatal): ${titleErr.message}`);
+              await logLine(`Title generation failed (non-fatal): ${titleErr.message}`);
             }
           }
 
@@ -196,21 +190,21 @@ async function tick() {
               const summary = await generateDocumentSummary(providerName, combined.transcription);
               if (summary) {
                 updates.description = summary;
-                logLine(`Generated summary: "${summary}"`);
+                await logLine(`Generated summary: "${summary}"`);
               }
             } catch (sumErr) {
-              logLine(`Summary generation failed (non-fatal): ${sumErr.message}`);
+              await logLine(`Summary generation failed (non-fatal): ${sumErr.message}`);
             }
           }
         }
 
-        documents.update(doc.id, updates);
-        logLine(`Extracted metadata: ${Object.keys(llmMeta).filter(k => llmMeta[k] != null).join(', ')}`);
+        await documentsAsync.update(doc.id, updates);
+        await logLine(`Extracted metadata: ${Object.keys(llmMeta).filter(k => llmMeta[k] != null).join(', ')}`);
       }
     }
 
     const pd = combined.paradata || {};
-    transcripts.create({
+    await transcriptsAsync.create({
       document_id: job.document_id,
       content: combined.transcription,
       transcriber: 'AI Transcription',
@@ -225,24 +219,24 @@ async function tick() {
     });
 
     const totalDur = pd.run_duration_ms;
-    logLine(`Done. Total duration: ${totalDur ? `${(totalDur / 1000).toFixed(1)}s` : 'unknown'}`);
+    await logLine(`Done. Total duration: ${totalDur ? `${(totalDur / 1000).toFixed(1)}s` : 'unknown'}`);
     if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
-      userApiKeys.markUsed(job.user_api_key_id, job.requested_by_user_id);
+      await userApiKeysAsync.markUsed(job.user_api_key_id, job.requested_by_user_id);
     }
-    transcriptionJobs.markDone(job.id);
+    await transcriptionJobsAsync.markDone(job.id);
   } catch (err) {
     const msg = err.message || String(err);
-    logLine(`ERROR: ${msg}`);
+    await logLine(`ERROR: ${msg}`);
 
     // Auto-retry transient errors up to MAX_RETRIES
     if (isTransientError(err) && (job.attempts + 1) < MAX_RETRIES) {
       const backoff = Math.pow(2, job.attempts + 1) * 5000; // 10s, 20s, 40s
-      logLine(`Transient error — will retry in ${backoff / 1000}s (attempt ${job.attempts + 1}/${MAX_RETRIES})`);
-      transcriptionJobs.requeueForRetry(job.id);
+      await logLine(`Transient error — will retry in ${backoff / 1000}s (attempt ${job.attempts + 1}/${MAX_RETRIES})`);
+      await transcriptionJobsAsync.requeueForRetry(job.id);
       // Wait before releasing busy flag so next tick picks up after a delay
       await sleep(backoff);
     } else {
-      transcriptionJobs.markFailed(job.id, msg);
+      await transcriptionJobsAsync.markFailed(job.id, msg);
     }
   } finally {
     // Small cooldown between jobs to avoid hammering the API

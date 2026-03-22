@@ -1,6 +1,3 @@
-const initSqlJs = require('sql.js');
-const path = require('path');
-const fs = require('fs');
 const {
   canEncryptSecrets,
   isEncryptedSecret,
@@ -8,14 +5,7 @@ const {
   decryptSecret
 } = require('../utils/secrets');
 const { hashOtpCode } = require('../utils/mfa');
-
-const dbPath = path.join(__dirname, '..', 'data', 'transcriber.db');
-
-// Ensure data directory exists
-const dataDir = path.dirname(dbPath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+const { initDriver } = require('./driver');
 
 let db = null;
 const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key']);
@@ -249,32 +239,20 @@ const MIGRATIONS = [
 
 async function initDatabase() {
   if (db) return db;
-
-  const SQL = await initSqlJs();
-
-  if (fs.existsSync(dbPath)) {
-    const fileBuffer = fs.readFileSync(dbPath);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run('PRAGMA foreign_keys = ON');
+  db = await initDriver();
   return db;
 }
 
 function saveDatabase() {
   if (db) {
-    const data = db.export();
-    fs.writeFileSync(dbPath, Buffer.from(data));
+    return db.persist();
   }
 }
 
 async function initializeSchema() {
   await initDatabase();
 
-  const versionResult = db.exec('PRAGMA user_version');
-  const currentVersion = versionResult[0]?.values[0]?.[0] || 0;
+  const currentVersion = await db.getSchemaVersion();
 
   if (currentVersion < MIGRATIONS.length) {
     for (let i = currentVersion; i < MIGRATIONS.length; i++) {
@@ -288,7 +266,7 @@ async function initializeSchema() {
 
       for (const stmt of statements) {
         try {
-          db.run(stmt);
+          await db.run(stmt);
         } catch (e) {
           // ALTER TABLE ADD COLUMN on an already-existing column is safe to skip.
           // CREATE TABLE/INDEX IF NOT EXISTS never throws, but guard defensively.
@@ -301,52 +279,52 @@ async function initializeSchema() {
       }
 
       const safeVersion = Number.isInteger(version) ? version : parseInt(version, 10);
-      db.run(`PRAGMA user_version = ${safeVersion}`);
+      await db.setSchemaVersion(safeVersion);
       console.log(`[db] migration ${version} complete`);
     }
 
-    saveDatabase();
+    await saveDatabase();
   }
 
   // Recover from unclean shutdown: any jobs left in processing/running
   // can never complete (the process that was handling them is gone).
-  const staleImports = db.exec("SELECT COUNT(*) FROM import_jobs WHERE status = 'processing'");
-  const staleImportCount = staleImports[0]?.values[0]?.[0] || 0;
+  const staleImports = await get("SELECT COUNT(*) as count FROM import_jobs WHERE status = 'processing'");
+  const staleImportCount = staleImports?.count || 0;
   if (staleImportCount > 0) {
-    db.run("UPDATE import_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'processing'");
+    await db.run("UPDATE import_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'processing'");
     console.log(`[db] Marked ${staleImportCount} stale import job(s) as failed`);
   }
 
-  const staleTranscriptions = db.exec("SELECT COUNT(*) FROM transcription_jobs WHERE status = 'running'");
-  const staleTranscriptionCount = staleTranscriptions[0]?.values[0]?.[0] || 0;
+  const staleTranscriptions = await get("SELECT COUNT(*) as count FROM transcription_jobs WHERE status = 'running'");
+  const staleTranscriptionCount = staleTranscriptions?.count || 0;
   if (staleTranscriptionCount > 0) {
-    db.run("UPDATE transcription_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'running'");
+    await db.run("UPDATE transcription_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'running'");
     console.log(`[db] Marked ${staleTranscriptionCount} stale transcription job(s) as failed`);
   }
 
   if (staleImportCount > 0 || staleTranscriptionCount > 0) {
-    saveDatabase();
+    await saveDatabase();
   }
 
-  migrateEncryptedSettings();
+  await migrateEncryptedSettings();
 
   return db;
 }
 
-function migrateEncryptedSettings() {
+async function migrateEncryptedSettings() {
   if (!canEncryptSecrets()) return;
 
-  const rows = all('SELECT key, value FROM settings');
+  const rows = await all('SELECT key, value FROM settings');
   let mutated = false;
 
   for (const row of rows) {
     if (!SECRET_SETTING_KEYS.has(row.key) || !row.value || isEncryptedSecret(row.value)) continue;
-    db.run('UPDATE settings SET value = ? WHERE key = ?', [encryptSecret(row.value), row.key]);
+    await db.run('UPDATE settings SET value = ? WHERE key = ?', [encryptSecret(row.value), row.key]);
     mutated = true;
   }
 
   if (mutated) {
-    saveDatabase();
+    await saveDatabase();
     console.log('[security] Encrypted stored provider secrets in settings');
   }
 }
@@ -540,30 +518,33 @@ const importJobs = {
 
 // Helper to run query and return all results
 function all(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const results = [];
-  while (stmt.step()) {
-    results.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return results;
+  return db.all(sql, params);
 }
 
 // Helper to run query and return first result
 function get(sql, params = []) {
-  const results = all(sql, params);
-  return results[0] || null;
+  return db.get(sql, params);
 }
 
 // Helper to run insert/update/delete
 function run(sql, params = []) {
-  db.run(sql, params);
-  // Capture these BEFORE saveDatabase() — db.export() can reset last_insert_rowid()
-  const lastInsertRowid = db.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0];
-  const changes = db.getRowsModified();
+  const result = db.run(sql, params);
   saveDatabase();
-  return { lastInsertRowid, changes };
+  return result;
+}
+
+async function allAsync(sql, params = []) {
+  return await db.all(sql, params);
+}
+
+async function getAsync(sql, params = []) {
+  return await db.get(sql, params);
+}
+
+async function runAsync(sql, params = []) {
+  const result = await db.run(sql, params);
+  await saveDatabase();
+  return result;
 }
 
 // ── Documents ──────────────────────────────────────────────────────────────
@@ -1529,6 +1510,972 @@ const settings = {
   }
 };
 
+const transcriptionJobsAsync = {
+  async create({
+    document_id,
+    provider,
+    model,
+    temperature,
+    initiated_by,
+    image_path,
+    additional_image_paths,
+    provider_key_scope,
+    user_api_key_id,
+    requested_by_user_id
+  }) {
+    const result = await runAsync(`
+      INSERT INTO transcription_jobs
+        (document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths, provider_key_scope, user_api_key_id, requested_by_user_id, status, log)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
+    `, [
+      document_id,
+      provider || null,
+      model || null,
+      temperature != null ? temperature : null,
+      initiated_by || null,
+      image_path,
+      additional_image_paths ? JSON.stringify(additional_image_paths) : null,
+      provider_key_scope || null,
+      user_api_key_id || null,
+      requested_by_user_id || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getNextQueued() {
+    return await getAsync("SELECT * FROM transcription_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1");
+  },
+
+  async markRunning(id) {
+    await db.run("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
+    await saveDatabase();
+  },
+
+  async appendLog(id, text) {
+    await db.run("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
+    await saveDatabase();
+  },
+
+  async markDone(id) {
+    await db.run("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await db.run("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  async requeueForRetry(id) {
+    await db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ?", [id]);
+    await saveDatabase();
+  },
+
+  async getById(id) {
+    return await getAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.id = ?
+    `, [id]);
+  },
+
+  async getPendingForDocument(docId) {
+    return await getAsync("SELECT * FROM transcription_jobs WHERE document_id = ? AND status IN ('queued', 'running') LIMIT 1", [docId]);
+  },
+
+  async getAll() {
+    return await allAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      ORDER BY j.created_at DESC
+    `);
+  },
+
+  async retry(id) {
+    await db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ? AND status = 'failed'", [id]);
+    await saveDatabase();
+  },
+
+  async delete(id) {
+    return await runAsync("DELETE FROM transcription_jobs WHERE id = ?", [id]);
+  }
+};
+
+const importJobsAsync = {
+  async create({ original_name, file_path }) {
+    const result = await runAsync(`
+      INSERT INTO import_jobs (original_name, file_path, status)
+      VALUES (?, ?, 'processing')
+    `, [original_name || null, file_path || null]);
+    return result.lastInsertRowid;
+  },
+
+  async updateProgress(id, { page_count, pages_rendered }) {
+    if (page_count != null) {
+      await db.run("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
+    }
+    if (pages_rendered != null) {
+      await db.run("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
+    }
+  },
+
+  async markDone(id, pages) {
+    await db.run("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [JSON.stringify(pages), id]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await db.run("UPDATE import_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM import_jobs WHERE id = ?', [id]);
+  },
+
+  async getAll() {
+    return await allAsync('SELECT * FROM import_jobs ORDER BY created_at DESC');
+  },
+
+  async markSubmitted(id) {
+    await db.run("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
+    await saveDatabase();
+  },
+
+  async delete(id) {
+    return await runAsync("DELETE FROM import_jobs WHERE id = ?", [id]);
+  }
+};
+
+const documentsAsync = {
+  buildAccessConditions: documents.buildAccessConditions.bind(documents),
+  buildFilterConditions: documents.buildFilterConditions.bind(documents),
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM documents WHERE id = ?', [id]);
+  },
+
+  async canAccess(docId, userId, isAdmin, accessAll) {
+    if (isAdmin || accessAll) return true;
+    if (!userId) return false;
+    const row = await getAsync(`
+      SELECT 1 FROM document_collections dc
+      INNER JOIN collections col ON dc.collection_id = col.id
+      WHERE dc.document_id = ? AND (
+        col.is_public = 1
+        OR dc.collection_id IN (
+          SELECT collection_id FROM user_collection_access WHERE user_id = ?
+        )
+      )
+      LIMIT 1
+    `, [docId, userId]);
+    return !!row;
+  },
+
+  async getAll(limit = 20, offset = 0, opts = {}) {
+    const { userId, isAdmin, accessAll } = opts;
+
+    if (isAdmin || accessAll || !userId) {
+      return await allAsync(`
+        SELECT d.*,
+               (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+        FROM documents d
+        ORDER BY d.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [limit, offset]);
+    }
+
+    return await allAsync(`
+      SELECT d.*,
+             (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+      FROM documents d
+      WHERE d.id IN (
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+        WHERE uca.user_id = ?
+        UNION
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE col.is_public = 1
+      )
+      ORDER BY d.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
+  },
+
+  async getByIds(ids, limit = 25, offset = 0) {
+    if (!ids || ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT d.*,
+             (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+      FROM documents d
+      WHERE d.id IN (${placeholders})
+      ORDER BY d.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...ids, limit, offset]);
+  },
+
+  async getCount(opts = {}) {
+    const { userId, isAdmin, accessAll } = opts;
+
+    if (isAdmin || accessAll || !userId) {
+      const result = await getAsync('SELECT COUNT(*) as count FROM documents');
+      return result ? result.count : 0;
+    }
+
+    const result = await getAsync(`
+      SELECT COUNT(DISTINCT d.id) as count
+      FROM documents d
+      WHERE d.id IN (
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+        WHERE uca.user_id = ?
+        UNION
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE col.is_public = 1
+      )
+    `, [userId]);
+    return result ? result.count : 0;
+  },
+
+  async getUncollectedCount() {
+    const result = await getAsync(`
+      SELECT COUNT(*) as count FROM documents d
+      WHERE d.id NOT IN (SELECT document_id FROM document_collections)
+    `);
+    return result ? result.count : 0;
+  },
+
+  async getDistinctTypesFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `json_extract(d.metadata, '$.document_type') IS NOT NULL`,
+      `json_extract(d.metadata, '$.document_type') != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const rows = await allAsync(`
+      SELECT DISTINCT json_extract(d.metadata, '$.document_type') as doc_type
+      FROM documents d
+      ${where}
+      ORDER BY doc_type
+    `, params);
+    return rows.map(r => r.doc_type);
+  },
+
+  async getDistinctLocationsFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `json_extract(d.metadata, '$.location') IS NOT NULL`,
+      `json_extract(d.metadata, '$.location') != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const rows = await allAsync(`
+      SELECT DISTINCT json_extract(d.metadata, '$.location') as location
+      FROM documents d
+      ${where}
+      ORDER BY location
+    `, params);
+    return rows.map(r => r.location);
+  },
+
+  async getDateRangeFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `d.date_created IS NOT NULL`,
+      `d.date_created != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const result = await getAsync(`
+      SELECT MIN(d.date_created) as min_date, MAX(d.date_created) as max_date
+      FROM documents d
+      ${where}
+    `, params);
+    return result || { min_date: null, max_date: null };
+  },
+
+  async getAllFiltered(limit = 20, offset = 0, opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions(filters);
+    const conditions = [...access.conditions, ...scoped.conditions];
+    const params = [...access.params, ...scoped.params];
+
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const countResult = await getAsync(`SELECT COUNT(*) as count FROM documents d ${where}`, params);
+    const totalCount = countResult ? countResult.count : 0;
+
+    const rows = await allAsync(`
+      SELECT d.*,
+             (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+      FROM documents d
+      ${where}
+      ORDER BY d.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    return { rows, totalCount };
+  },
+
+  async update(id, fields) {
+    const doc = await getAsync('SELECT * FROM documents WHERE id = ?', [id]);
+    if (!doc) return;
+    await runAsync(`
+      UPDATE documents SET title = ?, date_created = ?, description = ?, metadata = ?
+      WHERE id = ?
+    `, [
+      fields.title !== undefined ? fields.title : doc.title,
+      fields.date_created !== undefined ? fields.date_created : doc.date_created,
+      fields.description !== undefined ? fields.description : doc.description,
+      fields.metadata !== undefined ? JSON.stringify(fields.metadata) : doc.metadata,
+      id
+    ]);
+  },
+
+  async create(doc) {
+    const result = await runAsync(`
+      INSERT INTO documents (title, date_created, description, image_path, metadata)
+      VALUES (?, ?, ?, ?, ?)
+    `, [
+      doc.title,
+      doc.date_created,
+      doc.description,
+      doc.image_path,
+      JSON.stringify(doc.metadata || {})
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async delete(id) {
+    const docTranscripts = await allAsync('SELECT id FROM transcripts WHERE document_id = ?', [id]);
+    for (const t of docTranscripts) {
+      await runAsync('DELETE FROM annotations WHERE transcript_id = ?', [t.id]);
+    }
+    await runAsync('DELETE FROM transcripts WHERE document_id = ?', [id]);
+    await runAsync('DELETE FROM document_collections WHERE document_id = ?', [id]);
+    return await runAsync('DELETE FROM documents WHERE id = ?', [id]);
+  }
+};
+
+const transcriptsAsync = {
+  async getByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT * FROM transcripts
+      WHERE document_id = ?
+      ORDER BY version DESC
+    `, [documentId]);
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM transcripts WHERE id = ?', [id]);
+  },
+
+  async create(transcript) {
+    const result = await runAsync(`
+      INSERT INTO transcripts (
+        document_id, content, transcriber, version, notes,
+        provider, model, prompt, temperature, initiated_by, run_duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      transcript.document_id,
+      transcript.content,
+      transcript.transcriber,
+      transcript.version || 1,
+      transcript.notes,
+      transcript.provider || null,
+      transcript.model || null,
+      transcript.prompt || null,
+      transcript.temperature != null ? transcript.temperature : null,
+      transcript.initiated_by || null,
+      transcript.run_duration_ms || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async search(query, limit = 20, opts = {}) {
+    const { userId, isAdmin, accessAll } = opts;
+
+    const searchTerms = query
+      .replace(/['"]/g, '')
+      .split(/\s+/)
+      .filter(term => term.length > 0);
+
+    if (searchTerms.length === 0) return [];
+
+    const termConditions = searchTerms.map(() =>
+      '(t.content LIKE ? OR d.title LIKE ? OR d.description LIKE ?)'
+    ).join(' OR ');
+
+    const params = [];
+    searchTerms.forEach(term => {
+      const likeTerm = `%${term}%`;
+      params.push(likeTerm, likeTerm, likeTerm);
+    });
+
+    let accessClause = '';
+    if (!isAdmin && !accessAll && userId) {
+      accessClause = `AND d.id IN (
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+        WHERE uca.user_id = ?
+      )`;
+      params.push(userId);
+    }
+
+    params.push(limit);
+
+    const results = await allAsync(`
+      SELECT t.*, d.title as document_title, d.id as document_id, d.description as document_description
+      FROM transcripts t
+      JOIN documents d ON t.document_id = d.id
+      WHERE (${termConditions}) ${accessClause}
+      ORDER BY t.created_at DESC
+      LIMIT ?
+    `, params);
+
+    return results.map(row => {
+      let snippet = '';
+      for (const term of searchTerms) {
+        const termLower = term.toLowerCase();
+        if (row.document_title && row.document_title.toLowerCase().includes(termLower)) {
+          snippet = row.content.substring(0, 200) + (row.content.length > 200 ? '...' : '');
+          break;
+        }
+        if (row.document_description && row.document_description.toLowerCase().includes(termLower)) {
+          snippet = row.document_description;
+          break;
+        }
+        const idx = row.content.toLowerCase().indexOf(termLower);
+        if (idx !== -1) {
+          const start = Math.max(0, idx - 80);
+          const end = Math.min(row.content.length, idx + term.length + 80);
+          snippet = (start > 0 ? '...' : '') + row.content.substring(start, end) + (end < row.content.length ? '...' : '');
+          break;
+        }
+      }
+      if (!snippet) snippet = row.content.substring(0, 200) + (row.content.length > 200 ? '...' : '');
+      snippet = snippet
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+      for (const term of searchTerms) {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(${escaped})`, 'gi');
+        snippet = snippet.replace(regex, '<mark>$1</mark>');
+      }
+      return { ...row, snippet };
+    });
+  }
+};
+
+const settingsAsync = {
+  async get(key) {
+    const row = await getAsync('SELECT value FROM settings WHERE key = ?', [key]);
+    if (!row) return null;
+    if (!SECRET_SETTING_KEYS.has(key) || row.value == null) return row.value;
+    return decryptSecret(row.value);
+  },
+
+  async getAll() {
+    const rows = await allAsync('SELECT key, value FROM settings');
+    return rows.reduce((acc, { key, value }) => {
+      acc[key] = SECRET_SETTING_KEYS.has(key) && value != null
+        ? decryptSecret(value)
+        : value;
+      return acc;
+    }, {});
+  },
+
+  async set(key, value) {
+    const storedValue = SECRET_SETTING_KEYS.has(key) && value != null && value !== ''
+      ? encryptSecret(value)
+      : value;
+    await runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, storedValue]);
+  },
+
+  async hasSystemKeyForProvider(provider) {
+    if (provider === 'openai') return !!((await this.get('openai_api_key')) || process.env.OPENAI_API_KEY);
+    if (provider === 'claude') return !!((await this.get('anthropic_api_key')) || process.env.ANTHROPIC_API_KEY);
+    if (provider === 'ollama' || provider === 'lmstudio') return true;
+    return false;
+  }
+};
+
+const userApiKeysAsync = {
+  async getByUserId(userId) {
+    return await allAsync(`
+      SELECT id, user_id, provider, label, created_at, updated_at, last_used_at
+      FROM user_api_keys
+      WHERE user_id = ?
+      ORDER BY provider, label, created_at
+    `, [userId]);
+  },
+
+  async getByIdForUser(id, userId) {
+    return await getAsync(`
+      SELECT id, user_id, provider, label, encrypted_key, created_at, updated_at, last_used_at
+      FROM user_api_keys
+      WHERE id = ? AND user_id = ?
+    `, [id, userId]);
+  },
+
+  async getResolvedForUser(id, userId) {
+    const row = await this.getByIdForUser(id, userId);
+    if (!row) return null;
+    return {
+      ...row,
+      api_key: decryptSecret(row.encrypted_key),
+      masked_key: maskSecret(decryptSecret(row.encrypted_key))
+    };
+  },
+
+  async markUsed(id, userId) {
+    await runAsync('UPDATE user_api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [id, userId]);
+  },
+
+  async getProviderOptionsForUser(userId) {
+    const keys = await this.getByUserId(userId);
+    return keys.reduce((acc, key) => {
+      if (!acc[key.provider]) acc[key.provider] = [];
+      acc[key.provider].push({
+        id: key.id,
+        label: key.label,
+        provider: key.provider,
+        type: 'user'
+      });
+      return acc;
+    }, {});
+  },
+
+  async create({ userId, provider, label, apiKey }) {
+    const result = await runAsync(`
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key)
+      VALUES (?, ?, ?, ?)
+    `, [
+      userId,
+      provider,
+      label,
+      encryptSecret(apiKey)
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async delete(id, userId) {
+    await runAsync('DELETE FROM user_api_keys WHERE id = ? AND user_id = ?', [id, userId]);
+  }
+};
+
+const annotationsAsync = {
+  async getByTranscriptId(transcriptId) {
+    return await allAsync(`
+      SELECT * FROM annotations
+      WHERE transcript_id = ?
+      ORDER BY position_start, created_at
+    `, [transcriptId]);
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM annotations WHERE id = ?', [id]);
+  },
+
+  async create(annotation) {
+    const result = await runAsync(`
+      INSERT INTO annotations (transcript_id, user_name, content, position_start, position_end)
+      VALUES (?, ?, ?, ?, ?)
+    `, [
+      annotation.transcript_id,
+      annotation.user_name,
+      annotation.content,
+      annotation.position_start,
+      annotation.position_end
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM annotations WHERE id = ?', [id]);
+  }
+};
+
+const documentCollectionsAsync = {
+  async getByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT c.* FROM collections c
+      INNER JOIN document_collections dc ON c.id = dc.collection_id
+      WHERE dc.document_id = ?
+      ORDER BY c.name
+    `, [documentId]);
+  },
+
+  async getByCollectionId(collectionId) {
+    return await allAsync(`
+      SELECT dc.document_id FROM document_collections dc
+      WHERE dc.collection_id = ?
+    `, [collectionId]);
+  },
+
+  async setForDocument(documentId, collectionIds) {
+    await runAsync('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
+    for (const cid of (collectionIds || [])) {
+      try {
+        await runAsync('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
+      } catch (e) {}
+    }
+  }
+};
+
+const userCollectionAccessAsync = {
+  async getIdsByUserId(userId) {
+    const rows = await allAsync('SELECT collection_id FROM user_collection_access WHERE user_id = ?', [userId]);
+    return rows.map(r => r.collection_id);
+  },
+
+  async getByCollectionId(collectionId) {
+    return await allAsync(`
+      SELECT u.id, u.username, u.email, u.role
+      FROM users u
+      INNER JOIN user_collection_access uca ON u.id = uca.user_id
+      WHERE uca.collection_id = ?
+      ORDER BY u.username
+    `, [collectionId]);
+  },
+
+  async setForUser(userId, collectionIds) {
+    await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
+    for (const cid of (collectionIds || [])) {
+      try {
+        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, cid]);
+      } catch (e) {}
+    }
+  },
+
+  async grant(userId, collectionId) {
+    try {
+      await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, collectionId]);
+    } catch (e) {}
+  },
+
+  async revoke(userId, collectionId) {
+    await runAsync('DELETE FROM user_collection_access WHERE user_id = ? AND collection_id = ?', [userId, collectionId]);
+  }
+};
+
+const collectionsAsync = {
+  async getAll() {
+    return await allAsync(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) as document_count
+      FROM collections c
+      ORDER BY c.name
+    `);
+  },
+
+  async getAllWithThumbnails() {
+    return await allAsync(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) as document_count,
+             COALESCE(
+               (SELECT d.image_path FROM documents d WHERE d.id = c.preview_document_id),
+               (SELECT d.image_path FROM documents d
+                INNER JOIN document_collections dc ON d.id = dc.document_id
+                WHERE dc.collection_id = c.id
+                ORDER BY d.created_at DESC LIMIT 1)
+             ) as thumbnail
+      FROM collections c
+      ORDER BY c.name
+    `);
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM collections WHERE id = ?', [id]);
+  },
+
+  async canAccess(collectionId, userId, isAdmin, accessAll) {
+    if (isAdmin || accessAll) return true;
+    if (!userId) return false;
+
+    const result = await getAsync(`
+      SELECT c.id
+      FROM collections c
+      LEFT JOIN user_collection_access uca
+        ON c.id = uca.collection_id AND uca.user_id = ?
+      WHERE c.id = ?
+        AND (c.is_public = 1 OR uca.user_id IS NOT NULL)
+    `, [userId, collectionId]);
+
+    return !!result;
+  },
+
+  async create({ name, description, is_public, createdBy }) {
+    const result = await runAsync(
+      'INSERT INTO collections (name, description, is_public, created_by) VALUES (?, ?, ?, ?)',
+      [name, description || null, is_public ? 1 : 0, createdBy || null]
+    );
+    return result.lastInsertRowid;
+  },
+
+  async update(id, { name, description, is_public }) {
+    await runAsync('UPDATE collections SET name = ?, description = ?, is_public = ? WHERE id = ?',
+      [name, description || null, is_public ? 1 : 0, id]);
+  },
+
+  async setPreviewDocument(id, documentId) {
+    if (documentId != null) {
+      const belongsToCollection = await getAsync(`
+        SELECT 1
+        FROM document_collections
+        WHERE collection_id = ? AND document_id = ?
+      `, [id, documentId]);
+      if (!belongsToCollection) {
+        throw new Error('Preview document must belong to the collection');
+      }
+    }
+    await runAsync('UPDATE collections SET preview_document_id = ? WHERE id = ?',
+      [documentId || null, id]);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM collections WHERE id = ?', [id]);
+  }
+};
+
+const usersAsync = {
+  async count() {
+    const result = await getAsync('SELECT COUNT(*) as n FROM users');
+    return result ? result.n : 0;
+  },
+
+  async findById(id) {
+    return await getAsync('SELECT * FROM users WHERE id = ?', [id]);
+  },
+
+  async findByUsername(username) {
+    return await getAsync('SELECT * FROM users WHERE username = ?', [username]);
+  },
+
+  async findByEmail(email) {
+    return await getAsync('SELECT * FROM users WHERE email = ?', [email]);
+  },
+
+  async getAll() {
+    return await allAsync(`
+      SELECT
+        id, username, email, role, status, access_all, can_use_system_api_keys,
+        mfa_method, created_at
+      FROM users
+      ORDER BY created_at
+    `);
+  },
+
+  async getPending() {
+    return await allAsync("SELECT id, username, email, created_at FROM users WHERE status = 'pending' ORDER BY created_at");
+  },
+
+  async create({ username, email, passwordHash, role, status, accessAll, canUseSystemApiKeys, inviteId }) {
+    const result = await runAsync(
+      `INSERT INTO users
+        (username, email, password_hash, role, status, access_all, can_use_system_api_keys, invite_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        username,
+        email || null,
+        passwordHash,
+        role || 'user',
+        status || 'pending',
+        accessAll ? 1 : 0,
+        canUseSystemApiKeys ? 1 : 0,
+        inviteId || null
+      ]
+    );
+    return result.lastInsertRowid;
+  },
+
+  async updatePassword(id, passwordHash) {
+    await runAsync('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, id]);
+  },
+
+  async approve(id, { role, accessAll, canUseSystemApiKeys }) {
+    await runAsync(
+      "UPDATE users SET status = 'active', role = ?, access_all = ?, can_use_system_api_keys = ? WHERE id = ?",
+      [role || 'user', accessAll ? 1 : 0, canUseSystemApiKeys ? 1 : 0, id]
+    );
+  },
+
+  async reject(id) {
+    await runAsync("UPDATE users SET status = 'rejected' WHERE id = ?", [id]);
+  },
+
+  async setRole(id, role) {
+    await runAsync('UPDATE users SET role = ? WHERE id = ?', [role, id]);
+  },
+
+  async setAccessAll(id, accessAll) {
+    await runAsync('UPDATE users SET access_all = ? WHERE id = ?', [accessAll ? 1 : 0, id]);
+  },
+
+  async setCanUseSystemApiKeys(id, enabled) {
+    await runAsync('UPDATE users SET can_use_system_api_keys = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+  },
+
+  async updateEmail(id, email) {
+    await runAsync('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+  },
+
+  async setMfaMethod(id, method) {
+    await runAsync('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
+  },
+
+  async setTotpSecret(id, secret) {
+    const storedSecret = secret ? encryptSecret(secret) : null;
+    await runAsync('UPDATE users SET mfa_totp_secret = ? WHERE id = ?', [storedSecret, id]);
+  },
+
+  async getTotpSecret(id) {
+    const row = await getAsync('SELECT mfa_totp_secret FROM users WHERE id = ?', [id]);
+    return row?.mfa_totp_secret ? decryptSecret(row.mfa_totp_secret) : null;
+  },
+
+  async storeEmailOtp(id, code, expiresAt) {
+    await runAsync(
+      'UPDATE users SET mfa_email_otp_hash = ?, mfa_email_otp_expires_at = ?, mfa_email_otp_sent_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [hashOtpCode(code), expiresAt, id]
+    );
+  },
+
+  async clearEmailOtp(id) {
+    await runAsync(
+      'UPDATE users SET mfa_email_otp_hash = NULL, mfa_email_otp_expires_at = NULL, mfa_email_otp_sent_at = NULL WHERE id = ?',
+      [id]
+    );
+  },
+
+  async verifyEmailOtp(id, code) {
+    const row = await getAsync('SELECT mfa_email_otp_hash, mfa_email_otp_expires_at FROM users WHERE id = ?', [id]);
+    if (!row?.mfa_email_otp_hash || !row?.mfa_email_otp_expires_at) return false;
+    if (new Date(row.mfa_email_otp_expires_at).getTime() < Date.now()) return false;
+    return row.mfa_email_otp_hash === hashOtpCode(code);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM users WHERE id = ?', [id]);
+  }
+};
+
+const userInvitesAsync = {
+  async create({ email, tokenHash, role, accessAll, canUseSystemApiKeys, collectionIds, invitedBy, expiresAt }) {
+    const result = await runAsync(`
+      INSERT INTO user_invites
+        (email, token_hash, role, access_all, can_use_system_api_keys, collection_ids, invited_by, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      email,
+      tokenHash,
+      role || 'user',
+      accessAll ? 1 : 0,
+      canUseSystemApiKeys ? 1 : 0,
+      JSON.stringify(normalizeCollectionIds(collectionIds)),
+      invitedBy || null,
+      expiresAt
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getActive() {
+    const rows = await allAsync(`
+      SELECT i.*, u.username AS invited_by_username
+      FROM user_invites i
+      LEFT JOIN users u ON u.id = i.invited_by
+      WHERE i.accepted_at IS NULL
+        AND i.revoked_at IS NULL
+        AND datetime(i.expires_at) > datetime('now')
+      ORDER BY i.created_at DESC
+    `);
+    return rows.map(invite => ({
+      ...invite,
+      collection_ids: parseInviteCollectionIds(invite.collection_ids)
+    }));
+  },
+
+  async findByTokenHash(tokenHash) {
+    const invite = await getAsync('SELECT * FROM user_invites WHERE token_hash = ?', [tokenHash]);
+    return invite ? { ...invite, collection_ids: parseInviteCollectionIds(invite.collection_ids) } : null;
+  },
+
+  async markAccepted(id, userId) {
+    await runAsync(
+      'UPDATE user_invites SET accepted_at = CURRENT_TIMESTAMP, accepted_by_user_id = ? WHERE id = ?',
+      [userId, id]
+    );
+  },
+
+  async revoke(id) {
+    await runAsync('UPDATE user_invites SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  }
+};
+
+const passwordResetTokensAsync = {
+  async create({ userId, tokenHash, createdBy, expiresAt }) {
+    await runAsync(
+      `UPDATE password_reset_tokens
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?
+         AND used_at IS NULL
+         AND revoked_at IS NULL
+         AND datetime(expires_at) > datetime('now')`,
+      [userId]
+    );
+
+    const result = await runAsync(`
+      INSERT INTO password_reset_tokens (user_id, token_hash, created_by, expires_at)
+      VALUES (?, ?, ?, ?)
+    `, [userId, tokenHash, createdBy || null, expiresAt]);
+    return result.lastInsertRowid;
+  },
+
+  async findByTokenHash(tokenHash) {
+    return await getAsync(`
+      SELECT prt.*, u.username, u.email
+      FROM password_reset_tokens prt
+      INNER JOIN users u ON u.id = prt.user_id
+      WHERE prt.token_hash = ?
+    `, [tokenHash]);
+  },
+
+  async markUsed(id) {
+    await runAsync('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  },
+
+  async revokeForUser(userId) {
+    await runAsync(
+      `UPDATE password_reset_tokens
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL`,
+      [userId]
+    );
+  }
+};
+
 function getDb() { return db; }
 
 module.exports = {
@@ -1540,13 +2487,26 @@ module.exports = {
   transcripts,
   annotations,
   users,
+  usersAsync,
   userInvites,
+  userInvitesAsync,
   userApiKeys,
   passwordResetTokens,
+  passwordResetTokensAsync,
   collections,
   documentCollections,
   userCollectionAccess,
   settings,
+  settingsAsync,
   transcriptionJobs,
-  importJobs
+  transcriptionJobsAsync,
+  importJobs,
+  importJobsAsync,
+  documentsAsync,
+  transcriptsAsync,
+  annotationsAsync,
+  documentCollectionsAsync,
+  userCollectionAccessAsync,
+  collectionsAsync,
+  userApiKeysAsync
 };

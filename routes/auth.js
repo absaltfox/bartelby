@@ -5,7 +5,12 @@ const router = express.Router();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const passport = require('passport');
-const { users, userInvites, userCollectionAccess, passwordResetTokens, saveDatabase } = require('../database/db');
+const {
+  usersAsync,
+  userInvitesAsync,
+  userCollectionAccessAsync,
+  passwordResetTokensAsync
+} = require('../database/db');
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 
@@ -38,8 +43,7 @@ function completeLogin(req, res, next, user, returnTo) {
 async function beginEmailMfa(req, user, returnTo) {
   const code = generateOtpCode();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  users.storeEmailOtp(user.id, code, expiresAt);
-  saveDatabase();
+  await usersAsync.storeEmailOtp(user.id, code, expiresAt);
   await sendEmailOtp(user, code);
   req.session.pendingLogin = { userId: user.id, returnTo, method: 'email' };
 }
@@ -84,12 +88,12 @@ router.post('/login',
   }
 );
 
-router.get('/login/mfa', (req, res) => {
+router.get('/login/mfa', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const pending = req.session.pendingLogin;
   if (!pending?.userId) return res.redirect('/login');
 
-  const user = users.findById(pending.userId);
+  const user = await usersAsync.findById(pending.userId);
   if (!user) {
     delete req.session.pendingLogin;
     req.session.authError = 'Your sign-in session expired. Please try again.';
@@ -111,14 +115,14 @@ router.get('/login/mfa', (req, res) => {
   });
 });
 
-router.post('/login/mfa', (req, res, next) => {
+router.post('/login/mfa', async (req, res, next) => {
   const pending = req.session.pendingLogin;
   if (!pending?.userId) {
     req.session.authError = 'Your sign-in session expired. Please try again.';
     return res.redirect('/login');
   }
 
-  const user = users.findById(pending.userId);
+  const user = await usersAsync.findById(pending.userId);
   if (!user) {
     delete req.session.pendingLogin;
     req.session.authError = 'Your sign-in session expired. Please try again.';
@@ -129,13 +133,12 @@ router.post('/login/mfa', (req, res, next) => {
   let valid = false;
 
   if (pending.method === 'email') {
-    valid = users.verifyEmailOtp(user.id, code);
+    valid = await usersAsync.verifyEmailOtp(user.id, code);
     if (valid) {
-      users.clearEmailOtp(user.id);
-      saveDatabase();
+      await usersAsync.clearEmailOtp(user.id);
     }
   } else if (pending.method === 'totp') {
-    valid = verifyTotp(users.getTotpSecret(user.id), code);
+    valid = verifyTotp(await usersAsync.getTotpSecret(user.id), code);
   }
 
   if (!valid) {
@@ -154,7 +157,7 @@ router.post('/login/mfa/resend', async (req, res) => {
     return res.redirect('/login');
   }
 
-  const user = users.findById(pending.userId);
+  const user = await usersAsync.findById(pending.userId);
   if (!user) {
     delete req.session.pendingLogin;
     req.session.authError = 'Your sign-in session expired. Please try again.';
@@ -194,7 +197,7 @@ router.get('/terms', (req, res) => {
   });
 });
 
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res, next) => {
   const username = (req.body.username || '').trim().toLowerCase();
   const email    = (req.body.email    || '').trim().toLowerCase() || null;
   const password =  req.body.password || '';
@@ -216,23 +219,23 @@ router.post('/register', (req, res) => {
     req.session.authError = 'Passwords do not match.';
     return res.redirect('/register');
   }
-  if (users.findByUsername(username)) {
+  if (await usersAsync.findByUsername(username)) {
     req.session.authError = 'That username is already taken.';
     return res.redirect('/register');
   }
-  if (email && users.findByEmail(email)) {
+  if (email && await usersAsync.findByEmail(email)) {
     req.session.authError = 'That email address is already associated with an account.';
     return res.redirect('/register');
   }
 
   const passwordHash = bcrypt.hashSync(password, 12);
-  const isFirst = users.count() === 0;
+  const isFirst = await usersAsync.count() === 0;
   // First registered user becomes admin and is immediately active
   const role   = isFirst ? 'admin' : 'user';
   const status = isFirst ? 'active' : 'pending';
   let id;
   try {
-    id = users.create({
+    id = await usersAsync.create({
       username,
       email,
       passwordHash,
@@ -241,13 +244,12 @@ router.post('/register', (req, res) => {
       accessAll: isFirst,
       canUseSystemApiKeys: isFirst
     });
-    saveDatabase();
   } catch (err) {
     if ((err.message || '').includes('users.email')) {
       req.session.authError = 'That email address is already associated with an account.';
       return res.redirect('/register');
     }
-    throw err;
+    return next(err);
   }
 
   if (!isFirst) {
@@ -255,7 +257,7 @@ router.post('/register', (req, res) => {
     return res.redirect('/pending');
   }
 
-  const user = users.findById(id);
+  const user = await usersAsync.findById(id);
   completeLogin(req, res, () => {
     req.session.authError = 'Account created — please sign in.';
     return res.redirect('/login');
@@ -272,12 +274,12 @@ router.get('/pending', (req, res) => {
   res.render('auth/pending', { pageTitle: 'Account Pending' });
 });
 
-router.get('/invite/:token', (req, res) => {
+router.get('/invite/:token', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
 
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const invite = userInvites.findByTokenHash(tokenHash);
+  const invite = await userInvitesAsync.findByTokenHash(tokenHash);
 
   if (!invite || invite.revoked_at || invite.accepted_at || new Date(invite.expires_at).getTime() < Date.now()) {
     return res.status(404).render('error', { message: 'That invitation is no longer valid.', error: {} });
@@ -291,10 +293,10 @@ router.get('/invite/:token', (req, res) => {
   });
 });
 
-router.post('/invite/:token', (req, res) => {
+router.post('/invite/:token', async (req, res, next) => {
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const invite = userInvites.findByTokenHash(tokenHash);
+  const invite = await userInvitesAsync.findByTokenHash(tokenHash);
 
   if (!invite || invite.revoked_at || invite.accepted_at || new Date(invite.expires_at).getTime() < Date.now()) {
     return res.status(404).render('error', { message: 'That invitation is no longer valid.', error: {} });
@@ -320,46 +322,50 @@ router.post('/invite/:token', (req, res) => {
     req.session.authError = 'Passwords do not match.';
     return res.redirect(`/invite/${token}`);
   }
-  if (users.findByUsername(username)) {
+  if (await usersAsync.findByUsername(username)) {
     req.session.authError = 'That username is already taken.';
     return res.redirect(`/invite/${token}`);
   }
-  if (invite.email && users.findByEmail(invite.email)) {
+  if (invite.email && await usersAsync.findByEmail(invite.email)) {
     req.session.authError = 'That invited email address already belongs to an account.';
     return res.redirect(`/invite/${token}`);
   }
 
   const passwordHash = bcrypt.hashSync(password, 12);
-  const userId = users.create({
-    username,
-    email: invite.email,
-    passwordHash,
-    role: invite.role,
-    status: 'active',
-    accessAll: !!invite.access_all,
-    canUseSystemApiKeys: !!invite.can_use_system_api_keys,
-    inviteId: invite.id
-  });
+  let userId;
+  try {
+    userId = await usersAsync.create({
+      username,
+      email: invite.email,
+      passwordHash,
+      role: invite.role,
+      status: 'active',
+      accessAll: !!invite.access_all,
+      canUseSystemApiKeys: !!invite.can_use_system_api_keys,
+      inviteId: invite.id
+    });
 
-  if (!invite.access_all) {
-    userCollectionAccess.setForUser(userId, invite.collection_ids || []);
+    if (!invite.access_all) {
+      await userCollectionAccessAsync.setForUser(userId, invite.collection_ids || []);
+    }
+    await userInvitesAsync.markAccepted(invite.id, userId);
+  } catch (err) {
+    return next(err);
   }
-  userInvites.markAccepted(invite.id, userId);
-  saveDatabase();
 
-  const user = users.findById(userId);
+  const user = await usersAsync.findById(userId);
   completeLogin(req, res, () => {
     req.session.authError = 'Account created — please sign in.';
     return res.redirect('/login');
   }, user, '/');
 });
 
-router.get('/reset-password/:token', (req, res) => {
+router.get('/reset-password/:token', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
 
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const reset = passwordResetTokens.findByTokenHash(tokenHash);
+  const reset = await passwordResetTokensAsync.findByTokenHash(tokenHash);
 
   if (!reset || reset.used_at || reset.revoked_at || new Date(reset.expires_at).getTime() < Date.now()) {
     return res.status(404).render('error', { message: 'That password reset link is no longer valid.', error: {} });
@@ -373,10 +379,10 @@ router.get('/reset-password/:token', (req, res) => {
   });
 });
 
-router.post('/reset-password/:token', (req, res) => {
+router.post('/reset-password/:token', async (req, res) => {
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const reset = passwordResetTokens.findByTokenHash(tokenHash);
+  const reset = await passwordResetTokensAsync.findByTokenHash(tokenHash);
 
   if (!reset || reset.used_at || reset.revoked_at || new Date(reset.expires_at).getTime() < Date.now()) {
     return res.status(404).render('error', { message: 'That password reset link is no longer valid.', error: {} });
@@ -395,10 +401,9 @@ router.post('/reset-password/:token', (req, res) => {
   }
 
   const passwordHash = bcrypt.hashSync(password, 12);
-  users.updatePassword(reset.user_id, passwordHash);
-  passwordResetTokens.markUsed(reset.id);
-  passwordResetTokens.revokeForUser(reset.user_id);
-  saveDatabase();
+  await usersAsync.updatePassword(reset.user_id, passwordHash);
+  await passwordResetTokensAsync.markUsed(reset.id);
+  await passwordResetTokensAsync.revokeForUser(reset.user_id);
 
   req.session.authError = 'Your password has been reset. Please sign in.';
   res.redirect('/login');

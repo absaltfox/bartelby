@@ -1,19 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobs, importJobs } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync } = require('../database/db');
 
 router.use(requireAdmin);
 
 // Jobs list page — combined import + transcription jobs
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const filter = req.query.filter || 'all';
   const typeFilter = req.query.type || 'all';
 
   // Get transcription jobs and tag them
-  let tJobs = transcriptionJobs.getAll().map(j => ({ ...j, job_type: 'transcription' }));
+  let tJobs = (await transcriptionJobsAsync.getAll()).map(j => ({ ...j, job_type: 'transcription' }));
   // Get import jobs and tag them
-  let iJobs = importJobs.getAll().map(j => ({ ...j, job_type: 'import' }));
+  let iJobs = (await importJobsAsync.getAll()).map(j => ({ ...j, job_type: 'import' }));
 
   // Combine and sort by created_at descending
   let jobs = [...tJobs, ...iJobs].sort((a, b) =>
@@ -59,68 +59,68 @@ router.get('/', (req, res) => {
 });
 
 // API: bulk retry failed transcription jobs
-router.post('/api/bulk/retry', express.json(), (req, res) => {
+router.post('/api/bulk/retry', express.json(), async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs provided' });
   let count = 0;
-  ids.forEach(id => {
-    try { transcriptionJobs.retry(parseInt(id)); count++; } catch (e) {}
-  });
+  for (const id of ids) {
+    try { await transcriptionJobsAsync.retry(parseInt(id)); count++; } catch (e) {}
+  }
   res.json({ success: true, count });
 });
 
 // API: bulk delete jobs (handles both types)
-router.post('/api/bulk/delete', express.json(), (req, res) => {
+router.post('/api/bulk/delete', express.json(), async (req, res) => {
   const { jobs: jobList } = req.body;
   if (!Array.isArray(jobList) || jobList.length === 0) return res.status(400).json({ error: 'No jobs provided' });
   let count = 0;
-  jobList.forEach(({ id, type }) => {
+  for (const { id, type } of jobList) {
     try {
       if (type === 'import') {
-        importJobs.delete(parseInt(id));
+        await importJobsAsync.delete(parseInt(id));
       } else {
-        transcriptionJobs.delete(parseInt(id));
+        await transcriptionJobsAsync.delete(parseInt(id));
       }
       count++;
     } catch (e) {}
-  });
+  }
   res.json({ success: true, count });
 });
 
 // API: transcription job list (for polling)
-router.get('/api', (req, res) => {
-  res.json(transcriptionJobs.getAll());
+router.get('/api', async (req, res) => {
+  res.json(await transcriptionJobsAsync.getAll());
 });
 
 // API: single transcription job with log
-router.get('/api/:id', (req, res) => {
-  const job = transcriptionJobs.getById(parseInt(req.params.id));
+router.get('/api/:id', async (req, res) => {
+  const job = await transcriptionJobsAsync.getById(parseInt(req.params.id));
   if (!job) return res.status(404).json({ error: 'Not found' });
   res.json(job);
 });
 
 // API: retry failed transcription job
-router.post('/api/:id/retry', (req, res) => {
-  transcriptionJobs.retry(parseInt(req.params.id));
+router.post('/api/:id/retry', async (req, res) => {
+  await transcriptionJobsAsync.retry(parseInt(req.params.id));
   res.json({ success: true });
 });
 
 // API: delete transcription job record
-router.delete('/api/:id', express.json(), (req, res) => {
-  transcriptionJobs.delete(parseInt(req.params.id));
+router.delete('/api/:id', express.json(), async (req, res) => {
+  await transcriptionJobsAsync.delete(parseInt(req.params.id));
   res.json({ success: true });
 });
 
 // API: get import job details (for "Continue" flow)
-router.get('/api/import/:id', (req, res) => {
-  const job = importJobs.getById(parseInt(req.params.id));
+router.get('/api/import/:id', async (req, res) => {
+  const job = await importJobsAsync.getById(parseInt(req.params.id));
   if (!job) return res.status(404).json({ error: 'Not found' });
   res.json(job);
 });
 
 // API: delete import job record
-router.delete('/api/import/:id', express.json(), (req, res) => {
-  importJobs.delete(parseInt(req.params.id));
+router.delete('/api/import/:id', express.json(), async (req, res) => {
+  await importJobsAsync.delete(parseInt(req.params.id));
   res.json({ success: true });
 });
 

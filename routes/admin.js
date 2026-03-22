@@ -5,10 +5,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { canEncryptSecrets } = require('../utils/secrets');
-const { documents, transcripts, settings, collections, documentCollections, users, transcriptionJobs, importJobs, saveDatabase, userApiKeys } = require('../database/db');
-const { createProvider, listProviders, listConfiguredProviders } = require('../utils/llm');
-const { buildProviderAccessOptions, resolveProviderSelection } = require('../utils/provider-access');
-const { savePdfPages } = require('../utils/pdf');
+const config = require('../config');
+const storage = require('../utils/storage');
+const { documentsAsync, transcriptsAsync, settingsAsync, collectionsAsync, documentCollectionsAsync, usersAsync, transcriptionJobsAsync, importJobsAsync, saveDatabase, userApiKeysAsync } = require('../database/db');
+const { createProvider, listProviders } = require('../utils/llm');
+const { buildProviderAccessOptionsAsync, resolveProviderSelectionAsync } = require('../utils/provider-access');
 
 // ── In-memory job store for background PDF processing ──────────────────────
 const jobs = new Map(); // jobId → { status, progress, pageCount, pages, error, createdAt }
@@ -27,9 +28,22 @@ function createJob() {
   return id;
 }
 
+function sanitizeTempFiles(files) {
+  return (files || [])
+    .map(file => storage.sanitizeTempName(file))
+    .filter(Boolean);
+}
+
+function attachTempPreview(page) {
+  return {
+    ...page,
+    previewUrl: page.previewUrl || storage.getTempPreviewUrl(page.filename)
+  };
+}
+
 // Configure multer for temporary file uploads (images + PDFs)
 const upload = multer({
-  dest: path.join(__dirname, '..', 'temp'),
+  dest: config.app.tempDir,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for PDFs
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
@@ -41,15 +55,14 @@ const upload = multer({
   }
 });
 
-const tempDir = path.join(__dirname, '..', 'temp');
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+storage.init();
 
 // Admin dashboard
-router.get('/', (req, res) => {
-  const docCount        = documents.getCount();
-  const pendingCount    = users.getPending().length;
-  const collectionCount = collections.getAll().length;
-  const allUsers        = users.getAll();
+router.get('/', async (req, res) => {
+  const docCount        = await documentsAsync.getCount();
+  const pendingCount    = (await usersAsync.getPending()).length;
+  const collectionCount = (await collectionsAsync.getAll()).length;
+  const allUsers        = await usersAsync.getAll();
   const userCount       = allUsers.filter(u => u.status === 'active').length;
 
   res.render('admin/index', {
@@ -63,10 +76,10 @@ router.get('/', (req, res) => {
 });
 
 // Settings page
-router.get('/settings', (req, res) => {
+router.get('/settings', async (req, res) => {
   res.render('admin/settings', {
     pageTitle: 'LLM Settings',
-    cfg: settings.getAll(),
+    cfg: await settingsAsync.getAll(),
     providers: listProviders(),
     saved: req.query.saved === '1',
     error: req.query.error || null,
@@ -75,7 +88,7 @@ router.get('/settings', (req, res) => {
 });
 
 // Save settings
-router.post('/settings', express.urlencoded({ extended: false }), (req, res) => {
+router.post('/settings', express.urlencoded({ extended: false }), async (req, res) => {
   try {
     // Non-secret fields: always save (even if empty)
     const plainFields = [
@@ -86,7 +99,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
       'lmstudio_base_url', 'lmstudio_model'
     ];
     for (const field of plainFields) {
-      if (req.body[field] !== undefined) settings.set(field, req.body[field]);
+      if (req.body[field] !== undefined) await settingsAsync.set(field, req.body[field]);
     }
     // Secret fields: only overwrite if a new non-empty value was submitted
     const secretFields = ['openai_api_key', 'anthropic_api_key'];
@@ -96,10 +109,9 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     }
     for (const field of secretFields) {
       if (req.body[field] && req.body[field].trim() !== '') {
-        settings.set(field, req.body[field].trim());
+        await settingsAsync.set(field, req.body[field].trim());
       }
     }
-    saveDatabase();
     res.redirect('/admin/settings?saved=1');
   } catch (err) {
     res.redirect('/admin/settings?error=' + encodeURIComponent(err.message));
@@ -107,18 +119,18 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
 });
 
 // Import page
-router.get('/import', (req, res) => {
-  const providerOptions = buildProviderAccessOptions(req.user);
+router.get('/import', async (req, res) => {
+  const providerOptions = await buildProviderAccessOptionsAsync(req.user);
 
   // If resuming from a completed import job, pass the job data
   let resumeJob = null;
   if (req.query.importJobId) {
-    const job = importJobs.getById(parseInt(req.query.importJobId));
+    const job = await importJobsAsync.getById(parseInt(req.query.importJobId));
     if (job && job.status === 'done' && job.pages && !job.submitted) {
       resumeJob = {
         id: job.id,
         originalName: job.original_name,
-        pages: JSON.parse(job.pages)
+        pages: JSON.parse(job.pages).map(attachTempPreview)
       };
     }
   }
@@ -127,7 +139,7 @@ router.get('/import', (req, res) => {
     pageTitle: 'Import Document',
     providerOptions,
     hasNoProviders: providerOptions.length === 0,
-    allCollections: collections.getAll(),
+    allCollections: await collectionsAsync.getAll(),
     resumeJob
   });
 });
@@ -139,7 +151,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   if (req.file.mimetype === 'application/pdf') {
-    const pdfPath = req.file.path;
+    const pdfTempFile = storage.sanitizeTempName(req.file.filename);
     const fileSize = req.file.size || 0;
 
     // Decide inline vs. background: use file size as fast heuristic first,
@@ -151,7 +163,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
     if (fileSize < FILE_SIZE_THRESHOLD) {
       try {
         const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-        const pdfBuffer = fs.readFileSync(pdfPath);
+        const pdfBuffer = storage.readTempFile(pdfTempFile);
         const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
         numPages = pdf.numPages;
         pdf.destroy();
@@ -166,13 +178,13 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
 
     if (numPages > LARGE_PDF_THRESHOLD) {
       // Large PDF: queue as a persistent background import job
-      const dbJobId = importJobs.create({
+      const dbJobId = await importJobsAsync.create({
         original_name: req.file.originalname,
-        file_path: pdfPath
+        file_path: pdfTempFile
       });
       if (numPages > LARGE_PDF_THRESHOLD + 1) {
         // We know the real count (small-file path counted it)
-        importJobs.updateProgress(dbJobId, { page_count: numPages });
+        await importJobsAsync.updateProgress(dbJobId, { page_count: numPages });
       }
 
       res.json({
@@ -189,27 +201,39 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
         stdio: ['pipe', 'inherit', 'inherit', 'ipc']
       });
       let childDone = false;
-      child.send({ pdfPath, tempDir, dbJobId, originalName: req.file.originalname });
+      child.send({ pdfTempFile, dbJobId, originalName: req.file.originalname });
       child.on('message', (msg) => {
         if (msg.type === 'progress') {
-          importJobs.updateProgress(msg.dbJobId, { page_count: msg.pageCount, pages_rendered: msg.pagesRendered });
+          importJobsAsync.updateProgress(msg.dbJobId, { page_count: msg.pageCount, pages_rendered: msg.pagesRendered }).catch(err => {
+            console.error('Failed to update import job progress:', err);
+          });
         } else if (msg.type === 'done') {
           childDone = true;
-          importJobs.markDone(msg.dbJobId, msg.pages);
+          importJobsAsync.markDone(msg.dbJobId, msg.pages).catch(err => {
+            console.error('Failed to mark import job done:', err);
+          });
           console.log(`[import] PDF "${msg.originalName}" processed: ${msg.pages.length} pages`);
         } else if (msg.type === 'failed') {
           childDone = true;
-          importJobs.markFailed(msg.dbJobId, msg.error);
+          importJobsAsync.markFailed(msg.dbJobId, msg.error).catch(err => {
+            console.error('Failed to mark import job failed:', err);
+          });
         }
       });
       child.on('error', (err) => {
         console.error('PDF worker process error:', err);
-        if (!childDone) importJobs.markFailed(dbJobId, err.message);
+        if (!childDone) {
+          importJobsAsync.markFailed(dbJobId, err.message).catch(markErr => {
+            console.error('Failed to persist import worker error:', markErr);
+          });
+        }
       });
       child.on('exit', (code) => {
         if (!childDone) {
           console.error(`PDF worker exited unexpectedly with code ${code}`);
-          importJobs.markFailed(dbJobId, `Worker process exited with code ${code}`);
+          importJobsAsync.markFailed(dbJobId, `Worker process exited with code ${code}`).catch(err => {
+            console.error('Failed to persist import worker exit error:', err);
+          });
         }
       });
 
@@ -227,8 +251,8 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
       setImmediate(async () => {
         const job = jobs.get(jobId);
         try {
-          const pdfBuffer = fs.readFileSync(pdfPath);
-          try { fs.unlinkSync(pdfPath); } catch (e) {}
+          const pdfBuffer = storage.readTempFile(pdfTempFile);
+          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
 
           const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
           const { createCanvas } = require('canvas');
@@ -246,9 +270,13 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
             page.cleanup();
 
             const filename = `${prefix}_page${i}.png`;
-            fs.writeFileSync(path.join(tempDir, filename), canvas.toBuffer('image/png'));
+            storage.writeTempFile(filename, canvas.toBuffer('image/png'));
 
-            job.pages.push({ pageNumber: i, filename });
+            job.pages.push({
+              pageNumber: i,
+              filename,
+              previewUrl: storage.getTempPreviewUrl(filename)
+            });
             job.progress = Math.round((i / pdf.numPages) * 100);
           }
 
@@ -259,7 +287,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
           console.error('PDF background processing error:', err);
           job.status = 'error';
           job.error = err.message;
-          try { fs.unlinkSync(pdfPath); } catch (e) {}
+          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
         }
       });
     }
@@ -270,6 +298,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
       success: true,
       type: 'image',
       tempFile: req.file.filename,
+      previewUrl: storage.getTempPreviewUrl(req.file.filename),
       originalName: req.file.originalname,
       mimeType: req.file.mimetype
     });
@@ -284,16 +313,16 @@ router.get('/api/job/:id', (req, res) => {
     status: job.status,       // 'processing' | 'done' | 'error'
     progress: job.progress,   // 0-100
     pageCount: job.pageCount,
-    pages: job.status === 'done' ? job.pages : [],
+    pages: job.status === 'done' ? job.pages.map(attachTempPreview) : [],
     error: job.error || null
   });
 });
 
 // API: Serve temp page image (for previews)
 router.get('/api/temp-image/:filename', (req, res) => {
-  const filename = req.params.filename.replace(/[^a-zA-Z0-9_.-]/g, '');
-  const filePath = path.join(tempDir, filename);
-  if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+  const filename = storage.sanitizeTempName(req.params.filename);
+  const filePath = storage.getTempFilePath(filename);
+  if (!filePath || !storage.tempFileExists(filename)) return res.status(404).send('Not found');
   res.type('image/png').sendFile(filePath);
 });
 
@@ -302,13 +331,13 @@ router.post('/api/transcribe', express.json(), async (req, res) => {
   const { tempFile, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
-  const filePath = path.join(tempDir, tempFile.replace(/[^a-zA-Z0-9_.-]/g, ''));
-  if (!fs.existsSync(filePath)) return res.status(400).json({ error: 'Temp file not found' });
+  const safeTempFile = storage.sanitizeTempName(tempFile);
+  if (!storage.tempFileExists(safeTempFile)) return res.status(400).json({ error: 'Temp file not found' });
 
   try {
-    const selection = resolveProviderSelection(req.user, providerName, credentialSource);
-    const provider = createProvider(providerName, selection.runtimeConfig);
-    const imageBuffer = fs.readFileSync(filePath);
+    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
+    const provider = await createProvider(providerName, selection.runtimeConfig);
+    const imageBuffer = storage.readTempFile(safeTempFile);
     const mimeType = 'image/png';
     const opts = {
       temperature: temperature !== '' && temperature != null
@@ -326,8 +355,7 @@ router.post('/api/transcribe', express.json(), async (req, res) => {
       paradata: result.paradata || null
     });
     if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
-      userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
-      saveDatabase();
+      await userApiKeysAsync.markUsed(selection.userApiKeyId, req.user.id);
     }
   } catch (err) {
     console.error('Transcription error:', err);
@@ -343,8 +371,8 @@ router.post('/api/transcribe-group', express.json(), async (req, res) => {
   }
 
   try {
-    const selection = resolveProviderSelection(req.user, providerName, credentialSource);
-    const provider = createProvider(providerName, selection.runtimeConfig);
+    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
+    const provider = await createProvider(providerName, selection.runtimeConfig);
     const opts = {
       temperature: temperature !== '' && temperature != null
         ? parseFloat(temperature)
@@ -354,9 +382,9 @@ router.post('/api/transcribe-group', express.json(), async (req, res) => {
     // For multi-page: transcribe each page separately then combine
     const results = [];
     for (const tf of tempFiles) {
-      const filePath = path.join(tempDir, tf.replace(/[^a-zA-Z0-9_.-]/g, ''));
-      if (!fs.existsSync(filePath)) continue;
-      const imageBuffer = fs.readFileSync(filePath);
+      const safeTempFile = storage.sanitizeTempName(tf);
+      if (!storage.tempFileExists(safeTempFile)) continue;
+      const imageBuffer = storage.readTempFile(safeTempFile);
       const result = await provider.transcribeDocument(imageBuffer, 'image/png', opts);
       results.push(result);
     }
@@ -384,8 +412,7 @@ router.post('/api/transcribe-group', express.json(), async (req, res) => {
 
     res.json({ success: true, ...combined });
     if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
-      userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
-      saveDatabase();
+      await userApiKeysAsync.markUsed(selection.userApiKeyId, req.user.id);
     }
   } catch (err) {
     console.error('Group transcription error:', err);
@@ -411,8 +438,7 @@ router.post('/api/save-document', express.json(), async (req, res) => {
 
   const isAiMode = transcriptionMode === 'ai';
   const rawFiles = tempFiles || (tempFile ? [tempFile] : []);
-  // Sanitize all temp filenames to prevent path traversal
-  const files = rawFiles.map(f => path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '')).filter(Boolean);
+  const files = sanitizeTempFiles(rawFiles);
   if (files.length === 0) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -421,93 +447,79 @@ router.post('/api/save-document', express.json(), async (req, res) => {
   }
 
   try {
-    const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
     // Move first page image as the primary document image
     const firstFile = files[0];
-    const tempPath = path.join(tempDir, firstFile);
-    if (!fs.existsSync(tempPath)) {
+    if (!storage.tempFileExists(firstFile)) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
     }
 
     const baseName = originalName || 'document';
     const ext = path.extname(baseName) === '.pdf' ? '.png' : (path.extname(baseName) || '.jpg');
-    const stem = path.basename(baseName, path.extname(baseName)).replace(/[^a-zA-Z0-9_-]/g, '_');
-    let filename = stem + ext;
-    let destPath = path.join(uploadsDir, filename);
-    let counter = 1;
-    while (fs.existsSync(destPath)) {
-      filename = `${stem}_${counter}${ext}`;
-      destPath = path.join(uploadsDir, filename);
-      counter++;
-    }
-
-    fs.copyFileSync(tempPath, destPath);
+    const primaryUpload = await storage.copyTempFileToUpload(firstFile, baseName, ext);
 
     // Store additional page image paths in metadata
     const additionalPages = [];
     if (files.length > 1) {
       for (let i = 1; i < files.length; i++) {
-        const pTempPath = path.join(tempDir, files[i]);
-        if (!fs.existsSync(pTempPath)) continue;
-        const pageFilename = `${stem}_page${i + 1}_${counter > 1 ? counter - 1 : ''}${ext}`.replace(/__/g, '_');
-        const pageDest = path.join(uploadsDir, pageFilename);
-        fs.copyFileSync(pTempPath, pageDest);
-        additionalPages.push(`/uploads/${pageFilename}`);
+        if (!storage.tempFileExists(files[i])) continue;
+        const pageUpload = await storage.copyTempFileToUpload(
+          files[i],
+          `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`,
+          ext
+        );
+        additionalPages.push(pageUpload.url);
       }
     }
 
     // Clean up all temp files
-    for (const f of files) {
-      try { fs.unlinkSync(path.join(tempDir, f)); } catch (e) {}
-    }
+    storage.deleteTempFiles(files);
 
     const docMetadata = { ...(metadata || {}) };
     if (additionalPages.length > 0) {
       docMetadata.additional_pages = additionalPages;
     }
 
-    const docId = documents.create({
+    const docId = await documentsAsync.create({
       title: title || 'Untitled Document',
       date_created: dateCreated || null,
       description: description || null,
-      image_path: `/uploads/${filename}`,
+      image_path: primaryUpload.url,
       metadata: docMetadata
     });
 
     // Assign to collections
     if (Array.isArray(collectionIds) && collectionIds.length > 0) {
-      documentCollections.setForDocument(docId, collectionIds.map(Number));
+      await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
     }
 
     let transcriptId = null;
     let jobId = null;
 
     if (isAiMode) {
-      const selection = resolveProviderSelection(req.user, provider || settings.get('default_provider') || 'openai', credentialSource || 'system');
+      const defaultProvider = await settingsAsync.get('default_provider');
+      const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
       // Queue background transcription job
       const additionalImagePaths = additionalPages.length > 0 ? additionalPages : null;
       const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
-      jobId = transcriptionJobs.create({
+      jobId = await transcriptionJobsAsync.create({
         document_id: docId,
         provider: selection.provider || provider || null,
         model: null,
         temperature: !isNaN(tempVal) ? tempVal : null,
         initiated_by: initiatedBy || null,
-        image_path: `/uploads/${filename}`,
+        image_path: primaryUpload.url,
         additional_image_paths: additionalImagePaths,
         provider_key_scope: selection.providerKeyScope,
         user_api_key_id: selection.userApiKeyId,
         requested_by_user_id: req.user.id
       });
       if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
-        userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
+        await userApiKeysAsync.markUsed(selection.userApiKeyId, req.user.id);
       }
     } else {
       // Save transcript immediately (manual mode)
       const pd = paradata || {};
-      transcriptId = transcripts.create({
+      transcriptId = await transcriptsAsync.create({
         document_id: docId,
         content: transcription,
         transcriber: transcriber || 'Manual Transcription',
@@ -522,7 +534,7 @@ router.post('/api/save-document', express.json(), async (req, res) => {
       });
     }
 
-    saveDatabase();
+    await saveDatabase();
 
     res.json({
       success: true,
@@ -546,9 +558,8 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
   }
 
   try {
-    const selection = resolveProviderSelection(req.user, provider || settings.get('default_provider') || 'openai', credentialSource || 'system');
-    const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+    const defaultProvider = await settingsAsync.get('default_provider');
+    const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
 
     const savedDocs = [];
     const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
@@ -556,71 +567,58 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
     for (const group of groups) {
       const rawGroupFiles = group.tempFiles;
       if (!rawGroupFiles || rawGroupFiles.length === 0) continue;
-      // Sanitize temp filenames
-      const files = rawGroupFiles.map(f => path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '')).filter(Boolean);
+      const files = sanitizeTempFiles(rawGroupFiles);
       if (files.length === 0) continue;
 
       // Move first page as primary image
       const firstFile = files[0];
-      const tempPath = path.join(tempDir, firstFile);
-      if (!fs.existsSync(tempPath)) continue;
+      if (!storage.tempFileExists(firstFile)) continue;
 
       const baseName = originalName || 'document';
       const ext = '.png';
-      const stem = path.basename(baseName, path.extname(baseName)).replace(/[^a-zA-Z0-9_-]/g, '_');
-      let filename = stem + ext;
-      let destPath = path.join(uploadsDir, filename);
-      let counter = 1;
-      while (fs.existsSync(destPath)) {
-        filename = `${stem}_${counter}${ext}`;
-        destPath = path.join(uploadsDir, filename);
-        counter++;
-      }
-
-      fs.copyFileSync(tempPath, destPath);
+      const primaryUpload = await storage.copyTempFileToUpload(firstFile, baseName, ext);
 
       // Additional pages
       const additionalPages = [];
       for (let i = 1; i < files.length; i++) {
-        const pTempPath = path.join(tempDir, files[i]);
-        if (!fs.existsSync(pTempPath)) continue;
-        const pageFilename = `${stem}_page${i + 1}_${counter > 1 ? counter - 1 : ''}${ext}`.replace(/__/g, '_');
-        const pageDest = path.join(uploadsDir, pageFilename);
-        fs.copyFileSync(pTempPath, pageDest);
-        additionalPages.push(`/uploads/${pageFilename}`);
+        if (!storage.tempFileExists(files[i])) continue;
+        const pageUpload = await storage.copyTempFileToUpload(
+          files[i],
+          `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`,
+          ext
+        );
+        additionalPages.push(pageUpload.url);
       }
 
       // Clean up temp files for this group
-      for (const f of files) {
-        try { fs.unlinkSync(path.join(tempDir, f)); } catch (e) {}
-      }
+      storage.deleteTempFiles(files);
 
       const docMetadata = {};
       if (additionalPages.length > 0) {
         docMetadata.additional_pages = additionalPages;
       }
 
-      const docId = documents.create({
+      const docId = await documentsAsync.create({
         title: group.label || 'Untitled Document',
         date_created: null,
         description: null,
-        image_path: `/uploads/${filename}`,
+        image_path: primaryUpload.url,
         metadata: docMetadata
       });
 
       // Assign to collections
       if (Array.isArray(collectionIds) && collectionIds.length > 0) {
-        documentCollections.setForDocument(docId, collectionIds.map(Number));
+        await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
       }
 
       // Queue transcription job
-      const jobId = transcriptionJobs.create({
+      const jobId = await transcriptionJobsAsync.create({
         document_id: docId,
         provider: selection.provider || provider || null,
         model: null,
         temperature: !isNaN(tempVal) ? tempVal : null,
         initiated_by: initiatedBy || null,
-        image_path: `/uploads/${filename}`,
+        image_path: primaryUpload.url,
         additional_image_paths: additionalPages.length > 0 ? additionalPages : null,
         provider_key_scope: selection.providerKeyScope,
         user_api_key_id: selection.userApiKeyId,
@@ -630,11 +628,11 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
       savedDocs.push({ documentId: docId, jobId });
     }
 
-    saveDatabase();
+    await saveDatabase();
 
     // Mark import job as submitted so Continue button disappears
     if (importJobId) {
-      try { importJobs.markSubmitted(parseInt(importJobId)); } catch (e) {}
+      try { await importJobsAsync.markSubmitted(parseInt(importJobId)); } catch (e) {}
     }
 
     res.json({
@@ -652,17 +650,7 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
 router.post('/api/cancel-import', express.json(), (req, res) => {
   const { tempFile, tempFiles } = req.body;
   const files = tempFiles || (tempFile ? [tempFile] : []);
-  for (const f of files) {
-    try {
-      // Sanitize filename to prevent path traversal
-      const safeName = path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '');
-      if (!safeName) continue;
-      const tempPath = path.join(tempDir, safeName);
-      // Ensure resolved path is still inside tempDir
-      if (!tempPath.startsWith(tempDir)) continue;
-      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch (e) {}
-  }
+  storage.deleteTempFiles(files);
   res.json({ success: true });
 });
 

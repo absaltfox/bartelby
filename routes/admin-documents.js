@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
-const path = require('path');
 const { requireAdmin } = require('../middleware/auth');
-const { documents, collections, documentCollections, saveDatabase } = require('../database/db');
+const storage = require('../utils/storage');
+const { normalizeDocumentAssets, parseMetadata } = require('../utils/document-assets');
+const { documentsAsync, collectionsAsync, documentCollectionsAsync } = require('../database/db');
 
 router.use(requireAdmin);
 
 // List all documents
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const collectionFilter = req.query.collection ? parseInt(req.query.collection) : null;
   const allowedPerPage = [25, 50, 75, 100];
@@ -20,27 +20,31 @@ router.get('/', (req, res) => {
 
   if (collectionFilter) {
     // Filter by collection
-    const docIds = documentCollections.getByCollectionId(collectionFilter).map(d => d.document_id);
+    const docIds = (await documentCollectionsAsync.getByCollectionId(collectionFilter)).map(d => d.document_id);
     totalCount = docIds.length;
     allDocs = docIds.length > 0
-      ? documents.getByIds(docIds, limit, offset)
+      ? await documentsAsync.getByIds(docIds, limit, offset)
       : [];
   } else {
-    totalCount = documents.getCount();
-    allDocs = documents.getAll(limit, offset);
+    totalCount = await documentsAsync.getCount();
+    allDocs = await documentsAsync.getAll(limit, offset);
   }
 
   const totalPages = Math.ceil(totalCount / limit);
 
   const docsWithCollections = allDocs.map(doc => ({
-    ...doc,
-    collections: documentCollections.getByDocumentId(doc.id)
+    ...normalizeDocumentAssets(doc),
+    collections: []
   }));
+
+  for (const doc of docsWithCollections) {
+    doc.collections = await documentCollectionsAsync.getByDocumentId(doc.id);
+  }
 
   res.render('admin/documents', {
     pageTitle: 'Documents',
     docs: docsWithCollections,
-    allCollections: collections.getAll(),
+    allCollections: await collectionsAsync.getAll(),
     currentPage: page,
     totalPages,
     totalCount,
@@ -54,39 +58,33 @@ router.get('/', (req, res) => {
 // ── Bulk routes (MUST be before /:id routes) ────────────────────────────────
 
 // Bulk delete documents (JSON API)
-router.post('/bulk/delete', express.json(), (req, res) => {
+router.post('/bulk/delete', express.json(), async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
   if (ids.length === 0) return res.status(400).json({ error: 'No document IDs provided' });
 
   let deleted = 0;
   for (const id of ids) {
-    const doc = documents.getById(id);
+    const doc = await documentsAsync.getById(id);
     if (!doc) continue;
 
     if (doc.image_path) {
-      const imagePath = path.join(__dirname, '..', 'public', doc.image_path);
-      try { if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath); } catch (e) {}
+      try { await storage.deleteUploadByUrl(doc.image_path); } catch (e) {}
     }
-    let metadata = doc.metadata;
-    if (typeof metadata === 'string') {
-      try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
-    }
+    const metadata = parseMetadata(doc.metadata);
     if (metadata && Array.isArray(metadata.additional_pages)) {
       for (const pagePath of metadata.additional_pages) {
-        const fullPath = path.join(__dirname, '..', 'public', pagePath);
-        try { if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath); } catch (e) {}
+        try { await storage.deleteUploadByUrl(pagePath); } catch (e) {}
       }
     }
 
-    documents.delete(id);
+    await documentsAsync.delete(id);
     deleted++;
   }
-  saveDatabase();
   res.json({ success: true, deleted });
 });
 
 // Bulk update collections (JSON API)
-router.post('/bulk/collections', express.json(), (req, res) => {
+router.post('/bulk/collections', express.json(), async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
   const collectionIds = Array.isArray(req.body.collectionIds)
     ? req.body.collectionIds.map(Number).filter(n => !isNaN(n))
@@ -96,62 +94,54 @@ router.post('/bulk/collections', express.json(), (req, res) => {
   if (ids.length === 0) return res.status(400).json({ error: 'No document IDs provided' });
 
   for (const docId of ids) {
-    const doc = documents.getById(docId);
+    const doc = await documentsAsync.getById(docId);
     if (!doc) continue;
 
     if (mode === 'add') {
-      const existing = documentCollections.getByDocumentId(docId).map(c => c.id);
+      const existing = (await documentCollectionsAsync.getByDocumentId(docId)).map(c => c.id);
       const merged = [...new Set([...existing, ...collectionIds])];
-      documentCollections.setForDocument(docId, merged);
+      await documentCollectionsAsync.setForDocument(docId, merged);
     } else {
-      documentCollections.setForDocument(docId, collectionIds);
+      await documentCollectionsAsync.setForDocument(docId, collectionIds);
     }
   }
-  saveDatabase();
   res.json({ success: true, updated: ids.length });
 });
 
 // ── Per-document routes ─────────────────────────────────────────────────────
 
 // Update document collections (JSON API)
-router.post('/:id/collections', express.json(), (req, res) => {
+router.post('/:id/collections', express.json(), async (req, res) => {
   const docId = parseInt(req.params.id);
-  const doc = documents.getById(docId);
+  const doc = await documentsAsync.getById(docId);
   if (!doc) return res.status(404).json({ error: 'Not found' });
 
   const collectionIds = Array.isArray(req.body.collectionIds)
     ? req.body.collectionIds.map(Number).filter(n => !isNaN(n))
     : [];
 
-  documentCollections.setForDocument(docId, collectionIds);
-  saveDatabase();
+  await documentCollectionsAsync.setForDocument(docId, collectionIds);
 
-  const updated = documentCollections.getByDocumentId(docId);
+  const updated = await documentCollectionsAsync.getByDocumentId(docId);
   res.json({ success: true, collections: updated });
 });
 
 // Delete document
-router.post('/:id/delete', (req, res) => {
-  const doc = documents.getById(parseInt(req.params.id));
+router.post('/:id/delete', async (req, res) => {
+  const doc = await documentsAsync.getById(parseInt(req.params.id));
   if (!doc) return res.redirect('/admin/documents?error=not_found');
 
   if (doc.image_path) {
-    const imagePath = path.join(__dirname, '..', 'public', doc.image_path);
-    try { if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath); } catch (e) {}
+    try { await storage.deleteUploadByUrl(doc.image_path); } catch (e) {}
   }
-  let metadata = doc.metadata;
-  if (typeof metadata === 'string') {
-    try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
-  }
+  const metadata = parseMetadata(doc.metadata);
   if (metadata && Array.isArray(metadata.additional_pages)) {
     for (const pagePath of metadata.additional_pages) {
-      const fullPath = path.join(__dirname, '..', 'public', pagePath);
-      try { if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath); } catch (e) {}
+      try { await storage.deleteUploadByUrl(pagePath); } catch (e) {}
     }
   }
 
-  documents.delete(doc.id);
-  saveDatabase();
+  await documentsAsync.delete(doc.id);
   res.redirect('/admin/documents?deleted=1');
 });
 

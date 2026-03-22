@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { documents, transcripts, annotations, documentCollections, collections, transcriptionJobs, userCollectionAccess } = require('../database/db');
+const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
+const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 
 // All document routes require authentication
 router.use(requireAuth);
 
 // ── Collections landing page ────────────────────────────────────────────────
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const opts = {
     userId: req.user.id,
     isAdmin: req.user.role === 'admin',
@@ -17,21 +18,21 @@ router.get('/', (req, res) => {
   // Get collections the user can see
   let allCollections;
   if (opts.isAdmin || opts.accessAll) {
-    allCollections = collections.getAllWithThumbnails();
+    allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
   } else {
-    const accessIds = userCollectionAccess.getIdsByUserId(req.user.id);
+    const accessIds = await userCollectionAccessAsync.getIdsByUserId(req.user.id);
     // Regular user: show public collections + ones they have access to
-    allCollections = collections.getAllWithThumbnails().filter(c => {
+    allCollections = (await collectionsAsync.getAllWithThumbnails()).filter(c => {
       if (c.is_public) return true;
       return accessIds.includes(c.id);
-    });
+    }).map(normalizeCollectionAssets);
   }
 
   // Total document count (accessible to this user)
-  const totalDocCount = documents.getCount(opts);
+  const totalDocCount = await documentsAsync.getCount(opts);
 
   // Uncollected count (only show to admins)
-  const uncollectedCount = opts.isAdmin ? documents.getUncollectedCount(opts) : 0;
+  const uncollectedCount = opts.isAdmin ? await documentsAsync.getUncollectedCount(opts) : 0;
 
   res.render('collections', {
     collections: allCollections,
@@ -42,7 +43,7 @@ router.get('/', (req, res) => {
 });
 
 // ── Document list for a specific collection ──────────────────────────────────
-router.get('/collections/:id', (req, res) => {
+router.get('/collections/:id', async (req, res) => {
   const collectionId = req.params.id;
 
   // Special routes
@@ -57,11 +58,11 @@ router.get('/collections/:id', (req, res) => {
 
   let collection = null;
   if (!isAll && !isUncollected) {
-    collection = collections.getById(parseInt(collectionId, 10));
+    collection = await collectionsAsync.getById(parseInt(collectionId, 10));
     if (!collection) {
       return res.status(404).render('error', { message: 'Collection not found', error: {} });
     }
-    if (!collections.canAccess(collection.id, req.user.id, opts.isAdmin, opts.accessAll)) {
+    if (!(await collectionsAsync.canAccess(collection.id, req.user.id, opts.isAdmin, opts.accessAll))) {
       return res.status(403).render('error', { message: 'You do not have access to this collection.', error: {} });
     }
   } else if (isUncollected && !opts.isAdmin) {
@@ -88,7 +89,8 @@ router.get('/collections/:id', (req, res) => {
   if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
   if (req.query.dateTo) filters.dateTo = req.query.dateTo;
 
-  const { rows: docs, totalCount } = documents.getAllFiltered(limit, offset, opts, filters);
+  const { rows, totalCount } = await documentsAsync.getAllFiltered(limit, offset, opts, filters);
+  const docs = rows.map(normalizeDocumentAssets);
   const totalPages = Math.ceil(totalCount / limit);
 
   // Get filter options
@@ -96,11 +98,11 @@ router.get('/collections/:id', (req, res) => {
     collectionId: !isAll && !isUncollected ? parseInt(collectionId, 10) : undefined,
     uncollected: isUncollected
   };
-  const docTypes = documents.getDistinctTypesFiltered(opts, scopeFilters);
-  const dateRange = documents.getDateRangeFiltered(opts, scopeFilters);
+  const docTypes = await documentsAsync.getDistinctTypesFiltered(opts, scopeFilters);
+  const dateRange = await documentsAsync.getDateRangeFiltered(opts, scopeFilters);
 
   // Normalized locations for filter dropdown
-  const rawLocations = documents.getDistinctLocationsFiltered(opts, scopeFilters);
+  const rawLocations = await documentsAsync.getDistinctLocationsFiltered(opts, scopeFilters);
   const locationMap = new Map();
   for (const raw of rawLocations) {
     const key = raw.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').toLowerCase();
@@ -156,8 +158,8 @@ router.get('/collections/:id', (req, res) => {
 });
 
 // ── Document detail view ─────────────────────────────────────────────────────
-router.get('/documents/:id', (req, res) => {
-  const doc = documents.getById(req.params.id);
+router.get('/documents/:id', async (req, res) => {
+  const doc = await documentsAsync.getById(req.params.id);
 
   if (!doc) {
     return res.status(404).render('error', { message: 'Document not found', error: {} });
@@ -166,31 +168,26 @@ router.get('/documents/:id', (req, res) => {
   // Check collection access
   const isAdmin = req.user.role === 'admin';
   const accessAll = !!req.user.access_all;
-  if (!documents.canAccess(doc.id, req.user.id, isAdmin, accessAll)) {
+  if (!(await documentsAsync.canAccess(doc.id, req.user.id, isAdmin, accessAll))) {
     return res.status(403).render('error', { message: 'You do not have access to this document.', error: {} });
   }
 
-  const docTranscripts = transcripts.getByDocumentId(doc.id);
-  const docCollections = documentCollections.getByDocumentId(doc.id);
+  const docTranscripts = await transcriptsAsync.getByDocumentId(doc.id);
+  const docCollections = await documentCollectionsAsync.getByDocumentId(doc.id);
 
   const selectedTranscriptId = req.query.transcript
     ? parseInt(req.query.transcript)
     : (docTranscripts[0]?.id || null);
 
   const selectedTranscript = selectedTranscriptId
-    ? transcripts.getById(selectedTranscriptId)
+    ? await transcriptsAsync.getById(selectedTranscriptId)
     : null;
 
   const transcriptAnnotations = selectedTranscript
-    ? annotations.getByTranscriptId(selectedTranscript.id)
+    ? await annotationsAsync.getByTranscriptId(selectedTranscript.id)
     : [];
 
-  let metadata = doc.metadata;
-  if (typeof metadata === 'string') {
-    try { metadata = JSON.parse(metadata); } catch (e) { metadata = {}; }
-  }
-
-  const pendingJob = transcriptionJobs.getPendingForDocument(doc.id);
+  const pendingJob = await transcriptionJobsAsync.getPendingForDocument(doc.id);
 
   let backHref = '/';
   const requestedBack = typeof req.query.back === 'string' ? req.query.back : '';
@@ -199,7 +196,7 @@ router.get('/documents/:id', (req, res) => {
   }
 
   res.render('document', {
-    document: { ...doc, metadata },
+    document: normalizeDocumentAssets(doc),
     transcripts: docTranscripts,
     selectedTranscript,
     annotations: transcriptAnnotations,

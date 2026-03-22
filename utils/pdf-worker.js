@@ -1,18 +1,18 @@
 // Child process worker for rendering PDF pages to PNG images.
 // Runs in a separate process so it doesn't block the main server event loop.
 
-const path = require('path');
 const fs = require('fs');
+const storage = require('./storage');
 
 process.on('message', async (msg) => {
-  const { pdfPath, tempDir, dbJobId, originalName } = msg;
+  const { pdfTempFile, dbJobId, originalName } = msg;
 
   try {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
     const { createCanvas } = require('canvas');
 
-    const pdfBuffer = fs.readFileSync(pdfPath);
-    try { fs.unlinkSync(pdfPath); } catch (e) {}
+    const pdfBuffer = storage.readTempFile(pdfTempFile);
+    try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
 
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
 
@@ -30,8 +30,12 @@ process.on('message', async (msg) => {
       page.cleanup();
 
       const filename = `${prefix}_page${i}.png`;
-      fs.writeFileSync(path.join(tempDir, filename), canvas.toBuffer('image/png'));
-      pages.push({ pageNumber: i, filename });
+      storage.writeTempFile(filename, canvas.toBuffer('image/png'));
+      pages.push({
+        pageNumber: i,
+        filename,
+        previewUrl: storage.getTempPreviewUrl(filename)
+      });
 
       // Report progress every 10 pages to avoid IPC/DB thrashing
       if (i % 10 === 0 || i === pdf.numPages) {
@@ -48,7 +52,7 @@ process.on('message', async (msg) => {
   } catch (err) {
     console.error('PDF worker error:', err);
     process.send({ type: 'failed', dbJobId, error: err.message }, () => {
-      try { fs.unlinkSync(pdfPath); } catch (e) {}
+      try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
       process.exit(1);
     });
   }

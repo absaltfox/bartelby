@@ -19,8 +19,9 @@
 const fs = require('fs');
 const path = require('path');
 require('./secrets').loadEnv();
+const storage = require('./storage');
 const { createProvider, listProviders } = require('./llm');
-const { initializeSchema, documents, transcripts, saveDatabase } = require('../database/db');
+const { initializeSchema, documentsAsync, transcriptsAsync, saveDatabase } = require('../database/db');
 
 // Supported image formats
 const SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.tif'];
@@ -141,30 +142,9 @@ function findImages(dir) {
 /**
  * Copy image to public/uploads directory
  */
-function copyImageToUploads(sourcePath, filename) {
-  const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
-
-  // Ensure uploads directory exists
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
-
-  // Generate unique filename if needed
-  let destFilename = filename;
-  let destPath = path.join(uploadsDir, destFilename);
-  let counter = 1;
-
-  while (fs.existsSync(destPath)) {
-    const ext = path.extname(filename);
-    const base = path.basename(filename, ext);
-    destFilename = `${base}_${counter}${ext}`;
-    destPath = path.join(uploadsDir, destFilename);
-    counter++;
-  }
-
-  fs.copyFileSync(sourcePath, destPath);
-
-  return `/uploads/${destFilename}`;
+async function copyImageToUploads(sourcePath, filename) {
+  const result = await storage.copyLocalFileToUpload(sourcePath, filename);
+  return result.url;
 }
 
 /**
@@ -201,7 +181,7 @@ async function importDocument(image, provider, transcriber, options) {
   }
 
   // Copy image to uploads
-  const imagePath = copyImageToUploads(image.path, image.name);
+  const imagePath = await copyImageToUploads(image.path, image.name);
 
   if (verbose) {
     console.log(`  Copied image to: ${imagePath}`);
@@ -217,14 +197,14 @@ async function importDocument(image, provider, transcriber, options) {
   };
 
   // Insert document
-  const docId = documents.create(docData);
+  const docId = await documentsAsync.create(docData);
 
   if (verbose) {
     console.log(`  Created document ID: ${docId}`);
   }
 
   // Insert transcript
-  const transcriptId = transcripts.create({
+  const transcriptId = await transcriptsAsync.create({
     document_id: docId,
     content: result.transcription,
     transcriber: transcriber,
@@ -302,7 +282,7 @@ async function main() {
   console.log(`Initializing ${options.provider} provider...`);
   let provider;
   try {
-    provider = createProvider(options.provider);
+    provider = await createProvider(options.provider);
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);
@@ -347,7 +327,7 @@ async function main() {
 
   // Save database
   if (!options.dryRun) {
-    saveDatabase();
+    await saveDatabase();
   }
 
   // Summary

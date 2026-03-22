@@ -1,9 +1,8 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const { createCanvas } = require('canvas');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const storage = require('./storage');
 
 const RENDER_SCALE = 2.0; // 2x for decent quality page images
 
@@ -57,12 +56,11 @@ async function savePdfPages(pdfBuffer, tempDir) {
 
   for (const page of pages) {
     const filename = `${prefix}_page${page.pageNumber}.png`;
-    const filePath = path.join(tempDir, filename);
-    fs.writeFileSync(filePath, page.buffer);
+    storage.writeTempFile(filename, page.buffer);
     saved.push({
       pageNumber: page.pageNumber,
       filename,
-      path: filePath
+      previewUrl: storage.getTempPreviewUrl(filename)
     });
   }
 

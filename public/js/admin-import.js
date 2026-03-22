@@ -80,6 +80,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const skipBtn        = document.getElementById('skip-btn');
 
   let allTempFiles = [];
+  let tempPreviewUrls = {};
   let originalName = '';
   let imageDataUrl = null;
   let importJobId  = null;
@@ -94,6 +95,23 @@ document.addEventListener('DOMContentLoaded', function() {
     return Array.from(document.querySelectorAll(selector + ':checked'))
       .map(cb => parseInt(cb.dataset.id, 10))
       .filter(Number.isInteger);
+  }
+
+  function setTempPreview(filename, previewUrl) {
+    if (!filename) return;
+    tempPreviewUrls[filename] = previewUrl || `/admin/api/temp-image/${filename}`;
+  }
+
+  function setTempPreviews(pages) {
+    (pages || []).forEach((page) => {
+      if (page && page.filename) {
+        setTempPreview(page.filename, page.previewUrl);
+      }
+    });
+  }
+
+  function getTempPreviewUrl(filename) {
+    return tempPreviewUrls[filename] || `/admin/api/temp-image/${filename}`;
   }
 
   // ── Drag & Drop ──────────────────────────────────────────────────
@@ -181,6 +199,7 @@ document.addEventListener('DOMContentLoaded', function() {
         await pollPdfJob(data.jobId);
       } else {
         allTempFiles = [data.tempFile];
+        setTempPreview(data.tempFile, data.previewUrl);
         populateConfigureForm([data.tempFile], data.originalName);
         showStep('review');
       }
@@ -215,6 +234,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (job.status === 'done') {
             clearInterval(interval);
             progressWrap.style.display = 'none';
+            setTempPreviews(job.pages);
             allTempFiles = job.pages.map(p => p.filename);
             showPageManager(job.pages);
             showStep('pages');
@@ -246,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
       div.dataset.filename = p.filename;
       div.dataset.page = p.pageNumber;
       div.innerHTML = `
-        <img src="/admin/api/temp-image/${p.filename}" alt="Page ${p.pageNumber}">
+        <img src="${getTempPreviewUrl(p.filename)}" alt="Page ${p.pageNumber}">
         <span class="page-label">Page ${p.pageNumber}</span>
         <div class="page-check"></div>
         <button type="button" class="page-zoom-btn" title="Zoom in">&#128269;</button>
@@ -307,7 +327,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const div = document.createElement('div');
       div.className = 'page-group-card';
       const thumbs = g.pages.map(f =>
-        `<img src="/admin/api/temp-image/${f}" class="group-thumb" alt="">`
+        `<img src="${getTempPreviewUrl(f)}" class="group-thumb" alt="">`
       ).join('');
       div.innerHTML = `
         <div class="page-group-header">
@@ -365,7 +385,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function renderZoom() {
     const filename = allTempFiles[zoomIndex];
-    document.getElementById('zoom-image').src = `/admin/api/temp-image/${filename}`;
+    document.getElementById('zoom-image').src = getTempPreviewUrl(filename);
     document.getElementById('zoom-label').textContent = `Page ${zoomIndex + 1} of ${allTempFiles.length}`;
     document.getElementById('zoom-prev').disabled = zoomIndex === 0;
     document.getElementById('zoom-next').disabled = zoomIndex === allTempFiles.length - 1;
@@ -520,13 +540,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Preview images
     reviewPreview.src = (tempFiles.length === 1 && imageDataUrl)
       ? imageDataUrl
-      : `/admin/api/temp-image/${tempFiles[0]}`;
+      : getTempPreviewUrl(tempFiles[0]);
 
     const extraContainer = document.getElementById('review-extra-pages');
     extraContainer.innerHTML = '';
     tempFiles.slice(1).forEach((f, i) => {
       const img = document.createElement('img');
-      img.src = `/admin/api/temp-image/${f}`;
+      img.src = getTempPreviewUrl(f);
       img.alt = `Page ${i + 2}`;
       img.className = 'review-extra-thumb';
       extraContainer.appendChild(img);
@@ -646,6 +666,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       } catch (e) {}
       allTempFiles = [];
+      tempPreviewUrls = {};
     }
     documentQueue = [];
     currentQueueIndex = -1;
@@ -707,6 +728,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const job = resumeJob;
     importJobId = job.id;
     originalName = job.originalName || 'document.pdf';
+    setTempPreviews(job.pages);
     allTempFiles = job.pages.map(p => p.filename);
     showPageManager(job.pages);
     showStep('pages');
