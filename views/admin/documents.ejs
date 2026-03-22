@@ -80,6 +80,7 @@
                     title="Edit collections">&#9998;</button>
             <form method="POST" action="/admin/documents/<%= doc.id %>/delete" style="display:inline"
                   onsubmit="return confirm('Delete &quot;<%= doc.title.replace(/'/g, "\\'") %>&quot; and all its transcriptions?')">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button type="submit" class="btn-card-delete" title="Delete">&times;</button>
             </form>
           </div>
@@ -289,7 +290,7 @@
     try {
       var res = await fetch('/admin/documents/bulk/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ ids: ids })
       });
       var data = await res.json();
@@ -351,7 +352,7 @@
         var ids = getSelected();
         var res = await fetch('/admin/documents/bulk/collections', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
           body: JSON.stringify({ ids: ids, collectionIds: collectionIds, mode: 'add' })
         });
         var data = await res.json();
@@ -360,7 +361,7 @@
       } else if (currentDocId) {
         var res = await fetch('/admin/documents/' + currentDocId + '/collections', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
           body: JSON.stringify({ collectionIds: collectionIds })
         });
         var data = await res.json();

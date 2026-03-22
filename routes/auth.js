@@ -2,9 +2,47 @@
 
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const passport = require('passport');
-const { users } = require('../database/db');
+const { users, userInvites, userCollectionAccess, passwordResetTokens, saveDatabase } = require('../database/db');
+const { sendEmailOtp } = require('../utils/email');
+const { generateOtpCode, verifyTotp } = require('../utils/mfa');
+
+function consumeAuthError(req) {
+  const error = req.session.authError || null;
+  delete req.session.authError;
+  return error;
+}
+
+function safeReturnTo(req) {
+  let returnTo = req.session.returnTo || '/';
+  delete req.session.returnTo;
+  if (!returnTo.startsWith('/') || returnTo.startsWith('//')) {
+    returnTo = '/';
+  }
+  return returnTo;
+}
+
+function completeLogin(req, res, next, user, returnTo) {
+  req.session.regenerate((regenErr) => {
+    if (regenErr) return next(regenErr);
+    req.logIn(user, (loginErr) => {
+      if (loginErr) return next(loginErr);
+      delete req.session.pendingLogin;
+      res.redirect(returnTo || '/');
+    });
+  });
+}
+
+async function beginEmailMfa(req, user, returnTo) {
+  const code = generateOtpCode();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  users.storeEmailOtp(user.id, code, expiresAt);
+  saveDatabase();
+  await sendEmailOtp(user, code);
+  req.session.pendingLogin = { userId: user.id, returnTo, method: 'email' };
+}
 
 // ── Login ──────────────────────────────────────────────────────────────────
 
@@ -12,9 +50,8 @@ router.get('/login', (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   res.render('auth/login', {
     pageTitle: 'Sign In',
-    error: req.session.authError || null
+    error: consumeAuthError(req)
   });
-  delete req.session.authError;
 });
 
 router.post('/login',
@@ -29,15 +66,108 @@ router.post('/login',
         req.session.authError = info?.message || 'Invalid credentials.';
         return res.redirect('/login');
       }
-      req.logIn(user, (err) => {
-        if (err) return next(err);
-        const returnTo = req.session.returnTo || '/';
-        delete req.session.returnTo;
-        res.redirect(returnTo);
-      });
+      const returnTo = safeReturnTo(req);
+      if (user.mfa_method === 'email') {
+        return beginEmailMfa(req, user, returnTo)
+          .then(() => res.redirect('/login/mfa'))
+          .catch((mfaErr) => {
+            req.session.authError = mfaErr.message || 'Could not send email verification code.';
+            res.redirect('/login');
+          });
+      }
+      if (user.mfa_method === 'totp') {
+        req.session.pendingLogin = { userId: user.id, returnTo, method: 'totp' };
+        return res.redirect('/login/mfa');
+      }
+      completeLogin(req, res, next, user, returnTo);
     })(req, res, next);
   }
 );
+
+router.get('/login/mfa', (req, res) => {
+  if (req.isAuthenticated()) return res.redirect('/');
+  const pending = req.session.pendingLogin;
+  if (!pending?.userId) return res.redirect('/login');
+
+  const user = users.findById(pending.userId);
+  if (!user) {
+    delete req.session.pendingLogin;
+    req.session.authError = 'Your sign-in session expired. Please try again.';
+    return res.redirect('/login');
+  }
+
+  const maskedEmail = user.email
+    ? user.email.replace(/^(.)(.*)(@.*)$/, (_, first, middle, domain) => {
+        const maskedMiddle = middle.length > 2 ? `${middle[0]}${'•'.repeat(Math.max(middle.length - 2, 1))}${middle[middle.length - 1]}` : '••';
+        return `${first}${maskedMiddle}${domain}`;
+      })
+    : null;
+
+  res.render('auth/mfa', {
+    pageTitle: 'Verify Sign-In',
+    error: consumeAuthError(req),
+    method: pending.method,
+    maskedEmail
+  });
+});
+
+router.post('/login/mfa', (req, res, next) => {
+  const pending = req.session.pendingLogin;
+  if (!pending?.userId) {
+    req.session.authError = 'Your sign-in session expired. Please try again.';
+    return res.redirect('/login');
+  }
+
+  const user = users.findById(pending.userId);
+  if (!user) {
+    delete req.session.pendingLogin;
+    req.session.authError = 'Your sign-in session expired. Please try again.';
+    return res.redirect('/login');
+  }
+
+  const code = (req.body.code || '').trim();
+  let valid = false;
+
+  if (pending.method === 'email') {
+    valid = users.verifyEmailOtp(user.id, code);
+    if (valid) {
+      users.clearEmailOtp(user.id);
+      saveDatabase();
+    }
+  } else if (pending.method === 'totp') {
+    valid = verifyTotp(users.getTotpSecret(user.id), code);
+  }
+
+  if (!valid) {
+    req.session.authError = 'That verification code was not valid.';
+    return res.redirect('/login/mfa');
+  }
+
+  const returnTo = pending.returnTo || '/';
+  delete req.session.pendingLogin;
+  completeLogin(req, res, next, user, returnTo);
+});
+
+router.post('/login/mfa/resend', async (req, res) => {
+  const pending = req.session.pendingLogin;
+  if (!pending?.userId || pending.method !== 'email') {
+    return res.redirect('/login');
+  }
+
+  const user = users.findById(pending.userId);
+  if (!user) {
+    delete req.session.pendingLogin;
+    req.session.authError = 'Your sign-in session expired. Please try again.';
+    return res.redirect('/login');
+  }
+
+  try {
+    await beginEmailMfa(req, user, pending.returnTo || '/');
+  } catch (err) {
+    req.session.authError = err.message || 'Could not resend the email verification code.';
+  }
+  res.redirect('/login/mfa');
+});
 
 // ── Logout ─────────────────────────────────────────────────────────────────
 
@@ -54,9 +184,14 @@ router.get('/register', (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   res.render('auth/register', {
     pageTitle: 'Create Account',
-    error: req.session.authError || null
+    error: consumeAuthError(req)
   });
-  delete req.session.authError;
+});
+
+router.get('/terms', (req, res) => {
+  res.render('terms', {
+    pageTitle: 'Terms of Service'
+  });
 });
 
 router.post('/register', (req, res) => {
@@ -85,13 +220,35 @@ router.post('/register', (req, res) => {
     req.session.authError = 'That username is already taken.';
     return res.redirect('/register');
   }
+  if (email && users.findByEmail(email)) {
+    req.session.authError = 'That email address is already associated with an account.';
+    return res.redirect('/register');
+  }
 
   const passwordHash = bcrypt.hashSync(password, 12);
   const isFirst = users.count() === 0;
   // First registered user becomes admin and is immediately active
   const role   = isFirst ? 'admin' : 'user';
   const status = isFirst ? 'active' : 'pending';
-  const id = users.create({ username, email, passwordHash, role, status });
+  let id;
+  try {
+    id = users.create({
+      username,
+      email,
+      passwordHash,
+      role,
+      status,
+      accessAll: isFirst,
+      canUseSystemApiKeys: isFirst
+    });
+    saveDatabase();
+  } catch (err) {
+    if ((err.message || '').includes('users.email')) {
+      req.session.authError = 'That email address is already associated with an account.';
+      return res.redirect('/register');
+    }
+    throw err;
+  }
 
   if (!isFirst) {
     // Show pending page — do not auto-login
@@ -99,13 +256,10 @@ router.post('/register', (req, res) => {
   }
 
   const user = users.findById(id);
-  req.logIn(user, (err) => {
-    if (err) {
-      req.session.authError = 'Account created — please sign in.';
-      return res.redirect('/login');
-    }
-    res.redirect('/');
-  });
+  completeLogin(req, res, () => {
+    req.session.authError = 'Account created — please sign in.';
+    return res.redirect('/login');
+  }, user, '/');
 });
 
 // ── Pending approval ───────────────────────────────────────────────────────
@@ -116,6 +270,138 @@ router.get('/pending', (req, res) => {
     return res.redirect('/');
   }
   res.render('auth/pending', { pageTitle: 'Account Pending' });
+});
+
+router.get('/invite/:token', (req, res) => {
+  if (req.isAuthenticated()) return res.redirect('/');
+
+  const token = String(req.params.token || '');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const invite = userInvites.findByTokenHash(tokenHash);
+
+  if (!invite || invite.revoked_at || invite.accepted_at || new Date(invite.expires_at).getTime() < Date.now()) {
+    return res.status(404).render('error', { message: 'That invitation is no longer valid.', error: {} });
+  }
+
+  res.render('auth/invite', {
+    pageTitle: 'Accept Invitation',
+    invite,
+    token,
+    error: consumeAuthError(req)
+  });
+});
+
+router.post('/invite/:token', (req, res) => {
+  const token = String(req.params.token || '');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const invite = userInvites.findByTokenHash(tokenHash);
+
+  if (!invite || invite.revoked_at || invite.accepted_at || new Date(invite.expires_at).getTime() < Date.now()) {
+    return res.status(404).render('error', { message: 'That invitation is no longer valid.', error: {} });
+  }
+
+  const username = (req.body.username || '').trim().toLowerCase();
+  const password = req.body.password || '';
+  const confirm = req.body.confirm || '';
+
+  if (!username || !password) {
+    req.session.authError = 'Username and password are required.';
+    return res.redirect(`/invite/${token}`);
+  }
+  if (username.length < 3 || !/^[a-z0-9_.-]+$/.test(username)) {
+    req.session.authError = 'Username must be at least 3 characters and contain only letters, numbers, _ . -';
+    return res.redirect(`/invite/${token}`);
+  }
+  if (password.length < 8) {
+    req.session.authError = 'Password must be at least 8 characters.';
+    return res.redirect(`/invite/${token}`);
+  }
+  if (password !== confirm) {
+    req.session.authError = 'Passwords do not match.';
+    return res.redirect(`/invite/${token}`);
+  }
+  if (users.findByUsername(username)) {
+    req.session.authError = 'That username is already taken.';
+    return res.redirect(`/invite/${token}`);
+  }
+  if (invite.email && users.findByEmail(invite.email)) {
+    req.session.authError = 'That invited email address already belongs to an account.';
+    return res.redirect(`/invite/${token}`);
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 12);
+  const userId = users.create({
+    username,
+    email: invite.email,
+    passwordHash,
+    role: invite.role,
+    status: 'active',
+    accessAll: !!invite.access_all,
+    canUseSystemApiKeys: !!invite.can_use_system_api_keys,
+    inviteId: invite.id
+  });
+
+  if (!invite.access_all) {
+    userCollectionAccess.setForUser(userId, invite.collection_ids || []);
+  }
+  userInvites.markAccepted(invite.id, userId);
+  saveDatabase();
+
+  const user = users.findById(userId);
+  completeLogin(req, res, () => {
+    req.session.authError = 'Account created — please sign in.';
+    return res.redirect('/login');
+  }, user, '/');
+});
+
+router.get('/reset-password/:token', (req, res) => {
+  if (req.isAuthenticated()) return res.redirect('/');
+
+  const token = String(req.params.token || '');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const reset = passwordResetTokens.findByTokenHash(tokenHash);
+
+  if (!reset || reset.used_at || reset.revoked_at || new Date(reset.expires_at).getTime() < Date.now()) {
+    return res.status(404).render('error', { message: 'That password reset link is no longer valid.', error: {} });
+  }
+
+  res.render('auth/reset-password', {
+    pageTitle: 'Reset Password',
+    token,
+    username: reset.username,
+    error: consumeAuthError(req)
+  });
+});
+
+router.post('/reset-password/:token', (req, res) => {
+  const token = String(req.params.token || '');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const reset = passwordResetTokens.findByTokenHash(tokenHash);
+
+  if (!reset || reset.used_at || reset.revoked_at || new Date(reset.expires_at).getTime() < Date.now()) {
+    return res.status(404).render('error', { message: 'That password reset link is no longer valid.', error: {} });
+  }
+
+  const password = req.body.password || '';
+  const confirm = req.body.confirm || '';
+
+  if (password.length < 8) {
+    req.session.authError = 'Password must be at least 8 characters.';
+    return res.redirect(`/reset-password/${token}`);
+  }
+  if (password !== confirm) {
+    req.session.authError = 'Passwords do not match.';
+    return res.redirect(`/reset-password/${token}`);
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 12);
+  users.updatePassword(reset.user_id, passwordHash);
+  passwordResetTokens.markUsed(reset.id);
+  passwordResetTokens.revokeForUser(reset.user_id);
+  saveDatabase();
+
+  req.session.authError = 'Your password has been reset. Please sign in.';
+  res.redirect('/login');
 });
 
 module.exports = router;

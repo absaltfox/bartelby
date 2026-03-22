@@ -1,0 +1,36 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Verify Sign-In</h1>
+      <% if (method === 'email') { %>
+        <p>Enter the code sent to <strong><%= maskedEmail || 'your email' %></strong>.</p>
+      <% } else { %>
+        <p>Enter the current 6-digit code from your authenticator app.</p>
+      <% } %>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <form method="POST" action="/login/mfa" class="auth-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-group">
+        <label for="code">Verification Code</label>
+        <input type="text" id="code" name="code" required autofocus inputmode="numeric" autocomplete="one-time-code">
+      </div>
+      <button type="submit" class="btn-primary btn-full">Continue</button>
+    </form>
+
+    <% if (method === 'email') { %>
+      <form method="POST" action="/login/mfa/resend" style="margin-top:12px;">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn-secondary btn-full">Resend Email Code</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

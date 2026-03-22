@@ -54,15 +54,27 @@ async function tick() {
     logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
 
     const { createProvider } = require('./llm');
-    const { settings } = require('../database/db');
+    const { settings, userApiKeys } = require('../database/db');
     const cfg = settings.getAll();
 
     const providerName = job.provider || cfg.default_provider || 'openai';
     const temperature = job.temperature != null ? job.temperature : null;
+    const runtimeConfig = {};
+
+    if (job.provider_key_scope === 'user') {
+      const key = userApiKeys.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
+      if (!key) {
+        throw new Error('The personal API key for this transcription job is no longer available.');
+      }
+      runtimeConfig.apiKey = key.api_key;
+      logLine(`Using personal API key: ${key.label}`);
+    } else if (job.provider_key_scope === 'system') {
+      logLine('Using system AI credentials');
+    }
 
     logLine(`Provider: ${providerName}, Model: ${job.model || 'default'}`);
 
-    const provider = createProvider(providerName);
+    const provider = createProvider(providerName, runtimeConfig);
     const opts = { temperature };
 
     // Collect all image paths for this job
@@ -214,6 +226,9 @@ async function tick() {
 
     const totalDur = pd.run_duration_ms;
     logLine(`Done. Total duration: ${totalDur ? `${(totalDur / 1000).toFixed(1)}s` : 'unknown'}`);
+    if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
+      userApiKeys.markUsed(job.user_api_key_id, job.requested_by_user_id);
+    }
     transcriptionJobs.markDone(job.id);
   } catch (err) {
     const msg = err.message || String(err);

@@ -19,6 +19,7 @@
     </div>
 
     <form method="POST" action="/logout" style="text-align:center; margin-top: 24px;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <button type="submit" class="btn-secondary">Back to Sign In</button>
     </form>
   </div>

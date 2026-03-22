@@ -1,0 +1,99 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page">
+  <div class="admin-header">
+    <a href="/admin/users" class="back-link">&larr; Back to Users</a>
+    <h1>Invite User</h1>
+    <p class="subtitle">Create a permission-scoped invitation link for a new account.</p>
+  </div>
+
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <% if (!smtpConfigured) { %>
+    <div class="alert alert-error">SMTP is not configured yet, so the invitation will be created but not emailed automatically.</div>
+  <% } %>
+
+  <div class="settings-section">
+    <form method="POST" action="/admin/users/invite">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+      <div class="form-group">
+        <label for="email">Invite Email</label>
+        <input type="email" id="email" name="email" required autocomplete="email">
+      </div>
+
+      <h2>Role</h2>
+      <div class="role-choice">
+        <label class="role-option">
+          <input type="radio" name="role" value="user" checked>
+          <span class="role-option-label">
+            <strong>User</strong>
+            <small>Can sign in, manage their own account, and use only the access you grant below.</small>
+          </span>
+        </label>
+        <label class="role-option">
+          <input type="radio" name="role" value="admin">
+          <span class="role-option-label">
+            <strong>Admin</strong>
+            <small>Full administrative access, including settings and user management.</small>
+          </span>
+        </label>
+      </div>
+
+      <h2 style="margin-top: 28px;">Permissions</h2>
+
+      <label class="role-option access-all-option">
+        <input type="checkbox" name="can_use_system_api_keys" value="1">
+        <span class="role-option-label">
+          <strong>Can use system AI API keys</strong>
+          <small>Allows this account to use globally configured provider credentials during transcription runs.</small>
+        </span>
+      </label>
+
+      <label class="role-option access-all-option">
+        <input type="checkbox" name="access_all" value="1" id="access-all-cb">
+        <span class="role-option-label">
+          <strong>All collections</strong>
+          <small>Grants access to every current and future collection.</small>
+        </span>
+      </label>
+
+      <% if (allCollections.length > 0) { %>
+        <div id="collection-list" class="collection-access-list">
+          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections:</p>
+          <% allCollections.forEach(function(c) { %>
+            <label class="collection-access-item">
+              <input type="checkbox" name="collections" value="<%= c.id %>">
+              <span>
+                <strong><%= c.name %></strong>
+                <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
+                <small class="muted"> (<%= c.document_count %> doc<%= c.document_count !== 1 ? 's' : '' %>)</small>
+              </span>
+            </label>
+          <% }) %>
+        </div>
+      <% } else { %>
+        <p class="field-hint">No collections exist yet. You can still invite the user now and adjust access later.</p>
+      <% } %>
+
+      <div class="form-actions" style="margin-top: 28px;">
+        <a href="/admin/users" class="btn-secondary">Cancel</a>
+        <button type="submit" class="btn-primary">Create Invitation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const allCb = document.getElementById('access-all-cb');
+  const collList = document.getElementById('collection-list');
+  function toggleCollList() {
+    if (collList) collList.style.opacity = allCb.checked ? '0.4' : '1';
+    if (collList) collList.querySelectorAll('input').forEach(cb => cb.disabled = allCb.checked);
+  }
+  if (allCb) { allCb.addEventListener('change', toggleCollList); toggleCollList(); }
+</script>
+
+<%- include('../partials/footer') %>

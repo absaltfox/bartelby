@@ -2,7 +2,7 @@
 
 <div class="document-detail">
   <div class="document-header">
-    <a href="/" class="back-link">&larr; Back to Documents</a>
+    <a href="<%= backHref %>" class="back-link">&larr; Back to Documents</a>
     <h1><%= document.title %></h1>
     <% if (document.date_created) { %>
       <p class="document-date">Date: <%= document.date_created %></p>
@@ -90,7 +90,7 @@
         <% if (transcripts.length > 1) { %>
           <div class="transcript-selector">
             <label for="transcript-select">Version:</label>
-            <select id="transcript-select" onchange="window.location.href='?transcript='+this.value">
+            <select id="transcript-select" data-back-href="<%= backHref %>">
               <% transcripts.forEach(t => { %>
                 <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
                   v<%= t.version %> by <%= t.transcriber || 'Unknown' %>
@@ -192,5 +192,18 @@
     </div>
   </div>
 </div>
+
+<script>
+  (function() {
+    var select = document.getElementById('transcript-select');
+    if (!select) return;
+    select.addEventListener('change', function() {
+      var params = new URLSearchParams(window.location.search);
+      params.set('transcript', select.value);
+      if (select.dataset.backHref) params.set('back', select.dataset.backHref);
+      window.location.search = params.toString();
+    });
+  })();
+</script>
 
 <%- include('partials/footer') %>

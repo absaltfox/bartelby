@@ -16,6 +16,7 @@
 
   <div class="settings-section">
     <form method="POST" action="/admin/users/<%= approveUser.id %>/<%= editMode ? 'access' : 'approve' %>">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 
       <h2>Role</h2>
       <div class="role-choice">
@@ -38,6 +39,15 @@
       </div>
 
       <h2 style="margin-top: 28px;">Collection Access</h2>
+
+      <label class="role-option access-all-option" style="margin-bottom: 14px;">
+        <input type="checkbox" name="can_use_system_api_keys" value="1"
+          <%= (editMode ? (approveUser.can_use_system_api_keys || approveUser.role === 'admin') : approveUser.role === 'admin') ? 'checked' : '' %>>
+        <span class="role-option-label">
+          <strong>Can use system AI API keys</strong>
+          <small>Allows this account to run AI transcriptions using provider keys configured globally in Admin Settings.</small>
+        </span>
+      </label>
 
       <% if (allCollections.length === 0) { %>
         <p class="field-hint" style="margin-bottom:18px;">
@@ -87,7 +97,7 @@
 
     <% if (!editMode) { %>
       <form id="reject-form" method="POST" action="/admin/users/<%= approveUser.id %>/reject"
-            onsubmit="return confirm('Reject <%= approveUser.username %>\'s account request?')"></form>
+            onsubmit="return confirm('Reject <%= approveUser.username %>\'s account request?')"><input type="hidden" name="_csrf" value="<%= csrfToken %>"></form>
     <% } %>
   </div>
 </div>

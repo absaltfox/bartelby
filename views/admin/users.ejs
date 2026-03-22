@@ -5,10 +5,79 @@
 
   <div class="admin-header">
     <h1>User Management</h1>
+    <p class="subtitle">Invite users, review access, and manage account-level AI permissions.</p>
+    <div class="header-actions">
+      <a href="/admin/users/invite" class="btn-primary">Invite User</a>
+    </div>
   </div>
 
-  <% if (typeof flash !== 'undefined' && flash) { %>
-    <div class="alert alert-success"><%= flash %></div>
+  <% if (flash) { %>
+    <div class="alert alert-success">
+      <p><%= flash.message %></p>
+      <% if (flash.inviteUrl) { %>
+        <p style="margin-top:8px;">
+          <strong>Invite link:</strong>
+          <a href="<%= flash.inviteUrl %>"><%= flash.inviteUrl %></a>
+        </p>
+      <% } %>
+      <% if (flash.resetUrl) { %>
+        <p style="margin-top:8px;">
+          <strong>Password reset link:</strong>
+          <a href="<%= flash.resetUrl %>"><%= flash.resetUrl %></a>
+        </p>
+      <% } %>
+    </div>
+  <% } %>
+
+  <% if (invites.length > 0) { %>
+    <div class="settings-section">
+      <h2>Open Invitations (<%= invites.length %>)</h2>
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Access</th>
+              <th>Expires</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% invites.forEach(function(invite) { %>
+              <tr>
+                <td class="user-email-cell"><%= invite.email %></td>
+                <td class="user-summary-cell">
+                  <div class="user-badge-stack">
+                    <span class="role-badge role-<%= invite.role %>"><%= invite.role %></span>
+                    <% if (invite.access_all) { %>
+                      <span class="access-badge access-all">All Collections</span>
+                    <% } else if ((invite.collection_ids || []).length > 0) { %>
+                      <span class="access-badge access-restricted"><%= invite.collection_ids.length %> Collections</span>
+                    <% } else { %>
+                      <span class="access-badge access-restricted">No Collection Access</span>
+                    <% } %>
+                    <span class="access-badge <%= invite.can_use_system_api_keys ? 'access-all' : 'access-restricted' %>">
+                      <%= invite.can_use_system_api_keys ? 'System Keys Allowed' : 'System Keys Blocked' %>
+                    </span>
+                  </div>
+                </td>
+                <td class="user-date-cell"><%= new Date(invite.expires_at).toLocaleDateString() %></td>
+                <td class="user-actions-cell">
+                  <form method="POST" action="/admin/users/invites/<%= invite.id %>/revoke" class="inline-form"
+                        onsubmit="return confirm('Revoke the invitation for <%= invite.email %>?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-action btn-delete">Revoke</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <% if (!smtpConfigured) { %>
+        <p class="field-hint">SMTP is not configured, so invitation links must be copied manually from the success message after creation.</p>
+      <% } %>
+    </div>
   <% } %>
 
   <!-- Pending approvals -->
@@ -38,6 +107,7 @@
                   <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Review &amp; Approve</a>
                   <form method="POST" action="/admin/users/<%= u.id %>/reject" class="inline-form"
                         onsubmit="return confirm('Reject <%= u.username %>\'s request?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete">Reject</button>
                   </form>
                 </td>
@@ -61,9 +131,8 @@
             <tr>
               <th>Username</th>
               <th>Email</th>
-              <th>Role</th>
-              <th>Access</th>
-              <th>Joined</th>
+              <th>Permissions</th>
+              <th>Security</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -75,24 +144,44 @@
                   <% if (u.id === currentUserId) { %><span class="badge-you">you</span><% } %>
                 </td>
                 <td class="user-email-cell"><% if (u.email) { %><%= u.email %><% } else { %><span class="muted">&mdash;</span><% } %></td>
-                <td><span class="role-badge role-<%= u.role %>"><%= u.role %></span></td>
-                <td>
-                  <% if (u.role === 'admin') { %>
-                    <span class="access-badge access-all">Full (admin)</span>
-                  <% } else if (u.access_all) { %>
-                    <span class="access-badge access-all">All collections</span>
-                  <% } else { %>
-                    <span class="access-badge access-restricted">Restricted</span>
-                  <% } %>
+                <td class="user-summary-cell">
+                  <div class="user-badge-stack">
+                    <span class="role-badge role-<%= u.role %>"><%= u.role %></span>
+                    <% if (u.role === 'admin') { %>
+                      <span class="access-badge access-all">Full Admin Access</span>
+                    <% } else if (u.access_all) { %>
+                      <span class="access-badge access-all">All Collections</span>
+                    <% } else { %>
+                      <span class="access-badge access-restricted">Restricted Collections</span>
+                    <% } %>
+                    <span class="access-badge <%= (u.can_use_system_api_keys || u.role === 'admin') ? 'access-all' : 'access-restricted' %>">
+                      <%= (u.can_use_system_api_keys || u.role === 'admin') ? 'System Keys Allowed' : 'System Keys Blocked' %>
+                    </span>
+                  </div>
                 </td>
-                <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
+                <td class="user-summary-cell">
+                  <div class="user-badge-stack">
+                    <span class="access-badge <%= u.mfa_method && u.mfa_method !== 'none' ? 'access-all' : 'access-restricted' %>">
+                      MFA: <%= u.mfa_method && u.mfa_method !== 'none' ? u.mfa_method.toUpperCase() : 'None' %>
+                    </span>
+                    <span class="access-badge access-restricted">Joined <%= new Date(u.created_at).toLocaleDateString() %></span>
+                  </div>
+                </td>
                 <td class="user-actions-cell">
                   <% if (u.id !== currentUserId) { %>
-                    <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote">Edit Access</a>
-                    <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
+                    <div class="user-actions-stack">
+                      <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote">Edit Access</a>
+                      <form method="POST" action="/admin/users/<%= u.id %>/password-reset" class="inline-form"
+                          onsubmit="return confirm('Create a password reset link for <%= u.username %>?')">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-action btn-promote">Send Reset Link</button>
+                      </form>
+                      <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
                           onsubmit="return confirm('Delete user <%= u.username %>?')">
-                      <button type="submit" class="btn-action btn-delete">Delete</button>
-                    </form>
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-action btn-delete">Delete</button>
+                      </form>
+                    </div>
                   <% } else { %>
                     <span class="muted" style="font-size:0.8125rem; font-style:italic;">Current user</span>
                   <% } %>
@@ -124,6 +213,7 @@
                   <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Approve</a>
                   <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
                         onsubmit="return confirm('Permanently delete <%= u.username %>?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete">Delete</button>
                   </form>
                 </td>

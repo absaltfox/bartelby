@@ -1,5 +1,11 @@
 // Historical Document Transcriber - Client-side JavaScript
 
+// CSRF token helper — reads from meta tag set by the server
+function getCsrfToken() {
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.getAttribute('content') : '';
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   initAnnotations();
   initImageZoom();
@@ -107,7 +113,8 @@ async function handleAnnotationSubmit(e) {
     const response = await fetch('/api/annotations', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': getCsrfToken()
       },
       body: JSON.stringify(data)
     });
@@ -133,7 +140,8 @@ async function handleAnnotationDelete(e) {
 
   try {
     const response = await fetch(`/api/annotations/${id}`, {
-      method: 'DELETE'
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': getCsrfToken() }
     });
 
     if (response.ok) {

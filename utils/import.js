@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+require('./secrets').loadEnv();
 const { createProvider, listProviders } = require('./llm');
 const { initializeSchema, documents, transcripts, saveDatabase } = require('../database/db');
 

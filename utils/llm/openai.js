@@ -1,3 +1,5 @@
+require('../secrets').loadEnv();
+
 const LLMProvider = require('./provider');
 
 /**

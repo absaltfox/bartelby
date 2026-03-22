@@ -4,19 +4,20 @@ const { annotations } = require('../database/db');
 
 // Create annotation
 router.post('/', (req, res) => {
-  const { transcript_id, user_name, content, position_start, position_end } = req.body;
+  const { transcript_id, content, position_start, position_end } = req.body;
 
-  if (!transcript_id || !user_name || !content) {
+  if (!transcript_id || !content) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
   try {
+    // Use authenticated user's username, not client-supplied value
     const id = annotations.create({
-      transcript_id: parseInt(transcript_id),
-      user_name,
+      transcript_id: parseInt(transcript_id, 10),
+      user_name: req.user.username,
       content,
-      position_start: position_start ? parseInt(position_start) : null,
-      position_end: position_end ? parseInt(position_end) : null
+      position_start: position_start ? parseInt(position_start, 10) : null,
+      position_end: position_end ? parseInt(position_end, 10) : null
     });
 
     res.status(201).json({ id, message: 'Annotation created successfully' });
@@ -26,15 +27,20 @@ router.post('/', (req, res) => {
   }
 });
 
-// Delete annotation
+// Delete annotation — only the author or an admin can delete
 router.delete('/:id', (req, res) => {
   try {
-    const result = annotations.delete(parseInt(req.params.id));
-
-    if (result.changes === 0) {
+    const annotation = annotations.getById(parseInt(req.params.id, 10));
+    if (!annotation) {
       return res.status(404).json({ error: 'Annotation not found' });
     }
 
+    // Authorization: only the author or an admin can delete
+    if (annotation.user_name !== req.user.username && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You can only delete your own annotations' });
+    }
+
+    annotations.delete(annotation.id);
     res.json({ message: 'Annotation deleted successfully' });
   } catch (err) {
     console.error('Error deleting annotation:', err);

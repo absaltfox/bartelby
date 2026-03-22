@@ -1,5 +1,7 @@
 'use strict';
 
+require('./secrets').loadEnv();
+
 const { generateText } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
@@ -69,6 +71,10 @@ function loadConfig() {
   }
 }
 
+function mergeConfig(overrides = {}) {
+  return { ...loadConfig(), ...overrides };
+}
+
 async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType) {
   const startMs = Date.now();
   const { text } = await generateText({
@@ -94,10 +100,10 @@ async function runTranscription(modelInstance, providerName, modelName, temperat
 const PROVIDERS = {
   openai: {
     name: 'openai',
-    async transcribeDocument(imageBuffer, mimeType, opts = {}) {
-      const cfg = loadConfig();
-      const apiKey = cfg.openai_api_key || process.env.OPENAI_API_KEY;
-      const model = opts.model || cfg.openai_model || 'gpt-4o';
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = mergeConfig(runtimeConfig);
+      const apiKey = runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY;
+      const model = opts.model || runtimeConfig.model || cfg.openai_model || 'gpt-4o';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOpenAI({ apiKey });
       return runTranscription(client(model), 'openai', model, temperature, imageBuffer, mimeType);
@@ -106,10 +112,10 @@ const PROVIDERS = {
 
   claude: {
     name: 'claude',
-    async transcribeDocument(imageBuffer, mimeType, opts = {}) {
-      const cfg = loadConfig();
-      const apiKey = cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
-      const model = opts.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = mergeConfig(runtimeConfig);
+      const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+      const model = opts.model || runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createAnthropic({ apiKey });
       return runTranscription(client(model), 'claude', model, temperature, imageBuffer, mimeType);
@@ -118,10 +124,10 @@ const PROVIDERS = {
 
   ollama: {
     name: 'ollama',
-    async transcribeDocument(imageBuffer, mimeType, opts = {}) {
-      const cfg = loadConfig();
-      const baseURL = cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-      const model = opts.model || cfg.ollama_model || 'llava';
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = mergeConfig(runtimeConfig);
+      const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      const model = opts.model || runtimeConfig.model || cfg.ollama_model || 'llava';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOllama({ baseURL });
       return runTranscription(client(model), 'ollama', model, temperature, imageBuffer, mimeType);
@@ -130,10 +136,10 @@ const PROVIDERS = {
 
   lmstudio: {
     name: 'lmstudio',
-    async transcribeDocument(imageBuffer, mimeType, opts = {}) {
-      const cfg = loadConfig();
-      const baseURL = cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
-      const model = opts.model || cfg.lmstudio_model || 'local-model';
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = mergeConfig(runtimeConfig);
+      const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      const model = opts.model || runtimeConfig.model || cfg.lmstudio_model || 'local-model';
       const temperature = opts.temperature != null ? opts.temperature : null;
       // LM Studio is OpenAI-compatible; no API key required for local use
       const client = createOpenAI({ baseURL, apiKey: 'lmstudio' });
@@ -142,19 +148,28 @@ const PROVIDERS = {
   }
 };
 
-function createProvider(name) {
+function providerNeedsApiKey(name) {
+  return name === 'openai' || name === 'claude';
+}
+
+function createProvider(name, runtimeConfig = {}) {
   const provider = PROVIDERS[name];
   if (!provider) {
     throw new Error(`Unknown provider: "${name}". Available: ${listProviders().join(', ')}`);
   }
-  const cfg = loadConfig();
-  if (name === 'openai' && !cfg.openai_api_key && !process.env.OPENAI_API_KEY) {
+  const cfg = mergeConfig(runtimeConfig);
+  if (name === 'openai' && !runtimeConfig.apiKey && !cfg.openai_api_key && !process.env.OPENAI_API_KEY) {
     throw new Error('OpenAI API key is not configured. Set it in Admin → Settings.');
   }
-  if (name === 'claude' && !cfg.anthropic_api_key && !process.env.ANTHROPIC_API_KEY) {
+  if (name === 'claude' && !runtimeConfig.apiKey && !cfg.anthropic_api_key && !process.env.ANTHROPIC_API_KEY) {
     throw new Error('Anthropic API key is not configured. Set it in Admin → Settings.');
   }
-  return provider;
+  return {
+    ...provider,
+    transcribeDocument(imageBuffer, mimeType, opts = {}) {
+      return provider.transcribeDocument(imageBuffer, mimeType, opts, runtimeConfig);
+    }
+  };
 }
 
 function listProviders() {
@@ -245,4 +260,11 @@ async function generateDocumentSummary(providerName, transcription) {
   return summary;
 }
 
-module.exports = { createProvider, listProviders, listConfiguredProviders, generateDocumentTitle, generateDocumentSummary };
+module.exports = {
+  createProvider,
+  listProviders,
+  listConfiguredProviders,
+  providerNeedsApiKey,
+  generateDocumentTitle,
+  generateDocumentSummary
+};

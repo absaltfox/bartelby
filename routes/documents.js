@@ -1,16 +1,53 @@
 const express = require('express');
 const router = express.Router();
-const { documents, transcripts, annotations, documentCollections, collections, transcriptionJobs } = require('../database/db');
+const { documents, transcripts, annotations, documentCollections, collections, transcriptionJobs, userCollectionAccess } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 
 // All document routes require authentication
 router.use(requireAuth);
 
-// Document listing (index page)
+// ── Collections landing page ────────────────────────────────────────────────
 router.get('/', (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = 10;
-  const offset = (page - 1) * limit;
+  const opts = {
+    userId: req.user.id,
+    isAdmin: req.user.role === 'admin',
+    accessAll: !!req.user.access_all
+  };
+
+  // Get collections the user can see
+  let allCollections;
+  if (opts.isAdmin || opts.accessAll) {
+    allCollections = collections.getAllWithThumbnails();
+  } else {
+    const accessIds = userCollectionAccess.getIdsByUserId(req.user.id);
+    // Regular user: show public collections + ones they have access to
+    allCollections = collections.getAllWithThumbnails().filter(c => {
+      if (c.is_public) return true;
+      return accessIds.includes(c.id);
+    });
+  }
+
+  // Total document count (accessible to this user)
+  const totalDocCount = documents.getCount(opts);
+
+  // Uncollected count (only show to admins)
+  const uncollectedCount = opts.isAdmin ? documents.getUncollectedCount(opts) : 0;
+
+  res.render('collections', {
+    collections: allCollections,
+    totalDocCount,
+    uncollectedCount,
+    isAdmin: opts.isAdmin
+  });
+});
+
+// ── Document list for a specific collection ──────────────────────────────────
+router.get('/collections/:id', (req, res) => {
+  const collectionId = req.params.id;
+
+  // Special routes
+  const isAll = collectionId === 'all';
+  const isUncollected = collectionId === 'uncollected';
 
   const opts = {
     userId: req.user.id,
@@ -18,8 +55,30 @@ router.get('/', (req, res) => {
     accessAll: !!req.user.access_all
   };
 
+  let collection = null;
+  if (!isAll && !isUncollected) {
+    collection = collections.getById(parseInt(collectionId, 10));
+    if (!collection) {
+      return res.status(404).render('error', { message: 'Collection not found', error: {} });
+    }
+    if (!collections.canAccess(collection.id, req.user.id, opts.isAdmin, opts.accessAll)) {
+      return res.status(403).render('error', { message: 'You do not have access to this collection.', error: {} });
+    }
+  } else if (isUncollected && !opts.isAdmin) {
+    return res.status(403).render('error', { message: 'Admin access required.', error: {} });
+  }
+
+  const page = parseInt(req.query.page) || 1;
+  const limit = 10;
+  const offset = (page - 1) * limit;
+
   const filters = {};
-  if (req.query.collection) filters.collectionId = parseInt(req.query.collection);
+  if (!isAll && !isUncollected) {
+    filters.collectionId = parseInt(collectionId, 10);
+  }
+  if (isUncollected) {
+    filters.uncollected = true;
+  }
   if (req.query.type) {
     filters.docTypes = req.query.type.split(',').map(s => s.trim()).filter(Boolean);
   }
@@ -33,24 +92,24 @@ router.get('/', (req, res) => {
   const totalPages = Math.ceil(totalCount / limit);
 
   // Get filter options
-  const allCollections = collections.getAll();
-  const docTypes = documents.getDistinctTypes();
-  const dateRange = documents.getDateRange();
+  const scopeFilters = {
+    collectionId: !isAll && !isUncollected ? parseInt(collectionId, 10) : undefined,
+    uncollected: isUncollected
+  };
+  const docTypes = documents.getDistinctTypesFiltered(opts, scopeFilters);
+  const dateRange = documents.getDateRangeFiltered(opts, scopeFilters);
 
-  // Normalize and dedupe locations for the filter dropdown.
-  // Raw metadata values are preserved in documents; this only affects the filter list.
-  const rawLocations = documents.getDistinctLocations();
-  const locationMap = new Map(); // normalized key → { display, count }
+  // Normalized locations for filter dropdown
+  const rawLocations = documents.getDistinctLocationsFiltered(opts, scopeFilters);
+  const locationMap = new Map();
   for (const raw of rawLocations) {
     const key = raw.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').toLowerCase();
     if (!key) continue;
     const existing = locationMap.get(key);
     if (existing) {
       existing.count++;
-      // Prefer the version with more title-case letters as the display name
       if (raw.length > existing.display.length) existing.display = raw.trim();
     } else {
-      // Title-case the display name
       const display = key.replace(/\b\w/g, c => c.toUpperCase());
       locationMap.set(key, { display, count: 1 });
     }
@@ -59,20 +118,44 @@ router.get('/', (req, res) => {
     .map(v => v.display)
     .sort((a, b) => a.localeCompare(b));
 
-  res.render('index', {
+  // Page title
+  let pageTitle, pageSubtitle;
+  if (isAll) {
+    pageTitle = 'All Documents';
+    pageSubtitle = `${totalCount} document${totalCount !== 1 ? 's' : ''}`;
+  } else if (isUncollected) {
+    pageTitle = 'Uncollected Documents';
+    pageSubtitle = `${totalCount} document${totalCount !== 1 ? 's' : ''} not assigned to any collection`;
+  } else {
+    pageTitle = collection.name;
+    pageSubtitle = collection.description || `${totalCount} document${totalCount !== 1 ? 's' : ''}`;
+  }
+
+  const hasActiveFilters = (filters.docTypes && filters.docTypes.length) ||
+    (filters.locations && filters.locations.length) ||
+    filters.dateFrom || filters.dateTo;
+
+  res.render('collection-documents', {
     documents: docs,
+    collection,
+    collectionId,
+    isAll,
+    isUncollected,
+    pageTitle,
+    pageSubtitle,
     currentPage: page,
     totalPages,
     totalCount,
-    allCollections,
     docTypes,
     locations,
     dateRange,
-    filters
+    filters,
+    hasActiveFilters,
+    currentListUrl: req.originalUrl
   });
 });
 
-// Document detail view
+// ── Document detail view ─────────────────────────────────────────────────────
 router.get('/documents/:id', (req, res) => {
   const doc = documents.getById(req.params.id);
 
@@ -109,13 +192,20 @@ router.get('/documents/:id', (req, res) => {
 
   const pendingJob = transcriptionJobs.getPendingForDocument(doc.id);
 
+  let backHref = '/';
+  const requestedBack = typeof req.query.back === 'string' ? req.query.back : '';
+  if (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//')) {
+    backHref = requestedBack;
+  }
+
   res.render('document', {
     document: { ...doc, metadata },
     transcripts: docTranscripts,
     selectedTranscript,
     annotations: transcriptAnnotations,
     docCollections,
-    pendingJob: pendingJob || null
+    pendingJob: pendingJob || null,
+    backHref
   });
 });
 

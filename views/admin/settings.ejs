@@ -11,8 +11,16 @@
   <% if (saved) { %>
     <div class="alert alert-success">Settings saved successfully.</div>
   <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <% if (!hasEncryptionKey) { %>
+    <div class="alert alert-error"><code>DATA_ENCRYPTION_KEY</code> is not configured, so API keys cannot be saved securely until it is added to <code>.env</code>.</div>
+  <% } %>
 
   <form method="POST" action="/admin/settings">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 
     <section class="settings-section">
       <h2>Default Provider</h2>

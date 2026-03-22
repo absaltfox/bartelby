@@ -178,7 +178,7 @@
     btn.addEventListener('click', async function() {
       btn.disabled = true;
       try {
-        await fetch('/admin/jobs/api/' + btn.dataset.id + '/retry', { method: 'POST' });
+        await fetch('/admin/jobs/api/' + btn.dataset.id + '/retry', { method: 'POST', headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content } });
         window.location.reload();
       } catch(e) { btn.disabled = false; }
     });
@@ -192,7 +192,7 @@
       var type = btn.dataset.type;
       var apiBase = type === 'import' ? '/admin/jobs/api/import/' : '/admin/jobs/api/';
       try {
-        await fetch(apiBase + btn.dataset.id, { method: 'DELETE' });
+        await fetch(apiBase + btn.dataset.id, { method: 'DELETE', headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content } });
         window.location.reload();
       } catch(e) { btn.disabled = false; }
     });
@@ -262,7 +262,7 @@
     try {
       await fetch('/admin/jobs/api/bulk/retry', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ ids: sel.map(function(cb) { return cb.value; }) })
       });
       window.location.reload();
@@ -283,7 +283,7 @@
       var jobs = sel.map(function(cb) { return { id: cb.value, type: cb.dataset.type }; });
       await fetch('/admin/jobs/api/bulk/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
         body: JSON.stringify({ jobs: jobs })
       });
       window.location.reload();

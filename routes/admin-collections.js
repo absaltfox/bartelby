@@ -2,20 +2,25 @@
 
 const express = require('express');
 const router = express.Router();
-const { collections, users, userCollectionAccess, saveDatabase } = require('../database/db');
+const { collections, users, userCollectionAccess, documentCollections, documents, saveDatabase } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
 
 router.use(requireAdmin);
 
 // List collections
 router.get('/', (req, res) => {
-  const allCollections = collections.getAll();
+  const allCollections = collections.getAllWithThumbnails();
 
-  // Attach per-collection user access list
-  const collectionsWithAccess = allCollections.map(c => ({
-    ...c,
-    grantedUsers: userCollectionAccess.getByCollectionId(c.id)
-  }));
+  // Attach per-collection user access list + documents for preview picker
+  const collectionsWithAccess = allCollections.map(c => {
+    const docIds = documentCollections.getByCollectionId(c.id).map(dc => dc.document_id);
+    const collectionDocs = docIds.length > 0 ? documents.getByIds(docIds, 100, 0) : [];
+    return {
+      ...c,
+      grantedUsers: userCollectionAccess.getByCollectionId(c.id),
+      documents: collectionDocs
+    };
+  });
 
   // Non-admin, non-access_all active users (candidates for access grants)
   const activeUsers = users.getAll().filter(u =>
@@ -90,6 +95,19 @@ router.post('/:id/access/revoke/:userId', (req, res) => {
     saveDatabase();
   }
   res.redirect('/admin/collections#collection-' + collectionId);
+});
+
+// Set preview image
+router.post('/:id/preview', express.urlencoded({ extended: false }), (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  const documentId = req.body.preview_document_id ? parseInt(req.body.preview_document_id, 10) : null;
+  try {
+    collections.setPreviewDocument(collectionId, documentId);
+    saveDatabase();
+    res.redirect('/admin/collections?saved=1#collection-' + collectionId);
+  } catch (err) {
+    res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
+  }
 });
 
 // Delete

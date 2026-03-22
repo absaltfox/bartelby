@@ -19,6 +19,7 @@
   <div class="settings-section">
     <h2>New Collection</h2>
     <form method="POST" action="/admin/collections" class="auth-form" style="max-width: 560px;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="form-group">
         <label for="col-name">Name *</label>
         <input type="text" id="col-name" name="name" required placeholder="e.g. Colonial Records">
@@ -59,12 +60,14 @@
               <span class="collection-doc-count"><%= c.document_count %> document<%= c.document_count !== 1 ? 's' : '' %></span>
             </div>
             <div class="collection-row-actions">
-              <button class="btn-action btn-demote btn-sm" onclick="toggleEdit(<%= c.id %>)">Edit</button>
+              <button type="button" class="btn-action btn-demote btn-sm js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Edit</button>
+              <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Preview Image</button>
               <% if (!c.is_public) { %>
-                <button class="btn-action btn-sm" onclick="toggleAccess(<%= c.id %>)">Access</button>
+                <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="access-<%= c.id %>" data-collection-id="<%= c.id %>">Access</button>
               <% } %>
               <form method="POST" action="/admin/collections/<%= c.id %>/delete" style="display:inline"
                     onsubmit="return confirm('Delete collection &quot;<%= c.name %>&quot;? Documents will not be deleted.')">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
               </form>
             </div>
@@ -73,15 +76,14 @@
           <!-- Edit form -->
           <div id="edit-<%= c.id %>" class="collection-edit-form" style="display:none;">
             <form method="POST" action="/admin/collections/<%= c.id %>/edit">
-              <div class="form-row">
-                <div class="form-group">
-                  <label>Name</label>
-                  <input type="text" name="name" value="<%= c.name %>" required>
-                </div>
-                <div class="form-group">
-                  <label>Description</label>
-                  <input type="text" name="description" value="<%= c.description || '' %>">
-                </div>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="form-group">
+                <label>Name</label>
+                <input type="text" name="name" value="<%= c.name %>" required>
+              </div>
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="description" rows="3"><%= c.description || '' %></textarea>
               </div>
               <div class="form-group">
                 <label class="checkbox-label">
@@ -91,9 +93,49 @@
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn-primary">Save</button>
-                <button type="button" class="btn-secondary" onclick="toggleEdit(<%= c.id %>)">Cancel</button>
+                <button type="button" class="btn-secondary js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Cancel</button>
               </div>
             </form>
+          </div>
+
+          <!-- Preview image selector -->
+          <div id="preview-<%= c.id %>" class="collection-access-panel" style="display:none;">
+            <h4>Collection Preview Image</h4>
+            <p class="muted" style="font-size:0.9rem; margin-bottom:12px;">
+              Select a document whose image will appear as the collection thumbnail. If none is selected, the most recent document's image is used.
+            </p>
+            <% if (c.documents && c.documents.length > 0) { %>
+              <form method="POST" action="/admin/collections/<%= c.id %>/preview">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="preview-image-grid">
+                  <label class="preview-image-option <%= !c.preview_document_id ? 'selected' : '' %>">
+                    <input type="radio" name="preview_document_id" value="" <%= !c.preview_document_id ? 'checked' : '' %>>
+                    <div class="preview-image-thumb preview-image-thumb--auto">
+                      <span>Auto</span>
+                    </div>
+                  </label>
+                  <% c.documents.forEach(function(doc) { %>
+                    <label class="preview-image-option <%= c.preview_document_id === doc.id ? 'selected' : '' %>">
+                      <input type="radio" name="preview_document_id" value="<%= doc.id %>" <%= c.preview_document_id === doc.id ? 'checked' : '' %>>
+                      <div class="preview-image-thumb">
+                        <% if (doc.image_path) { %>
+                          <img src="<%= doc.image_path %>" alt="<%= doc.title %>">
+                        <% } else { %>
+                          <span>&#128220;</span>
+                        <% } %>
+                      </div>
+                      <span class="preview-image-label"><%= doc.title.length > 25 ? doc.title.substring(0, 25) + '...' : doc.title %></span>
+                    </label>
+                  <% }) %>
+                </div>
+                <div class="form-actions" style="margin-top:12px;">
+                  <button type="submit" class="btn-primary btn-sm">Save Preview</button>
+                  <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Cancel</button>
+                </div>
+              </form>
+            <% } else { %>
+              <p class="muted" style="font-size:0.9rem;">No documents in this collection yet. Add documents to set a preview image.</p>
+            <% } %>
           </div>
 
           <!-- Access management panel (private collections only) -->
@@ -107,6 +149,7 @@
                     <li class="access-user-item">
                       <span><strong><%= u.username %></strong><% if (u.email) { %> <small class="muted">&lt;<%= u.email %>&gt;</small><% } %></span>
                       <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" style="display:inline">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
                       </form>
                     </li>
@@ -123,6 +166,7 @@
                 %>
                 <% if (eligible.length > 0) { %>
                   <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" class="access-grant-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <select name="user_id" required>
                       <option value="">— Grant access to a user —</option>
                       <% eligible.forEach(function(u) { %>
@@ -157,22 +201,24 @@
 </div>
 
 <script>
-  function toggleEdit(id) {
-    var el = document.getElementById('edit-' + id);
-    var acc = document.getElementById('access-' + id);
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    if (acc) acc.style.display = 'none';
+  function toggleCollectionPanel(id, targetId) {
+    var panels = ['edit-' + id, 'preview-' + id, 'access-' + id];
+    panels.forEach(function(panelId) {
+      var panel = document.getElementById(panelId);
+      if (!panel) return;
+      var shouldShow = panelId === targetId && panel.style.display === 'none';
+      panel.style.display = shouldShow ? 'block' : 'none';
+    });
   }
 
-  function toggleAccess(id) {
-    var el = document.getElementById('access-' + id);
-    var edit = document.getElementById('edit-' + id);
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-    edit.style.display = 'none';
-  }
-
-  // Auto-open the access panel if the URL has a hash like #collection-123
   (function() {
+    document.querySelectorAll('.js-collection-toggle').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        toggleCollectionPanel(btn.dataset.collectionId, btn.dataset.target);
+      });
+    });
+
+    // Auto-open the access panel if the URL has a hash like #collection-123
     var hash = window.location.hash;
     var m = hash.match(/^#collection-(\d+)$/);
     if (m) {

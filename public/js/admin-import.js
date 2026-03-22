@@ -1,12 +1,61 @@
 // Admin Import Page JavaScript — Upload → [Pages] → Configure → Save (queue AI or save manual)
 
+function getCsrfToken() {
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  return meta ? meta.getAttribute('content') : '';
+}
+
+function getResumeImportJob() {
+  if (window.__resumeImportJob) return window.__resumeImportJob;
+  var el = document.getElementById('resume-import-job');
+  if (!el) return null;
+  try {
+    return JSON.parse(el.textContent);
+  } catch (err) {
+    console.error('Failed to parse resume import job payload:', err);
+    return null;
+  }
+}
+
+function getProviderOptions() {
+  const el = document.getElementById('provider-options-data');
+  if (!el) return [];
+  try {
+    return JSON.parse(el.textContent);
+  } catch (err) {
+    console.error('Failed to parse provider options:', err);
+    return [];
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   const uploadArea      = document.getElementById('upload-area');
   const fileInput       = document.getElementById('file-input');
   const providerSelect  = document.getElementById('provider');
+  const credentialSelect = document.getElementById('credential-source');
   const modeAI          = document.getElementById('mode-ai');
   const modeManual      = document.getElementById('mode-manual');
   const aiOptions       = document.getElementById('ai-options');
+  const providerOptions = getProviderOptions();
+
+  function refreshCredentialOptions() {
+    if (!providerSelect || !credentialSelect) return;
+    const selectedProvider = providerSelect.value;
+    const entry = providerOptions.find(option => option.provider === selectedProvider);
+    credentialSelect.innerHTML = '';
+
+    (entry?.sources || []).forEach(source => {
+      const option = document.createElement('option');
+      option.value = source.value;
+      option.textContent = source.label;
+      credentialSelect.appendChild(option);
+    });
+  }
+
+  if (providerSelect && credentialSelect) {
+    providerSelect.addEventListener('change', refreshCredentialOptions);
+    refreshCredentialOptions();
+  }
 
   // Show/hide AI options panel based on mode
   function updateModeUI() {
@@ -40,6 +89,12 @@ document.addEventListener('DOMContentLoaded', function() {
   let currentQueueIndex = -1;
   let savedDocIds      = [];
   let anyAiQueued      = false;
+
+  function getSelectedCollectionIds(selector) {
+    return Array.from(document.querySelectorAll(selector + ':checked'))
+      .map(cb => parseInt(cb.dataset.id, 10))
+      .filter(Number.isInteger);
+  }
 
   // ── Drag & Drop ──────────────────────────────────────────────────
 
@@ -102,7 +157,7 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       processingText.textContent = isPdf ? 'Uploading PDF...' : 'Uploading image...';
 
-      const response = await fetch('/admin/api/upload', { method: 'POST', body: formData });
+      const response = await fetch('/admin/api/upload', { method: 'POST', body: formData, headers: { 'X-CSRF-Token': getCsrfToken() } });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload failed');
 
@@ -364,18 +419,17 @@ document.addEventListener('DOMContentLoaded', function() {
       groups.push({ tempFiles: [f], label: `Page ${pageNum}` });
     });
 
-    const collectionIds = Array.from(
-      document.querySelectorAll('.collection-cb:checked')
-    ).map(cb => parseInt(cb.dataset.id));
+    const collectionIds = getSelectedCollectionIds('.page-collection-cb');
 
     try {
       const response = await fetch('/admin/api/submit-pages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           groups,
           originalName,
           provider: providerSelect ? providerSelect.value : null,
+          credentialSource: credentialSelect ? credentialSelect.value : 'system',
           temperature: document.getElementById('temperature')
             ? document.getElementById('temperature').value : null,
           initiatedBy: document.getElementById('initiated-by')
@@ -505,9 +559,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     try {
       const tempFiles = JSON.parse(document.getElementById('temp-files').value || '[]');
-      const collectionIds = Array.from(
-        document.querySelectorAll('.collection-cb:checked')
-      ).map(cb => parseInt(cb.dataset.id));
+      const collectionIds = getSelectedCollectionIds('.review-collection-cb');
 
       const manual = isManualMode();
 
@@ -535,6 +587,7 @@ document.addEventListener('DOMContentLoaded', function() {
           ? document.getElementById('initiated-by').value : null;
       } else {
         formData.provider    = providerSelect ? providerSelect.value : null;
+        formData.credentialSource = credentialSelect ? credentialSelect.value : 'system';
         formData.temperature = document.getElementById('temperature')
           ? document.getElementById('temperature').value : null;
         formData.initiatedBy = document.getElementById('initiated-by')
@@ -543,7 +596,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
       const response = await fetch('/admin/api/save-document', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(formData)
       });
 
@@ -588,7 +641,7 @@ document.addEventListener('DOMContentLoaded', function() {
       try {
         await fetch('/admin/api/cancel-import', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({ tempFiles: allTempFiles })
         });
       } catch (e) {}
@@ -649,12 +702,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // ── Resume from Import Job ───────────────────────────────────────
   // If we arrived via "Continue" from Jobs tab, load pages directly into the page manager
-  if (window.__resumeImportJob) {
-    const job = window.__resumeImportJob;
+  const resumeJob = getResumeImportJob();
+  if (resumeJob && Array.isArray(resumeJob.pages) && resumeJob.pages.length > 0) {
+    const job = resumeJob;
     importJobId = job.id;
     originalName = job.originalName || 'document.pdf';
     allTempFiles = job.pages.map(p => p.filename);
     showPageManager(job.pages);
     showStep('pages');
+  } else if (resumeJob) {
+    showError('This import job could not be resumed because its page data is incomplete.');
   }
 });

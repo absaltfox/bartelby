@@ -56,7 +56,57 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL DEFAULT 'user',
   status TEXT NOT NULL DEFAULT 'active',
   access_all INTEGER NOT NULL DEFAULT 0,
+  can_use_system_api_keys INTEGER NOT NULL DEFAULT 0,
+  mfa_method TEXT NOT NULL DEFAULT 'none',
+  mfa_totp_secret TEXT,
+  mfa_email_otp_hash TEXT,
+  mfa_email_otp_expires_at DATETIME,
+  mfa_email_otp_sent_at DATETIME,
+  invite_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_invites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT 'user',
+  access_all INTEGER NOT NULL DEFAULT 0,
+  can_use_system_api_keys INTEGER NOT NULL DEFAULT 0,
+  collection_ids TEXT,
+  invited_by INTEGER,
+  accepted_by_user_id INTEGER,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  accepted_at DATETIME,
+  revoked_at DATETIME,
+  FOREIGN KEY (invited_by) REFERENCES users(id),
+  FOREIGN KEY (accepted_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  label TEXT NOT NULL,
+  encrypted_key TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  last_used_at DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_by INTEGER,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  used_at DATETIME,
+  revoked_at DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
 
@@ -99,6 +149,9 @@ CREATE TABLE IF NOT EXISTS transcription_jobs (
   model TEXT,
   temperature REAL,
   initiated_by TEXT,
+  provider_key_scope TEXT,
+  user_api_key_id INTEGER,
+  requested_by_user_id INTEGER,
   image_path TEXT NOT NULL,
   additional_image_paths TEXT,
   log TEXT NOT NULL DEFAULT '',

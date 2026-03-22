@@ -1,0 +1,38 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Accept Invitation</h1>
+      <p>Create your Bartelby account for <strong><%= invite.email %></strong>.</p>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <form method="POST" action="/invite/<%= token %>" class="auth-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" value="<%= invite.email %>" disabled>
+      </div>
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" required autofocus autocomplete="username"
+               pattern="[a-zA-Z0-9_.\-]+" title="Letters, numbers, _ . - only">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label for="confirm">Confirm Password</label>
+        <input type="password" id="confirm" name="confirm" required autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn-primary btn-full">Create Account</button>
+    </form>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

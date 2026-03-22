@@ -1,0 +1,166 @@
+<%- include('partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page account-page">
+  <div class="admin-header">
+    <h1>My Account</h1>
+    <p class="subtitle">Manage your email address, personal AI keys, and multi-factor authentication.</p>
+  </div>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Your account changes were saved.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <section class="settings-section">
+    <h2>Profile</h2>
+    <form method="POST" action="/account/profile">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" value="<%= currentUser.username %>" disabled>
+      </div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="<%= currentUser.email || '' %>" autocomplete="email">
+        <p class="field-hint">Required if you want to use email-based MFA.</p>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Save Profile</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section">
+    <h2>Personal API Keys</h2>
+    <p class="field-hint">These keys belong only to your account. Other users, including admins, cannot view them.</p>
+
+    <% if (!canEncryptSecrets) { %>
+      <div class="alert alert-error"><code>DATA_ENCRYPTION_KEY</code> must be configured before personal API keys can be stored securely.</div>
+    <% } %>
+
+    <form method="POST" action="/account/api-keys">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="provider">Provider</label>
+          <select id="provider" name="provider" <%= canEncryptSecrets ? '' : 'disabled' %>>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="label">Label</label>
+          <input type="text" id="label" name="label" placeholder="My work OpenAI key" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="api_key">API Key</label>
+        <input type="password" id="api_key" name="api_key" autocomplete="off" <%= canEncryptSecrets ? '' : 'disabled' %>>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary" <%= canEncryptSecrets ? '' : 'disabled' %>>Add Personal Key</button>
+      </div>
+    </form>
+
+    <% if (userApiKeys.length === 0) { %>
+      <p class="muted" style="margin-top:16px;">No personal API keys have been added yet.</p>
+    <% } else { %>
+      <div class="users-table-wrap" style="margin-top:18px;">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Label</th>
+              <th>Added</th>
+              <th>Last Used</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% userApiKeys.forEach(function(key) { %>
+              <tr>
+                <td><span class="role-badge role-user"><%= key.provider %></span></td>
+                <td><%= key.label %></td>
+                <td class="user-date-cell"><%= new Date(key.created_at).toLocaleDateString() %></td>
+                <td class="user-date-cell"><%= key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : '—' %></td>
+                <td class="user-actions-cell">
+                  <form method="POST" action="/account/api-keys/<%= key.id %>/delete" class="inline-form"
+                        onsubmit="return confirm('Delete the personal API key labeled <%= key.label.replace(/'/g, "\\'") %>?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-action btn-delete">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </section>
+
+  <section class="settings-section">
+    <h2>Multi-Factor Authentication</h2>
+    <p class="field-hint">Current method: <strong><%= currentUser.mfa_method && currentUser.mfa_method !== 'none' ? currentUser.mfa_method.toUpperCase() : 'None' %></strong></p>
+
+    <div class="form-actions mfa-actions" style="margin-bottom:16px;">
+      <form method="POST" action="/account/mfa/email/enable">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn-secondary" <%= smtpConfigured && currentUser.email ? '' : 'disabled' %>>Use Email OTP</button>
+      </form>
+      <form method="POST" action="/account/mfa/totp/setup">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn-secondary" <%= canEncryptSecrets ? '' : 'disabled' %>>Set Up Authenticator App</button>
+      </form>
+      <form method="POST" action="/account/mfa/disable">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn-danger">Disable MFA</button>
+      </form>
+    </div>
+
+    <% if (!smtpConfigured) { %>
+      <p class="field-hint">Email MFA will be available after SMTP is configured in the environment.</p>
+    <% } %>
+
+    <% if (pendingTotpSecret) { %>
+      <div class="role-option" style="cursor:default; margin-top:16px;">
+        <div class="role-option-label" style="width:100%;">
+          <strong>Authenticator Setup</strong>
+          <small>Add this secret in Authy, Google Authenticator, or a similar app, then confirm a current 6-digit code.</small>
+          <% if (pendingTotpQrCode) { %>
+            <div class="mfa-qr-block">
+              <img src="<%= pendingTotpQrCode %>" alt="Authenticator app QR code" class="mfa-qr-image">
+            </div>
+          <% } %>
+          <div class="form-group" style="margin-top:12px;">
+            <label>Secret</label>
+            <input type="text" value="<%= pendingTotpSecret %>" readonly>
+          </div>
+          <div class="form-group">
+            <label>OTPAuth URI</label>
+            <textarea rows="3" readonly><%= pendingTotpUri %></textarea>
+          </div>
+          <form method="POST" action="/account/mfa/totp/confirm">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="totp-code">Verification Code</label>
+                <input type="text" id="totp-code" name="code" inputmode="numeric" autocomplete="one-time-code">
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">Confirm Authenticator</button>
+            </div>
+          </form>
+          <form method="POST" action="/account/mfa/totp/cancel" style="margin-top:10px;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button type="submit" class="btn-secondary">Cancel Setup</button>
+          </form>
+        </div>
+      </div>
+    <% } %>
+  </section>
+</div>
+
+<%- include('partials/footer') %>

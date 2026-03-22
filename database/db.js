@@ -1,6 +1,13 @@
 const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
+const {
+  canEncryptSecrets,
+  isEncryptedSecret,
+  encryptSecret,
+  decryptSecret
+} = require('../utils/secrets');
+const { hashOtpCode } = require('../utils/mfa');
 
 const dbPath = path.join(__dirname, '..', 'data', 'transcriber.db');
 
@@ -11,6 +18,8 @@ if (!fs.existsSync(dataDir)) {
 }
 
 let db = null;
+const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key']);
+const USER_SECRET_PROVIDERS = new Set(['openai', 'claude']);
 
 // ── Migrations ──────────────────────────────────────────────────────────────
 // Each entry is applied exactly once, tracked via PRAGMA user_version in the
@@ -164,6 +173,76 @@ const MIGRATIONS = [
 
   // v8 — track rendering progress for import jobs
   `ALTER TABLE import_jobs ADD COLUMN pages_rendered INTEGER NOT NULL DEFAULT 0`,
+
+  // v9 — collection preview image (selected document)
+  `ALTER TABLE collections ADD COLUMN preview_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL`,
+
+  // v10 — invites, private provider keys, MFA, and job credential provenance
+  `
+  ALTER TABLE users ADD COLUMN can_use_system_api_keys INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN mfa_method TEXT NOT NULL DEFAULT 'none';
+  ALTER TABLE users ADD COLUMN mfa_totp_secret TEXT;
+  ALTER TABLE users ADD COLUMN mfa_email_otp_hash TEXT;
+  ALTER TABLE users ADD COLUMN mfa_email_otp_expires_at DATETIME;
+  ALTER TABLE users ADD COLUMN mfa_email_otp_sent_at DATETIME;
+  ALTER TABLE users ADD COLUMN invite_id INTEGER;
+  UPDATE users
+    SET can_use_system_api_keys = CASE WHEN role = 'admin' THEN 1 ELSE 0 END
+    WHERE can_use_system_api_keys IS NULL;
+  CREATE TABLE IF NOT EXISTS user_invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'user',
+    access_all INTEGER NOT NULL DEFAULT 0,
+    can_use_system_api_keys INTEGER NOT NULL DEFAULT 0,
+    collection_ids TEXT,
+    invited_by INTEGER,
+    accepted_by_user_id INTEGER,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    accepted_at DATETIME,
+    revoked_at DATETIME,
+    FOREIGN KEY (invited_by) REFERENCES users(id),
+    FOREIGN KEY (accepted_by_user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_invites_email ON user_invites(email);
+  CREATE INDEX IF NOT EXISTS idx_user_invites_token_hash ON user_invites(token_hash);
+  CREATE TABLE IF NOT EXISTS user_api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    label TEXT NOT NULL,
+    encrypted_key TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys(user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_api_keys_provider ON user_api_keys(provider);
+  ALTER TABLE transcription_jobs ADD COLUMN provider_key_scope TEXT;
+  ALTER TABLE transcription_jobs ADD COLUMN user_api_key_id INTEGER;
+  ALTER TABLE transcription_jobs ADD COLUMN requested_by_user_id INTEGER;
+  `,
+
+  // v11 — admin-initiated password reset tokens
+  `
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_by INTEGER,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    used_at DATETIME,
+    revoked_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+  `
 ];
 
 // ── Core database setup ─────────────────────────────────────────────────────
@@ -221,7 +300,8 @@ async function initializeSchema() {
         }
       }
 
-      db.run(`PRAGMA user_version = ${version}`);
+      const safeVersion = Number.isInteger(version) ? version : parseInt(version, 10);
+      db.run(`PRAGMA user_version = ${safeVersion}`);
       console.log(`[db] migration ${version} complete`);
     }
 
@@ -248,17 +328,68 @@ async function initializeSchema() {
     saveDatabase();
   }
 
+  migrateEncryptedSettings();
+
   return db;
+}
+
+function migrateEncryptedSettings() {
+  if (!canEncryptSecrets()) return;
+
+  const rows = all('SELECT key, value FROM settings');
+  let mutated = false;
+
+  for (const row of rows) {
+    if (!SECRET_SETTING_KEYS.has(row.key) || !row.value || isEncryptedSecret(row.value)) continue;
+    db.run('UPDATE settings SET value = ? WHERE key = ?', [encryptSecret(row.value), row.key]);
+    mutated = true;
+  }
+
+  if (mutated) {
+    saveDatabase();
+    console.log('[security] Encrypted stored provider secrets in settings');
+  }
+}
+
+function maskSecret(value) {
+  if (!value) return '';
+  if (value.length <= 8) return '••••••••';
+  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+}
+
+function normalizeCollectionIds(collectionIds) {
+  if (!Array.isArray(collectionIds)) return [];
+  return [...new Set(collectionIds.map(Number).filter(Number.isInteger))];
+}
+
+function parseInviteCollectionIds(value) {
+  if (!value) return [];
+  try {
+    return normalizeCollectionIds(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 
 // ── Transcription Jobs ──────────────────────────────────────────────────────
 
 const transcriptionJobs = {
-  create({ document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths }) {
+  create({
+    document_id,
+    provider,
+    model,
+    temperature,
+    initiated_by,
+    image_path,
+    additional_image_paths,
+    provider_key_scope,
+    user_api_key_id,
+    requested_by_user_id
+  }) {
     const result = run(`
       INSERT INTO transcription_jobs
-        (document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths, status, log)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', '')
+        (document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths, provider_key_scope, user_api_key_id, requested_by_user_id, status, log)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
     `, [
       document_id,
       provider || null,
@@ -266,7 +397,10 @@ const transcriptionJobs = {
       temperature != null ? temperature : null,
       initiated_by || null,
       image_path,
-      additional_image_paths ? JSON.stringify(additional_image_paths) : null
+      additional_image_paths ? JSON.stringify(additional_image_paths) : null,
+      provider_key_scope || null,
+      user_api_key_id || null,
+      requested_by_user_id || null
     ]);
     return result.lastInsertRowid;
   },
@@ -435,6 +569,60 @@ function run(sql, params = []) {
 // ── Documents ──────────────────────────────────────────────────────────────
 
 const documents = {
+  buildAccessConditions(opts = {}) {
+    const { userId, isAdmin, accessAll } = opts;
+    const conditions = [];
+    const params = [];
+
+    if (!isAdmin && !accessAll && userId) {
+      conditions.push(`d.id IN (
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+        WHERE uca.user_id = ?
+        UNION
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE col.is_public = 1
+      )`);
+      params.push(userId);
+    }
+
+    return { conditions, params };
+  },
+
+  buildFilterConditions(filters = {}) {
+    const { collectionId, uncollected, docTypes, locations, dateFrom, dateTo } = filters;
+    const conditions = [];
+    const params = [];
+
+    if (uncollected) {
+      conditions.push(`d.id NOT IN (SELECT document_id FROM document_collections)`);
+    } else if (collectionId) {
+      conditions.push(`d.id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)`);
+      params.push(collectionId);
+    }
+    if (docTypes && docTypes.length > 0) {
+      const placeholders = docTypes.map(() => '?').join(',');
+      conditions.push(`json_extract(d.metadata, '$.document_type') IN (${placeholders})`);
+      params.push(...docTypes);
+    }
+    if (locations && locations.length > 0) {
+      const placeholders = locations.map(() => 'LOWER(TRIM(?))').join(',');
+      conditions.push(`LOWER(TRIM(json_extract(d.metadata, '$.location'))) IN (${placeholders})`);
+      params.push(...locations);
+    }
+    if (dateFrom) {
+      conditions.push(`d.date_created >= ?`);
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push(`d.date_created <= ?`);
+      params.push(dateTo);
+    }
+
+    return { conditions, params };
+  },
+
   // opts: { userId, isAdmin, accessAll } — omit or set isAdmin to bypass filtering
   getAll(limit = 20, offset = 0, opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
@@ -526,6 +714,22 @@ const documents = {
     return result ? result.count : 0;
   },
 
+  getUncollectedCount(opts = {}) {
+    const { userId, isAdmin, accessAll } = opts;
+    let accessClause = '';
+    const params = [];
+    if (!isAdmin && !accessAll && userId) {
+      // Uncollected docs are only visible to admins in practice,
+      // but include access check for safety
+      accessClause = '';
+    }
+    const result = get(`
+      SELECT COUNT(*) as count FROM documents d
+      WHERE d.id NOT IN (SELECT document_id FROM document_collections)
+    `);
+    return result ? result.count : 0;
+  },
+
   getDistinctTypes() {
     return all(`
       SELECT DISTINCT json_extract(metadata, '$.document_type') as doc_type
@@ -534,6 +738,26 @@ const documents = {
         AND json_extract(metadata, '$.document_type') != ''
       ORDER BY doc_type
     `).map(r => r.doc_type);
+  },
+
+  getDistinctTypesFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `json_extract(d.metadata, '$.document_type') IS NOT NULL`,
+      `json_extract(d.metadata, '$.document_type') != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    return all(`
+      SELECT DISTINCT json_extract(d.metadata, '$.document_type') as doc_type
+      FROM documents d
+      ${where}
+      ORDER BY doc_type
+    `, params).map(r => r.doc_type);
   },
 
   getDistinctLocations() {
@@ -546,6 +770,26 @@ const documents = {
     `).map(r => r.location);
   },
 
+  getDistinctLocationsFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `json_extract(d.metadata, '$.location') IS NOT NULL`,
+      `json_extract(d.metadata, '$.location') != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    return all(`
+      SELECT DISTINCT json_extract(d.metadata, '$.location') as location
+      FROM documents d
+      ${where}
+      ORDER BY location
+    `, params).map(r => r.location);
+  },
+
   getDateRange() {
     const result = get(`
       SELECT MIN(date_created) as min_date, MAX(date_created) as max_date
@@ -555,49 +799,31 @@ const documents = {
     return result || { min_date: null, max_date: null };
   },
 
+  getDateRangeFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `d.date_created IS NOT NULL`,
+      `d.date_created != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const result = get(`
+      SELECT MIN(d.date_created) as min_date, MAX(d.date_created) as max_date
+      FROM documents d
+      ${where}
+    `, params);
+    return result || { min_date: null, max_date: null };
+  },
+
   getAllFiltered(limit = 20, offset = 0, opts = {}, filters = {}) {
-    const { userId, isAdmin, accessAll } = opts;
-    const { collectionId, docTypes, locations, dateFrom, dateTo } = filters;
-
-    const conditions = [];
-    const params = [];
-
-    // Access control
-    if (!isAdmin && !accessAll && userId) {
-      conditions.push(`d.id IN (
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-        WHERE uca.user_id = ?
-        UNION
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN collections col ON dc.collection_id = col.id
-        WHERE col.is_public = 1
-      )`);
-      params.push(userId);
-    }
-
-    if (collectionId) {
-      conditions.push(`d.id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)`);
-      params.push(collectionId);
-    }
-    if (docTypes && docTypes.length > 0) {
-      const placeholders = docTypes.map(() => '?').join(',');
-      conditions.push(`json_extract(d.metadata, '$.document_type') IN (${placeholders})`);
-      params.push(...docTypes);
-    }
-    if (locations && locations.length > 0) {
-      const placeholders = locations.map(() => 'LOWER(TRIM(?))').join(',');
-      conditions.push(`LOWER(TRIM(json_extract(d.metadata, '$.location'))) IN (${placeholders})`);
-      params.push(...locations);
-    }
-    if (dateFrom) {
-      conditions.push(`d.date_created >= ?`);
-      params.push(dateFrom);
-    }
-    if (dateTo) {
-      conditions.push(`d.date_created <= ?`);
-      params.push(dateTo);
-    }
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions(filters);
+    const conditions = [...access.conditions, ...scoped.conditions];
+    const params = [...access.params, ...scoped.params];
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
@@ -719,8 +945,9 @@ const transcripts = {
       accessClause = `AND d.id IN (
         SELECT dc.document_id FROM document_collections dc
         INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-        WHERE uca.user_id = ${parseInt(userId)}
+        WHERE uca.user_id = ?
       )`;
+      params.push(userId);
     }
 
     params.push(limit);
@@ -755,8 +982,16 @@ const transcripts = {
         }
       }
       if (!snippet) snippet = row.content.substring(0, 200) + (row.content.length > 200 ? '...' : '');
+      // Escape HTML to prevent XSS, then safely highlight search terms
+      snippet = snippet
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
       for (const term of searchTerms) {
-        const regex = new RegExp(`(${term})`, 'gi');
+        // Escape regex special chars to prevent ReDoS
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(${escaped})`, 'gi');
         snippet = snippet.replace(regex, '<mark>$1</mark>');
       }
       return { ...row, snippet };
@@ -773,6 +1008,10 @@ const annotations = {
       WHERE transcript_id = ?
       ORDER BY position_start, created_at
     `, [transcriptId]);
+  },
+
+  getById(id) {
+    return get('SELECT * FROM annotations WHERE id = ?', [id]);
   },
 
   create(annotation) {
@@ -810,26 +1049,47 @@ const users = {
     return get('SELECT * FROM users WHERE username = ?', [username]);
   },
 
+  findByEmail(email) {
+    return get('SELECT * FROM users WHERE email = ?', [email]);
+  },
+
   getAll() {
-    return all('SELECT id, username, email, role, status, access_all, created_at FROM users ORDER BY created_at');
+    return all(`
+      SELECT
+        id, username, email, role, status, access_all, can_use_system_api_keys,
+        mfa_method, created_at
+      FROM users
+      ORDER BY created_at
+    `);
   },
 
   getPending() {
     return all("SELECT id, username, email, created_at FROM users WHERE status = 'pending' ORDER BY created_at");
   },
 
-  create({ username, email, passwordHash, role, status }) {
+  create({ username, email, passwordHash, role, status, accessAll, canUseSystemApiKeys, inviteId }) {
     const result = run(
-      'INSERT INTO users (username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?)',
-      [username, email || null, passwordHash, role || 'user', status || 'pending']
+      `INSERT INTO users
+        (username, email, password_hash, role, status, access_all, can_use_system_api_keys, invite_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        username,
+        email || null,
+        passwordHash,
+        role || 'user',
+        status || 'pending',
+        accessAll ? 1 : 0,
+        canUseSystemApiKeys ? 1 : 0,
+        inviteId || null
+      ]
     );
     return result.lastInsertRowid;
   },
 
-  approve(id, { role, accessAll }) {
+  approve(id, { role, accessAll, canUseSystemApiKeys }) {
     run(
-      "UPDATE users SET status = 'active', role = ?, access_all = ? WHERE id = ?",
-      [role || 'user', accessAll ? 1 : 0, id]
+      "UPDATE users SET status = 'active', role = ?, access_all = ?, can_use_system_api_keys = ? WHERE id = ?",
+      [role || 'user', accessAll ? 1 : 0, canUseSystemApiKeys ? 1 : 0, id]
     );
   },
 
@@ -845,8 +1105,235 @@ const users = {
     run('UPDATE users SET access_all = ? WHERE id = ?', [accessAll ? 1 : 0, id]);
   },
 
+  setCanUseSystemApiKeys(id, enabled) {
+    run('UPDATE users SET can_use_system_api_keys = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+  },
+
+  updateEmail(id, email) {
+    run('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+  },
+
+  updatePassword(id, passwordHash) {
+    run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, id]);
+  },
+
+  setMfaMethod(id, method) {
+    run('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
+  },
+
+  setTotpSecret(id, secret) {
+    const storedSecret = secret ? encryptSecret(secret) : null;
+    run('UPDATE users SET mfa_totp_secret = ? WHERE id = ?', [storedSecret, id]);
+  },
+
+  getTotpSecret(id) {
+    const row = get('SELECT mfa_totp_secret FROM users WHERE id = ?', [id]);
+    return row?.mfa_totp_secret ? decryptSecret(row.mfa_totp_secret) : null;
+  },
+
+  storeEmailOtp(id, code, expiresAt) {
+    run(
+      'UPDATE users SET mfa_email_otp_hash = ?, mfa_email_otp_expires_at = ?, mfa_email_otp_sent_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [hashOtpCode(code), expiresAt, id]
+    );
+  },
+
+  clearEmailOtp(id) {
+    run(
+      'UPDATE users SET mfa_email_otp_hash = NULL, mfa_email_otp_expires_at = NULL, mfa_email_otp_sent_at = NULL WHERE id = ?',
+      [id]
+    );
+  },
+
+  verifyEmailOtp(id, code) {
+    const row = get('SELECT mfa_email_otp_hash, mfa_email_otp_expires_at FROM users WHERE id = ?', [id]);
+    if (!row?.mfa_email_otp_hash || !row?.mfa_email_otp_expires_at) return false;
+    if (new Date(row.mfa_email_otp_expires_at).getTime() < Date.now()) return false;
+    return row.mfa_email_otp_hash === hashOtpCode(code);
+  },
+
   delete(id) {
     return run('DELETE FROM users WHERE id = ?', [id]);
+  }
+};
+
+const userInvites = {
+  create({ email, tokenHash, role, accessAll, canUseSystemApiKeys, collectionIds, invitedBy, expiresAt }) {
+    const result = run(`
+      INSERT INTO user_invites
+        (email, token_hash, role, access_all, can_use_system_api_keys, collection_ids, invited_by, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      email,
+      tokenHash,
+      role || 'user',
+      accessAll ? 1 : 0,
+      canUseSystemApiKeys ? 1 : 0,
+      JSON.stringify(normalizeCollectionIds(collectionIds)),
+      invitedBy || null,
+      expiresAt
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  getActive() {
+    return all(`
+      SELECT i.*, u.username AS invited_by_username
+      FROM user_invites i
+      LEFT JOIN users u ON u.id = i.invited_by
+      WHERE i.accepted_at IS NULL
+        AND i.revoked_at IS NULL
+        AND datetime(i.expires_at) > datetime('now')
+      ORDER BY i.created_at DESC
+    `).map(invite => ({
+      ...invite,
+      collection_ids: parseInviteCollectionIds(invite.collection_ids)
+    }));
+  },
+
+  findByTokenHash(tokenHash) {
+    const invite = get('SELECT * FROM user_invites WHERE token_hash = ?', [tokenHash]);
+    return invite ? { ...invite, collection_ids: parseInviteCollectionIds(invite.collection_ids) } : null;
+  },
+
+  revoke(id) {
+    run('UPDATE user_invites SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  },
+
+  markAccepted(id, userId) {
+    run(
+      'UPDATE user_invites SET accepted_at = CURRENT_TIMESTAMP, accepted_by_user_id = ? WHERE id = ?',
+      [userId, id]
+    );
+  }
+};
+
+const userApiKeys = {
+  getByUserId(userId) {
+    return all(`
+      SELECT id, user_id, provider, label, created_at, updated_at, last_used_at
+      FROM user_api_keys
+      WHERE user_id = ?
+      ORDER BY provider, label, created_at
+    `, [userId]);
+  },
+
+  getByIdForUser(id, userId) {
+    return get(`
+      SELECT id, user_id, provider, label, encrypted_key, created_at, updated_at, last_used_at
+      FROM user_api_keys
+      WHERE id = ? AND user_id = ?
+    `, [id, userId]);
+  },
+
+  create({ userId, provider, label, apiKey }) {
+    const result = run(`
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key)
+      VALUES (?, ?, ?, ?)
+    `, [
+      userId,
+      provider,
+      label,
+      encryptSecret(apiKey)
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  update(id, userId, { label, apiKey }) {
+    if (label != null && apiKey != null) {
+      run(
+        'UPDATE user_api_keys SET label = ?, encrypted_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+        [label, encryptSecret(apiKey), id, userId]
+      );
+    } else if (label != null) {
+      run('UPDATE user_api_keys SET label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [label, id, userId]);
+    } else if (apiKey != null) {
+      run(
+        'UPDATE user_api_keys SET encrypted_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+        [encryptSecret(apiKey), id, userId]
+      );
+    }
+  },
+
+  delete(id, userId) {
+    run('DELETE FROM user_api_keys WHERE id = ? AND user_id = ?', [id, userId]);
+  },
+
+  getResolvedForUser(id, userId) {
+    const row = this.getByIdForUser(id, userId);
+    if (!row) return null;
+    return {
+      ...row,
+      api_key: decryptSecret(row.encrypted_key),
+      masked_key: maskSecret(decryptSecret(row.encrypted_key))
+    };
+  },
+
+  markUsed(id, userId) {
+    run('UPDATE user_api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?', [id, userId]);
+  },
+
+  getProviderOptionsForUser(userId) {
+    return this.getByUserId(userId).reduce((acc, key) => {
+      if (!acc[key.provider]) acc[key.provider] = [];
+      acc[key.provider].push({
+        id: key.id,
+        label: key.label,
+        provider: key.provider,
+        type: 'user'
+      });
+      return acc;
+    }, {});
+  }
+};
+
+const passwordResetTokens = {
+  create({ userId, tokenHash, createdBy, expiresAt }) {
+    run(
+      `UPDATE password_reset_tokens
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?
+         AND used_at IS NULL
+         AND revoked_at IS NULL
+         AND datetime(expires_at) > datetime('now')`,
+      [userId]
+    );
+
+    const result = run(`
+      INSERT INTO password_reset_tokens (user_id, token_hash, created_by, expires_at)
+      VALUES (?, ?, ?, ?)
+    `, [userId, tokenHash, createdBy || null, expiresAt]);
+    return result.lastInsertRowid;
+  },
+
+  findByTokenHash(tokenHash) {
+    return get(`
+      SELECT prt.*, u.username, u.email
+      FROM password_reset_tokens prt
+      INNER JOIN users u ON u.id = prt.user_id
+      WHERE prt.token_hash = ?
+    `, [tokenHash]);
+  },
+
+  isUsable(tokenHash) {
+    const row = this.findByTokenHash(tokenHash);
+    if (!row) return false;
+    if (row.used_at || row.revoked_at) return false;
+    if (new Date(row.expires_at).getTime() < Date.now()) return false;
+    return true;
+  },
+
+  markUsed(id) {
+    run('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  },
+
+  revokeForUser(userId) {
+    run(
+      `UPDATE password_reset_tokens
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL`,
+      [userId]
+    );
   }
 };
 
@@ -862,8 +1349,40 @@ const collections = {
     `);
   },
 
+  getAllWithThumbnails() {
+    return all(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) as document_count,
+             COALESCE(
+               (SELECT d.image_path FROM documents d WHERE d.id = c.preview_document_id),
+               (SELECT d.image_path FROM documents d
+                INNER JOIN document_collections dc ON d.id = dc.document_id
+                WHERE dc.collection_id = c.id
+                ORDER BY d.created_at DESC LIMIT 1)
+             ) as thumbnail
+      FROM collections c
+      ORDER BY c.name
+    `);
+  },
+
   getById(id) {
     return get('SELECT * FROM collections WHERE id = ?', [id]);
+  },
+
+  canAccess(collectionId, userId, isAdmin, accessAll) {
+    if (isAdmin || accessAll) return true;
+    if (!userId) return false;
+
+    const result = get(`
+      SELECT c.id
+      FROM collections c
+      LEFT JOIN user_collection_access uca
+        ON c.id = uca.collection_id AND uca.user_id = ?
+      WHERE c.id = ?
+        AND (c.is_public = 1 OR uca.user_id IS NOT NULL)
+    `, [userId, collectionId]);
+
+    return !!result;
   },
 
   create({ name, description, is_public, createdBy }) {
@@ -877,6 +1396,21 @@ const collections = {
   update(id, { name, description, is_public }) {
     run('UPDATE collections SET name = ?, description = ?, is_public = ? WHERE id = ?',
       [name, description || null, is_public ? 1 : 0, id]);
+  },
+
+  setPreviewDocument(id, documentId) {
+    if (documentId != null) {
+      const belongsToCollection = get(`
+        SELECT 1
+        FROM document_collections
+        WHERE collection_id = ? AND document_id = ?
+      `, [id, documentId]);
+      if (!belongsToCollection) {
+        throw new Error('Preview document must belong to the collection');
+      }
+    }
+    run('UPDATE collections SET preview_document_id = ? WHERE id = ?',
+      [documentId || null, id]);
   },
 
   delete(id) {
@@ -965,19 +1499,33 @@ const userCollectionAccess = {
 const settings = {
   get(key) {
     const row = get('SELECT value FROM settings WHERE key = ?', [key]);
-    return row ? row.value : null;
+    if (!row) return null;
+    if (!SECRET_SETTING_KEYS.has(key) || row.value == null) return row.value;
+    return decryptSecret(row.value);
   },
 
   getAll() {
     const rows = all('SELECT key, value FROM settings');
     return rows.reduce((acc, { key, value }) => {
-      acc[key] = value;
+      acc[key] = SECRET_SETTING_KEYS.has(key) && value != null
+        ? decryptSecret(value)
+        : value;
       return acc;
     }, {});
   },
 
   set(key, value) {
-    run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
+    const storedValue = SECRET_SETTING_KEYS.has(key) && value != null && value !== ''
+      ? encryptSecret(value)
+      : value;
+    run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, storedValue]);
+  },
+
+  hasSystemKeyForProvider(provider) {
+    if (provider === 'openai') return !!(this.get('openai_api_key') || process.env.OPENAI_API_KEY);
+    if (provider === 'claude') return !!(this.get('anthropic_api_key') || process.env.ANTHROPIC_API_KEY);
+    if (provider === 'ollama' || provider === 'lmstudio') return true;
+    return false;
   }
 };
 
@@ -992,6 +1540,9 @@ module.exports = {
   transcripts,
   annotations,
   users,
+  userInvites,
+  userApiKeys,
+  passwordResetTokens,
   collections,
   documentCollections,
   userCollectionAccess,

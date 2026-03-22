@@ -1,18 +1,29 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { documents, transcripts, settings, collections, documentCollections, users, transcriptionJobs, importJobs, saveDatabase } = require('../database/db');
+const { canEncryptSecrets } = require('../utils/secrets');
+const { documents, transcripts, settings, collections, documentCollections, users, transcriptionJobs, importJobs, saveDatabase, userApiKeys } = require('../database/db');
 const { createProvider, listProviders, listConfiguredProviders } = require('../utils/llm');
+const { buildProviderAccessOptions, resolveProviderSelection } = require('../utils/provider-access');
 const { savePdfPages } = require('../utils/pdf');
 
 // ── In-memory job store for background PDF processing ──────────────────────
-const jobs = new Map(); // jobId → { status, progress, pageCount, pages, error }
+const jobs = new Map(); // jobId → { status, progress, pageCount, pages, error, createdAt }
+const JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 function createJob() {
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  jobs.set(id, { status: 'processing', progress: 0, pageCount: null, pages: [], error: null });
+  const id = crypto.randomBytes(16).toString('hex');
+  jobs.set(id, { status: 'processing', progress: 0, pageCount: null, pages: [], error: null, createdAt: Date.now() });
+  // Periodically clean up stale jobs
+  if (jobs.size > 50) {
+    const now = Date.now();
+    for (const [key, job] of jobs) {
+      if (now - job.createdAt > JOB_TTL_MS) jobs.delete(key);
+    }
+  }
   return id;
 }
 
@@ -57,37 +68,47 @@ router.get('/settings', (req, res) => {
     pageTitle: 'LLM Settings',
     cfg: settings.getAll(),
     providers: listProviders(),
-    saved: req.query.saved === '1'
+    saved: req.query.saved === '1',
+    error: req.query.error || null,
+    hasEncryptionKey: canEncryptSecrets()
   });
 });
 
 // Save settings
 router.post('/settings', express.urlencoded({ extended: false }), (req, res) => {
-  // Non-secret fields: always save (even if empty)
-  const plainFields = [
-    'default_provider',
-    'openai_model',
-    'anthropic_model',
-    'ollama_base_url', 'ollama_model',
-    'lmstudio_base_url', 'lmstudio_model'
-  ];
-  for (const field of plainFields) {
-    if (req.body[field] !== undefined) settings.set(field, req.body[field]);
-  }
-  // Secret fields: only overwrite if a new non-empty value was submitted
-  const secretFields = ['openai_api_key', 'anthropic_api_key'];
-  for (const field of secretFields) {
-    if (req.body[field] && req.body[field].trim() !== '') {
-      settings.set(field, req.body[field].trim());
+  try {
+    // Non-secret fields: always save (even if empty)
+    const plainFields = [
+      'default_provider',
+      'openai_model',
+      'anthropic_model',
+      'ollama_base_url', 'ollama_model',
+      'lmstudio_base_url', 'lmstudio_model'
+    ];
+    for (const field of plainFields) {
+      if (req.body[field] !== undefined) settings.set(field, req.body[field]);
     }
+    // Secret fields: only overwrite if a new non-empty value was submitted
+    const secretFields = ['openai_api_key', 'anthropic_api_key'];
+    const hasSecretUpdates = secretFields.some(field => req.body[field] && req.body[field].trim() !== '');
+    if (hasSecretUpdates && !canEncryptSecrets()) {
+      throw new Error('DATA_ENCRYPTION_KEY is not configured. Add it to .env before saving API keys.');
+    }
+    for (const field of secretFields) {
+      if (req.body[field] && req.body[field].trim() !== '') {
+        settings.set(field, req.body[field].trim());
+      }
+    }
+    saveDatabase();
+    res.redirect('/admin/settings?saved=1');
+  } catch (err) {
+    res.redirect('/admin/settings?error=' + encodeURIComponent(err.message));
   }
-  saveDatabase();
-  res.redirect('/admin/settings?saved=1');
 });
 
 // Import page
 router.get('/import', (req, res) => {
-  const configuredProviders = listConfiguredProviders();
+  const providerOptions = buildProviderAccessOptions(req.user);
 
   // If resuming from a completed import job, pass the job data
   let resumeJob = null;
@@ -104,8 +125,8 @@ router.get('/import', (req, res) => {
 
   res.render('admin/import', {
     pageTitle: 'Import Document',
-    providers: configuredProviders,
-    hasNoProviders: configuredProviders.length === 0,
+    providerOptions,
+    hasNoProviders: providerOptions.length === 0,
     allCollections: collections.getAll(),
     resumeJob
   });
@@ -278,14 +299,15 @@ router.get('/api/temp-image/:filename', (req, res) => {
 
 // API: Transcribe a single image (by temp filename)
 router.post('/api/transcribe', express.json(), async (req, res) => {
-  const { tempFile, provider: providerName = 'openai', temperature } = req.body;
+  const { tempFile, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
   const filePath = path.join(tempDir, tempFile.replace(/[^a-zA-Z0-9_.-]/g, ''));
   if (!fs.existsSync(filePath)) return res.status(400).json({ error: 'Temp file not found' });
 
   try {
-    const provider = createProvider(providerName);
+    const selection = resolveProviderSelection(req.user, providerName, credentialSource);
+    const provider = createProvider(providerName, selection.runtimeConfig);
     const imageBuffer = fs.readFileSync(filePath);
     const mimeType = 'image/png';
     const opts = {
@@ -303,6 +325,10 @@ router.post('/api/transcribe', express.json(), async (req, res) => {
       notes: result.notes,
       paradata: result.paradata || null
     });
+    if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
+      userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
+      saveDatabase();
+    }
   } catch (err) {
     console.error('Transcription error:', err);
     res.status(500).json({ error: err.message });
@@ -311,13 +337,14 @@ router.post('/api/transcribe', express.json(), async (req, res) => {
 
 // API: Transcribe a group of pages (multi-page document)
 router.post('/api/transcribe-group', express.json(), async (req, res) => {
-  const { tempFiles, provider: providerName = 'openai', temperature } = req.body;
+  const { tempFiles, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
   if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
     return res.status(400).json({ error: 'No files specified' });
   }
 
   try {
-    const provider = createProvider(providerName);
+    const selection = resolveProviderSelection(req.user, providerName, credentialSource);
+    const provider = createProvider(providerName, selection.runtimeConfig);
     const opts = {
       temperature: temperature !== '' && temperature != null
         ? parseFloat(temperature)
@@ -356,6 +383,10 @@ router.post('/api/transcribe-group', express.json(), async (req, res) => {
     }
 
     res.json({ success: true, ...combined });
+    if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
+      userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
+      saveDatabase();
+    }
   } catch (err) {
     console.error('Group transcription error:', err);
     res.status(500).json({ error: err.message });
@@ -374,11 +405,14 @@ router.post('/api/save-document', express.json(), async (req, res) => {
     collectionIds,
     transcriptionMode,
     provider,
+    credentialSource,
     temperature
   } = req.body;
 
   const isAiMode = transcriptionMode === 'ai';
-  const files = tempFiles || (tempFile ? [tempFile] : []);
+  const rawFiles = tempFiles || (tempFile ? [tempFile] : []);
+  // Sanitize all temp filenames to prevent path traversal
+  const files = rawFiles.map(f => path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '')).filter(Boolean);
   if (files.length === 0) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -451,18 +485,25 @@ router.post('/api/save-document', express.json(), async (req, res) => {
     let jobId = null;
 
     if (isAiMode) {
+      const selection = resolveProviderSelection(req.user, provider || settings.get('default_provider') || 'openai', credentialSource || 'system');
       // Queue background transcription job
       const additionalImagePaths = additionalPages.length > 0 ? additionalPages : null;
       const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
       jobId = transcriptionJobs.create({
         document_id: docId,
-        provider: provider || null,
+        provider: selection.provider || provider || null,
         model: null,
         temperature: !isNaN(tempVal) ? tempVal : null,
         initiated_by: initiatedBy || null,
         image_path: `/uploads/${filename}`,
-        additional_image_paths: additionalImagePaths
+        additional_image_paths: additionalImagePaths,
+        provider_key_scope: selection.providerKeyScope,
+        user_api_key_id: selection.userApiKeyId,
+        requested_by_user_id: req.user.id
       });
+      if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
+        userApiKeys.markUsed(selection.userApiKeyId, req.user.id);
+      }
     } else {
       // Save transcript immediately (manual mode)
       const pd = paradata || {};
@@ -498,13 +539,14 @@ router.post('/api/save-document', express.json(), async (req, res) => {
 
 // API: Bulk submit pages (groups + ungrouped) — creates documents & queues transcription
 router.post('/api/submit-pages', express.json(), async (req, res) => {
-  const { groups, originalName, provider, temperature, initiatedBy, collectionIds, importJobId } = req.body;
+  const { groups, originalName, provider, credentialSource, temperature, initiatedBy, collectionIds, importJobId } = req.body;
 
   if (!Array.isArray(groups) || groups.length === 0) {
     return res.status(400).json({ error: 'No documents to submit' });
   }
 
   try {
+    const selection = resolveProviderSelection(req.user, provider || settings.get('default_provider') || 'openai', credentialSource || 'system');
     const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
     if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -512,8 +554,11 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
     const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
 
     for (const group of groups) {
-      const files = group.tempFiles;
-      if (!files || files.length === 0) continue;
+      const rawGroupFiles = group.tempFiles;
+      if (!rawGroupFiles || rawGroupFiles.length === 0) continue;
+      // Sanitize temp filenames
+      const files = rawGroupFiles.map(f => path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '')).filter(Boolean);
+      if (files.length === 0) continue;
 
       // Move first page as primary image
       const firstFile = files[0];
@@ -571,12 +616,15 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
       // Queue transcription job
       const jobId = transcriptionJobs.create({
         document_id: docId,
-        provider: provider || null,
+        provider: selection.provider || provider || null,
         model: null,
         temperature: !isNaN(tempVal) ? tempVal : null,
         initiated_by: initiatedBy || null,
         image_path: `/uploads/${filename}`,
-        additional_image_paths: additionalPages.length > 0 ? additionalPages : null
+        additional_image_paths: additionalPages.length > 0 ? additionalPages : null,
+        provider_key_scope: selection.providerKeyScope,
+        user_api_key_id: selection.userApiKeyId,
+        requested_by_user_id: req.user.id
       });
 
       savedDocs.push({ documentId: docId, jobId });
@@ -606,7 +654,12 @@ router.post('/api/cancel-import', express.json(), (req, res) => {
   const files = tempFiles || (tempFile ? [tempFile] : []);
   for (const f of files) {
     try {
-      const tempPath = path.join(tempDir, f);
+      // Sanitize filename to prevent path traversal
+      const safeName = path.basename(String(f)).replace(/[^a-zA-Z0-9_.-]/g, '');
+      if (!safeName) continue;
+      const tempPath = path.join(tempDir, safeName);
+      // Ensure resolved path is still inside tempDir
+      if (!tempPath.startsWith(tempDir)) continue;
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     } catch (e) {}
   }

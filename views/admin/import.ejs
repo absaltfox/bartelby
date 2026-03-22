@@ -45,10 +45,16 @@
       <div class="provider-select">
         <label for="provider">AI Provider:</label>
         <select id="provider">
-          <% providers.forEach(p => { %>
-            <option value="<%= p %>"><%= p.charAt(0).toUpperCase() + p.slice(1) %></option>
+          <% providerOptions.forEach(option => { %>
+            <option value="<%= option.provider %>"><%= option.label %></option>
           <% }) %>
         </select>
+      </div>
+
+      <div class="provider-select">
+        <label for="credential-source">Credentials:</label>
+        <select id="credential-source"></select>
+        <p class="field-hint">Choose between a system credential and one of your own private API keys for this provider.</p>
       </div>
 
       <div class="paradata-fields">
@@ -73,7 +79,24 @@
       <span class="step-title">Organize Pages</span>
     </div>
 
-    <p class="step-subtitle">Your PDF has been split into individual pages. Select pages and group them if they belong to the same document. Ungrouped pages will be imported individually. Click any thumbnail to zoom in.</p>
+    <div class="step-intro">
+      <p class="step-subtitle">Your PDF has been split into individual pages.</p>
+      <p class="step-subtitle-detail">Select pages and group them when they belong to the same document. Any ungrouped pages will be imported individually, and you can click any thumbnail to zoom in.</p>
+
+      <% if (allCollections.length > 0) { %>
+        <div class="step-pages-collections">
+          <h3>Add Imported Documents To</h3>
+          <div class="collection-checkboxes" id="step-pages-collection-checkboxes">
+            <% allCollections.forEach(function(c) { %>
+              <label class="collection-access-item">
+                <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>">
+                <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
+              </label>
+            <% }) %>
+          </div>
+        </div>
+      <% } %>
+    </div>
 
     <div class="page-manager">
       <div class="page-grid" id="page-grid">
@@ -218,7 +241,7 @@
             <div class="collection-checkboxes" id="collection-checkboxes">
               <% allCollections.forEach(function(c) { %>
                 <label class="collection-access-item">
-                  <input type="checkbox" class="collection-cb" data-id="<%= c.id %>">
+                  <input type="checkbox" class="review-collection-cb" data-id="<%= c.id %>">
                   <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
                 </label>
               <% }) %>
@@ -267,10 +290,9 @@
 </div>
 
 <% if (resumeJob) { %>
-<script>
-  window.__resumeImportJob = <%- JSON.stringify(resumeJob) %>;
-</script>
+<script id="resume-import-job" type="application/json"><%- JSON.stringify(resumeJob).replace(/</g, '\\u003c') %></script>
 <% } %>
+<script id="provider-options-data" type="application/json"><%- JSON.stringify(providerOptions).replace(/</g, '\\u003c') %></script>
 <script src="/js/admin-import.js"></script>
 
 <%- include('../partials/footer') %>
