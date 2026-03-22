@@ -7,4 +7,6 @@ documents/
 .env
 .env.local
 .DS_Store
+*.swp
+*.swo
 .claude/

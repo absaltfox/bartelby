@@ -1,7 +1,7 @@
 'use strict';
 
 const { createCanvas } = require('canvas');
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
 const storage = require('./storage');
 
 const RENDER_SCALE = 2.0; // 2x for decent quality page images

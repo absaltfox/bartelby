@@ -64,7 +64,7 @@
                 <td class="user-date-cell"><%= new Date(invite.expires_at).toLocaleDateString() %></td>
                 <td class="user-actions-cell">
                   <form method="POST" action="/admin/users/invites/<%= invite.id %>/revoke" class="inline-form"
-                        onsubmit="return confirm('Revoke the invitation for <%= invite.email %>?')">
+                        onsubmit="return confirm('Revoke the invitation for ' + this.dataset.name + '?')" data-name="<%= invite.email %>">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete">Revoke</button>
                   </form>
@@ -106,7 +106,7 @@
                 <td class="user-actions-cell">
                   <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Review &amp; Approve</a>
                   <form method="POST" action="/admin/users/<%= u.id %>/reject" class="inline-form"
-                        onsubmit="return confirm('Reject <%= u.username %>\'s request?')">
+                        onsubmit="return confirm('Reject ' + this.dataset.name + '\'s request?')" data-name="<%= u.username %>">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete">Reject</button>
                   </form>
@@ -172,12 +172,12 @@
                     <div class="user-actions-stack">
                       <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote">Edit Access</a>
                       <form method="POST" action="/admin/users/<%= u.id %>/password-reset" class="inline-form"
-                          onsubmit="return confirm('Create a password reset link for <%= u.username %>?')">
+                          onsubmit="return confirm('Create a password reset link for ' + this.dataset.name + '?')" data-name="<%= u.username %>">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn-action btn-promote">Send Reset Link</button>
                       </form>
                       <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
-                          onsubmit="return confirm('Delete user <%= u.username %>?')">
+                          onsubmit="return confirm('Delete user ' + this.dataset.name + '?')" data-name="<%= u.username %>">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn-action btn-delete">Delete</button>
                       </form>
@@ -212,7 +212,7 @@
                 <td class="user-actions-cell">
                   <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote">Approve</a>
                   <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form"
-                        onsubmit="return confirm('Permanently delete <%= u.username %>?')">
+                        onsubmit="return confirm('Permanently delete ' + this.dataset.name + '?')" data-name="<%= u.username %>">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete">Delete</button>
                   </form>

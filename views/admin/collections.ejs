@@ -66,7 +66,7 @@
                 <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="access-<%= c.id %>" data-collection-id="<%= c.id %>">Access</button>
               <% } %>
               <form method="POST" action="/admin/collections/<%= c.id %>/delete" style="display:inline"
-                    onsubmit="return confirm('Delete collection &quot;<%= c.name %>&quot;? Documents will not be deleted.')">
+                    onsubmit="return confirm('Delete collection \u0022' + this.dataset.name + '\u0022? Documents will not be deleted.')" data-name="<%= c.name %>">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
               </form>

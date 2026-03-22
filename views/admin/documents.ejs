@@ -79,7 +79,7 @@
                     data-collection-ids="<%= (doc.collections || []).map(c => c.id).join(',') %>"
                     title="Edit collections">&#9998;</button>
             <form method="POST" action="/admin/documents/<%= doc.id %>/delete" style="display:inline"
-                  onsubmit="return confirm('Delete &quot;<%= doc.title.replace(/'/g, "\\'") %>&quot; and all its transcriptions?')">
+                  onsubmit="return confirm('Delete \u0022' + this.dataset.name + '\u0022 and all its transcriptions?')" data-name="<%= doc.title %>">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button type="submit" class="btn-card-delete" title="Delete">&times;</button>
             </form>

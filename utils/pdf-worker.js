@@ -8,7 +8,7 @@ process.on('message', async (msg) => {
   const { pdfTempFile, dbJobId, originalName } = msg;
 
   try {
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
     const { createCanvas } = require('canvas');
 
     const pdfBuffer = storage.readTempFile(pdfTempFile);

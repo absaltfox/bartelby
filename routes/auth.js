@@ -35,6 +35,7 @@ function completeLogin(req, res, next, user, returnTo) {
     req.logIn(user, (loginErr) => {
       if (loginErr) return next(loginErr);
       delete req.session.pendingLogin;
+      req.session.authenticatedAt = Date.now();
       res.redirect(returnTo || '/');
     });
   });
@@ -402,6 +403,7 @@ router.post('/reset-password/:token', async (req, res) => {
 
   const passwordHash = bcrypt.hashSync(password, 12);
   await usersAsync.updatePassword(reset.user_id, passwordHash);
+  await usersAsync.updatePasswordChangedAt(reset.user_id);
   await passwordResetTokensAsync.markUsed(reset.id);
   await passwordResetTokensAsync.revokeForUser(reset.user_id);
 

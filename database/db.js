@@ -4,6 +4,7 @@ const {
   encryptSecret,
   decryptSecret
 } = require('../utils/secrets');
+const crypto = require('crypto');
 const { hashOtpCode } = require('../utils/mfa');
 const { initDriver } = require('./driver');
 
@@ -232,6 +233,10 @@ const MIGRATIONS = [
   );
   CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
   CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+  `,
+  // v12 — track password changes for session invalidation
+  `
+  ALTER TABLE users ADD COLUMN password_changed_at DATETIME;
   `
 ];
 
@@ -1098,6 +1103,10 @@ const users = {
     run('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, id]);
   },
 
+  updatePasswordChangedAt(id) {
+    run('UPDATE users SET password_changed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  },
+
   setMfaMethod(id, method) {
     run('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
   },
@@ -1130,7 +1139,9 @@ const users = {
     const row = get('SELECT mfa_email_otp_hash, mfa_email_otp_expires_at FROM users WHERE id = ?', [id]);
     if (!row?.mfa_email_otp_hash || !row?.mfa_email_otp_expires_at) return false;
     if (new Date(row.mfa_email_otp_expires_at).getTime() < Date.now()) return false;
-    return row.mfa_email_otp_hash === hashOtpCode(code);
+    const stored = Buffer.from(row.mfa_email_otp_hash);
+    const computed = Buffer.from(hashOtpCode(code));
+    return stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
   },
 
   delete(id) {
@@ -2315,6 +2326,10 @@ const usersAsync = {
     await runAsync('UPDATE users SET password_hash = ? WHERE id = ?', [passwordHash, id]);
   },
 
+  async updatePasswordChangedAt(id) {
+    await runAsync('UPDATE users SET password_changed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+  },
+
   async approve(id, { role, accessAll, canUseSystemApiKeys }) {
     await runAsync(
       "UPDATE users SET status = 'active', role = ?, access_all = ?, can_use_system_api_keys = ? WHERE id = ?",
@@ -2374,7 +2389,9 @@ const usersAsync = {
     const row = await getAsync('SELECT mfa_email_otp_hash, mfa_email_otp_expires_at FROM users WHERE id = ?', [id]);
     if (!row?.mfa_email_otp_hash || !row?.mfa_email_otp_expires_at) return false;
     if (new Date(row.mfa_email_otp_expires_at).getTime() < Date.now()) return false;
-    return row.mfa_email_otp_hash === hashOtpCode(code);
+    const stored = Buffer.from(row.mfa_email_otp_hash);
+    const computed = Buffer.from(hashOtpCode(code));
+    return stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
   },
 
   async delete(id) {

@@ -97,7 +97,7 @@
 
     <% if (!editMode) { %>
       <form id="reject-form" method="POST" action="/admin/users/<%= approveUser.id %>/reject"
-            onsubmit="return confirm('Reject <%= approveUser.username %>\'s account request?')"><input type="hidden" name="_csrf" value="<%= csrfToken %>"></form>
+            onsubmit="return confirm('Reject ' + this.dataset.name + '\'s account request?')" data-name="<%= approveUser.username %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"></form>
     <% } %>
   </div>
 </div>

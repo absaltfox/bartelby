@@ -93,8 +93,11 @@ function verifyTotp(secret, token, windowSteps = 1, epochMs = Date.now()) {
   if (!/^\d{6}$/.test(normalizedToken) || !secret) return false;
 
   const currentCounter = Math.floor(epochMs / 1000 / 30);
+  const tokenBuf = Buffer.from(normalizedToken);
   for (let offset = -windowSteps; offset <= windowSteps; offset++) {
-    if (hotp(secret, currentCounter + offset) === normalizedToken) {
+    const expected = hotp(secret, currentCounter + offset);
+    if (tokenBuf.length === expected.length &&
+        crypto.timingSafeEqual(tokenBuf, Buffer.from(expected))) {
       return true;
     }
   }

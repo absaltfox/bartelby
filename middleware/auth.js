@@ -47,6 +47,16 @@ passport.deserializeUser(async (id, done) => {
 
 /** Make req.user available in all EJS templates as `currentUser` */
 function locals(req, res, next) {
+  // Invalidate session if password was changed after authentication
+  if (req.isAuthenticated() && req.user.password_changed_at && req.session.authenticatedAt) {
+    if (new Date(req.user.password_changed_at).getTime() > req.session.authenticatedAt) {
+      return req.logout((err) => {
+        if (err) return next(err);
+        req.session.authError = 'Your password was changed. Please sign in again.';
+        return res.redirect('/login');
+      });
+    }
+  }
   res.locals.currentUser = req.user || null;
   res.locals.isAdmin = req.user?.role === 'admin';
   next();

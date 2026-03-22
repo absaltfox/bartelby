@@ -54,31 +54,14 @@ const authLimiter = rateLimit({
 });
 app.use('/login', authLimiter);
 app.use('/register', authLimiter);
+app.use('/reset-password', authLimiter);
 
 // ── Core middleware ────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// When using S3 storage, serve /uploads/* by proxying from S3
-if (config.storage.driver === 's3') {
-  const storage = require('./utils/storage');
-  app.get('/uploads/:filename', async (req, res) => {
-    try {
-      const buffer = await storage.readUploadByUrl(`/uploads/${req.params.filename}`);
-      const ext = path.extname(req.params.filename).toLowerCase();
-      const mimeTypes = {
-        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-        '.png': 'image/png', '.gif': 'image/gif',
-        '.webp': 'image/webp', '.pdf': 'application/pdf'
-      };
-      res.set('Content-Type', mimeTypes[ext] || 'application/octet-stream');
-      res.set('Cache-Control', 'public, max-age=86400');
-      res.send(buffer);
-    } catch (err) {
-      res.status(404).end();
-    }
-  });
-}
+// When using S3 storage, serve /uploads/* by proxying from S3.
+// Auth is deferred until after Passport is initialized (see below).
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -114,7 +97,13 @@ function validateCsrf(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   const token = req.body?._csrf || req.headers['x-csrf-token'];
-  if (!token || token !== req.session.csrfToken) {
+  if (!token || !req.session.csrfToken) {
+    return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
+  }
+  const tokenBuf = Buffer.from(String(token));
+  const expectedBuf = Buffer.from(req.session.csrfToken);
+  if (tokenBuf.length !== expectedBuf.length ||
+      !crypto.timingSafeEqual(tokenBuf, expectedBuf)) {
     return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
   }
   next();
@@ -132,8 +121,30 @@ app.use(locals); // makes currentUser / isAdmin available in all templates
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+// ── Authenticated upload proxy ──────────────────────────────────────────────
+const { requireAuth, requireAdmin, requireAuthApi } = require('./middleware/auth');
+
+if (config.storage.driver === 's3') {
+  const storage = require('./utils/storage');
+  app.get('/uploads/:filename', requireAuth, async (req, res) => {
+    try {
+      const buffer = await storage.readUploadByUrl(`/uploads/${req.params.filename}`);
+      const ext = path.extname(req.params.filename).toLowerCase();
+      const mimeTypes = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.png': 'image/png', '.gif': 'image/gif',
+        '.webp': 'image/webp', '.pdf': 'application/pdf'
+      };
+      res.set('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+      res.set('Cache-Control', 'private, max-age=86400');
+      res.send(buffer);
+    } catch (err) {
+      res.status(404).end();
+    }
+  });
+}
+
 // ── Routes ─────────────────────────────────────────────────────────────────
-const { requireAdmin, requireAuthApi } = require('./middleware/auth');
 
 // Auth routes get CSRF protection on POST
 app.use('/', require('./routes/auth'));
