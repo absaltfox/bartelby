@@ -2378,6 +2378,13 @@ const usersAsync = {
   },
 
   async delete(id) {
+    // Nullify references in tables without ON DELETE CASCADE
+    await runAsync('UPDATE collections SET created_by = NULL WHERE created_by = ?', [id]);
+    await runAsync('UPDATE user_invites SET invited_by = NULL WHERE invited_by = ?', [id]);
+    await runAsync('UPDATE user_invites SET accepted_by_user_id = NULL WHERE accepted_by_user_id = ?', [id]);
+    await runAsync('UPDATE password_reset_tokens SET created_by = NULL WHERE created_by = ?', [id]);
+    // Tables with ON DELETE CASCADE (user_collection_access, user_api_keys, password_reset_tokens.user_id)
+    // are handled automatically by SQLite
     return await runAsync('DELETE FROM users WHERE id = ?', [id]);
   }
 };

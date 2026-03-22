@@ -247,7 +247,12 @@ router.post('/:id/password-reset', async (req, res) => {
 router.post('/:id/delete', async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
-  await usersAsync.delete(id);
+  try {
+    await usersAsync.delete(id);
+  } catch (err) {
+    console.error(`Failed to delete user ${id}:`, err.message);
+    req.session.adminUsersFlash = { error: 'Failed to delete user. They may have associated records.' };
+  }
   res.redirect('/admin/users');
 });
 
