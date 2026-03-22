@@ -31,6 +31,11 @@ app.use(helmet({
   }
 }));
 
+// Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies and rate
+// limiting work correctly behind TLS termination. Must be set before
+// rate limiters, which validate X-Forwarded-For against this setting.
+app.set('trust proxy', 1);
+
 // ── Rate limiting ───────────────────────────────────────────────────────
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -76,9 +81,6 @@ if (config.storage.driver === 's3') {
 }
 
 app.use(express.static(path.join(__dirname, 'public')));
-
-// Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies work behind TLS termination
-app.set('trust proxy', 1);
 
 // ── Sessions ───────────────────────────────────────────────────────────────
 if (!process.env.SESSION_SECRET) {
