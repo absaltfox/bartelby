@@ -120,7 +120,9 @@ router.get('/:id/approve', async (req, res) => {
   res.render('admin/approve-user', {
     pageTitle: `Approve ${user.username}`,
     approveUser: user,
-    allCollections
+    allCollections,
+    grantedIds: [],
+    editMode: false
   });
 });
 
