@@ -237,7 +237,10 @@ const MIGRATIONS = [
   // v12 — track password changes for session invalidation
   `
   ALTER TABLE users ADD COLUMN password_changed_at DATETIME;
-  `
+  `,
+
+  // v13 — track Fly machine ID for ephemeral PDF workers
+  `ALTER TABLE import_jobs ADD COLUMN machine_id TEXT`
 ];
 
 // ── Core database setup ─────────────────────────────────────────────────────
@@ -293,10 +296,12 @@ async function initializeSchema() {
 
   // Recover from unclean shutdown: any jobs left in processing/running
   // can never complete (the process that was handling them is gone).
-  const staleImports = await get("SELECT COUNT(*) as count FROM import_jobs WHERE status = 'processing'");
+  // Skip jobs with a machine_id — they run on ephemeral Fly machines
+  // and may still be processing on a separate VM.
+  const staleImports = await get("SELECT COUNT(*) as count FROM import_jobs WHERE status = 'processing' AND machine_id IS NULL");
   const staleImportCount = staleImports?.count || 0;
   if (staleImportCount > 0) {
-    await db.run("UPDATE import_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'processing'");
+    await db.run("UPDATE import_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'processing' AND machine_id IS NULL");
     console.log(`[db] Marked ${staleImportCount} stale import job(s) as failed`);
   }
 
@@ -509,6 +514,10 @@ const importJobs = {
       counts.total += r.count;
     });
     return counts;
+  },
+
+  updateMachineId(id, machineId) {
+    db.run("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },
 
   markSubmitted(id) {
@@ -1650,6 +1659,10 @@ const importJobsAsync = {
 
   async getAll() {
     return await allAsync('SELECT * FROM import_jobs ORDER BY created_at DESC');
+  },
+
+  async updateMachineId(id, machineId) {
+    await db.run("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },
 
   async markSubmitted(id) {

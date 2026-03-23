@@ -6,6 +6,9 @@
 app = 'bartelby'
 primary_region = 'iad'
 
+[env]
+  FLY_MACHINES_ENABLED = "true"
+
 [build]
 
 [http_service]

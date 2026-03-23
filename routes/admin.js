@@ -180,12 +180,14 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
 
     if (numPages > LARGE_PDF_THRESHOLD) {
       // Large PDF: queue as a persistent background import job
+      const useEphemeralMachine = config.flyMachines.enabled;
+      const s3TempKey = useEphemeralMachine ? `import_${Date.now()}.pdf` : null;
+
       const dbJobId = await importJobsAsync.create({
         original_name: req.file.originalname,
-        file_path: pdfTempFile
+        file_path: useEphemeralMachine ? s3TempKey : pdfTempFile
       });
       if (numPages > LARGE_PDF_THRESHOLD + 1) {
-        // We know the real count (small-file path counted it)
         await importJobsAsync.updateProgress(dbJobId, { page_count: numPages });
       }
 
@@ -197,47 +199,63 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
         originalName: req.file.originalname
       });
 
-      // Process in a child process so it doesn't block the event loop
-      const { fork } = require('child_process');
-      const child = fork(path.join(__dirname, '..', 'utils', 'pdf-worker.js'), [], {
-        stdio: ['pipe', 'inherit', 'inherit', 'ipc']
-      });
-      let childDone = false;
-      child.send({ pdfTempFile, dbJobId, originalName: req.file.originalname });
-      child.on('message', (msg) => {
-        if (msg.type === 'progress') {
-          importJobsAsync.updateProgress(msg.dbJobId, { page_count: msg.pageCount, pages_rendered: msg.pagesRendered }).catch(err => {
-            console.error('Failed to update import job progress:', err);
-          });
-        } else if (msg.type === 'done') {
-          childDone = true;
-          importJobsAsync.markDone(msg.dbJobId, msg.pages).catch(err => {
-            console.error('Failed to mark import job done:', err);
-          });
-          console.log(`[import] PDF "${msg.originalName}" processed: ${msg.pages.length} pages`);
-        } else if (msg.type === 'failed') {
-          childDone = true;
-          importJobsAsync.markFailed(msg.dbJobId, msg.error).catch(err => {
-            console.error('Failed to mark import job failed:', err);
-          });
+      if (useEphemeralMachine) {
+        // Upload PDF to S3 and launch an ephemeral Fly machine
+        try {
+          const pdfBuffer = storage.readTempFile(pdfTempFile);
+          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
+          await storage.putTempObject(s3TempKey, pdfBuffer);
+
+          const flyMachines = require('../utils/fly-machines');
+          const machineId = await flyMachines.runEphemeralWorker(dbJobId);
+          await importJobsAsync.updateMachineId(dbJobId, machineId);
+        } catch (err) {
+          console.error('[import] Failed to launch ephemeral worker:', err);
+          importJobsAsync.markFailed(dbJobId, `Failed to launch worker: ${err.message}`).catch(() => {});
         }
-      });
-      child.on('error', (err) => {
-        console.error('PDF worker process error:', err);
-        if (!childDone) {
-          importJobsAsync.markFailed(dbJobId, err.message).catch(markErr => {
-            console.error('Failed to persist import worker error:', markErr);
-          });
-        }
-      });
-      child.on('exit', (code) => {
-        if (!childDone) {
-          console.error(`PDF worker exited unexpectedly with code ${code}`);
-          importJobsAsync.markFailed(dbJobId, `Worker process exited with code ${code}`).catch(err => {
-            console.error('Failed to persist import worker exit error:', err);
-          });
-        }
-      });
+      } else {
+        // Fallback: process in a local child process (for local dev)
+        const { fork } = require('child_process');
+        const child = fork(path.join(__dirname, '..', 'utils', 'pdf-worker.js'), [], {
+          stdio: ['pipe', 'inherit', 'inherit', 'ipc']
+        });
+        let childDone = false;
+        child.send({ pdfTempFile, dbJobId, originalName: req.file.originalname });
+        child.on('message', (msg) => {
+          if (msg.type === 'progress') {
+            importJobsAsync.updateProgress(msg.dbJobId, { page_count: msg.pageCount, pages_rendered: msg.pagesRendered }).catch(err => {
+              console.error('Failed to update import job progress:', err);
+            });
+          } else if (msg.type === 'done') {
+            childDone = true;
+            importJobsAsync.markDone(msg.dbJobId, msg.pages).catch(err => {
+              console.error('Failed to mark import job done:', err);
+            });
+            console.log(`[import] PDF "${msg.originalName}" processed: ${msg.pages.length} pages`);
+          } else if (msg.type === 'failed') {
+            childDone = true;
+            importJobsAsync.markFailed(msg.dbJobId, msg.error).catch(err => {
+              console.error('Failed to mark import job failed:', err);
+            });
+          }
+        });
+        child.on('error', (err) => {
+          console.error('PDF worker process error:', err);
+          if (!childDone) {
+            importJobsAsync.markFailed(dbJobId, err.message).catch(markErr => {
+              console.error('Failed to persist import worker error:', markErr);
+            });
+          }
+        });
+        child.on('exit', (code) => {
+          if (!childDone) {
+            console.error(`PDF worker exited unexpectedly with code ${code}`);
+            importJobsAsync.markFailed(dbJobId, `Worker process exited with code ${code}`).catch(err => {
+              console.error('Failed to persist import worker exit error:', err);
+            });
+          }
+        });
+      }
 
     } else {
       // Small PDF: inline processing with in-memory job (existing flow)
@@ -358,11 +376,28 @@ router.get('/api/job/:id', (req, res) => {
 });
 
 // API: Serve temp page image (for previews)
-router.get('/api/temp-image/:filename', (req, res) => {
+// Checks local temp dir first, falls back to S3 for images rendered by ephemeral workers.
+router.get('/api/temp-image/:filename', async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
+
+  // Try local first (small PDFs or local dev)
   const filePath = storage.getTempFilePath(filename);
-  if (!filePath || !storage.tempFileExists(filename)) return res.status(404).send('Not found');
-  res.type('image/png').sendFile(filePath);
+  if (filePath && storage.tempFileExists(filename)) {
+    return res.type('image/png').sendFile(filePath);
+  }
+
+  // Fall back to S3 (pages rendered by ephemeral worker)
+  if (config.storage.driver === 's3' && storage.tempObjectExists) {
+    try {
+      const buffer = await storage.getTempObject(filename);
+      res.set('Cache-Control', 'private, max-age=3600');
+      return res.type('image/png').send(buffer);
+    } catch (err) {
+      // Not in S3 either
+    }
+  }
+
+  res.status(404).send('Not found');
 });
 
 // API: Transcribe a single image (by temp filename)

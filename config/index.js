@@ -35,6 +35,15 @@ const config = {
       forcePathStyle: boolEnv('S3_FORCE_PATH_STYLE', false)
     }
   },
+  flyMachines: {
+    enabled: boolEnv('FLY_MACHINES_ENABLED', false),
+    apiToken: process.env.FLY_API_TOKEN || '',
+    appName: process.env.FLY_APP_NAME || '',
+    imageRef: process.env.FLY_IMAGE_REF || '',
+    region: process.env.FLY_REGION || process.env.PRIMARY_REGION || 'iad',
+    workerCpus: parseInt(process.env.PDF_WORKER_CPUS || '4', 10),
+    workerMemoryMb: parseInt(process.env.PDF_WORKER_MEMORY_MB || '2048', 10)
+  },
   database: {
     driver: process.env.DATABASE_DRIVER || 'sqljs',
     dataDir: path.join(rootDir, 'data'),

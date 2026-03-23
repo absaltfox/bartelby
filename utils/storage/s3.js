@@ -187,6 +187,24 @@ function getTempFilePath(name) {
   return resolveTempPath(name);
 }
 
+// ── S3-backed temp files (for ephemeral worker machines) ─────────────────
+
+async function putTempObject(name, buffer) {
+  await putObject(TEMP_PREFIX + sanitizeTempName(name), buffer, 'application/octet-stream');
+}
+
+async function getTempObject(name) {
+  return getObject(TEMP_PREFIX + sanitizeTempName(name));
+}
+
+async function deleteTempObject(name) {
+  await deleteObject(TEMP_PREFIX + sanitizeTempName(name));
+}
+
+async function tempObjectExists(name) {
+  return objectExists(TEMP_PREFIX + sanitizeTempName(name));
+}
+
 // ── Upload operations (S3-backed) ────────────────────────────────────────
 
 async function copyTempFileToUpload(tempName, originalName, extOverride) {
@@ -263,5 +281,9 @@ module.exports = {
   deleteUploadByUrl,
   readUploadByUrl,
   toUploadsUrl,
-  resolveStoredUrl
+  resolveStoredUrl,
+  putTempObject,
+  getTempObject,
+  deleteTempObject,
+  tempObjectExists
 };

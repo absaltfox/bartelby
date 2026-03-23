@@ -29,7 +29,30 @@ function sleep(ms) {
 
 function startWorker() {
   setInterval(tick, 5000);
+  // Check for stale import jobs every 60 seconds
+  setInterval(checkStaleImportJobs, 60000);
   console.log('Transcription worker started (polling every 5s)');
+}
+
+const IMPORT_TIMEOUT_MINUTES = 45;
+
+async function checkStaleImportJobs() {
+  try {
+    const { importJobsAsync } = require('../database/db');
+    const allJobs = await importJobsAsync.getAll();
+    const now = Date.now();
+    for (const job of allJobs) {
+      if (job.status !== 'processing') continue;
+      if (!job.started_at && !job.created_at) continue;
+      const startedAt = new Date(job.started_at || job.created_at).getTime();
+      if (now - startedAt > IMPORT_TIMEOUT_MINUTES * 60 * 1000) {
+        console.log(`[worker] Import job ${job.id} timed out after ${IMPORT_TIMEOUT_MINUTES} minutes`);
+        await importJobsAsync.markFailed(job.id, `Worker timed out after ${IMPORT_TIMEOUT_MINUTES} minutes`);
+      }
+    }
+  } catch (err) {
+    // Non-fatal — will retry on next interval
+  }
 }
 
 async function tick() {
