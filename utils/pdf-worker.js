@@ -90,11 +90,13 @@ async function renderWithPdftoppm(pdfBuffer, dbJobId) {
   const outPrefix = path.join(outDir, prefix);
 
   try {
-    // Render all pages at 200 DPI as PNG (30-minute timeout)
+    // Render all pages at 200 DPI as PNG
+    // Ephemeral machines get 180 min; local fork gets 30 min
+    const timeoutMs = isStandalone ? 180 * 60 * 1000 : 30 * 60 * 1000;
     execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
       stdio: 'pipe',
       maxBuffer: 50 * 1024 * 1024,
-      timeout: 30 * 60 * 1000
+      timeout: timeoutMs
     });
   } finally {
     try { fs.unlinkSync(pdfPath); } catch {}

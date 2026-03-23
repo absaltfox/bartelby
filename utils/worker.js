@@ -34,7 +34,7 @@ function startWorker() {
   console.log('Transcription worker started (polling every 5s)');
 }
 
-const IMPORT_TIMEOUT_MINUTES = 45;
+const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
 async function checkStaleImportJobs() {
   try {
