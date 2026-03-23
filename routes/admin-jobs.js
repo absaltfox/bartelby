@@ -87,6 +87,24 @@ router.post('/api/bulk/delete', express.json(), async (req, res) => {
   res.json({ success: true, count });
 });
 
+// API: combined job list with counts (for AJAX polling)
+router.get('/api/all', async (req, res) => {
+  const tJobs = (await transcriptionJobsAsync.getAll()).map(j => ({ ...j, job_type: 'transcription' }));
+  const iJobs = (await importJobsAsync.getAll()).map(j => ({ ...j, job_type: 'import' }));
+  let jobs = [...tJobs, ...iJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const counts = {
+    total: jobs.length,
+    queued: jobs.filter(j => j.status === 'queued').length,
+    running: jobs.filter(j => j.status === 'running' || j.status === 'processing').length,
+    done: jobs.filter(j => j.status === 'done').length,
+    failed: jobs.filter(j => j.status === 'failed').length
+  };
+  const typeCounts = { import: iJobs.length, transcription: tJobs.length };
+
+  res.json({ jobs, counts, typeCounts });
+});
+
 // API: transcription job list (for polling)
 router.get('/api', async (req, res) => {
   res.json(await transcriptionJobsAsync.getAll());

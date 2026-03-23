@@ -272,7 +272,7 @@ router.post('/api/upload', upload.single('file'), async (req, res) => {
 
             try {
               execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
-                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024, timeout: 20 * 60 * 1000
+                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024, timeout: 30 * 60 * 1000
               });
             } finally {
               try { require('fs').unlinkSync(pdfPath); } catch {}

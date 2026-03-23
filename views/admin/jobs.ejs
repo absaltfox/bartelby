@@ -293,10 +293,124 @@
     }
   });
 
-  // Auto-refresh every 4s when queued/running/processing jobs exist
+  // AJAX polling: update job rows in-place every 5s when active jobs exist
+  var currentFilter = '<%= filter %>';
+  var currentTypeFilter = '<%= typeFilter %>';
+
+  function isActiveStatus(s) {
+    return s === 'queued' || s === 'running' || s === 'processing';
+  }
+
+  function formatDuration(job) {
+    if (job.started_at && job.completed_at) {
+      var ms = new Date(job.completed_at) - new Date(job.started_at);
+      return (ms / 1000).toFixed(1) + 's';
+    }
+    if (job.started_at && job.status === 'running') return 'running…';
+    if (job.status === 'processing') return 'processing…';
+    return '—';
+  }
+
+  function buildProgressHtml(job) {
+    if (job.job_type !== 'import') return '';
+    if (job.status === 'processing' && job.page_count) {
+      var pct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
+      return '<div class="import-progress"><div class="import-progress-bar" style="width:' + pct + '%"></div></div>' +
+             '<small class="muted">Rendering page ' + (job.pages_rendered || 0) + ' of ' + job.page_count + '</small>';
+    }
+    if (job.status === 'processing') return '<small class="muted">Starting...</small>';
+    if (job.page_count) return '<small class="muted"> (' + job.page_count + ' pages)</small>';
+    return '';
+  }
+
+  function pollJobs() {
+    fetch('/admin/jobs/api/all')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        // Update filter tab counts
+        var countMap = { all: data.counts.total, queued: data.counts.queued, running: data.counts.running, done: data.counts.done, failed: data.counts.failed };
+        document.querySelectorAll('.filter-tab').forEach(function(tab) {
+          var href = tab.getAttribute('href') || '';
+          var badge = tab.querySelector('.filter-count');
+          if (!badge) return;
+          Object.keys(countMap).forEach(function(key) {
+            if (href.indexOf('filter=' + key) !== -1 || (key === 'all' && href === '/admin/jobs')) {
+              badge.textContent = countMap[key];
+            }
+          });
+        });
+
+        // Filter jobs the same way the server does
+        var jobs = data.jobs;
+        if (currentTypeFilter !== 'all') {
+          jobs = jobs.filter(function(j) { return j.job_type === currentTypeFilter; });
+        }
+        if (currentFilter !== 'all') {
+          if (currentFilter === 'running') {
+            jobs = jobs.filter(function(j) { return j.status === 'running' || j.status === 'processing'; });
+          } else {
+            jobs = jobs.filter(function(j) { return j.status === currentFilter; });
+          }
+        }
+
+        // Update existing rows and track which IDs we've seen
+        var tbody = document.getElementById('jobs-tbody');
+        var seenIds = {};
+        jobs.forEach(function(job) {
+          var key = job.job_type + '-' + job.id;
+          seenIds[key] = true;
+          var row = tbody.querySelector('tr.job-row[data-id="' + job.id + '"][data-type="' + job.job_type + '"]');
+          if (!row) return; // new job — will appear on next full load
+
+          // Update status badge
+          var statusBadge = row.querySelector('.status-badge');
+          if (statusBadge && statusBadge.textContent !== job.status) {
+            statusBadge.className = 'status-badge status-' + job.status;
+            statusBadge.textContent = job.status;
+            row.dataset.status = job.status;
+          }
+
+          // Update duration
+          var cells = row.querySelectorAll('td');
+          if (cells[6]) cells[6].textContent = formatDuration(job);
+
+          // Update import progress
+          if (job.job_type === 'import') {
+            var docCell = cells[3];
+            var progressEl = docCell.querySelector('.import-progress');
+            var smallEl = docCell.querySelector('small');
+            var newProgress = buildProgressHtml(job);
+            if (progressEl) progressEl.remove();
+            if (smallEl) smallEl.remove();
+            if (newProgress) {
+              var nameEl = docCell.querySelector('span');
+              if (nameEl) nameEl.insertAdjacentHTML('afterend', newProgress);
+            }
+          }
+
+          // Update action buttons based on new status
+          var canDelete = job.status === 'done' || job.status === 'failed';
+          var canRetry = job.job_type !== 'import' && job.status === 'failed';
+          row.dataset.canDelete = canDelete;
+          row.dataset.canRetry = canRetry;
+        });
+
+        // Schedule next poll if there are still active jobs
+        var hasActive = data.jobs.some(function(j) { return isActiveStatus(j.status); });
+        if (hasActive) {
+          setTimeout(pollJobs, 5000);
+        }
+      })
+      .catch(function() {
+        // On error, retry after a longer delay
+        setTimeout(pollJobs, 15000);
+      });
+  }
+
+  // Start polling if there are active jobs
   var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
   if (hasActive) {
-    setTimeout(function() { window.location.reload(); }, 4000);
+    setTimeout(pollJobs, 5000);
   }
 
   // Live-update log for running transcription jobs
@@ -306,12 +420,11 @@
     if (!logEl) return;
     setInterval(async function() {
       try {
-        var res = await fetch('/admin/jobs/api/' + id);
-        var job = await res.json();
+        var r = await fetch('/admin/jobs/api/' + id);
+        var job = await r.json();
         logEl.textContent = job.log || '(no log yet)';
-        if (job.status !== 'running') window.location.reload();
       } catch(e) {}
-    }, 2000);
+    }, 5000);
   });
 })();
 </script>

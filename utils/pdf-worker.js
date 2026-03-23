@@ -31,7 +31,7 @@ async function renderWithPdftoppm(pdfBuffer, dbJobId) {
     execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
       stdio: 'pipe',
       maxBuffer: 50 * 1024 * 1024,
-      timeout: 20 * 60 * 1000
+      timeout: 30 * 60 * 1000
     });
   } finally {
     try { fs.unlinkSync(pdfPath); } catch {}
