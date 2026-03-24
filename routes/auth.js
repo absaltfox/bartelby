@@ -9,7 +9,8 @@ const {
   usersAsync,
   userInvitesAsync,
   userCollectionAccessAsync,
-  passwordResetTokensAsync
+  passwordResetTokensAsync,
+  mfaRememberTokensAsync
 } = require('../database/db');
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
@@ -61,7 +62,7 @@ router.get('/login', (req, res) => {
 
 router.post('/login',
   (req, res, next) => {
-    passport.authenticate('local', (err, user, info) => {
+    passport.authenticate('local', async (err, user, info) => {
       if (err) return next(err);
       if (!user) {
         // Special case: pending account — redirect to /pending page
@@ -72,6 +73,16 @@ router.post('/login',
         return res.redirect('/login');
       }
       const returnTo = safeReturnTo(req);
+
+      // Check "remember this computer" cookie to skip MFA
+      if (user.mfa_method && req.signedCookies?.mfa_remember) {
+        const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
+        const remembered = await mfaRememberTokensAsync.verify(user.id, tokenHash);
+        if (remembered) {
+          return completeLogin(req, res, next, user, returnTo);
+        }
+      }
+
       if (user.mfa_method === 'email') {
         return beginEmailMfa(req, user, returnTo)
           .then(() => res.redirect('/login/mfa'))
@@ -147,6 +158,21 @@ router.post('/login/mfa', async (req, res, next) => {
     return res.redirect('/login/mfa');
   }
 
+  // Set "remember this computer" cookie if requested
+  if (req.body.remember_device) {
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await mfaRememberTokensAsync.create(user.id, tokenHash, expiresAt);
+    res.cookie('mfa_remember', rawToken, {
+      signed: true,
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+  }
+
   const returnTo = pending.returnTo || '/';
   delete req.session.pendingLogin;
   completeLogin(req, res, next, user, returnTo);
@@ -176,6 +202,7 @@ router.post('/login/mfa/resend', async (req, res) => {
 // ── Logout ─────────────────────────────────────────────────────────────────
 
 router.post('/logout', (req, res, next) => {
+  res.clearCookie('mfa_remember');
   req.logout((err) => {
     if (err) return next(err);
     res.redirect('/login');

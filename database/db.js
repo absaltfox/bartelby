@@ -240,7 +240,20 @@ const MIGRATIONS = [
   `,
 
   // v13 — track Fly machine ID for ephemeral PDF workers
-  `ALTER TABLE import_jobs ADD COLUMN machine_id TEXT`
+  `ALTER TABLE import_jobs ADD COLUMN machine_id TEXT`,
+
+  // v14 — MFA remember tokens (skip MFA for trusted devices)
+  `
+  CREATE TABLE IF NOT EXISTS mfa_remember_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_mfa_remember_user ON mfa_remember_tokens(user_id);
+  CREATE INDEX IF NOT EXISTS idx_mfa_remember_hash ON mfa_remember_tokens(token_hash)
+  `
 ];
 
 // ── Core database setup ─────────────────────────────────────────────────────
@@ -2513,6 +2526,33 @@ const passwordResetTokensAsync = {
   }
 };
 
+// ── MFA Remember Tokens ──────────────────────────────────────────────────
+
+const mfaRememberTokensAsync = {
+  async create(userId, tokenHash, expiresAt) {
+    await runAsync(
+      `INSERT INTO mfa_remember_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)`,
+      [userId, tokenHash, expiresAt]
+    );
+  },
+
+  async verify(userId, tokenHash) {
+    const row = await getAsync(
+      `SELECT id FROM mfa_remember_tokens WHERE user_id = ? AND token_hash = ? AND expires_at > datetime('now')`,
+      [userId, tokenHash]
+    );
+    return !!row;
+  },
+
+  async deleteForUser(userId) {
+    await runAsync(`DELETE FROM mfa_remember_tokens WHERE user_id = ?`, [userId]);
+  },
+
+  async deleteExpired() {
+    await runAsync(`DELETE FROM mfa_remember_tokens WHERE expires_at <= datetime('now')`);
+  }
+};
+
 function getDb() { return db; }
 
 module.exports = {
@@ -2545,5 +2585,6 @@ module.exports = {
   documentCollectionsAsync,
   userCollectionAccessAsync,
   collectionsAsync,
-  userApiKeysAsync
+  userApiKeysAsync,
+  mfaRememberTokensAsync
 };

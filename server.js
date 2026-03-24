@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
@@ -70,8 +71,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 if (!process.env.SESSION_SECRET) {
   console.warn('[security] SESSION_SECRET is not set — using a random secret. Sessions will not persist across restarts. Set SESSION_SECRET in .env for production.');
 }
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 app.use(session({
-  secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   name: 'bartelby.sid',
@@ -82,6 +84,7 @@ app.use(session({
     secure: process.env.NODE_ENV === 'production'
   }
 }));
+app.use(cookieParser(sessionSecret));
 
 // ── CSRF protection ─────────────────────────────────────────────────────
 // Simple double-submit token approach for all state-changing requests.

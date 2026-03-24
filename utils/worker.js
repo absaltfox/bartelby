@@ -31,7 +31,18 @@ function startWorker() {
   setInterval(tick, 5000);
   // Check for stale import jobs every 60 seconds
   setInterval(checkStaleImportJobs, 60000);
+  // Clean up expired MFA remember tokens once per hour
+  setInterval(cleanExpiredMfaTokens, 60 * 60 * 1000);
   console.log('Transcription worker started (polling every 5s)');
+}
+
+async function cleanExpiredMfaTokens() {
+  try {
+    const { mfaRememberTokensAsync } = require('../database/db');
+    await mfaRememberTokensAsync.deleteExpired();
+  } catch (err) {
+    // Non-fatal
+  }
 }
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
