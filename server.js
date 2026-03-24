@@ -37,16 +37,7 @@ app.use(helmet({
 // rate limiters, which validate X-Forwarded-For against this setting.
 app.set('trust proxy', 1);
 
-// ── Rate limiting ───────────────────────────────────────────────────────
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.isAuthenticated && req.isAuthenticated()
-});
-app.use(generalLimiter);
-
+// ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -128,6 +119,16 @@ app.use(validateCsrf);
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(locals); // makes currentUser / isAdmin available in all templates
+
+// ── General rate limiting (after Passport so req.isAuthenticated works) ───
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.isAuthenticated && req.isAuthenticated()
+});
+app.use(generalLimiter);
 
 // ── View engine ────────────────────────────────────────────────────────────
 app.set('view engine', 'ejs');
