@@ -134,7 +134,15 @@ function init() {
 
 function tempFileExists(name) {
   const fullPath = resolveTempPath(name);
-  return !!(fullPath && fs.existsSync(fullPath));
+  if (fullPath && fs.existsSync(fullPath)) return true;
+  // Sync check can't query S3 — use tempFileExistsAsync for S3 fallback
+  return false;
+}
+
+async function tempFileExistsAsync(name) {
+  const fullPath = resolveTempPath(name);
+  if (fullPath && fs.existsSync(fullPath)) return true;
+  return tempObjectExists(name);
 }
 
 function readTempFile(name) {
@@ -209,13 +217,22 @@ async function tempObjectExists(name) {
 
 async function copyTempFileToUpload(tempName, originalName, extOverride) {
   ensureLocalTempDir();
-  const tempPath = resolveTempPath(tempName);
-  if (!tempPath || !fs.existsSync(tempPath)) {
-    throw new Error('Temporary file not found. Please upload again.');
+  const safeName = sanitizeTempName(tempName);
+  const tempPath = resolveTempPath(safeName);
+  let buffer;
+
+  if (tempPath && fs.existsSync(tempPath)) {
+    buffer = fs.readFileSync(tempPath);
+  } else {
+    // Fall back to S3 temp object (rendered by ephemeral worker)
+    try {
+      buffer = await getTempObject(safeName);
+    } catch (err) {
+      throw new Error('Temporary file not found. Please upload again.');
+    }
   }
 
   const filename = makeUniqueFilename(originalName, extOverride);
-  const buffer = fs.readFileSync(tempPath);
   const ext = path.extname(filename).toLowerCase();
   const contentType = {
     '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -285,5 +302,6 @@ module.exports = {
   putTempObject,
   getTempObject,
   deleteTempObject,
-  tempObjectExists
+  tempObjectExists,
+  tempFileExistsAsync
 };

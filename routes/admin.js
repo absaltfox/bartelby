@@ -646,7 +646,8 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
 
       // Move first page as primary image
       const firstFile = files[0];
-      if (!storage.tempFileExists(firstFile)) continue;
+      const existsAsync = storage.tempFileExistsAsync || storage.tempFileExists;
+      if (!(await existsAsync(firstFile))) continue;
 
       const baseName = originalName || 'document';
       const ext = '.png';
@@ -655,7 +656,7 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
       // Additional pages
       const additionalPages = [];
       for (let i = 1; i < files.length; i++) {
-        if (!storage.tempFileExists(files[i])) continue;
+        if (!(await existsAsync(files[i]))) continue;
         const pageUpload = await storage.copyTempFileToUpload(
           files[i],
           `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`,
@@ -664,8 +665,13 @@ router.post('/api/submit-pages', express.json(), async (req, res) => {
         additionalPages.push(pageUpload.url);
       }
 
-      // Clean up temp files for this group
+      // Clean up temp files for this group (local + S3)
       storage.deleteTempFiles(files);
+      if (storage.deleteTempObject) {
+        for (const f of files) {
+          try { await storage.deleteTempObject(f); } catch (e) {}
+        }
+      }
 
       const docMetadata = {};
       if (additionalPages.length > 0) {

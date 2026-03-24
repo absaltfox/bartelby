@@ -41,7 +41,8 @@ const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 300,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  skip: (req) => req.isAuthenticated && req.isAuthenticated()
 });
 app.use(generalLimiter);
 
