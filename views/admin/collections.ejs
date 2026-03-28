@@ -34,6 +34,12 @@
           <span>Make this collection <strong>public</strong> — accessible to all logged-in users without explicit access grants</span>
         </label>
       </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="allow_export" value="1">
+          <span>Allow export — users can download documents from this collection as PDF or TEI</span>
+        </label>
+      </div>
       <div class="form-actions">
         <button type="submit" class="btn-primary">Create Collection</button>
       </div>
@@ -89,6 +95,12 @@
                 <label class="checkbox-label">
                   <input type="checkbox" name="is_public" value="1" <%= c.is_public ? 'checked' : '' %>>
                   <span>Public — accessible to all logged-in users</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="allow_export" value="1" <%= c.allow_export ? 'checked' : '' %>>
+                  <span>Allow export — users can download documents as PDF or TEI</span>
                 </label>
               </div>
               <div class="form-actions">
@@ -147,11 +159,26 @@
                 <ul class="access-user-list">
                   <% c.grantedUsers.forEach(function(u) { %>
                     <li class="access-user-item">
-                      <span><strong><%= u.username %></strong><% if (u.email) { %> <small class="muted">&lt;<%= u.email %>&gt;</small><% } %></span>
-                      <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" style="display:inline">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
-                      </form>
+                      <span>
+                        <strong><%= u.username %></strong>
+                        <% if (u.email) { %> <small class="muted">&lt;<%= u.email %>&gt;</small><% } %>
+                        <span class="role-badge role-<%= u.collection_role || 'viewer' %>" style="margin-left:6px; font-size:0.75rem;"><%= u.collection_role || 'viewer' %></span>
+                      </span>
+                      <div style="display:flex; gap:4px; align-items:center;">
+                        <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" style="display:inline">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <input type="hidden" name="user_id" value="<%= u.id %>">
+                          <select name="role" onchange="this.form.submit()" style="font-size:0.8rem; padding:2px 4px;">
+                            <option value="viewer" <%= u.collection_role === 'viewer' ? 'selected' : '' %>>Viewer</option>
+                            <option value="editor" <%= u.collection_role === 'editor' ? 'selected' : '' %>>Editor</option>
+                            <option value="manager" <%= u.collection_role === 'manager' ? 'selected' : '' %>>Manager</option>
+                          </select>
+                        </form>
+                        <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" style="display:inline">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
+                        </form>
+                      </div>
                     </li>
                   <% }) %>
                 </ul>
@@ -172,6 +199,11 @@
                       <% eligible.forEach(function(u) { %>
                         <option value="<%= u.id %>"><%= u.username %><% if (u.email) { %> (<%= u.email %>)<% } %></option>
                       <% }) %>
+                    </select>
+                    <select name="role">
+                      <option value="viewer">Viewer</option>
+                      <option value="editor">Editor</option>
+                      <option value="manager">Manager</option>
                     </select>
                     <button type="submit" class="btn-primary btn-sm">Grant Access</button>
                   </form>

@@ -27,6 +27,13 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function buildTranscriptPageSegments(results) {
+  return results.map((result, index) => ({
+    pageNumber: index + 1,
+    charLength: String(result.transcription || '').trim().length
+  }));
+}
+
 function startWorker() {
   setInterval(tick, 5000);
   // Check for stale import jobs every 60 seconds
@@ -152,9 +159,8 @@ async function tick() {
 
     // Combine multi-page results
     const combined = {
-      transcription: results.map((r, i) =>
-        results.length > 1 ? `[Page ${i + 1}]\n${r.transcription}` : r.transcription
-      ).join('\n\n'),
+      transcription: results.map(r => String(r.transcription || '').trim()).join('\n\n'),
+      page_segments: results.length > 1 ? buildTranscriptPageSegments(results) : null,
       metadata: results[0].metadata,
       notes: results.map(r => r.notes).filter(Boolean).join(' | ') || null,
       paradata: results[0].paradata
@@ -238,9 +244,13 @@ async function tick() {
     }
 
     const pd = combined.paradata || {};
+    // Only set as best if no existing best transcript (protects human-curated transcripts)
+    const existingBest = await transcriptsAsync.getBestByDocumentId(job.document_id);
+    const shouldBeBest = !existingBest;
     await transcriptsAsync.create({
       document_id: job.document_id,
       content: combined.transcription,
+      page_segments: combined.page_segments,
       transcriber: 'AI Transcription',
       version: 1,
       notes: combined.notes || null,
@@ -249,7 +259,9 @@ async function tick() {
       prompt: pd.prompt || null,
       temperature: pd.temperature != null ? pd.temperature : temperature,
       initiated_by: job.initiated_by || null,
-      run_duration_ms: pd.run_duration_ms || null
+      run_duration_ms: pd.run_duration_ms || null,
+      provider_key_scope: job.provider_key_scope || null,
+      is_best: shouldBeBest
     });
 
     const totalDur = pd.run_duration_ms;

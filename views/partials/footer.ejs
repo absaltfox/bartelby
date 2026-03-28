@@ -2,8 +2,15 @@
   <footer class="site-footer">
     <div class="container">
       <div class="site-footer-content">
-        <p>&copy; <%= new Date().getFullYear() %> Michael LeBlanc</p>
-        <a href="/terms" class="site-footer-link">Terms of Service</a>
+        <p>&copy; <%= new Date().getFullYear() %> Michael LeBlanc. <%= appName || 'Bartelby' %> is proprietary software; an open-source release is planned.</p>
+        <% if (deploymentNotice) { %>
+          <p class="site-footer-deployment"><%= deploymentNotice %></p>
+        <% } %>
+        <div class="site-footer-links">
+          <a href="/terms" class="site-footer-link">Terms of Service</a>
+          <a href="/privacy" class="site-footer-link">Privacy Policy</a>
+          <a href="/data-security" class="site-footer-link">Data Security</a>
+        </div>
       </div>
     </div>
   </footer>

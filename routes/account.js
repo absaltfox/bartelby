@@ -6,12 +6,13 @@ const QRCode = require('qrcode');
 const { requireAuth } = require('../middleware/auth');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { isSmtpConfigured } = require('../utils/email');
-const { userApiKeysAsync, usersAsync } = require('../database/db');
+const { userApiKeysAsync, usersAsync, settingsAsync } = require('../database/db');
 const {
   buildOtpAuthUrl,
   generateTotpSecret,
   verifyTotp
 } = require('../utils/mfa');
+const { resolveApplicationSettings } = require('../utils/application-settings');
 
 router.use(requireAuth);
 
@@ -20,11 +21,13 @@ function normalizeProvider(provider) {
 }
 
 router.get('/', async (req, res) => {
+  const cfg = await settingsAsync.getAll();
+  const applicationSettings = resolveApplicationSettings(cfg);
   const pendingTotpSecret = req.session.pendingTotpSecret || null;
   const pendingTotpUri = pendingTotpSecret
     ? buildOtpAuthUrl({
         accountName: req.user.email || req.user.username,
-        issuer: 'Bartelby',
+        issuer: applicationSettings.appName,
         secret: pendingTotpSecret
       })
     : null;

@@ -1,0 +1,12 @@
+<nav class="admin-subnav">
+  <a href="/manage" class="admin-subnav-link" data-page="manage-home">My Collections</a>
+</nav>
+<script>
+(function() {
+  var p = window.location.pathname;
+  document.querySelectorAll('.admin-subnav-link').forEach(function(a) {
+    var page = a.dataset.page;
+    if (page === 'manage-home' && p === '/manage') a.classList.add('active');
+  });
+})();
+</script>

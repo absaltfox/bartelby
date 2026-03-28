@@ -7,7 +7,7 @@ const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
 const { createOllama } = require('ollama-ai-provider');
 
-const SYSTEM_PROMPT = `You are an expert in historical document transcription and paleography. \
+const DEFAULT_SYSTEM_PROMPT = `You are an expert in historical document transcription and paleography. \
 Transcribe all handwritten and printed text from the document image with high accuracy.
 
 Rules:
@@ -30,6 +30,11 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   },
   "notes": "<observations about illegible sections or difficulties, or null>"
 }`;
+
+function getSystemPrompt(cfg = {}) {
+  const prompt = cfg.transcription_prompt;
+  return (typeof prompt === 'string' && prompt.trim()) ? prompt : DEFAULT_SYSTEM_PROMPT;
+}
 
 function buildMessages(imageBuffer, mimeType) {
   return [
@@ -75,11 +80,12 @@ async function mergeConfig(overrides = {}) {
   return { ...(await loadConfig()), ...overrides };
 }
 
-async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType) {
+async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType, cfg = {}) {
   const startMs = Date.now();
+  const systemPrompt = getSystemPrompt(cfg);
   const { text } = await generateText({
     model: modelInstance,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     temperature: temperature != null ? temperature : undefined,
     messages: buildMessages(imageBuffer, mimeType)
   });
@@ -90,7 +96,7 @@ async function runTranscription(modelInstance, providerName, modelName, temperat
     paradata: {
       provider: providerName,
       model: modelName,
-      prompt: SYSTEM_PROMPT,
+      prompt: systemPrompt,
       temperature: temperature != null ? temperature : null,
       run_duration_ms: durationMs
     }
@@ -106,7 +112,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.openai_model || 'gpt-4o';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOpenAI({ apiKey });
-      return runTranscription(client(model), 'openai', model, temperature, imageBuffer, mimeType);
+      return runTranscription(client(model), 'openai', model, temperature, imageBuffer, mimeType, cfg);
     }
   },
 
@@ -118,7 +124,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createAnthropic({ apiKey });
-      return runTranscription(client(model), 'claude', model, temperature, imageBuffer, mimeType);
+      return runTranscription(client(model), 'claude', model, temperature, imageBuffer, mimeType, cfg);
     }
   },
 
@@ -130,7 +136,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.ollama_model || 'llava';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOllama({ baseURL });
-      return runTranscription(client(model), 'ollama', model, temperature, imageBuffer, mimeType);
+      return runTranscription(client(model), 'ollama', model, temperature, imageBuffer, mimeType, cfg);
     }
   },
 
@@ -143,7 +149,7 @@ const PROVIDERS = {
       const temperature = opts.temperature != null ? opts.temperature : null;
       // LM Studio is OpenAI-compatible; no API key required for local use
       const client = createOpenAI({ baseURL, apiKey: 'lmstudio' });
-      return runTranscription(client(model), 'lmstudio', model, temperature, imageBuffer, mimeType);
+      return runTranscription(client(model), 'lmstudio', model, temperature, imageBuffer, mimeType, cfg);
     }
   }
 };

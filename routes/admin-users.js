@@ -63,6 +63,12 @@ router.post('/invite', async (req, res) => {
   const canUseSystemApiKeys = req.body.can_use_system_api_keys === '1' || role === 'admin';
   const collectionIds = parseCollectionIds(req.body.collections);
 
+  // Build per-collection role map from collection_role_* fields
+  const collectionRoles = {};
+  for (const cid of collectionIds) {
+    collectionRoles[cid] = req.body[`collection_role_${cid}`] || 'viewer';
+  }
+
   if (!email) {
     req.session.authError = 'Email is required to send or create an invitation.';
     return res.redirect('/admin/users/invite');
@@ -81,6 +87,7 @@ router.post('/invite', async (req, res) => {
     accessAll,
     canUseSystemApiKeys,
     collectionIds,
+    collectionRoles,
     invitedBy: req.user.id,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
   });
@@ -122,6 +129,7 @@ router.get('/:id/approve', async (req, res) => {
     approveUser: user,
     allCollections,
     grantedIds: [],
+    grantedRoles: {},
     editMode: false
   });
 });
@@ -136,7 +144,11 @@ router.post('/:id/approve', async (req, res) => {
 
   await usersAsync.approve(id, { role, accessAll, canUseSystemApiKeys });
   if (!accessAll) {
-    await userCollectionAccessAsync.setForUser(id, collectionIds);
+    const collectionRoles = {};
+    for (const cid of collectionIds) {
+      collectionRoles[cid] = req.body[`collection_role_${cid}`] || 'viewer';
+    }
+    await userCollectionAccessAsync.setForUserWithRoles(id, collectionRoles);
   }
   res.redirect('/admin/users');
 });
@@ -164,12 +176,16 @@ router.get('/:id/access', async (req, res) => {
   if (!user || id === req.user.id) return res.redirect('/admin/users');
 
   const allCollections = await collectionsAsync.getAll();
-  const grantedIds = await userCollectionAccessAsync.getIdsByUserId(id);
+  const grants = await userCollectionAccessAsync.getWithRolesByUserId(id);
+  const grantedIds = grants.map(g => g.collection_id);
+  const grantedRoles = {};
+  grants.forEach(g => { grantedRoles[g.collection_id] = g.role; });
   res.render('admin/approve-user', {
     pageTitle: `Edit Access — ${user.username}`,
     approveUser: user,
     allCollections,
     grantedIds,
+    grantedRoles,
     editMode: true
   });
 });
@@ -187,7 +203,12 @@ router.post('/:id/access', async (req, res) => {
   await usersAsync.setAccessAll(id, accessAll);
   await usersAsync.setCanUseSystemApiKeys(id, canUseSystemApiKeys);
   if (!accessAll) {
-    await userCollectionAccessAsync.setForUser(id, collectionIds);
+    // Build role map from collection_role_* fields
+    const collectionRoles = {};
+    for (const cid of collectionIds) {
+      collectionRoles[cid] = req.body[`collection_role_${cid}`] || 'viewer';
+    }
+    await userCollectionAccessAsync.setForUserWithRoles(id, collectionRoles);
   }
   res.redirect('/admin/users');
 });

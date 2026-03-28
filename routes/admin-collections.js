@@ -45,11 +45,12 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
   const is_public = req.body.is_public === '1';
+  const allow_export = req.body.allow_export === '1';
 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
-    await collectionsAsync.create({ name, description, is_public, createdBy: req.user.id });
+    await collectionsAsync.create({ name, description, is_public, allow_export, createdBy: req.user.id });
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE')) {
@@ -66,23 +67,26 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), async (req, re
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
   const is_public = req.body.is_public === '1';
+  const allow_export = req.body.allow_export === '1' ? 1 : 0;
 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
     await collectionsAsync.update(id, { name, description, is_public });
+    await collectionsAsync.setAllowExport(id, allow_export);
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));
   }
 });
 
-// Grant access to a user
+// Grant access to a user (with role)
 router.post('/:id/access/grant', express.urlencoded({ extended: false }), async (req, res) => {
   const collectionId = parseInt(req.params.id);
   const userId = parseInt(req.body.user_id);
+  const role = req.body.role || 'viewer';
   if (!isNaN(userId) && !isNaN(collectionId)) {
-    await userCollectionAccessAsync.grant(userId, collectionId);
+    await userCollectionAccessAsync.grant(userId, collectionId, role);
   }
   res.redirect('/admin/collections?saved=1#collection-' + collectionId);
 });

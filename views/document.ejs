@@ -1,38 +1,52 @@
 <%- include('partials/header', { pageTitle: document.title, query: '' }) %>
 
-<div class="document-detail">
-  <div class="document-header">
+<div class="document-detail" id="document-detail" data-doc-id="<%= document.id %>" data-can-edit="<%= (typeof canEdit !== 'undefined' && canEdit) ? '1' : '' %>" data-can-manage="<%= (typeof canManage !== 'undefined' && canManage) ? '1' : '' %>">
+
+  <!-- ── Top bar ── -->
+  <div class="document-topbar">
     <a href="<%= backHref %>" class="back-link">&larr; Back to Documents</a>
-    <h1><%= document.title %></h1>
-    <% if (document.date_created) { %>
-      <p class="document-date">Date: <%= document.date_created %></p>
-    <% } %>
   </div>
 
-  <% if (document.description || (document.metadata && Object.keys(document.metadata).length > 0)) { %>
-    <details class="metadata-panel" open>
-      <summary>Document Information</summary>
-      <div class="metadata-content">
-        <% if (document.description) { %>
-          <p><strong>Description:</strong> <%= document.description %></p>
-        <% } %>
-        <% if (document.metadata && Object.keys(document.metadata).length > 0) { %>
-          <dl class="metadata-list">
-            <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
-              <dt><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></dt>
-              <dd><%= value %></dd>
-            <% }) %>
-          </dl>
-        <% } %>
-      </div>
-    </details>
-  <% } %>
-
-  <% if (docCollections && docCollections.length > 0) { %>
-    <div class="doc-collections">
-      <% docCollections.forEach(c => { %><span class="collection-tag"><%= c.name %></span><% }) %>
+  <div class="document-title-row">
+    <div class="document-title-content">
+      <h1 id="doc-title-display"><%= document.title %></h1>
+      <% const documentLocation = document.metadata && document.metadata.location ? document.metadata.location : ''; %>
+      <% if (document.date_created || documentLocation) { %>
+        <p class="document-date">
+          <% if (document.date_created) { %>
+            <span id="doc-date-display"><%= document.date_created %></span>
+          <% } %>
+          <% if (document.date_created && documentLocation) { %>, <% } %>
+          <% if (documentLocation) { %>
+            <span id="doc-location-display"><%= documentLocation %></span>
+          <% } %>
+        </p>
+      <% } %>
+      <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+        <p class="export-context-note">
+          Export is enabled for this document through
+          <strong><%= exportEnabledCollections.length === 1 ? exportEnabledCollections[0] : exportEnabledCollections.join(', ') %></strong>.
+        </p>
+      <% } %>
     </div>
-  <% } %>
+    <div class="document-title-actions">
+      <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+        <div class="export-dropdown">
+          <button type="button" class="btn-action btn-sm export-dropdown-toggle">Export &darr;</button>
+          <div class="export-dropdown-menu">
+            <a href="/export/documents/<%= document.id %>/pdf">Export PDF</a>
+            <a href="/export/documents/<%= document.id %>/tei">Export TEI XML</a>
+          </div>
+        </div>
+      <% } %>
+      <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+        <div class="mode-toggle" id="mode-toggle">
+          <button type="button" class="mode-toggle-btn active" data-mode="view">View</button>
+          <button type="button" class="mode-toggle-btn" data-mode="edit">Edit</button>
+        </div>
+      <% } %>
+    </div>
+  </div>
 
   <% if (pendingJob) { %>
     <div class="transcription-pending-banner" id="transcription-pending-banner">
@@ -62,148 +76,436 @@
     </script>
   <% } %>
 
-  <div class="side-by-side">
-    <div class="image-panel">
-      <h2>Original Document</h2>
-      <div class="image-container">
-        <% if (document.image_path) { %>
-          <img src="<%= document.image_path %>" alt="<%= document.title %>" class="document-image" onerror="this.parentElement.innerHTML='<div class=\'no-image\'>Image not available</div>'">
-        <% } else { %>
-          <div class="no-image">No image available</div>
-        <% } %>
-      </div>
-      <% if (document.metadata && document.metadata.additional_pages && document.metadata.additional_pages.length > 0) { %>
-        <div class="additional-pages">
-          <p class="additional-pages-label">Additional pages:</p>
-          <% document.metadata.additional_pages.forEach(function(pagePath, i) { %>
-            <div class="image-container">
-              <img src="<%= pagePath %>" alt="Page <%= i + 2 %>" class="document-image">
-            </div>
-          <% }) %>
+  <!-- ── Tab navigation ── -->
+  <div class="doc-tabs" id="doc-tabs">
+    <button type="button" class="doc-tab active" data-tab="info">Document</button>
+    <button type="button" class="doc-tab" data-tab="history">History</button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- ── Document Info Tab ── -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <div class="doc-tab-content active" id="tab-info">
+    <% if (comparisonPages && comparisonPages.length > 1) { %>
+      <div class="comparison-toolbar" id="comparison-toolbar">
+        <div class="comparison-toolbar-copy">
+          <strong>Page Comparison</strong>
+          <span>View one page at a time, or switch to all pages for a full-document read-through.</span>
         </div>
-      <% } %>
-    </div>
-
-    <div class="transcript-panel">
-      <div class="transcript-header">
-        <h2>Transcript</h2>
-        <% if (transcripts.length > 1) { %>
-          <div class="transcript-selector">
-            <label for="transcript-select">Version:</label>
-            <select id="transcript-select" data-back-href="<%= backHref %>">
-              <% transcripts.forEach(t => { %>
-                <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
-                  v<%= t.version %> by <%= t.transcriber || 'Unknown' %>
-                </option>
-              <% }) %>
-            </select>
+        <div class="comparison-toolbar-controls">
+          <div class="comparison-page-nav" id="comparison-page-nav">
+            <% comparisonPages.forEach(function(page, index) { %>
+              <button
+                type="button"
+                class="comparison-page-chip <%= index === 0 ? 'active' : '' %>"
+                data-page-number="<%= page.pageNumber %>">
+                Page <%= page.pageNumber %>
+              </button>
+            <% }) %>
           </div>
-        <% } %>
+          <button type="button" class="btn-secondary btn-sm" id="comparison-toggle-view">Show All Pages</button>
+        </div>
       </div>
+    <% } %>
 
-      <% if (selectedTranscript) { %>
-        <div class="transcript-info">
-          <p><strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %></p>
-          <p><strong>Version:</strong> <%= selectedTranscript.version %></p>
-          <% if (selectedTranscript.notes) { %>
-            <p><strong>Notes:</strong> <%= selectedTranscript.notes %></p>
+    <div class="side-by-side">
+
+      <!-- ── Left column: Image + Info ── -->
+      <div class="image-panel">
+        <h2>Original Document</h2>
+        <div class="comparison-page-stack image-page-stack" id="image-page-stack">
+          <% if (comparisonPages && comparisonPages.length > 0) { %>
+            <% comparisonPages.forEach(function(page, index) { %>
+              <section class="comparison-page-block <%= index === 0 ? 'active' : 'is-hidden' %>" data-page-number="<%= page.pageNumber %>">
+                <% if (comparisonPages.length > 1) { %>
+                  <div class="comparison-page-label">Page <%= page.pageNumber %></div>
+                <% } %>
+                <div class="image-container">
+                  <% if (page.imagePath) { %>
+                    <img src="<%= page.imagePath %>" alt="<%= document.title %> — Page <%= page.pageNumber %>" class="document-image" onerror="this.parentElement.innerHTML='<div class=\'no-image\'>Image not available</div>'">
+                  <% } else { %>
+                    <div class="no-image">No image available</div>
+                  <% } %>
+                </div>
+              </section>
+            <% }) %>
+          <% } else { %>
+            <div class="image-container">
+              <div class="no-image">No image available</div>
+            </div>
           <% } %>
         </div>
 
-        <% if (selectedTranscript.provider || selectedTranscript.model || selectedTranscript.initiated_by) { %>
-          <details class="paradata-panel">
-            <summary>Transcription Run Details</summary>
-            <dl class="metadata-list paradata-list">
-              <% if (selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
-              <% if (selectedTranscript.provider) { %><dt>Provider</dt><dd><%= selectedTranscript.provider %></dd><% } %>
-              <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
-              <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
-              <% if (selectedTranscript.run_duration_ms) { %><dt>Duration</dt><dd><%= (selectedTranscript.run_duration_ms / 1000).toFixed(1) %>s</dd><% } %>
-              <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
+        <!-- ── Document Information ── -->
+        <div class="doc-info-section">
+          <h2>Document Information</h2>
+
+          <!-- View mode -->
+          <div class="doc-info-view" id="doc-info-view">
+            <dl class="metadata-list">
+              <% if (document.title) { %>
+                <dt>Title</dt>
+                <dd><%= document.title %></dd>
+              <% } %>
+              <% if (document.date_created) { %>
+                <dt>Date</dt>
+                <dd><%= document.date_created %></dd>
+              <% } %>
+              <% if (document.description) { %>
+                <dt>Description</dt>
+                <dd><%= document.description %></dd>
+              <% } %>
+              <% if (docCollections && docCollections.length > 0) { %>
+                <dt>Collections</dt>
+                <dd class="doc-collections-inline">
+                  <% docCollections.forEach(c => { %><span class="collection-tag"><%= c.name %></span><% }) %>
+                </dd>
+              <% } %>
+              <% if (document.metadata && Object.keys(document.metadata).length > 0) { %>
+                <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
+                  <dt><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></dt>
+                  <dd><%= value %></dd>
+                <% }) %>
+              <% } %>
             </dl>
-            <% if (selectedTranscript.prompt) { %>
-              <details class="prompt-detail">
-                <summary>System prompt used</summary>
-                <pre class="prompt-text"><%= selectedTranscript.prompt %></pre>
-              </details>
-            <% } %>
-          </details>
-        <% } %>
-
-        <div class="transcript-content" id="transcript-content" data-transcript-id="<%= selectedTranscript.id %>">
-          <pre><%= selectedTranscript.content %></pre>
-        </div>
-
-        <div class="annotation-section">
-          <h3>Annotations (<span id="annotation-count"><%= annotations.length %></span>)</h3>
-
-          <div id="annotation-list" class="annotation-list">
-            <% if (annotations.length === 0) { %>
-              <p class="no-annotations">No annotations yet.<% if (currentUser) { %> Select text in the transcript to add one.<% } %></p>
-            <% } else { %>
-              <% annotations.forEach(ann => { %>
-                <div class="annotation-item" data-id="<%= ann.id %>" data-start="<%= ann.position_start %>" data-end="<%= ann.position_end %>">
-                  <div class="annotation-header">
-                    <strong><%= ann.user_name %></strong>
-                    <span class="annotation-date"><%= new Date(ann.created_at).toLocaleDateString() %></span>
-                    <% if (currentUser) { %>
-                      <button class="delete-annotation" data-id="<%= ann.id %>" title="Delete annotation">&times;</button>
-                    <% } %>
-                  </div>
-                  <p class="annotation-content"><%= ann.content %></p>
-                  <% if (ann.position_start !== null && ann.position_end !== null) { %>
-                    <p class="annotation-position">Characters <%= ann.position_start %>-<%= ann.position_end %></p>
-                  <% } %>
-                </div>
-              <% }) %>
-            <% } %>
           </div>
 
-          <% if (currentUser) { %>
-            <div id="annotation-form-container" class="annotation-form-container" style="display: none;">
-              <form id="annotation-form" class="annotation-form">
-                <input type="hidden" name="transcript_id" value="<%= selectedTranscript.id %>">
-                <input type="hidden" name="position_start" id="position-start">
-                <input type="hidden" name="position_end" id="position-end">
-                <input type="hidden" name="user_name" value="<%= currentUser.username %>">
-
-                <div class="form-group">
-                  <label for="annotation-content">Annotation <span class="field-hint-inline">as <%= currentUser.username %></span></label>
-                  <textarea id="annotation-content" name="content" required rows="3"></textarea>
+          <!-- Edit mode -->
+          <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+            <div class="doc-info-edit" id="doc-info-edit" style="display:none;">
+              <form id="metadata-edit-form" class="edit-form">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <div class="edit-field">
+                  <label for="edit-title">Title</label>
+                  <input type="text" id="edit-title" name="title" value="<%= document.title %>" required>
                 </div>
-
-                <p class="selected-text-preview">Selected text: "<span id="selected-text"></span>"</p>
-
-                <div class="form-actions">
-                  <button type="submit" class="btn-primary">Add Annotation</button>
-                  <button type="button" class="btn-secondary" onclick="hideAnnotationForm()">Cancel</button>
+                <div class="edit-field">
+                  <label for="edit-date">Date</label>
+                  <input type="text" id="edit-date" name="date_created" value="<%= document.date_created || '' %>" placeholder="YYYY-MM-DD">
+                </div>
+                <div class="edit-field">
+                  <label for="edit-description">Description</label>
+                  <textarea id="edit-description" name="description" rows="2"><%= document.description || '' %></textarea>
+                </div>
+                <% if (document.metadata && Object.keys(document.metadata).filter(k => k !== 'additional_pages').length > 0) { %>
+                  <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
+                    <div class="edit-field">
+                      <label><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></label>
+                      <input type="text" name="metadata_field_<%= key %>" value="<%= value || '' %>">
+                    </div>
+                  <% }) %>
+                <% } %>
+                <div class="edit-actions">
+                  <button type="submit" class="btn-primary btn-sm">Save Metadata</button>
+                  <button type="button" class="btn-secondary btn-sm" id="cancel-metadata-edit">Cancel</button>
+                  <span class="save-status" id="metadata-save-status"></span>
                 </div>
               </form>
             </div>
-          <% } else { %>
-            <div class="auth-gate">
-              <a href="/login">Sign in</a> to add annotations to this transcript.
+          <% } %>
+        </div>
+      </div>
+
+      <!-- ── Right column: Transcript + Annotations ── -->
+      <div class="transcript-panel">
+        <div class="transcript-header">
+          <h2>Transcript</h2>
+          <% if (transcripts.length > 1) { %>
+            <div class="transcript-selector">
+              <label for="transcript-select">Version:</label>
+              <select id="transcript-select" data-back-href="<%= backHref %>">
+                <% transcripts.forEach(t => { %>
+                  <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
+                    v<%= t.version %> by <%= t.transcriber || 'Unknown' %><%= t.is_best ? ' ★' : '' %>
+                  </option>
+                <% }) %>
+              </select>
             </div>
           <% } %>
         </div>
-      <% } else { %>
-        <p class="no-transcript">No transcripts available for this document.</p>
-      <% } %>
+
+        <% if (selectedTranscript) { %>
+          <div class="transcript-info">
+            <span class="transcript-info-transcriber">
+              <strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %>
+            </span>
+            <% if (selectedTranscript.is_best) { %>
+              <span class="badge-best">★ Best</span>
+            <% } %>
+            <span class="transcript-info-version">
+              <strong>Version</strong> <%= selectedTranscript.version %>
+            </span>
+            <span class="transcript-info-notes transcript-notes-view" title="<%= selectedTranscript.notes || '' %>">
+              <% if (selectedTranscript.notes) { %>
+                <strong>Notes:</strong> <%= selectedTranscript.notes %>
+              <% } %>
+            </span>
+            <% if (typeof canEdit !== 'undefined' && canEdit && !selectedTranscript.provider) { %>
+              <span class="transcript-notes-edit" style="display:none;">
+                <strong>Notes:</strong>
+                <input type="text" id="transcript-notes-input" value="<%= selectedTranscript.notes || '' %>" placeholder="Add notes..." class="transcript-notes-field">
+                <button type="button" class="btn-action btn-sm" id="save-transcript-notes">Save</button>
+                <span class="save-status" id="notes-save-status"></span>
+              </span>
+            <% } %>
+          </div>
+
+          <% if (selectedTranscript.provider || selectedTranscript.model || selectedTranscript.initiated_by) { %>
+            <details class="paradata-panel">
+              <summary>Transcription Run Details</summary>
+              <dl class="metadata-list paradata-list">
+                <% if (selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
+                <% if (selectedTranscript.provider) { %><dt>Provider</dt><dd><%= selectedTranscript.provider %></dd><% } %>
+                <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
+                <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
+                <% if (selectedTranscript.run_duration_ms) { %><dt>Duration</dt><dd><%= (selectedTranscript.run_duration_ms / 1000).toFixed(1) %>s</dd><% } %>
+                <% if (selectedTranscript.provider_key_scope) { %><dt>Credentials</dt><dd><%= selectedTranscript.provider_key_scope === 'user' ? 'Personal API key' : 'System API key' %></dd><% } %>
+                <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
+              </dl>
+              <% if (selectedTranscript.prompt) { %>
+                <details class="prompt-detail">
+                  <summary>System prompt used</summary>
+                  <pre class="prompt-text"><%= selectedTranscript.prompt %></pre>
+                </details>
+              <% } %>
+            </details>
+          <% } %>
+
+          <!-- Transcript content -->
+          <div class="transcript-content" id="transcript-content" data-transcript-id="<%= selectedTranscript.id %>">
+            <!-- View mode -->
+            <div id="transcript-view-mode">
+              <div class="comparison-page-stack transcript-page-stack" id="transcript-page-stack">
+                <% if (comparisonPages && comparisonPages.length > 0) { %>
+                  <% comparisonPages.forEach(function(page, index) { %>
+                    <section class="comparison-page-block transcript-page-block <%= index === 0 ? 'active' : 'is-hidden' %>" data-page-number="<%= page.pageNumber %>">
+                      <% if (comparisonPages.length > 1) { %>
+                        <div class="comparison-page-label">Page <%= page.pageNumber %></div>
+                      <% } %>
+                      <pre class="transcript-page-pre" data-page-start="<%= page.startOffset %>" data-page-end="<%= page.endOffset %>"><%= page.transcriptText || (comparisonPages.length > 1 ? '[No transcript text detected for this page]' : selectedTranscript.content) %></pre>
+                    </section>
+                  <% }) %>
+                <% } else { %>
+                  <pre class="transcript-page-pre" data-page-start="0" data-page-end="<%= (selectedTranscript.content || '').length %>"><%= selectedTranscript.content || '' %></pre>
+                <% } %>
+              </div>
+            </div>
+            <!-- Edit mode: textarea only, actions are outside -->
+            <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+              <div id="transcript-edit-mode" style="display:none;">
+                <textarea id="transcript-editor" rows="20"><%= typeof editableTranscriptContent !== 'undefined' ? editableTranscriptContent : (selectedTranscript.content || '') %></textarea>
+              </div>
+            <% } %>
+          </div>
+          <!-- Edit actions outside the scrollable content area -->
+          <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+            <div class="transcript-edit-toolbar" id="transcript-edit-toolbar" style="display:none;">
+              <div class="transcript-edit-toolbar-header">
+                <div>
+                  <p class="transcript-edit-toolbar-eyebrow">Editing transcript</p>
+                  <h3>Version <%= selectedTranscript.version %><% if (selectedTranscript.is_best) { %> <span class="badge-best">★ Best</span><% } %></h3>
+                </div>
+                <span class="save-status transcript-toolbar-status" id="transcript-save-status"></span>
+              </div>
+
+              <div class="transcript-edit-toolbar-grid">
+                <div class="transcript-action-group">
+                  <p class="transcript-action-group-label">Current draft</p>
+                  <div class="transcript-edit-actions" id="transcript-edit-actions">
+                    <button type="button" class="btn-primary btn-sm" id="save-transcript-btn">Save Transcript</button>
+                    <button type="button" class="btn-secondary btn-sm" id="cancel-transcript-edit">Cancel</button>
+                  </div>
+                </div>
+
+                <div class="transcript-action-group">
+                  <p class="transcript-action-group-label">Versions</p>
+                  <div class="transcript-edit-actions">
+                    <button type="button" class="btn-action btn-sm" id="open-new-transcript-modal">New Transcript</button>
+                    <% if (typeof canManage !== 'undefined' && canManage && !selectedTranscript.is_best) { %>
+                      <form method="POST" action="/documents/<%= document.id %>/transcripts/<%= selectedTranscript.id %>/best">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-action btn-promote btn-sm">Set as Best</button>
+                      </form>
+                    <% } %>
+                  </div>
+                </div>
+
+                <% if (typeof canManage !== 'undefined' && canManage && transcripts.length > 1) { %>
+                  <div class="transcript-action-group transcript-action-group-danger">
+                    <p class="transcript-action-group-label">Danger zone</p>
+                    <div class="transcript-manage-actions" id="transcript-manage-actions">
+                      <form method="POST" action="/documents/<%= document.id %>/transcripts/<%= selectedTranscript.id %>/delete"
+                            onsubmit="return confirm('Delete this transcript version? This cannot be undone.')">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-action btn-delete btn-sm">Delete Transcript</button>
+                      </form>
+                    </div>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          <% } %>
+
+          <!-- Annotations -->
+          <div class="annotation-section">
+            <h3>Annotations (<span id="annotation-count"><%= annotations.length %></span>)</h3>
+
+            <div id="annotation-list" class="annotation-list">
+              <% if (annotations.length === 0) { %>
+                <p class="no-annotations">No annotations yet.<% if (currentUser) { %> Select text in the transcript to add one.<% } %></p>
+              <% } else { %>
+                <% annotations.forEach(ann => { %>
+                  <div class="annotation-item" data-id="<%= ann.id %>" data-start="<%= ann.position_start %>" data-end="<%= ann.position_end %>">
+                    <div class="annotation-header">
+                      <strong><%= ann.user_name %></strong>
+                      <span class="annotation-date"><%= new Date(ann.created_at).toLocaleDateString() %></span>
+                      <% if (currentUser) { %>
+                        <button class="delete-annotation" data-id="<%= ann.id %>" title="Delete annotation">&times;</button>
+                      <% } %>
+                    </div>
+                    <p class="annotation-content"><%= ann.content %></p>
+                    <% if (ann.position_start !== null && ann.position_end !== null) { %>
+                      <p class="annotation-position">Characters <%= ann.position_start %>-<%= ann.position_end %></p>
+                    <% } %>
+                  </div>
+                <% }) %>
+              <% } %>
+            </div>
+
+            <% if (currentUser) { %>
+              <div id="annotation-form-container" class="annotation-form-container" style="display: none;">
+                <form id="annotation-form" class="annotation-form">
+                  <input type="hidden" name="transcript_id" value="<%= selectedTranscript.id %>">
+                  <input type="hidden" name="position_start" id="position-start">
+                  <input type="hidden" name="position_end" id="position-end">
+                  <input type="hidden" name="user_name" value="<%= currentUser.username %>">
+
+                  <div class="form-group">
+                    <label for="annotation-content">Annotation <span class="field-hint-inline">as <%= currentUser.username %></span></label>
+                    <textarea id="annotation-content" name="content" required rows="3"></textarea>
+                  </div>
+
+                  <p class="selected-text-preview">Selected text: "<span id="selected-text"></span>"</p>
+
+                  <div class="form-actions">
+                    <button type="submit" class="btn-primary">Add Annotation</button>
+                    <button type="button" class="btn-secondary" onclick="hideAnnotationForm()">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            <% } else { %>
+              <div class="auth-gate">
+                <a href="/login">Sign in</a> to add annotations to this transcript.
+              </div>
+            <% } %>
+          </div>
+        <% } else { %>
+          <p class="no-transcript">No transcripts available for this document.</p>
+          <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+            <div class="new-transcript-trigger" style="margin-top:12px;">
+              <button type="button" class="btn-action btn-sm" id="open-new-transcript-modal">+ New Transcript</button>
+            </div>
+          <% } %>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- ── History Tab ── -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <div class="doc-tab-content" id="tab-history" style="display:none;">
+    <div class="history-panel">
+      <h2>Document History</h2>
+      <div id="history-list" class="history-list">
+        <p class="history-loading">Loading history...</p>
+      </div>
+      <div id="history-load-more" style="display:none; text-align:center; margin-top:12px;">
+        <button type="button" class="btn-secondary btn-sm" id="load-more-history">Load more</button>
+      </div>
     </div>
   </div>
 </div>
 
-<script>
-  (function() {
-    var select = document.getElementById('transcript-select');
-    if (!select) return;
-    select.addEventListener('change', function() {
-      var params = new URLSearchParams(window.location.search);
-      params.set('transcript', select.value);
-      if (select.dataset.backHref) params.set('back', select.dataset.backHref);
-      window.location.search = params.toString();
-    });
-  })();
-</script>
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!-- ── New Transcript Modal ── -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<% if (typeof canEdit !== 'undefined' && canEdit) { %>
+<div class="modal-overlay" id="new-transcript-modal" style="display:none;">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Create New Transcript</h3>
+      <button type="button" class="modal-close" id="close-new-transcript-modal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Mode selection -->
+      <div class="new-transcript-modes">
+        <button type="button" class="new-transcript-mode-btn active" data-nt-mode="manual">Manual</button>
+        <button type="button" class="new-transcript-mode-btn" data-nt-mode="ai">AI Transcription</button>
+      </div>
+
+      <!-- Manual mode -->
+      <div class="nt-mode-content active" id="nt-mode-manual">
+        <p class="nt-mode-desc">Create a new transcript version to edit by hand.</p>
+        <form method="POST" action="/documents/<%= document.id %>/transcripts" id="manual-transcript-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="edit-field">
+            <label>
+              <input type="radio" name="mode" value="empty" checked> Blank transcript
+            </label>
+          </div>
+          <% if (selectedTranscript) { %>
+            <div class="edit-field">
+              <label>
+                <input type="radio" name="mode" value="copy"> Copy from current (v<%= selectedTranscript.version %>)
+              </label>
+              <input type="hidden" name="source_transcript_id" value="<%= selectedTranscript.id %>">
+            </div>
+          <% } %>
+          <div class="edit-field">
+            <label for="manual-transcript-notes">Notes <span class="field-hint-inline">(optional)</span></label>
+            <textarea id="manual-transcript-notes" name="notes" rows="2" placeholder="E.g. corrected spelling, added missing paragraph..."></textarea>
+          </div>
+          <div class="edit-actions" style="margin-top:14px;">
+            <button type="submit" class="btn-primary btn-sm">Create Transcript</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- AI mode -->
+      <div class="nt-mode-content" id="nt-mode-ai" style="display:none;">
+        <p class="nt-mode-desc">Queue a new AI transcription using the document image.</p>
+        <% if (!document.image_path) { %>
+          <p class="nt-mode-warn">This document has no image. AI transcription requires an image.</p>
+        <% } else { %>
+          <form id="ai-transcript-form">
+            <div class="edit-field">
+              <label for="ai-provider">Provider</label>
+              <select id="ai-provider" name="provider">
+                <option value="">Loading providers...</option>
+              </select>
+            </div>
+            <div class="edit-field" id="ai-credential-field" style="display:none;">
+              <label for="ai-credential">Credential</label>
+              <select id="ai-credential" name="credentialSource"></select>
+            </div>
+            <div class="edit-field">
+              <label for="ai-temperature">Temperature <span class="field-hint-inline">(optional)</span></label>
+              <input type="number" id="ai-temperature" name="temperature" step="0.1" min="0" max="2" placeholder="Default">
+            </div>
+            <div class="edit-actions" style="margin-top:14px;">
+              <button type="submit" class="btn-primary btn-sm" id="ai-submit-btn">Queue Transcription</button>
+              <span class="save-status" id="ai-status"></span>
+            </div>
+          </form>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</div>
+<% } %>
+
+<script src="/js/app.js"></script>
+<script src="/js/document-page.js"></script>
 
 <%- include('partials/footer') %>

@@ -1,0 +1,52 @@
+<%- include('../partials/header', { pageTitle: 'Manage Collections', query: '' }) %>
+
+<div class="admin-page">
+  <%- include('../partials/manage-nav') %>
+
+  <div class="admin-header">
+    <h1>Manage Collections</h1>
+    <p class="subtitle">Collections you manage. You can manage documents, jobs, and user access for these collections.</p>
+  </div>
+
+  <% if (collections.length > 0) { %>
+    <div class="settings-section">
+      <div class="collections-list">
+        <% collections.forEach(function(c) { %>
+          <div class="collection-row">
+            <div class="collection-row-info">
+              <div class="collection-row-title">
+                <strong><%= c.name %></strong>
+                <% if (c.is_public) { %>
+                  <span class="badge-public">public</span>
+                <% } else { %>
+                  <span class="badge-private">private</span>
+                <% } %>
+                <% if (c.allow_export) { %>
+                  <span class="badge-best manage-export-badge">export enabled</span>
+                <% } %>
+              </div>
+              <% if (c.description) { %><p class="collection-row-desc"><%= c.description %></p><% } %>
+              <span class="collection-doc-count"><%= c.document_count %> document<%= c.document_count !== 1 ? 's' : '' %></span>
+            </div>
+            <div class="collection-row-actions">
+              <a href="/manage/collections/<%= c.id %>/documents" class="btn-action btn-sm">Documents</a>
+              <a href="/manage/collections/<%= c.id %>/import" class="btn-action btn-sm">Import</a>
+              <a href="/manage/collections/<%= c.id %>/jobs" class="btn-action btn-sm">Jobs</a>
+              <% if (!c.is_public) { %>
+                <a href="/manage/collections/<%= c.id %>/users" class="btn-action btn-sm">Users</a>
+              <% } %>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  <% } else { %>
+    <div class="empty-state" style="padding: 40px 20px;">
+      <div class="empty-icon">&#128193;</div>
+      <h2>No managed collections</h2>
+      <p>You don't currently manage any collections. An admin can grant you the Manager role on a collection.</p>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

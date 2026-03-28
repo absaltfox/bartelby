@@ -1,0 +1,273 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/manage-nav') %>
+  <%- include('../partials/manage-collection-nav', {
+    collection,
+    heading: 'Jobs — ' + collection.name,
+    subtitle: 'Import and transcription jobs for this collection',
+    activePage: 'jobs'
+  }) %>
+
+  <!-- Filter tabs: status -->
+  <div class="filter-tabs">
+    <%
+      const baseUrl = '/manage/collections/' + collection.id + '/jobs';
+      function filterHref(f, t) {
+        var params = [];
+        if (f !== 'all') params.push('filter=' + f);
+        if (t !== 'all') params.push('type=' + t);
+        return baseUrl + (params.length ? '?' + params.join('&') : '');
+      }
+    %>
+    <a href="<%= filterHref('all', typeFilter) %>" class="filter-tab <%= filter === 'all' ? 'active' : '' %>">
+      All <span class="filter-count"><%= counts.total %></span>
+    </a>
+    <a href="<%= filterHref('queued', typeFilter) %>" class="filter-tab <%= filter === 'queued' ? 'active' : '' %>">
+      Queued <span class="filter-count"><%= counts.queued %></span>
+    </a>
+    <a href="<%= filterHref('running', typeFilter) %>" class="filter-tab filter-tab-running <%= filter === 'running' ? 'active' : '' %>">
+      Running <span class="filter-count"><%= counts.running %></span>
+    </a>
+    <a href="<%= filterHref('done', typeFilter) %>" class="filter-tab filter-tab-done <%= filter === 'done' ? 'active' : '' %>">
+      Done <span class="filter-count"><%= counts.done %></span>
+    </a>
+    <a href="<%= filterHref('failed', typeFilter) %>" class="filter-tab filter-tab-failed <%= filter === 'failed' ? 'active' : '' %>">
+      Failed <span class="filter-count"><%= counts.failed %></span>
+    </a>
+
+    <span class="filter-separator"></span>
+
+    <a href="<%= filterHref(filter, 'all') %>" class="filter-tab filter-tab-type <%= typeFilter === 'all' ? 'active' : '' %>">
+      All Types
+    </a>
+    <a href="<%= filterHref(filter, 'import') %>" class="filter-tab filter-tab-type <%= typeFilter === 'import' ? 'active' : '' %>">
+      Import <span class="filter-count"><%= typeCounts.import %></span>
+    </a>
+    <a href="<%= filterHref(filter, 'transcription') %>" class="filter-tab filter-tab-type <%= typeFilter === 'transcription' ? 'active' : '' %>">
+      Transcription <span class="filter-count"><%= typeCounts.transcription %></span>
+    </a>
+  </div>
+
+  <% if (jobs.length === 0) { %>
+    <div class="empty-state">
+      <p>No jobs<% if (filter !== 'all') { %> with status "<%= filter %>"<% } %><% if (typeFilter !== 'all') { %> of type "<%= typeFilter %>"<% } %>.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Document / File</th>
+            <th>Provider</th>
+            <th>Queued</th>
+            <th>Duration</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody">
+          <% jobs.forEach(function(job) { %>
+            <%
+              let durationStr = '—';
+              if (job.started_at && job.completed_at) {
+                const ms = new Date(job.completed_at) - new Date(job.started_at);
+                durationStr = (ms / 1000).toFixed(1) + 's';
+              } else if (job.started_at && job.status === 'running') {
+                durationStr = 'running…';
+              } else if (job.status === 'processing') {
+                durationStr = 'processing…';
+              }
+              const isImport = job.job_type === 'import';
+            %>
+            <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>">
+              <td>
+                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImport ? 'Import' : 'Transcription' %></span>
+              </td>
+              <td>
+                <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
+              </td>
+              <td>
+                <% if (isImport) { %>
+                  <span><%= job.original_name || 'PDF Import' %></span>
+                  <% if (job.status === 'processing' && job.page_count) { %>
+                    <div class="import-progress">
+                      <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
+                    </div>
+                    <small class="muted">Rendering page <%= job.pages_rendered || 0 %> of <%= job.page_count %></small>
+                  <% } else if (job.status === 'processing') { %>
+                    <small class="muted">Starting...</small>
+                  <% } else if (job.page_count) { %>
+                    <small class="muted"> (<%= job.page_count %> pages)</small>
+                  <% } %>
+                <% } else if (job.document_title) { %>
+                  <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
+                <% } else { %>
+                  <span class="muted">Document #<%= job.document_id %></span>
+                <% } %>
+              </td>
+              <td><%= isImport ? '—' : (job.provider || '—') %></td>
+              <td class="muted"><%= new Date(job.created_at).toLocaleString() %></td>
+              <td><%= durationStr %></td>
+              <td class="job-actions">
+                <% if (!isImport) { %>
+                  <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>">Log</button>
+                <% } %>
+                <% if (isImport && job.status === 'done' && !job.submitted) { %>
+                  <a href="/manage/collections/<%= collection.id %>/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-primary">Continue</a>
+                <% } %>
+              </td>
+            </tr>
+            <% if (!isImport) { %>
+              <tr class="log-row" id="log-row-<%= job.id %>" style="display:none;">
+                <td colspan="7">
+                  <% if (job.error) { %>
+                    <div class="job-error">Error: <%= job.error %></div>
+                  <% } %>
+                  <pre class="job-log" id="job-log-<%= job.id %>"><%= job.log || '(no log yet)' %></pre>
+                </td>
+              </tr>
+            <% } %>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<script>
+(function() {
+  var collectionId = '<%= collection.id %>';
+  var apiBase = '/manage/collections/' + collectionId + '/jobs/api';
+
+  // Toggle log rows
+  document.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var id = btn.dataset.id;
+      var row = document.getElementById('log-row-' + id);
+      row.style.display = row.style.display === 'none' ? '' : 'none';
+    });
+  });
+
+  // AJAX polling: update job rows in-place every 5s when active jobs exist
+  var currentFilter = '<%= filter %>';
+  var currentTypeFilter = '<%= typeFilter %>';
+
+  function isActiveStatus(s) {
+    return s === 'queued' || s === 'running' || s === 'processing';
+  }
+
+  function formatDuration(job) {
+    if (job.started_at && job.completed_at) {
+      var ms = new Date(job.completed_at) - new Date(job.started_at);
+      return (ms / 1000).toFixed(1) + 's';
+    }
+    if (job.started_at && job.status === 'running') return 'running…';
+    if (job.status === 'processing') return 'processing…';
+    return '—';
+  }
+
+  function buildProgressHtml(job) {
+    if (job.job_type !== 'import') return '';
+    if (job.status === 'processing' && job.page_count) {
+      var pct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
+      return '<div class="import-progress"><div class="import-progress-bar" style="width:' + pct + '%"></div></div>' +
+             '<small class="muted">Rendering page ' + (job.pages_rendered || 0) + ' of ' + job.page_count + '</small>';
+    }
+    if (job.status === 'processing') return '<small class="muted">Starting...</small>';
+    if (job.page_count) return '<small class="muted"> (' + job.page_count + ' pages)</small>';
+    return '';
+  }
+
+  function pollJobs() {
+    fetch(apiBase)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        // Update filter tab counts
+        var countMap = { all: data.counts.total, queued: data.counts.queued, running: data.counts.running, done: data.counts.done, failed: data.counts.failed };
+        document.querySelectorAll('.filter-tab').forEach(function(tab) {
+          var href = tab.getAttribute('href') || '';
+          var badge = tab.querySelector('.filter-count');
+          if (!badge) return;
+          Object.keys(countMap).forEach(function(key) {
+            var baseJobsUrl = '/manage/collections/' + collectionId + '/jobs';
+            if (href.indexOf('filter=' + key) !== -1 || (key === 'all' && href === baseJobsUrl)) {
+              badge.textContent = countMap[key];
+            }
+          });
+        });
+
+        var jobs = data.jobs;
+        if (currentTypeFilter !== 'all') {
+          jobs = jobs.filter(function(j) { return j.job_type === currentTypeFilter; });
+        }
+        if (currentFilter !== 'all') {
+          if (currentFilter === 'running') {
+            jobs = jobs.filter(function(j) { return j.status === 'running' || j.status === 'processing'; });
+          } else {
+            jobs = jobs.filter(function(j) { return j.status === currentFilter; });
+          }
+        }
+
+        var tbody = document.getElementById('jobs-tbody');
+        jobs.forEach(function(job) {
+          var row = tbody.querySelector('tr.job-row[data-id="' + job.id + '"][data-type="' + job.job_type + '"]');
+          if (!row) return;
+
+          var statusBadge = row.querySelector('.status-badge');
+          if (statusBadge && statusBadge.textContent !== job.status) {
+            statusBadge.className = 'status-badge status-' + job.status;
+            statusBadge.textContent = job.status;
+            row.dataset.status = job.status;
+          }
+
+          var cells = row.querySelectorAll('td');
+          if (cells[5]) cells[5].textContent = formatDuration(job);
+
+          if (job.job_type === 'import') {
+            var docCell = cells[2];
+            var progressEl = docCell.querySelector('.import-progress');
+            var smallEl = docCell.querySelector('small');
+            var newProgress = buildProgressHtml(job);
+            if (progressEl) progressEl.remove();
+            if (smallEl) smallEl.remove();
+            if (newProgress) {
+              var nameEl = docCell.querySelector('span');
+              if (nameEl) nameEl.insertAdjacentHTML('afterend', newProgress);
+            }
+          }
+        });
+
+        var hasActive = data.jobs.some(function(j) { return isActiveStatus(j.status); });
+        if (hasActive) {
+          setTimeout(pollJobs, 5000);
+        }
+      })
+      .catch(function() {
+        setTimeout(pollJobs, 15000);
+      });
+  }
+
+  var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
+  if (hasActive) {
+    setTimeout(pollJobs, 5000);
+  }
+
+  // Live-update log for running transcription jobs
+  document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"]').forEach(function(row) {
+    var id = row.dataset.id;
+    var logEl = document.getElementById('job-log-' + id);
+    if (!logEl) return;
+    setInterval(async function() {
+      try {
+        var r = await fetch(apiBase + '/' + id);
+        var job = await r.json();
+        logEl.textContent = job.log || '(no log yet)';
+      } catch(e) {}
+    }, 5000);
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

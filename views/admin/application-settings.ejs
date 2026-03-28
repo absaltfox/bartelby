@@ -1,0 +1,136 @@
+<%- include('../partials/header', { pageTitle: 'Application Settings', query: '' }) %>
+
+<div class="admin-page settings-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Application Settings</h1>
+    <p class="subtitle">Manage branding, policies, and footer-linked public information.</p>
+  </div>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Application settings saved successfully.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <form method="POST" action="/admin/application-settings" enctype="multipart/form-data">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+    <section class="settings-section">
+      <h2>Branding</h2>
+      <div class="form-group">
+        <label for="app_name">Application Name</label>
+        <input type="text" id="app_name" name="app_name" value="<%= applicationSettings.appName %>" placeholder="Bartelby">
+        <p class="field-hint">Shown in the header and browser title.</p>
+      </div>
+      <div class="form-group">
+        <label for="app_logo_svg">Header Logo SVG</label>
+        <input type="file" id="app_logo_svg_file" name="app_logo_svg_file" accept=".svg,image/svg+xml">
+        <p class="field-hint">Upload an SVG file to replace the current header logo, or edit the markup directly below.</p>
+        <textarea id="app_logo_svg" name="app_logo_svg" rows="12"><%= applicationSettings.appLogoSvg %></textarea>
+        <p class="field-hint">Paste inline SVG markup for the header logo mark. Leave as-is to keep the current quill logo.</p>
+      </div>
+      <div class="form-group">
+        <label for="app_favicon_svg">Favicon SVG</label>
+        <input type="file" id="app_favicon_svg_file" name="app_favicon_svg_file" accept=".svg,image/svg+xml">
+        <p class="field-hint">Upload an SVG file to replace the current favicon, or edit the markup directly below.</p>
+        <textarea id="app_favicon_svg" name="app_favicon_svg" rows="8"><%= applicationSettings.appFaviconSvg %></textarea>
+        <p class="field-hint">Paste inline SVG markup for the browser tab icon. SVG works well for crisp favicons on modern browsers.</p>
+        <div class="favicon-preview-panel">
+          <div class="favicon-preview-card">
+            <div class="favicon-preview-browser-dotbar">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="favicon-preview-tab">
+              <img
+                id="favicon-preview-image"
+                src="data:image/svg+xml;charset=UTF-8,<%= encodeURIComponent(applicationSettings.appFaviconSvg) %>"
+                alt="Favicon preview">
+              <span class="favicon-preview-label"><%= applicationSettings.appName %></span>
+            </div>
+          </div>
+          <p class="field-hint">Preview of the favicon at browser-tab scale.</p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="deployment_notice">Deployment Notice</label>
+        <input type="text" id="deployment_notice" name="deployment_notice" value="<%= applicationSettings.deploymentNotice || '' %>" placeholder="This deployment is operated by Example University.">
+        <p class="field-hint">Optional footer text for institutions or organizations running their own deployment. Your ownership notice remains fixed separately.</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Terms of Service</h2>
+      <div class="form-group">
+        <label for="terms_of_service">Terms Content</label>
+        <textarea id="terms_of_service" name="terms_of_service" rows="12"><%= applicationSettings.termsOfService %></textarea>
+        <p class="field-hint">Displayed on the public Terms of Service page.</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Privacy Policy</h2>
+      <div class="form-group">
+        <label for="privacy_policy">Privacy Policy Content</label>
+        <textarea id="privacy_policy" name="privacy_policy" rows="12"><%= applicationSettings.privacyPolicy %></textarea>
+        <p class="field-hint">Displayed on the public Privacy Policy page and linked from the footer.</p>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h2>Data Security</h2>
+      <div class="form-group">
+        <label for="data_security_info">Data Security Content</label>
+        <textarea id="data_security_info" name="data_security_info" rows="12"><%= applicationSettings.dataSecurityInfo %></textarea>
+        <p class="field-hint">Displayed on the public Data Security page and linked from the footer.</p>
+      </div>
+    </section>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">Save Application Settings</button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function() {
+  function bindSvgUpload(fileInputId, textareaId, onLoad) {
+    var fileInput = document.getElementById(fileInputId);
+    var textarea = document.getElementById(textareaId);
+    if (!fileInput || !textarea) return;
+
+    fileInput.addEventListener('change', function() {
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+
+      var reader = new FileReader();
+      reader.onload = function(event) {
+        textarea.value = String(event.target.result || '');
+        if (typeof onLoad === 'function') onLoad();
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  var textarea = document.getElementById('app_favicon_svg');
+  var preview = document.getElementById('favicon-preview-image');
+
+  function updatePreview() {
+    if (!textarea || !preview) return;
+    try {
+      preview.src = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(textarea.value || '');
+    } catch (err) {}
+  }
+
+  if (textarea) {
+    textarea.addEventListener('input', updatePreview);
+  }
+
+  bindSvgUpload('app_logo_svg_file', 'app_logo_svg');
+  bindSvgUpload('app_favicon_svg_file', 'app_favicon_svg', updatePreview);
+})();
+</script>
+
+<%- include('../partials/footer') %>

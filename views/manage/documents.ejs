@@ -1,0 +1,246 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page">
+  <%- include('../partials/manage-nav') %>
+  <%- include('../partials/manage-collection-nav', {
+    collection,
+    heading: 'Documents — ' + collection.name,
+    subtitle: totalCount + ' document' + (totalCount !== 1 ? 's' : '') + ' in this collection',
+    activePage: 'documents'
+  }) %>
+
+  <% if (deleted) { %>
+    <div class="alert alert-success">Document deleted successfully.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <div class="settings-section manage-settings-panel">
+    <h2>Collection Settings</h2>
+    <form method="POST" action="/manage/collections/<%= collection.id %>/settings/export" class="manage-settings-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="checkbox-label">
+        <input type="checkbox" name="allow_export" value="1" <%= collection.allow_export ? 'checked' : '' %>>
+        <span>Allow exports from this collection</span>
+      </label>
+      <p class="field-hint">When enabled, document pages show the Export menu and document lists allow bulk export for items in this collection.</p>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary btn-sm">Save Setting</button>
+      </div>
+    </form>
+  </div>
+
+  <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+    <div class="export-context-banner">
+      Exports are enabled for this collection. Use this list for batch export, or open a document to export that document on its own.
+    </div>
+  <% } %>
+
+  <% if (docs.length > 0) { %>
+    <div id="action-bar" class="move-bar" style="display:none; margin-bottom:16px; padding:10px 14px; background:var(--bg-secondary, #f5f5f5); border-radius:8px; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span id="action-count" style="font-size:0.9rem; font-weight:500;">0 selected</span>
+      <% if (allCollections.length > 1) { %>
+        <select id="move-target" style="font-size:0.85rem; padding:4px 8px;">
+          <option value="">— Move to collection —</option>
+          <% allCollections.forEach(function(c) { %>
+            <% if (c.id !== collection.id) { %>
+              <option value="<%= c.id %>"><%= c.name %></option>
+            <% } %>
+          <% }) %>
+        </select>
+        <button type="button" id="move-btn" class="btn-primary btn-sm" disabled>Move</button>
+      <% } %>
+      <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+        <select id="export-format" style="font-size:0.85rem; padding:4px 8px;">
+          <option value="pdf">PDF</option>
+          <option value="tei">TEI (XML)</option>
+          <option value="both">Both (PDF + TEI)</option>
+        </select>
+        <button type="button" id="export-btn" class="btn-primary btn-sm">Export</button>
+      <% } %>
+      <button type="button" id="deselect-all-btn" class="btn-secondary btn-sm">Deselect All</button>
+    </div>
+
+    <div class="settings-section">
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <% if (allCollections.length > 1 || allowExport) { %>
+                <th style="width:32px;"><input type="checkbox" id="select-all-cb" title="Select all"></th>
+              <% } %>
+              <th></th>
+              <th>Title</th>
+              <th>Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% docs.forEach(function(doc) { %>
+              <tr>
+                <% if (allCollections.length > 1 || allowExport) { %>
+                  <td><input type="checkbox" class="doc-cb" data-id="<%= doc.id %>"></td>
+                <% } %>
+                <td style="width:60px;">
+                  <% if (doc.image_path) { %>
+                    <img src="<%= doc.image_path %>" alt="" style="width:48px; height:48px; object-fit:cover; border-radius:4px;">
+                  <% } %>
+                </td>
+                <td>
+                  <a href="/documents/<%= doc.id %>"><strong><%= doc.title %></strong></a>
+                </td>
+                <td class="user-date-cell"><%= doc.date_created || '—' %></td>
+                <td class="user-actions-cell">
+                  <a href="/documents/<%= doc.id %>" class="btn-action btn-sm">View</a>
+                  <form method="POST" action="/manage/collections/<%= collection.id %>/documents/<%= doc.id %>/delete" class="inline-form"
+                        onsubmit="return confirm('Delete this document permanently? This cannot be undone.')" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <% if (totalPages > 1) { %>
+        <div class="pagination" style="margin-top: 16px; text-align: center;">
+          <% for (let p = 1; p <= totalPages; p++) { %>
+            <% if (p === currentPage) { %>
+              <strong class="pagination-current"><%= p %></strong>
+            <% } else { %>
+              <a href="/manage/collections/<%= collection.id %>/documents?page=<%= p %>" class="pagination-link"><%= p %></a>
+            <% } %>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  <% } else { %>
+    <div class="empty-state" style="padding: 40px 20px;">
+      <div class="empty-icon">&#128220;</div>
+      <h2>No documents</h2>
+      <p>This collection has no documents yet.</p>
+    </div>
+  <% } %>
+</div>
+
+<% if ((allCollections.length > 1 || allowExport) && docs.length > 0) { %>
+<script>
+(function() {
+  var csrfToken = '<%= csrfToken %>';
+  var collectionId = <%= collection.id %>;
+  var selectAllCb = document.getElementById('select-all-cb');
+  var actionBar = document.getElementById('action-bar');
+  var actionCount = document.getElementById('action-count');
+  var moveTarget = document.getElementById('move-target');
+  var moveBtn = document.getElementById('move-btn');
+  var exportFormat = document.getElementById('export-format');
+  var exportBtn = document.getElementById('export-btn');
+  var deselectBtn = document.getElementById('deselect-all-btn');
+  var checkboxes = document.querySelectorAll('.doc-cb');
+
+  function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.doc-cb:checked')).map(function(cb) {
+      return parseInt(cb.dataset.id);
+    });
+  }
+
+  function updateUI() {
+    var checked = document.querySelectorAll('.doc-cb:checked');
+    var count = checked.length;
+    actionBar.style.display = count > 0 ? 'flex' : 'none';
+    actionCount.textContent = count + ' selected';
+    if (moveBtn && moveTarget) moveBtn.disabled = !moveTarget.value || count === 0;
+    selectAllCb.checked = count === checkboxes.length && count > 0;
+    selectAllCb.indeterminate = count > 0 && count < checkboxes.length;
+  }
+
+  checkboxes.forEach(function(cb) { cb.addEventListener('change', updateUI); });
+  if (moveTarget) moveTarget.addEventListener('change', updateUI);
+
+  selectAllCb.addEventListener('change', function() {
+    checkboxes.forEach(function(cb) { cb.checked = selectAllCb.checked; });
+    updateUI();
+  });
+
+  deselectBtn.addEventListener('click', function() {
+    checkboxes.forEach(function(cb) { cb.checked = false; });
+    updateUI();
+  });
+
+  if (moveBtn) {
+    moveBtn.addEventListener('click', async function() {
+      var target = parseInt(moveTarget.value);
+      if (!target) return;
+      var ids = getSelectedIds();
+      if (ids.length === 0) return;
+      if (!confirm('Move ' + ids.length + ' document' + (ids.length !== 1 ? 's' : '') + ' to the selected collection?')) return;
+
+      moveBtn.disabled = true;
+      moveBtn.textContent = 'Moving...';
+      try {
+        var res = await fetch('/manage/collections/' + collectionId + '/documents/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          body: JSON.stringify({ targetCollectionId: target, ids: ids })
+        });
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Move failed');
+        window.location.reload();
+      } catch (err) {
+        alert(err.message);
+        moveBtn.disabled = false;
+        moveBtn.textContent = 'Move';
+      }
+    });
+  }
+
+  if (exportBtn) {
+    exportBtn.addEventListener('click', async function() {
+      var ids = getSelectedIds();
+      if (ids.length === 0) return;
+      var format = exportFormat.value;
+
+      // Single doc, single format — direct download
+      if (ids.length === 1 && format !== 'both') {
+        var ext = format === 'tei' ? 'tei' : 'pdf';
+        window.location.href = '/export/documents/' + ids[0] + '/' + ext;
+        return;
+      }
+
+      exportBtn.disabled = true;
+      exportBtn.textContent = 'Exporting...';
+      try {
+        var res = await fetch('/export/documents/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          body: JSON.stringify({ ids: ids, format: format })
+        });
+        if (!res.ok) {
+          var err = await res.json();
+          throw new Error(err.error || 'Export failed');
+        }
+        var blob = await res.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'export.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Export';
+      }
+    });
+  }
+})();
+</script>
+<% } %>
+
+<%- include('../partials/footer') %>

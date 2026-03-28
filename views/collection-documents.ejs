@@ -129,6 +129,24 @@
 
   <!-- Main content -->
   <div class="collection-main">
+    <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+      <div class="export-context-banner">
+        Exports are enabled for this collection. Use the list to select one or more documents for batch export, or open a document to export it individually.
+      </div>
+    <% } %>
+    <% if (typeof allowExport !== 'undefined' && allowExport && documents.length > 0) { %>
+      <div id="export-bar" class="export-bar" style="display:none;">
+        <span id="export-count" class="export-bar-count">0 selected</span>
+        <select id="export-format" class="export-bar-format">
+          <option value="pdf">PDF</option>
+          <option value="tei">TEI (XML)</option>
+          <option value="both">Both (PDF + TEI)</option>
+        </select>
+        <button type="button" id="export-btn" class="btn-primary btn-sm">Export</button>
+        <button type="button" id="export-deselect-btn" class="btn-secondary btn-sm">Deselect All</button>
+      </div>
+    <% } %>
+
     <% if (documents.length === 0) { %>
       <div class="empty-state">
         <% if (hasActiveFilters) { %>
@@ -142,7 +160,12 @@
     <% } else { %>
       <div class="document-list">
         <% documents.forEach(doc => { %>
-          <article class="document-card">
+          <article class="document-card<%= (typeof allowExport !== 'undefined' && allowExport) ? ' document-card-exportable' : '' %>">
+            <% if (typeof allowExport !== 'undefined' && allowExport) { %>
+              <div class="document-card-select">
+                <input type="checkbox" class="export-cb" data-id="<%= doc.id %>" title="Select for export">
+              </div>
+            <% } %>
             <div class="document-thumbnail">
               <% if (doc.image_path) { %>
                 <img src="<%= doc.image_path %>" alt="<%= doc.title %>" onerror="this.style.display='none'">
@@ -203,6 +226,77 @@
     <% } %>
   </div>
 </div>
+
+<% if (typeof allowExport !== 'undefined' && allowExport && documents.length > 0) { %>
+<script>
+(function() {
+  var exportBar = document.getElementById('export-bar');
+  var exportCount = document.getElementById('export-count');
+  var exportFormat = document.getElementById('export-format');
+  var exportBtn = document.getElementById('export-btn');
+  var deselectBtn = document.getElementById('export-deselect-btn');
+  var checkboxes = document.querySelectorAll('.export-cb');
+  var csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
+  function updateExportUI() {
+    var checked = document.querySelectorAll('.export-cb:checked');
+    var count = checked.length;
+    exportBar.style.display = count > 0 ? 'flex' : 'none';
+    exportCount.textContent = count + ' selected';
+  }
+
+  checkboxes.forEach(function(cb) { cb.addEventListener('change', updateExportUI); });
+
+  deselectBtn.addEventListener('click', function() {
+    checkboxes.forEach(function(cb) { cb.checked = false; });
+    updateExportUI();
+  });
+
+  exportBtn.addEventListener('click', async function() {
+    var ids = Array.from(document.querySelectorAll('.export-cb:checked')).map(function(cb) {
+      return parseInt(cb.dataset.id);
+    });
+    if (ids.length === 0) return;
+
+    // Single document — direct download
+    if (ids.length === 1 && exportFormat.value !== 'both') {
+      var ext = exportFormat.value === 'tei' ? 'tei' : 'pdf';
+      window.location.href = '/export/documents/' + ids[0] + '/' + ext;
+      return;
+    }
+
+    // Bulk — POST for ZIP
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Exporting...';
+    try {
+      var res = await fetch('/export/documents/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ ids: ids, format: exportFormat.value })
+      });
+      if (!res.ok) {
+        var err = await res.json();
+        throw new Error(err.error || 'Export failed');
+      }
+      var blob = await res.blob();
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'export.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = 'Export';
+    }
+  });
+})();
+</script>
+<% } %>
 
 <script>
 (function() {

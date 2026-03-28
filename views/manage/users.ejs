@@ -1,0 +1,183 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page">
+  <%- include('../partials/manage-nav') %>
+  <%- include('../partials/manage-collection-nav', {
+    collection,
+    heading: 'User Access — ' + collection.name,
+    subtitle: 'Manage who can access this collection and what they can do.',
+    activePage: 'users'
+  }) %>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Access updated successfully.</div>
+  <% } %>
+
+  <div class="settings-section">
+    <h2>Current Access</h2>
+
+    <% if (grantedUsers.length > 0) { %>
+      <div class="users-table-wrap">
+        <table class="users-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Role</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% grantedUsers.forEach(function(u) { %>
+              <tr>
+                <td>
+                  <strong><%= u.username %></strong>
+                  <% if (u.email) { %><br><small class="muted"><%= u.email %></small><% } %>
+                </td>
+                <td>
+                  <span class="role-badge role-<%= u.collection_role || 'viewer' %>" style="font-size:0.75rem;"><%= u.collection_role || 'viewer' %></span>
+                </td>
+                <td>
+                  <% if (u.id !== currentUser.id) { %>
+                    <button type="button" class="btn-action btn-sm edit-role-btn"
+                      data-user-id="<%= u.id %>"
+                      data-username="<%= u.username %>"
+                      data-role="<%= u.collection_role || 'viewer' %>">Edit</button>
+                    <form method="POST" action="/manage/collections/<%= collection.id %>/users/<%= u.id %>/revoke" style="display:inline">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-action btn-delete btn-sm" onclick="return confirm('Revoke access for <%= u.username %>?')">Revoke</button>
+                    </form>
+                  <% } else { %>
+                    <span class="muted" style="font-size:0.8rem;">you</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } else { %>
+      <p class="muted" style="font-size:0.9rem;">No users have been granted access to this collection.</p>
+    <% } %>
+
+    <% if (eligible.length > 0) { %>
+      <h2 style="margin-top:1.5rem;">Grant Access</h2>
+      <form method="POST" action="/manage/collections/<%= collection.id %>/users/grant" class="access-grant-form" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <select name="user_id" required style="min-width:180px;">
+          <option value="">Select a user</option>
+          <% eligible.forEach(function(u) { %>
+            <option value="<%= u.id %>"><%= u.username %><% if (u.email) { %> (<%= u.email %>)<% } %></option>
+          <% }) %>
+        </select>
+        <select name="role">
+          <option value="viewer">Viewer</option>
+          <option value="editor">Editor</option>
+        </select>
+        <button type="submit" class="btn-primary btn-sm">Grant Access</button>
+      </form>
+    <% } else { %>
+      <p class="muted" style="font-size:0.9rem; margin-top:0.5rem;">All eligible users already have access.</p>
+    <% } %>
+
+    <p class="field-hint" style="margin-top:0.75rem;">
+      Users with <em>Access All</em> or the <em>admin</em> role always have access regardless of these grants.
+      As a collection manager, you can grant Viewer or Editor access.
+    </p>
+  </div>
+</div>
+
+<!-- Edit Role Modal -->
+<div class="tag-modal-overlay" id="role-modal" style="display:none;">
+  <div class="tag-modal" style="width:440px;">
+    <div class="tag-modal-header">
+      <h3 id="role-modal-title">Edit Role</h3>
+      <button type="button" class="tag-modal-close" id="role-modal-close">&times;</button>
+    </div>
+    <form method="POST" action="/manage/collections/<%= collection.id %>/users/grant" id="role-modal-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="user_id" id="role-modal-user-id" value="">
+      <div class="tag-modal-body" style="padding:16px 20px;">
+        <p style="margin:0 0 16px;">Choose a permission level for <strong id="role-modal-username"></strong>:</p>
+
+        <label class="role-option" style="display:block; padding:12px; border:2px solid var(--border-color); border-radius:8px; margin-bottom:10px; cursor:pointer;">
+          <input type="radio" name="role" value="viewer" style="margin-right:8px;">
+          <strong>Viewer</strong>
+          <p class="field-hint" style="margin:4px 0 0 24px;">Can browse documents and read transcriptions in this collection. Cannot edit or create content.</p>
+        </label>
+
+        <label class="role-option" style="display:block; padding:12px; border:2px solid var(--border-color); border-radius:8px; cursor:pointer;">
+          <input type="radio" name="role" value="editor" style="margin-right:8px;">
+          <strong>Editor</strong>
+          <p class="field-hint" style="margin:4px 0 0 24px;">Can browse, edit, and create transcriptions for documents in this collection. Cannot manage users or collection settings.</p>
+        </label>
+      </div>
+      <div class="tag-modal-footer">
+        <button type="button" class="btn-action btn-sm" id="role-modal-cancel">Cancel</button>
+        <button type="submit" class="btn-primary btn-sm">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function() {
+  var modal = document.getElementById('role-modal');
+  var form = document.getElementById('role-modal-form');
+  var userIdInput = document.getElementById('role-modal-user-id');
+  var usernameEl = document.getElementById('role-modal-username');
+  var titleEl = document.getElementById('role-modal-title');
+  var options = form.querySelectorAll('.role-option');
+
+  function openModal(userId, username, currentRole) {
+    userIdInput.value = userId;
+    usernameEl.textContent = username;
+    titleEl.textContent = 'Edit Role — ' + username;
+
+    // Select current role
+    var radios = form.querySelectorAll('input[name="role"]');
+    radios.forEach(function(r) {
+      r.checked = r.value === currentRole;
+    });
+    updateHighlight();
+
+    modal.style.display = 'flex';
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+  }
+
+  function updateHighlight() {
+    options.forEach(function(opt) {
+      var radio = opt.querySelector('input[type="radio"]');
+      opt.style.borderColor = radio.checked ? 'var(--accent-color, #8b6914)' : 'var(--border-color)';
+      opt.style.background = radio.checked ? 'var(--hover-bg, rgba(139,105,20,0.06))' : '';
+    });
+  }
+
+  // Open modal on Edit button click
+  document.querySelectorAll('.edit-role-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      openModal(btn.dataset.userId, btn.dataset.username, btn.dataset.role);
+    });
+  });
+
+  // Close handlers
+  document.getElementById('role-modal-close').addEventListener('click', closeModal);
+  document.getElementById('role-modal-cancel').addEventListener('click', closeModal);
+  modal.addEventListener('click', function(e) {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+
+  // Highlight selected option
+  options.forEach(function(opt) {
+    var radio = opt.querySelector('input[type="radio"]');
+    radio.addEventListener('change', updateHighlight);
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

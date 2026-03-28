@@ -52,11 +52,13 @@ function showAnnotationForm(selection, selectedText, transcriptId) {
   if (!formContainer) return;
 
   // Get position in the transcript text
-  const pre = document.querySelector('#transcript-content pre');
+  const range = selection.getRangeAt(0);
+  const pre = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+    ? range.commonAncestorContainer.closest('pre')
+    : range.commonAncestorContainer.parentElement.closest('pre');
   if (!pre) return;
 
-  const fullText = pre.textContent;
-  const range = selection.getRangeAt(0);
+  const pageStart = parseInt(pre.dataset.pageStart || '0', 10);
 
   // Calculate position relative to the pre element's text content
   let startOffset = 0;
@@ -80,18 +82,21 @@ function showAnnotationForm(selection, selectedText, transcriptId) {
   if (!found) return;
 
   const endOffset = startOffset + selectedText.length;
+  const globalStart = pageStart + startOffset;
+  const globalEnd = pageStart + endOffset;
 
   // Populate form
   selectedTextSpan.textContent = selectedText.substring(0, 100) + (selectedText.length > 100 ? '...' : '');
-  positionStart.value = startOffset;
-  positionEnd.value = endOffset;
+  positionStart.value = globalStart;
+  positionEnd.value = globalEnd;
 
   // Show form
   formContainer.style.display = 'block';
   formContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Focus on name input
-  document.getElementById('user-name').focus();
+  // Focus on annotation content
+  var contentEl = document.getElementById('annotation-content');
+  if (contentEl) contentEl.focus();
 }
 
 function hideAnnotationForm() {
@@ -171,11 +176,10 @@ async function handleAnnotationDelete(e) {
 
 function highlightAnnotations() {
   const annotationItems = document.querySelectorAll('.annotation-item[data-start][data-end]');
-  const pre = document.querySelector('#transcript-content pre');
+  const pres = document.querySelectorAll('#transcript-content pre');
 
-  if (!pre || annotationItems.length === 0) return;
+  if (pres.length === 0 || annotationItems.length === 0) return;
 
-  const text = pre.textContent;
   const annotations = [];
 
   annotationItems.forEach(item => {
@@ -190,35 +194,48 @@ function highlightAnnotations() {
 
   if (annotations.length === 0) return;
 
-  // Sort annotations by start position (descending to avoid index shifting)
-  annotations.sort((a, b) => b.start - a.start);
+  pres.forEach(pre => {
+    const text = pre.textContent;
+    const pageStart = parseInt(pre.dataset.pageStart || '0', 10);
+    const pageEnd = parseInt(pre.dataset.pageEnd || String(pageStart + text.length), 10);
 
-  let html = escapeHtml(text);
-  const htmlText = text; // Use for position calculations
+    const pageAnnotations = annotations
+      .filter(ann => ann.end > pageStart && ann.start < pageEnd)
+      .map(ann => ({
+        id: ann.id,
+        start: Math.max(ann.start - pageStart, 0),
+        end: Math.min(ann.end - pageStart, text.length)
+      }))
+      .filter(ann => ann.start < ann.end)
+      .sort((a, b) => a.start - b.start);
 
-  // Apply highlights from end to start
-  annotations.forEach(ann => {
-    const before = escapeHtml(htmlText.substring(0, ann.start));
-    const highlighted = escapeHtml(htmlText.substring(ann.start, ann.end));
-    const after = escapeHtml(htmlText.substring(ann.end));
+    if (pageAnnotations.length === 0) return;
 
-    html = before + `<span class="highlight" data-annotation-id="${ann.id}">${highlighted}</span>` + after;
-  });
+    let html = '';
+    let cursor = 0;
 
-  pre.innerHTML = html;
+    pageAnnotations.forEach(ann => {
+      if (ann.start < cursor) return;
+      html += escapeHtml(text.substring(cursor, ann.start));
+      html += `<span class="highlight" data-annotation-id="${ann.id}">${escapeHtml(text.substring(ann.start, ann.end))}</span>`;
+      cursor = ann.end;
+    });
 
-  // Add click handlers to highlights
-  pre.querySelectorAll('.highlight').forEach(span => {
-    span.addEventListener('click', function() {
-      const annotationId = this.dataset.annotationId;
-      const annotationItem = document.querySelector(`.annotation-item[data-id="${annotationId}"]`);
-      if (annotationItem) {
-        annotationItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        annotationItem.style.backgroundColor = '#e3f2fd';
-        setTimeout(() => {
-          annotationItem.style.backgroundColor = '';
-        }, 2000);
-      }
+    html += escapeHtml(text.substring(cursor));
+    pre.innerHTML = html;
+
+    pre.querySelectorAll('.highlight').forEach(span => {
+      span.addEventListener('click', function() {
+        const annotationId = this.dataset.annotationId;
+        const annotationItem = document.querySelector(`.annotation-item[data-id="${annotationId}"]`);
+        if (annotationItem) {
+          annotationItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          annotationItem.style.backgroundColor = '#e3f2fd';
+          setTimeout(() => {
+            annotationItem.style.backgroundColor = '';
+          }, 2000);
+        }
+      });
     });
   });
 }
@@ -231,45 +248,47 @@ function escapeHtml(text) {
 
 // Image zoom functionality
 function initImageZoom() {
-  const documentImage = document.querySelector('.document-image');
-  if (!documentImage) return;
+  const documentImages = document.querySelectorAll('.document-image');
+  if (documentImages.length === 0) return;
 
-  documentImage.addEventListener('click', function() {
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.9);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-      cursor: zoom-out;
-    `;
+  documentImages.forEach(documentImage => {
+    documentImage.addEventListener('click', function() {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        cursor: zoom-out;
+      `;
 
-    const img = document.createElement('img');
-    img.src = this.src;
-    img.style.cssText = `
-      max-width: 95%;
-      max-height: 95%;
-      object-fit: contain;
-    `;
+      const img = document.createElement('img');
+      img.src = this.src;
+      img.style.cssText = `
+        max-width: 95%;
+        max-height: 95%;
+        object-fit: contain;
+      `;
 
-    overlay.appendChild(img);
-    document.body.appendChild(overlay);
+      overlay.appendChild(img);
+      document.body.appendChild(overlay);
 
-    overlay.addEventListener('click', function() {
-      document.body.removeChild(overlay);
-    });
-
-    document.addEventListener('keydown', function closeOnEscape(e) {
-      if (e.key === 'Escape') {
+      overlay.addEventListener('click', function() {
         document.body.removeChild(overlay);
-        document.removeEventListener('keydown', closeOnEscape);
-      }
+      });
+
+      document.addEventListener('keydown', function closeOnEscape(e) {
+        if (e.key === 'Escape') {
+          document.body.removeChild(overlay);
+          document.removeEventListener('keydown', closeOnEscape);
+        }
+      });
     });
   });
 }

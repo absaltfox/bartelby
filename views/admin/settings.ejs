@@ -34,6 +34,32 @@
           <% }) %>
         </select>
       </div>
+      <div class="form-group">
+        <label for="transcription_prompt">Default System Prompt</label>
+        <textarea id="transcription_prompt" name="transcription_prompt" rows="18"><%= cfg.transcription_prompt || `You are an expert in historical document transcription and paleography. Transcribe all handwritten and printed text from the document image with high accuracy.
+
+Rules:
+- Transcribe ALL visible text verbatim, preserving original spelling, punctuation, and capitalization
+- Use [illegible] for text that cannot be read with confidence
+- Use [unclear: word?] when a word is uncertain
+- Mark struck-through text as ~~text~~
+- Mark interlinear additions in {curly braces}
+
+Respond ONLY with a valid JSON object — no markdown fences, no commentary — in this exact shape:
+{
+  "transcription": "<full verbatim text>",
+  "metadata": {
+    "title": "<document title or null>",
+    "date_created": "<date as written, e.g. March 15 1847, or null>",
+    "document_type": "<letter|ledger|deed|diary|legal|receipt|other or null>",
+    "author": "<author/signer or null>",
+    "location": "<place of origin or null>",
+    "condition": "<good|fair|poor or null>"
+  },
+  "notes": "<observations about illegible sections or difficulties, or null>"
+}` %></textarea>
+        <p class="field-hint">This prompt is used for new AI transcriptions. It is also stored in transcript provenance so each run records the prompt that was used.</p>
+      </div>
     </section>
 
     <section class="settings-section">

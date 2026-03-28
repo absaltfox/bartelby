@@ -56,21 +56,26 @@
         <input type="checkbox" name="access_all" value="1" id="access-all-cb">
         <span class="role-option-label">
           <strong>All collections</strong>
-          <small>Grants access to every current and future collection.</small>
+          <small>Grants <em>view-only</em> access to every current and future collection. Use per-collection roles below for Editor or Manager access.</small>
         </span>
       </label>
 
       <% if (allCollections.length > 0) { %>
         <div id="collection-list" class="collection-access-list">
-          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections:</p>
+          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections and set their role:</p>
           <% allCollections.forEach(function(c) { %>
-            <label class="collection-access-item">
+            <label class="collection-access-item" style="display:flex; align-items:center; gap:8px;">
               <input type="checkbox" name="collections" value="<%= c.id %>">
-              <span>
+              <span style="flex:1;">
                 <strong><%= c.name %></strong>
                 <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
                 <small class="muted"> (<%= c.document_count %> doc<%= c.document_count !== 1 ? 's' : '' %>)</small>
               </span>
+              <select name="collection_role_<%= c.id %>" style="font-size:0.8125rem; padding:2px 6px;">
+                <option value="viewer">Viewer</option>
+                <option value="editor">Editor</option>
+                <option value="manager">Manager</option>
+              </select>
             </label>
           <% }) %>
         </div>

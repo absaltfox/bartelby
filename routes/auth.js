@@ -10,10 +10,12 @@ const {
   userInvitesAsync,
   userCollectionAccessAsync,
   passwordResetTokensAsync,
-  mfaRememberTokensAsync
+  mfaRememberTokensAsync,
+  settingsAsync
 } = require('../database/db');
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
+const { resolveApplicationSettings } = require('../utils/application-settings');
 
 function consumeAuthError(req) {
   const error = req.session.authError || null;
@@ -219,9 +221,36 @@ router.get('/register', (req, res) => {
   });
 });
 
-router.get('/terms', (req, res) => {
-  res.render('terms', {
-    pageTitle: 'Terms of Service'
+router.get('/terms', async (req, res) => {
+  const cfg = await settingsAsync.getAll();
+  const applicationSettings = resolveApplicationSettings(cfg);
+  res.render('policy', {
+    pageTitle: 'Terms of Service',
+    title: 'Terms of Service',
+    subtitle: 'The terms governing use of this site.',
+    content: applicationSettings.termsOfService
+  });
+});
+
+router.get('/privacy', async (req, res) => {
+  const cfg = await settingsAsync.getAll();
+  const applicationSettings = resolveApplicationSettings(cfg);
+  res.render('policy', {
+    pageTitle: 'Privacy Policy',
+    title: 'Privacy Policy',
+    subtitle: 'How this application handles the information stored in it.',
+    content: applicationSettings.privacyPolicy
+  });
+});
+
+router.get('/data-security', async (req, res) => {
+  const cfg = await settingsAsync.getAll();
+  const applicationSettings = resolveApplicationSettings(cfg);
+  res.render('policy', {
+    pageTitle: 'Data Security',
+    title: 'Data Security',
+    subtitle: 'How this application approaches access control and system protection.',
+    content: applicationSettings.dataSecurityInfo
   });
 });
 
@@ -374,7 +403,16 @@ router.post('/invite/:token', async (req, res, next) => {
     });
 
     if (!invite.access_all) {
-      await userCollectionAccessAsync.setForUser(userId, invite.collection_ids || []);
+      // Use per-collection roles if available, otherwise fall back to basic access
+      let collectionRoles = null;
+      if (invite.collection_roles) {
+        try { collectionRoles = JSON.parse(invite.collection_roles); } catch (e) {}
+      }
+      if (collectionRoles && Object.keys(collectionRoles).length > 0) {
+        await userCollectionAccessAsync.setForUserWithRoles(userId, collectionRoles);
+      } else {
+        await userCollectionAccessAsync.setForUser(userId, invite.collection_ids || []);
+      }
     }
     await userInvitesAsync.markAccepted(invite.id, userId);
   } catch (err) {

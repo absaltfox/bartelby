@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %>Bartelby</title>
+  <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %><%= appName || 'Bartelby' %></title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;charset=UTF-8,<%= encodeURIComponent(appFaviconSvg || '') %>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -14,43 +15,53 @@
   <header class="site-header">
     <div class="container">
       <a href="/" class="logo">
-        <svg class="logo-quill" viewBox="0 0 22 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <!-- Feather vane -->
-          <path d="M19 1 C 22 5, 21 15, 14 24 C 11 28, 8 33, 6 39 C 4 35, 3 33, 1 35 C -1 31, 2 27, 6 25 C 3 18, 3 9, 8 4 C 12 0, 18 -1, 19 1 Z" fill="#f0d8b4"/>
-          <!-- Feather highlight -->
-          <path d="M19 1 C 21 6, 18 16, 12 24" stroke="#e8c890" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
-          <!-- Barb lines -->
-          <path d="M16 7 L12 11" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
-          <path d="M13 13 L9 17" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
-          <path d="M10 19 L7 22" stroke="#d4a870" stroke-width="0.7" stroke-linecap="round"/>
-          <!-- Spine -->
-          <path d="M19 1 L6 39" stroke="#c08840" stroke-width="1.1" stroke-linecap="round"/>
-          <!-- Nib split -->
-          <path d="M6 39 L4 43 M6 39 L8 42" stroke="#c08840" stroke-width="0.9" stroke-linecap="round"/>
-        </svg>
-        Bartelby
+        <span class="logo-mark"><%- appLogoSvg %></span>
+        <%= appName || 'Bartelby' %>
       </a>
-      <nav class="main-nav">
-        <a href="/" class="nav-pill" data-section="collection">Collections</a>
-        <% if (isAdmin) { %>
-          <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
-        <% } %>
-        <form action="/search" method="GET" class="search-form">
-          <input type="search" name="q" placeholder="Search transcripts…" value="<%= typeof query !== 'undefined' ? query : '' %>">
-          <button type="submit">Search</button>
-        </form>
-        <% if (currentUser) { %>
-          <div class="user-chip">
-            <a href="/account" class="user-chip-link"><strong><%= currentUser.username %></strong></a>
-            <form method="POST" action="/logout" style="display:inline">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button type="submit" class="btn-logout">Sign out</button>
+      <div class="header-controls">
+        <nav class="main-nav header-primary-nav">
+          <a href="/" class="nav-pill" data-section="collection">Collections</a>
+          <% if (typeof isManager !== 'undefined' && isManager && !isAdmin) { %>
+            <a href="/manage" class="nav-pill" data-section="manage">Manage</a>
+          <% } %>
+          <% if (isAdmin) { %>
+            <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
+          <% } %>
+        </nav>
+
+        <div class="header-utility-nav">
+          <div class="header-search-tools">
+            <form action="/search" method="GET" class="search-form">
+              <input type="search" name="q" placeholder="Search transcripts…" value="<%= typeof query !== 'undefined' ? query : '' %>">
+              <button type="submit">Search</button>
             </form>
+            <a href="/search/advanced" class="nav-search-link">Advanced Search</a>
           </div>
-        <% } else { %>
-          <a href="/login" class="nav-login-link">Sign in</a>
-        <% } %>
-      </nav>
+
+          <% if (currentUser) { %>
+            <div class="user-menu" id="user-menu">
+              <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel">
+                <span class="user-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false">
+                    <path d="M12 12.2a4.1 4.1 0 1 0-4.1-4.1 4.1 4.1 0 0 0 4.1 4.1Zm0 2c-4 0-7.2 2.1-7.2 4.7 0 .5.4.9.9.9h12.6a.9.9 0 0 0 .9-.9c0-2.6-3.2-4.7-7.2-4.7Z" fill="currentColor"/>
+                  </svg>
+                </span>
+                <span class="sr-only">Account</span>
+                <span class="user-menu-name"><%= currentUser.username %></span>
+              </button>
+              <div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>
+                <a href="/account" class="user-menu-link">Profile</a>
+                <form method="POST" action="/logout" class="user-menu-form">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="user-menu-link user-menu-button">Sign out</button>
+                </form>
+              </div>
+            </div>
+          <% } else { %>
+            <a href="/login" class="nav-login-link">Sign in</a>
+          <% } %>
+        </div>
+      </div>
     </div>
   </header>
   <main class="container">
@@ -61,9 +72,31 @@
         var section = link.dataset.section;
         if (section === 'admin' && path.startsWith('/admin')) {
           link.classList.add('active');
-        } else if (section === 'collection' && !path.startsWith('/admin') && !path.startsWith('/search')) {
+        } else if (section === 'manage' && path.startsWith('/manage')) {
+          link.classList.add('active');
+        } else if (section === 'collection' && !path.startsWith('/admin') && !path.startsWith('/manage') && !path.startsWith('/search')) {
           link.classList.add('active');
         }
       });
+
+      var userMenu = document.getElementById('user-menu');
+      var userMenuToggle = document.getElementById('user-menu-toggle');
+      var userMenuPanel = document.getElementById('user-menu-panel');
+      if (userMenu && userMenuToggle && userMenuPanel) {
+        userMenuToggle.addEventListener('click', function(event) {
+          event.preventDefault();
+          var isOpen = userMenu.classList.toggle('open');
+          userMenuToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+          userMenuPanel.hidden = !isOpen;
+        });
+
+        document.addEventListener('click', function(event) {
+          if (!userMenu.contains(event.target)) {
+            userMenu.classList.remove('open');
+            userMenuToggle.setAttribute('aria-expanded', 'false');
+            userMenuPanel.hidden = true;
+          }
+        });
+      }
     })();
   </script>

@@ -7,8 +7,9 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
-const { initializeSchema } = require('./database/db');
+const { initializeSchema, settingsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
+const { resolveApplicationSettings } = require('./utils/application-settings');
 
 loadEnv();
 
@@ -43,7 +44,8 @@ const authLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many login attempts. Please try again later.'
+  message: 'Too many login attempts. Please try again later.',
+  skip: () => process.env.NODE_ENV !== 'production'
 });
 app.use('/login', authLimiter);
 app.use('/register', authLimiter);
@@ -119,6 +121,15 @@ app.use(validateCsrf);
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(locals); // makes currentUser / isAdmin available in all templates
+app.use(async (req, res, next) => {
+  try {
+    const cfg = await settingsAsync.getAll();
+    Object.assign(res.locals, resolveApplicationSettings(cfg));
+  } catch (err) {
+    Object.assign(res.locals, resolveApplicationSettings({}));
+  }
+  next();
+});
 
 // ── General rate limiting (after Passport so req.isAuthenticated works) ───
 const generalLimiter = rateLimit({
@@ -126,7 +137,7 @@ const generalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.isAuthenticated && req.isAuthenticated()
+  skip: (req) => process.env.NODE_ENV !== 'production' || (req.isAuthenticated && req.isAuthenticated())
 });
 app.use(generalLimiter);
 
@@ -165,12 +176,14 @@ app.use('/account', require('./routes/account'));
 app.use('/', require('./routes/documents'));
 app.use('/transcripts', require('./routes/transcripts'));
 app.use('/api/annotations', requireAuthApi, require('./routes/annotations'));
+app.use('/export', require('./routes/export'));
 app.use('/search', require('./routes/search'));
 app.use('/admin', requireAdmin, require('./routes/admin'));
 app.use('/admin/documents', require('./routes/admin-documents')); // has its own requireAdmin
 app.use('/admin/users', require('./routes/admin-users')); // has its own requireAdmin
 app.use('/admin/collections', require('./routes/admin-collections')); // has its own requireAdmin
 app.use('/admin/jobs', require('./routes/admin-jobs')); // has its own requireAdmin
+app.use('/manage', require('./routes/manage')); // has its own requireAdminOrManager
 
 // Export CSRF validator for routes that need it
 app.locals.validateCsrf = validateCsrf;

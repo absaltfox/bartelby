@@ -92,7 +92,29 @@ const MIGRATIONS = [
     ('ollama_base_url', 'http://localhost:11434'),
     ('ollama_model', 'llava'),
     ('lmstudio_base_url', 'http://localhost:1234/v1'),
-    ('lmstudio_model', 'local-model')
+    ('lmstudio_model', 'local-model'),
+    ('transcription_prompt', 'You are an expert in historical document transcription and paleography. Transcribe all handwritten and printed text from the document image with high accuracy.
+
+Rules:
+- Transcribe ALL visible text verbatim, preserving original spelling, punctuation, and capitalization
+- Use [illegible] for text that cannot be read with confidence
+- Use [unclear: word?] when a word is uncertain
+- Mark struck-through text as ~~text~~
+- Mark interlinear additions in {curly braces}
+
+Respond ONLY with a valid JSON object — no markdown fences, no commentary — in this exact shape:
+{
+  "transcription": "<full verbatim text>",
+  "metadata": {
+    "title": "<document title or null>",
+    "date_created": "<date as written, e.g. March 15 1847, or null>",
+    "document_type": "<letter|ledger|deed|diary|legal|receipt|other or null>",
+    "author": "<author/signer or null>",
+    "location": "<place of origin or null>",
+    "condition": "<good|fair|poor or null>"
+  },
+  "notes": "<observations about illegible sections or difficulties, or null>"
+}')
   `,
 
   // v2 — user status and access_all flag
@@ -253,6 +275,94 @@ const MIGRATIONS = [
   );
   CREATE INDEX IF NOT EXISTS idx_mfa_remember_user ON mfa_remember_tokens(user_id);
   CREATE INDEX IF NOT EXISTS idx_mfa_remember_hash ON mfa_remember_tokens(token_hash)
+  `,
+
+  // v15 — per-collection roles (viewer, editor, manager)
+  `
+  ALTER TABLE user_collection_access ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'
+  `,
+
+  // v16 — best transcript flag + created_by tracking
+  `
+  ALTER TABLE transcripts ADD COLUMN is_best INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE transcripts ADD COLUMN created_by_user_id INTEGER REFERENCES users(id);
+  CREATE INDEX IF NOT EXISTS idx_transcripts_best ON transcripts(document_id, is_best);
+  UPDATE transcripts SET is_best = 1
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id, document_id,
+          ROW_NUMBER() OVER (PARTITION BY document_id ORDER BY created_at DESC) as rn
+        FROM transcripts
+      ) ranked WHERE rn = 1
+    )
+  `,
+
+  // v17 — per-collection roles in invites
+  `
+  ALTER TABLE user_invites ADD COLUMN collection_roles TEXT
+  `,
+
+  // v18 — track which user initiated each import job
+  `
+  ALTER TABLE import_jobs ADD COLUMN user_id INTEGER REFERENCES users(id)
+  `,
+
+  // v19 — per-collection export permission
+  `
+  ALTER TABLE collections ADD COLUMN allow_export INTEGER NOT NULL DEFAULT 0
+  `,
+
+  // v20 — document event history (audit log)
+  `
+  CREATE TABLE IF NOT EXISTS document_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    user_id INTEGER,
+    user_name TEXT,
+    event_type TEXT NOT NULL,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_events_document_id ON document_events(document_id);
+  CREATE INDEX IF NOT EXISTS idx_document_events_created_at ON document_events(created_at)
+  `,
+
+  // v21 — store credential scope on transcripts for provenance
+  `ALTER TABLE transcripts ADD COLUMN provider_key_scope TEXT`,
+
+  // v22 — editable default transcription prompt
+  `
+  INSERT OR IGNORE INTO settings (key, value) VALUES (
+    'transcription_prompt',
+    'You are an expert in historical document transcription and paleography. Transcribe all handwritten and printed text from the document image with high accuracy.
+
+Rules:
+- Transcribe ALL visible text verbatim, preserving original spelling, punctuation, and capitalization
+- Use [illegible] for text that cannot be read with confidence
+- Use [unclear: word?] when a word is uncertain
+- Mark struck-through text as ~~text~~
+- Mark interlinear additions in {curly braces}
+
+Respond ONLY with a valid JSON object — no markdown fences, no commentary — in this exact shape:
+{
+  "transcription": "<full verbatim text>",
+  "metadata": {
+    "title": "<document title or null>",
+    "date_created": "<date as written, e.g. March 15 1847, or null>",
+    "document_type": "<letter|ledger|deed|diary|legal|receipt|other or null>",
+    "author": "<author/signer or null>",
+    "location": "<place of origin or null>",
+    "condition": "<good|fair|poor or null>"
+  },
+  "notes": "<observations about illegible sections or difficulties, or null>"
+}'
+  )
+  `,
+
+  // v23 — transcript page segmentation metadata for multipage comparison
+  `
+  ALTER TABLE transcripts ADD COLUMN page_segments TEXT
   `
 ];
 
@@ -264,10 +374,35 @@ async function initDatabase() {
   return db;
 }
 
+// Debounce saveDatabase so rapid back-to-back writes (e.g. appendLog during
+// a running transcription job) only trigger one full serialization per 500ms.
+// Each call resets the timer; the promise returned always resolves once the
+// actual persist fires.
+let _saveTimer = null;
+let _saveResolve = null;
+let _saveReject = null;
+let _savePending = null;
 function saveDatabase() {
-  if (db) {
-    return db.persist();
+  if (!db) return Promise.resolve();
+  // If no pending flush, create one
+  if (!_savePending) {
+    _savePending = new Promise((resolve, reject) => {
+      _saveResolve = resolve;
+      _saveReject = reject;
+    });
   }
+  // Always reset the timer so bursts collapse into one write
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    const resolve = _saveResolve;
+    const reject = _saveReject;
+    _savePending = null;
+    _saveTimer = null;
+    _saveResolve = null;
+    _saveReject = null;
+    try { resolve(db.persist()); } catch (e) { reject(e); }
+  }, 300);
+  return _savePending;
 }
 
 async function initializeSchema() {
@@ -599,7 +734,7 @@ const documents = {
   },
 
   buildFilterConditions(filters = {}) {
-    const { collectionId, uncollected, docTypes, locations, dateFrom, dateTo } = filters;
+    const { collectionId, uncollected, docTypes, locations, authors, dateFrom, dateTo } = filters;
     const conditions = [];
     const params = [];
 
@@ -618,6 +753,11 @@ const documents = {
       const placeholders = locations.map(() => 'LOWER(TRIM(?))').join(',');
       conditions.push(`LOWER(TRIM(json_extract(d.metadata, '$.location'))) IN (${placeholders})`);
       params.push(...locations);
+    }
+    if (authors && authors.length > 0) {
+      const placeholders = authors.map(() => 'LOWER(TRIM(?))').join(',');
+      conditions.push(`LOWER(TRIM(json_extract(d.metadata, '$.author'))) IN (${placeholders})`);
+      params.push(...authors);
     }
     if (dateFrom) {
       conditions.push(`d.date_created >= ?`);
@@ -910,8 +1050,9 @@ const transcripts = {
     const result = run(`
       INSERT INTO transcripts (
         document_id, content, transcriber, version, notes,
-        provider, model, prompt, temperature, initiated_by, run_duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        provider, model, prompt, temperature, initiated_by, run_duration_ms,
+        provider_key_scope, page_segments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -923,7 +1064,9 @@ const transcripts = {
       transcript.prompt || null,
       transcript.temperature != null ? transcript.temperature : null,
       transcript.initiated_by || null,
-      transcript.run_duration_ms || null
+      transcript.run_duration_ms || null,
+      transcript.provider_key_scope || null,
+      transcript.page_segments ? JSON.stringify(transcript.page_segments) : null
     ]);
     return result.lastInsertRowid;
   },
@@ -954,6 +1097,10 @@ const transcripts = {
         SELECT dc.document_id FROM document_collections dc
         INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
         WHERE uca.user_id = ?
+        UNION
+        SELECT dc.document_id FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE col.is_public = 1
       )`;
       params.push(userId);
     }
@@ -1399,10 +1546,10 @@ const collections = {
     return !!result;
   },
 
-  create({ name, description, is_public, createdBy }) {
+  create({ name, description, is_public, allow_export, createdBy }) {
     const result = run(
-      'INSERT INTO collections (name, description, is_public, created_by) VALUES (?, ?, ?, ?)',
-      [name, description || null, is_public ? 1 : 0, createdBy || null]
+      'INSERT INTO collections (name, description, is_public, allow_export, created_by) VALUES (?, ?, ?, ?, ?)',
+      [name, description || null, is_public ? 1 : 0, allow_export ? 1 : 0, createdBy || null]
     );
     return result.lastInsertRowid;
   },
@@ -1637,11 +1784,11 @@ const transcriptionJobsAsync = {
 };
 
 const importJobsAsync = {
-  async create({ original_name, file_path }) {
+  async create({ original_name, file_path, user_id }) {
     const result = await runAsync(`
-      INSERT INTO import_jobs (original_name, file_path, status)
-      VALUES (?, ?, 'processing')
-    `, [original_name || null, file_path || null]);
+      INSERT INTO import_jobs (original_name, file_path, status, user_id)
+      VALUES (?, ?, 'processing', ?)
+    `, [original_name || null, file_path || null, user_id || null]);
     return result.lastInsertRowid;
   },
 
@@ -1672,6 +1819,10 @@ const importJobsAsync = {
 
   async getAll() {
     return await allAsync('SELECT * FROM import_jobs ORDER BY created_at DESC');
+  },
+
+  async getByUserId(userId) {
+    return await allAsync('SELECT * FROM import_jobs WHERE user_id = ? ORDER BY created_at DESC', [userId]);
   },
 
   async updateMachineId(id, machineId) {
@@ -1831,6 +1982,27 @@ const documentsAsync = {
     return rows.map(r => r.location);
   },
 
+  async getDistinctAuthorsFiltered(opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
+    const conditions = [
+      ...access.conditions,
+      ...scoped.conditions,
+      `json_extract(d.metadata, '$.author') IS NOT NULL`,
+      `json_extract(d.metadata, '$.author') != ''`
+    ];
+    const params = [...access.params, ...scoped.params];
+    const where = `WHERE ${conditions.join(' AND ')}`;
+
+    const rows = await allAsync(`
+      SELECT DISTINCT json_extract(d.metadata, '$.author') as author
+      FROM documents d
+      ${where}
+      ORDER BY author
+    `, params);
+    return rows.map(r => r.author);
+  },
+
   async getDateRangeFiltered(opts = {}, filters = {}) {
     const access = this.buildAccessConditions(opts);
     const scoped = this.buildFilterConditions({ collectionId: filters.collectionId, uncollected: filters.uncollected });
@@ -1872,6 +2044,97 @@ const documentsAsync = {
     `, [...params, limit, offset]);
 
     return { rows, totalCount };
+  },
+
+  async searchAdvanced(limit = 25, offset = 0, opts = {}, filters = {}) {
+    const access = this.buildAccessConditions(opts);
+    const scoped = this.buildFilterConditions(filters);
+    const conditions = [...access.conditions, ...scoped.conditions];
+    const params = [...access.params, ...scoped.params];
+    const query = String(filters.query || '').trim();
+
+    if (query) {
+      const terms = query.split(/\s+/).filter(Boolean);
+      if (terms.length > 0) {
+        const termConditions = terms.map(() =>
+          `(d.title LIKE ? OR d.description LIKE ? OR bt.content LIKE ? OR json_extract(d.metadata, '$.author') LIKE ? OR json_extract(d.metadata, '$.location') LIKE ?)`
+        ).join(' AND ');
+        conditions.push(`(${termConditions})`);
+        terms.forEach(term => {
+          const likeTerm = `%${term}%`;
+          params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        });
+      }
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const countResult = await getAsync(`
+      SELECT COUNT(*) as count
+      FROM documents d
+      LEFT JOIN transcripts bt ON bt.document_id = d.id AND bt.is_best = 1
+      ${where}
+    `, params);
+
+    const rows = await allAsync(`
+      SELECT
+        d.*,
+        bt.id as transcript_id,
+        bt.content as transcript_content,
+        bt.transcriber as transcript_transcriber,
+        bt.version as transcript_version,
+        (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+      FROM documents d
+      LEFT JOIN transcripts bt ON bt.document_id = d.id AND bt.is_best = 1
+      ${where}
+      ORDER BY d.date_created DESC, d.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    const normalizedTerms = query ? query.split(/\s+/).filter(Boolean).map(term => term.toLowerCase()) : [];
+
+    const decorated = rows.map(row => {
+      let meta = row.metadata || {};
+      if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch (err) { meta = {}; }
+      }
+
+      const title = row.title || '';
+      const description = row.description || '';
+      const transcriptContent = row.transcript_content || '';
+      const author = meta.author || '';
+
+      let snippet = description || transcriptContent.substring(0, 220);
+      for (const term of normalizedTerms) {
+        const fields = [title, description, transcriptContent, author];
+        const match = fields.find(field => field && field.toLowerCase().includes(term));
+        if (match) {
+          const idx = match.toLowerCase().indexOf(term);
+          const start = Math.max(0, idx - 90);
+          const end = Math.min(match.length, idx + term.length + 90);
+          snippet = (start > 0 ? '...' : '') + match.substring(start, end) + (end < match.length ? '...' : '');
+          break;
+        }
+      }
+
+      snippet = String(snippet || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+      normalizedTerms.forEach(term => {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        snippet = snippet.replace(new RegExp(`(${escaped})`, 'gi'), '<mark>$1</mark>');
+      });
+
+      return { ...row, metadata: meta, snippet };
+    });
+
+    return {
+      rows: decorated,
+      totalCount: countResult ? countResult.count : 0
+    };
   },
 
   async update(id, fields) {
@@ -1919,7 +2182,7 @@ const transcriptsAsync = {
     return await allAsync(`
       SELECT * FROM transcripts
       WHERE document_id = ?
-      ORDER BY version DESC
+      ORDER BY is_best DESC, version DESC
     `, [documentId]);
   },
 
@@ -1927,12 +2190,17 @@ const transcriptsAsync = {
     return await getAsync('SELECT * FROM transcripts WHERE id = ?', [id]);
   },
 
+  async getBestByDocumentId(documentId) {
+    return await getAsync('SELECT * FROM transcripts WHERE document_id = ? AND is_best = 1', [documentId]);
+  },
+
   async create(transcript) {
     const result = await runAsync(`
       INSERT INTO transcripts (
         document_id, content, transcriber, version, notes,
-        provider, model, prompt, temperature, initiated_by, run_duration_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        provider, model, prompt, temperature, initiated_by, run_duration_ms,
+        is_best, created_by_user_id, provider_key_scope, page_segments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -1944,9 +2212,39 @@ const transcriptsAsync = {
       transcript.prompt || null,
       transcript.temperature != null ? transcript.temperature : null,
       transcript.initiated_by || null,
-      transcript.run_duration_ms || null
+      transcript.run_duration_ms || null,
+      transcript.is_best ? 1 : 0,
+      transcript.created_by_user_id || null,
+      transcript.provider_key_scope || null,
+      transcript.page_segments ? JSON.stringify(transcript.page_segments) : null
     ]);
     return result.lastInsertRowid;
+  },
+
+  async setBest(transcriptId, documentId) {
+    await runAsync('UPDATE transcripts SET is_best = 0 WHERE document_id = ?', [documentId]);
+    await runAsync('UPDATE transcripts SET is_best = 1 WHERE id = ? AND document_id = ?', [transcriptId, documentId]);
+  },
+
+  async updateContent(id, content) {
+    await runAsync('UPDATE transcripts SET content = ? WHERE id = ?', [content, id]);
+  },
+
+  async updateContentAndPageSegments(id, content, pageSegments) {
+    await runAsync('UPDATE transcripts SET content = ?, page_segments = ? WHERE id = ?', [
+      content,
+      pageSegments ? JSON.stringify(pageSegments) : null,
+      id
+    ]);
+  },
+
+  async updateNotes(id, notes) {
+    await runAsync('UPDATE transcripts SET notes = ? WHERE id = ?', [notes, id]);
+  },
+
+  async delete(id) {
+    await runAsync('DELETE FROM annotations WHERE transcript_id = ?', [id]);
+    await runAsync('DELETE FROM transcripts WHERE id = ?', [id]);
   },
 
   async search(query, limit = 20, opts = {}) {
@@ -1985,7 +2283,7 @@ const transcriptsAsync = {
       SELECT t.*, d.title as document_title, d.id as document_id, d.description as document_description
       FROM transcripts t
       JOIN documents d ON t.document_id = d.id
-      WHERE (${termConditions}) ${accessClause}
+      WHERE t.is_best = 1 AND (${termConditions}) ${accessClause}
       ORDER BY t.created_at DESC
       LIMIT ?
     `, params);
@@ -2179,8 +2477,21 @@ const documentCollectionsAsync = {
         await runAsync('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
       } catch (e) {}
     }
+  },
+
+  async add(documentId, collectionId) {
+    await runAsync('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, collectionId]);
+  },
+
+  async remove(documentId, collectionId) {
+    await runAsync('DELETE FROM document_collections WHERE document_id = ? AND collection_id = ?', [documentId, collectionId]);
   }
 };
+
+const ROLE_HIERARCHY = { viewer: 1, editor: 2, manager: 3 };
+function roleAtLeast(userRole, minRole) {
+  return (ROLE_HIERARCHY[userRole] || 0) >= (ROLE_HIERARCHY[minRole] || 0);
+}
 
 const userCollectionAccessAsync = {
   async getIdsByUserId(userId) {
@@ -2188,9 +2499,18 @@ const userCollectionAccessAsync = {
     return rows.map(r => r.collection_id);
   },
 
+  async getWithRolesByUserId(userId) {
+    return await allAsync('SELECT collection_id, role FROM user_collection_access WHERE user_id = ?', [userId]);
+  },
+
+  async getRoleForUser(userId, collectionId) {
+    const row = await getAsync('SELECT role FROM user_collection_access WHERE user_id = ? AND collection_id = ?', [userId, collectionId]);
+    return row ? row.role : null;
+  },
+
   async getByCollectionId(collectionId) {
     return await allAsync(`
-      SELECT u.id, u.username, u.email, u.role
+      SELECT u.id, u.username, u.email, u.role AS system_role, uca.role AS collection_role
       FROM users u
       INNER JOIN user_collection_access uca ON u.id = uca.user_id
       WHERE uca.collection_id = ?
@@ -2202,19 +2522,56 @@ const userCollectionAccessAsync = {
     await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
     for (const cid of (collectionIds || [])) {
       try {
-        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, cid]);
+        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, cid, 'viewer']);
       } catch (e) {}
     }
   },
 
-  async grant(userId, collectionId) {
+  async setForUserWithRoles(userId, collectionRoles) {
+    await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
+    for (const [cid, role] of Object.entries(collectionRoles || {})) {
+      const safeRole = ROLE_HIERARCHY[role] ? role : 'viewer';
+      try {
+        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, parseInt(cid), safeRole]);
+      } catch (e) {}
+    }
+  },
+
+  async grant(userId, collectionId, role) {
+    const safeRole = ROLE_HIERARCHY[role] ? role : 'viewer';
     try {
-      await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, collectionId]);
+      const existing = await getAsync('SELECT role FROM user_collection_access WHERE user_id = ? AND collection_id = ?', [userId, collectionId]);
+      if (existing) {
+        await runAsync('UPDATE user_collection_access SET role = ? WHERE user_id = ? AND collection_id = ?', [safeRole, userId, collectionId]);
+      } else {
+        await runAsync('INSERT INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, collectionId, safeRole]);
+      }
     } catch (e) {}
   },
 
   async revoke(userId, collectionId) {
     await runAsync('DELETE FROM user_collection_access WHERE user_id = ? AND collection_id = ?', [userId, collectionId]);
+  },
+
+  async getManagerCollectionIds(userId) {
+    const rows = await allAsync("SELECT collection_id FROM user_collection_access WHERE user_id = ? AND role = 'manager'", [userId]);
+    return rows.map(r => r.collection_id);
+  },
+
+  async getEditableCollectionIds(userId) {
+    const rows = await allAsync("SELECT collection_id FROM user_collection_access WHERE user_id = ? AND role IN ('editor', 'manager')", [userId]);
+    return rows.map(r => r.collection_id);
+  },
+
+  async hasRoleOnDocumentCollections(userId, documentId, minRole) {
+    const row = await getAsync(`
+      SELECT uca.role FROM user_collection_access uca
+      INNER JOIN document_collections dc ON dc.collection_id = uca.collection_id
+      WHERE uca.user_id = ? AND dc.document_id = ?
+      ORDER BY CASE uca.role WHEN 'manager' THEN 3 WHEN 'editor' THEN 2 ELSE 1 END DESC
+      LIMIT 1
+    `, [userId, documentId]);
+    return row ? roleAtLeast(row.role, minRole) : false;
   }
 };
 
@@ -2264,10 +2621,10 @@ const collectionsAsync = {
     return !!result;
   },
 
-  async create({ name, description, is_public, createdBy }) {
+  async create({ name, description, is_public, allow_export, createdBy }) {
     const result = await runAsync(
-      'INSERT INTO collections (name, description, is_public, created_by) VALUES (?, ?, ?, ?)',
-      [name, description || null, is_public ? 1 : 0, createdBy || null]
+      'INSERT INTO collections (name, description, is_public, allow_export, created_by) VALUES (?, ?, ?, ?, ?)',
+      [name, description || null, is_public ? 1 : 0, allow_export ? 1 : 0, createdBy || null]
     );
     return result.lastInsertRowid;
   },
@@ -2290,6 +2647,10 @@ const collectionsAsync = {
     }
     await runAsync('UPDATE collections SET preview_document_id = ? WHERE id = ?',
       [documentId || null, id]);
+  },
+
+  async setAllowExport(id, allow) {
+    await runAsync('UPDATE collections SET allow_export = ? WHERE id = ?', [allow ? 1 : 0, id]);
   },
 
   async delete(id) {
@@ -2383,6 +2744,15 @@ const usersAsync = {
     await runAsync('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
   },
 
+  async updateProfile(id, { username, email }) {
+    if (username !== undefined) {
+      await runAsync('UPDATE users SET username = ? WHERE id = ?', [username, id]);
+    }
+    if (email !== undefined) {
+      await runAsync('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+    }
+  },
+
   async setMfaMethod(id, method) {
     await runAsync('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
   },
@@ -2433,11 +2803,11 @@ const usersAsync = {
 };
 
 const userInvitesAsync = {
-  async create({ email, tokenHash, role, accessAll, canUseSystemApiKeys, collectionIds, invitedBy, expiresAt }) {
+  async create({ email, tokenHash, role, accessAll, canUseSystemApiKeys, collectionIds, collectionRoles, invitedBy, expiresAt }) {
     const result = await runAsync(`
       INSERT INTO user_invites
-        (email, token_hash, role, access_all, can_use_system_api_keys, collection_ids, invited_by, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (email, token_hash, role, access_all, can_use_system_api_keys, collection_ids, collection_roles, invited_by, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       email,
       tokenHash,
@@ -2445,6 +2815,7 @@ const userInvitesAsync = {
       accessAll ? 1 : 0,
       canUseSystemApiKeys ? 1 : 0,
       JSON.stringify(normalizeCollectionIds(collectionIds)),
+      collectionRoles ? JSON.stringify(collectionRoles) : null,
       invitedBy || null,
       expiresAt
     ]);
@@ -2553,6 +2924,30 @@ const mfaRememberTokensAsync = {
   }
 };
 
+// ── Document Events (audit log) ────────────────────────────────────────────
+const documentEventsAsync = {
+  async log(documentId, userId, userName, eventType, details = null) {
+    await runAsync(`
+      INSERT INTO document_events (document_id, user_id, user_name, event_type, details)
+      VALUES (?, ?, ?, ?, ?)
+    `, [documentId, userId || null, userName || null, eventType, details ? JSON.stringify(details) : null]);
+  },
+
+  async getByDocumentId(documentId, limit = 50, offset = 0) {
+    return await allAsync(`
+      SELECT * FROM document_events
+      WHERE document_id = ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `, [documentId, limit, offset]);
+  },
+
+  async getCountByDocumentId(documentId) {
+    const row = await getAsync('SELECT COUNT(*) as count FROM document_events WHERE document_id = ?', [documentId]);
+    return row ? row.count : 0;
+  }
+};
+
 function getDb() { return db; }
 
 module.exports = {
@@ -2586,5 +2981,7 @@ module.exports = {
   userCollectionAccessAsync,
   collectionsAsync,
   userApiKeysAsync,
-  mfaRememberTokensAsync
+  mfaRememberTokensAsync,
+  documentEventsAsync,
+  roleAtLeast
 };

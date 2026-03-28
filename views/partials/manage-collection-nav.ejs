@@ -1,0 +1,30 @@
+<div class="manage-collection-shell">
+  <div class="manage-collection-header">
+    <a href="/manage" class="back-link">&larr; Back to Manage</a>
+    <div class="manage-collection-heading">
+      <h1><%= heading %></h1>
+      <% if (typeof subtitle !== 'undefined' && subtitle) { %>
+        <p class="subtitle"><%= subtitle %></p>
+      <% } %>
+    </div>
+    <div class="manage-collection-meta">
+      <% if (collection.is_public) { %>
+        <span class="badge-public">public</span>
+      <% } else { %>
+        <span class="badge-private">private</span>
+      <% } %>
+      <% if (collection.allow_export) { %>
+        <span class="badge-best manage-export-badge">export enabled</span>
+      <% } %>
+    </div>
+  </div>
+
+  <nav class="admin-subnav manage-collection-subnav">
+    <a href="/manage/collections/<%= collection.id %>/documents" class="admin-subnav-link <%= activePage === 'documents' ? 'active' : '' %>">Documents</a>
+    <a href="/manage/collections/<%= collection.id %>/import" class="admin-subnav-link <%= activePage === 'import' ? 'active' : '' %>">Import</a>
+    <a href="/manage/collections/<%= collection.id %>/jobs" class="admin-subnav-link <%= activePage === 'jobs' ? 'active' : '' %>">Jobs</a>
+    <% if (!collection.is_public) { %>
+      <a href="/manage/collections/<%= collection.id %>/users" class="admin-subnav-link <%= activePage === 'users' ? 'active' : '' %>">Users</a>
+    <% } %>
+  </nav>
+</div>

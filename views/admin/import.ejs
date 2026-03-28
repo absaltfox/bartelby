@@ -38,7 +38,7 @@
     </div>
 
     <% if (hasNoProviders) { %>
-      <p class="field-hint">No AI providers are configured. <a href="/admin/settings">Add an API key</a> to enable AI transcription.</p>
+      <p class="field-hint">No AI providers are configured. <a href="<%= importConfig.settingsUrl %>">Add an API key</a> to enable AI transcription.</p>
     <% } %>
 
     <div id="ai-options"<% if (hasNoProviders) { %> style="display:none"<% } %>>
@@ -213,7 +213,7 @@
           <div id="ai-transcription-note" class="ai-queue-note" style="display:none;">
             <span class="ai-queue-icon">&#9203;</span>
             <strong>Transcription will run automatically in the background</strong> after saving.
-            You can monitor progress in <a href="/admin/jobs" target="_blank">Jobs</a>.
+            You can monitor progress in <a href="<%= importConfig.jobsUrl %>" target="_blank">Jobs</a>.
           </div>
 
           <!-- Manual mode: show transcription fields -->
@@ -247,7 +247,7 @@
               <% }) %>
             </div>
           <% } else { %>
-            <p class="field-hint">No collections created yet. <a href="/admin/collections" target="_blank">Create one</a> before importing to assign documents.</p>
+            <p class="field-hint">No collections created yet. <a href="<%= importConfig.collectionsUrl %>" target="_blank">Create one</a> before importing to assign documents.</p>
           <% } %>
 
           <div class="form-actions">
@@ -273,10 +273,10 @@
       <p id="complete-message"></p>
       <p id="complete-ai-note" style="display:none;" class="field-hint">
         Transcription has been queued and will run in the background.
-        <a href="/admin/jobs">Monitor in Jobs &rarr;</a>
+        <a href="<%= importConfig.jobsUrl %>">Monitor in Jobs &rarr;</a>
       </p>
       <div class="complete-actions">
-        <a href="/admin/import" class="btn-secondary">Import Another</a>
+        <a href="<%= importConfig.importUrl %>" class="btn-secondary">Import Another</a>
         <a href="#" id="view-document-btn" class="btn-primary">View Document</a>
       </div>
     </div>
@@ -292,6 +292,7 @@
 <% if (resumeJob) { %>
 <script id="resume-import-job" type="application/json"><%- JSON.stringify(resumeJob).replace(/</g, '\\u003c') %></script>
 <% } %>
+<script id="import-config" type="application/json"><%- JSON.stringify(importConfig).replace(/</g, '\\u003c') %></script>
 <script id="provider-options-data" type="application/json"><%- JSON.stringify(providerOptions).replace(/</g, '\\u003c') %></script>
 <script src="/js/admin-import.js"></script>
 

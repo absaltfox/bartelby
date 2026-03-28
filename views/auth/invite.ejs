@@ -4,7 +4,7 @@
   <div class="auth-card">
     <div class="auth-header">
       <h1>Accept Invitation</h1>
-      <p>Create your Bartelby account for <strong><%= invite.email %></strong>.</p>
+      <p>Create your <%= appName || 'Bartelby' %> account for <strong><%= invite.email %></strong>.</p>
     </div>
 
     <% if (error) { %>

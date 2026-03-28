@@ -1,4 +1,6 @@
-// Admin Import Page JavaScript — Upload → [Pages] → Configure → Save (queue AI or save manual)
+// Import Page JavaScript — Upload → [Pages] → Configure → Save (queue AI or save manual)
+// Works for both admin (/admin/import) and manager (/manage/collections/:id/import) pages.
+// Reads configurable paths from an #import-config JSON block on the page.
 
 function getCsrfToken() {
   var meta = document.querySelector('meta[name="csrf-token"]');
@@ -28,7 +30,25 @@ function getProviderOptions() {
   }
 }
 
+function getImportConfig() {
+  var el = document.getElementById('import-config');
+  if (!el) return {};
+  try {
+    return JSON.parse(el.textContent);
+  } catch (err) {
+    console.error('Failed to parse import config:', err);
+    return {};
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+  // ── Configurable paths (set by the server-rendered template) ─────
+  const cfg = getImportConfig();
+  const apiBase     = cfg.apiBase     || '/admin/api';
+  const jobsUrl     = cfg.jobsUrl     || '/admin/jobs';
+  const documentsUrl = cfg.documentsUrl || '/admin/documents';
+  const importUrl   = cfg.importUrl   || '/admin/import';
+
   const uploadArea      = document.getElementById('upload-area');
   const fileInput       = document.getElementById('file-input');
   const providerSelect  = document.getElementById('provider');
@@ -99,7 +119,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function setTempPreview(filename, previewUrl) {
     if (!filename) return;
-    tempPreviewUrls[filename] = previewUrl || `/admin/api/temp-image/${filename}`;
+    tempPreviewUrls[filename] = previewUrl || `${apiBase}/temp-image/${filename}`;
   }
 
   function setTempPreviews(pages) {
@@ -111,7 +131,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function getTempPreviewUrl(filename) {
-    return tempPreviewUrls[filename] || `/admin/api/temp-image/${filename}`;
+    return tempPreviewUrls[filename] || `${apiBase}/temp-image/${filename}`;
   }
 
   // ── Drag & Drop ──────────────────────────────────────────────────
@@ -175,7 +195,7 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       processingText.textContent = isPdf ? 'Uploading PDF...' : 'Uploading image...';
 
-      const response = await fetch('/admin/api/upload', { method: 'POST', body: formData, headers: { 'X-CSRF-Token': getCsrfToken() } });
+      const response = await fetch(`${apiBase}/upload`, { method: 'POST', body: formData, headers: { 'X-CSRF-Token': getCsrfToken() } });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Upload failed');
 
@@ -188,7 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('complete-message').textContent = data.pageCount
           ? `"${data.originalName}" (${data.pageCount} pages) has been queued for background processing.`
           : `"${data.originalName}" has been queued for background processing.`;
-        document.getElementById('view-document-btn').href = '/admin/jobs';
+        document.getElementById('view-document-btn').href = jobsUrl;
         document.getElementById('view-document-btn').textContent = 'Go to Jobs';
         var aiNote = document.getElementById('complete-ai-note');
         if (aiNote) {
@@ -220,7 +240,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {
         try {
-          const res = await fetch(`/admin/api/job/${jobId}`);
+          const res = await fetch(`${apiBase}/job/${jobId}`);
           const job = await res.json();
 
           progressBar.style.width = `${job.progress}%`;
@@ -442,7 +462,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const collectionIds = getSelectedCollectionIds('.page-collection-cb');
 
     try {
-      const response = await fetch('/admin/api/submit-pages', {
+      const response = await fetch(`${apiBase}/submit-pages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
@@ -470,11 +490,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
       heading.textContent = `${data.count} Document${data.count !== 1 ? 's' : ''} Submitted!`;
       message.textContent = `${data.count} document${data.count !== 1 ? 's have' : ' has'} been created and queued for transcription.`;
-      viewBtn.href = '/admin/documents';
-      viewBtn.textContent = 'View Documents';
+      viewBtn.href = jobsUrl;
+      viewBtn.textContent = 'View Jobs';
       if (aiNote) {
         aiNote.style.display = '';
-        aiNote.innerHTML = 'Transcription will run in the background. <a href="/admin/jobs">Monitor in Jobs &rarr;</a>';
+        aiNote.innerHTML = 'Transcription will run in the background. <a href="' + documentsUrl + '">View Documents &rarr;</a>';
       }
       showStep('complete');
 
@@ -614,7 +634,7 @@ document.addEventListener('DOMContentLoaded', function() {
           ? document.getElementById('initiated-by').value : null;
       }
 
-      const response = await fetch('/admin/api/save-document', {
+      const response = await fetch(`${apiBase}/save-document`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify(formData)
@@ -659,7 +679,7 @@ document.addEventListener('DOMContentLoaded', function() {
   cancelBtn.addEventListener('click', async () => {
     if (allTempFiles.length > 0) {
       try {
-        await fetch('/admin/api/cancel-import', {
+        await fetch(`${apiBase}/cancel-import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({ tempFiles: allTempFiles })
@@ -686,7 +706,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (savedDocIds.length > 1) {
       heading.textContent  = `${savedDocIds.length} Documents Saved!`;
       message.textContent  = 'All documents have been saved.';
-      viewBtn.href         = '/admin/documents';
+      viewBtn.href         = documentsUrl;
       viewBtn.textContent  = 'View Documents';
     } else if (savedDocIds.length === 1) {
       heading.textContent  = 'Document Saved!';
