@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %><%= appName || 'Bartelby' %></title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;charset=UTF-8,<%= encodeURIComponent(appFaviconSvg || '') %>">
+  <link rel="icon" type="image/svg+xml" href="<%= appFaviconDataUri || '' %>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -15,7 +15,9 @@
   <header class="site-header">
     <div class="container">
       <a href="/" class="logo">
-        <span class="logo-mark"><%- appLogoSvg %></span>
+        <span class="logo-mark">
+          <img src="<%= appLogoDataUri || '' %>" alt="" aria-hidden="true">
+        </span>
         <%= appName || 'Bartelby' %>
       </a>
       <div class="header-controls">

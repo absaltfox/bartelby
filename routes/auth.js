@@ -17,6 +17,30 @@ const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 const { resolveApplicationSettings } = require('../utils/application-settings');
 
+function getBootstrapToken() {
+  return String(process.env.BOOTSTRAP_ADMIN_TOKEN || '').trim();
+}
+
+async function getBootstrapStatus() {
+  const userCount = await usersAsync.count();
+  const bootstrapToken = getBootstrapToken();
+  return {
+    needsSetup: userCount === 0,
+    configured: bootstrapToken.length > 0
+  };
+}
+
+function constantTimeMatches(value, expected) {
+  const left = Buffer.from(String(value || ''));
+  const right = Buffer.from(String(expected || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function getMfaLockState(pending) {
+  const lockedUntil = pending?.lockedUntil ? Number(pending.lockedUntil) : 0;
+  return lockedUntil > Date.now() ? lockedUntil : 0;
+}
+
 function consumeAuthError(req) {
   const error = req.session.authError || null;
   delete req.session.authError;
@@ -54,11 +78,13 @@ async function beginEmailMfa(req, user, returnTo) {
 
 // ── Login ──────────────────────────────────────────────────────────────────
 
-router.get('/login', (req, res) => {
+router.get('/login', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
+  const bootstrap = await getBootstrapStatus();
   res.render('auth/login', {
     pageTitle: 'Sign In',
-    error: consumeAuthError(req)
+    error: consumeAuthError(req),
+    bootstrap
   });
 });
 
@@ -106,6 +132,11 @@ router.get('/login/mfa', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const pending = req.session.pendingLogin;
   if (!pending?.userId) return res.redirect('/login');
+  const lockedUntil = getMfaLockState(pending);
+  if (lockedUntil) {
+    req.session.authError = `Too many verification attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    return res.redirect('/login');
+  }
 
   const user = await usersAsync.findById(pending.userId);
   if (!user) {
@@ -145,6 +176,12 @@ router.post('/login/mfa', async (req, res, next) => {
 
   const code = (req.body.code || '').trim();
   let valid = false;
+  const lockedUntil = getMfaLockState(pending);
+
+  if (lockedUntil) {
+    req.session.authError = `Too many verification attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    return res.redirect('/login');
+  }
 
   if (pending.method === 'email') {
     valid = await usersAsync.verifyEmailOtp(user.id, code);
@@ -156,6 +193,13 @@ router.post('/login/mfa', async (req, res, next) => {
   }
 
   if (!valid) {
+    pending.failedAttempts = Number(pending.failedAttempts || 0) + 1;
+    if (pending.failedAttempts >= 5) {
+      pending.lockedUntil = Date.now() + 10 * 60 * 1000;
+      req.session.authError = 'Too many verification attempts. Please sign in again in 10 minutes.';
+      delete req.session.pendingLogin;
+      return res.redirect('/login');
+    }
     req.session.authError = 'That verification code was not valid.';
     return res.redirect('/login/mfa');
   }
@@ -213,11 +257,35 @@ router.post('/logout', (req, res, next) => {
 
 // ── Register ───────────────────────────────────────────────────────────────
 
-router.get('/register', (req, res) => {
+router.get('/register', async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
+  const bootstrap = await getBootstrapStatus();
+  if (bootstrap.needsSetup) {
+    req.session.authError = bootstrap.configured
+      ? 'Initial administrator setup must be completed before public registration is available.'
+      : 'Initial administrator setup is required. Set BOOTSTRAP_ADMIN_TOKEN and complete /setup first.';
+    return res.redirect('/setup');
+  }
   res.render('auth/register', {
     pageTitle: 'Create Account',
-    error: consumeAuthError(req)
+    error: consumeAuthError(req),
+    bootstrap
+  });
+});
+
+router.get('/setup', async (req, res) => {
+  if (req.isAuthenticated()) return res.redirect('/');
+  const bootstrap = await getBootstrapStatus();
+
+  if (!bootstrap.needsSetup) {
+    req.session.authError = 'Initial setup has already been completed. Please sign in.';
+    return res.redirect('/login');
+  }
+
+  res.render('auth/setup', {
+    pageTitle: 'Initial Setup',
+    error: consumeAuthError(req),
+    bootstrap
   });
 });
 
@@ -254,11 +322,93 @@ router.get('/data-security', async (req, res) => {
   });
 });
 
+router.post('/setup', async (req, res, next) => {
+  const username = (req.body.username || '').trim().toLowerCase();
+  const email = (req.body.email || '').trim().toLowerCase() || null;
+  const password = req.body.password || '';
+  const confirm = req.body.confirm || '';
+  const bootstrapToken = req.body.bootstrap_token || '';
+  const configuredToken = getBootstrapToken();
+
+  const bootstrap = await getBootstrapStatus();
+  if (!bootstrap.needsSetup) {
+    req.session.authError = 'Initial setup has already been completed. Please sign in.';
+    return res.redirect('/login');
+  }
+  if (!configuredToken) {
+    req.session.authError = 'BOOTSTRAP_ADMIN_TOKEN is not configured. Set it in the environment before using /setup.';
+    return res.redirect('/setup');
+  }
+
+  if (!username || !password) {
+    req.session.authError = 'Username and password are required.';
+    return res.redirect('/setup');
+  }
+  if (username.length < 3 || !/^[a-z0-9_.-]+$/.test(username)) {
+    req.session.authError = 'Username must be at least 3 characters and contain only letters, numbers, _ . -';
+    return res.redirect('/setup');
+  }
+  if (password.length < 8) {
+    req.session.authError = 'Password must be at least 8 characters.';
+    return res.redirect('/setup');
+  }
+  if (password !== confirm) {
+    req.session.authError = 'Passwords do not match.';
+    return res.redirect('/setup');
+  }
+  if (!constantTimeMatches(bootstrapToken, configuredToken)) {
+    req.session.authError = 'The setup token is not valid.';
+    return res.redirect('/setup');
+  }
+  if (await usersAsync.findByUsername(username)) {
+    req.session.authError = 'That username is already taken.';
+    return res.redirect('/setup');
+  }
+  if (email && await usersAsync.findByEmail(email)) {
+    req.session.authError = 'That email address is already associated with an account.';
+    return res.redirect('/setup');
+  }
+
+  const passwordHash = bcrypt.hashSync(password, 12);
+  let id;
+  try {
+    id = await usersAsync.create({
+      username,
+      email,
+      passwordHash,
+      role: 'admin',
+      status: 'active',
+      accessAll: true,
+      canUseSystemApiKeys: true
+    });
+  } catch (err) {
+    if ((err.message || '').includes('users.email')) {
+      req.session.authError = 'That email address is already associated with an account.';
+      return res.redirect('/setup');
+    }
+    return next(err);
+  }
+
+  const user = await usersAsync.findById(id);
+  completeLogin(req, res, () => {
+    req.session.authError = 'Initial administrator created. Please sign in.';
+    return res.redirect('/login');
+  }, user, '/');
+});
+
 router.post('/register', async (req, res, next) => {
   const username = (req.body.username || '').trim().toLowerCase();
   const email    = (req.body.email    || '').trim().toLowerCase() || null;
   const password =  req.body.password || '';
   const confirm  =  req.body.confirm  || '';
+  const bootstrap = await getBootstrapStatus();
+
+  if (bootstrap.needsSetup) {
+    req.session.authError = bootstrap.configured
+      ? 'Initial administrator setup must be completed before public registration is available.'
+      : 'Initial administrator setup is required. Set BOOTSTRAP_ADMIN_TOKEN and complete /setup first.';
+    return res.redirect('/setup');
+  }
 
   if (!username || !password) {
     req.session.authError = 'Username and password are required.';
@@ -286,20 +436,16 @@ router.post('/register', async (req, res, next) => {
   }
 
   const passwordHash = bcrypt.hashSync(password, 12);
-  const isFirst = await usersAsync.count() === 0;
-  // First registered user becomes admin and is immediately active
-  const role   = isFirst ? 'admin' : 'user';
-  const status = isFirst ? 'active' : 'pending';
   let id;
   try {
     id = await usersAsync.create({
       username,
       email,
       passwordHash,
-      role,
-      status,
-      accessAll: isFirst,
-      canUseSystemApiKeys: isFirst
+      role: 'user',
+      status: 'pending',
+      accessAll: false,
+      canUseSystemApiKeys: false
     });
   } catch (err) {
     if ((err.message || '').includes('users.email')) {
@@ -309,16 +455,8 @@ router.post('/register', async (req, res, next) => {
     return next(err);
   }
 
-  if (!isFirst) {
-    // Show pending page — do not auto-login
-    return res.redirect('/pending');
-  }
-
-  const user = await usersAsync.findById(id);
-  completeLogin(req, res, () => {
-    req.session.authError = 'Account created — please sign in.';
-    return res.redirect('/login');
-  }, user, '/');
+  // Show pending page — do not auto-login
+  return res.redirect('/pending');
 });
 
 // ── Pending approval ───────────────────────────────────────────────────────

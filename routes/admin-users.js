@@ -12,6 +12,7 @@ const {
 } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
 const { isSmtpConfigured, sendInviteEmail, sendPasswordResetEmail } = require('../utils/email');
+const { absoluteAppUrl } = require('../utils/app-url');
 
 router.use(requireAdmin);
 
@@ -92,7 +93,7 @@ router.post('/invite', async (req, res) => {
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
   });
 
-  const inviteUrl = `${req.protocol}://${req.get('host')}/invite/${token}`;
+  const inviteUrl = absoluteAppUrl(req, `/invite/${token}`);
   let message = `Invitation created for ${email}.`;
 
   if (isSmtpConfigured()) {
@@ -241,7 +242,7 @@ router.post('/:id/password-reset', async (req, res) => {
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
   });
 
-  const resetUrl = `${req.protocol}://${req.get('host')}/reset-password/${token}`;
+  const resetUrl = absoluteAppUrl(req, `/reset-password/${token}`);
   let message = `Password reset link created for ${user.username}.`;
 
   if (isSmtpConfigured()) {

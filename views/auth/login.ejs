@@ -30,7 +30,11 @@
       <button type="submit" class="btn-primary btn-full">Sign In</button>
     </form>
 
-    <p class="auth-switch">No account? <a href="/register">Create one</a></p>
+    <% if (bootstrap && bootstrap.needsSetup) { %>
+      <p class="auth-switch">Initial deployment? <a href="/setup">Run setup</a></p>
+    <% } else { %>
+      <p class="auth-switch">No account? <a href="/register">Create one</a></p>
+    <% } %>
   </div>
 </div>
 

@@ -24,6 +24,10 @@ const config = {
     port: parseInt(process.env.PORT || '3000', 10),
     startWorker: !boolEnv('DISABLE_BACKGROUND_WORKER', false)
   },
+  session: {
+    store: process.env.SESSION_STORE || 'memory',
+    redisUrl: process.env.REDIS_URL || ''
+  },
   storage: {
     driver: process.env.STORAGE_DRIVER || 'local',
     s3: {

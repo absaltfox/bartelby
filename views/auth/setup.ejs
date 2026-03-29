@@ -1,0 +1,63 @@
+<%- include('../partials/header', { pageTitle: 'Initial Setup', query: '' }) %>
+
+<div class="auth-page">
+  <div class="auth-card auth-card-wide">
+    <div class="auth-header">
+      <svg class="auth-quill" viewBox="0 0 22 40" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M19 1 C 22 5, 21 15, 14 24 C 11 28, 8 33, 6 39 C 4 35, 3 33, 1 35 C -1 31, 2 27, 6 25 C 3 18, 3 9, 8 4 C 12 0, 18 -1, 19 1 Z" fill="#c9906a" opacity="0.8"/>
+        <path d="M16 7 L12 11M13 13 L9 17M10 19 L7 22" stroke="#a06830" stroke-width="0.7" stroke-linecap="round"/>
+        <path d="M19 1 L6 39" stroke="#a06830" stroke-width="1.1" stroke-linecap="round"/>
+        <path d="M6 39 L4 43 M6 39 L8 42" stroke="#a06830" stroke-width="0.9" stroke-linecap="round"/>
+      </svg>
+      <h1>Initial Setup</h1>
+      <p>Create the first administrator for <%= appName || 'Bartelby' %>.</p>
+    </div>
+
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+
+    <% if (!bootstrap.configured) { %>
+      <div class="alert alert-error">
+        <strong>Setup is locked.</strong> Set <code>BOOTSTRAP_ADMIN_TOKEN</code> in the environment, then reload this page.
+      </div>
+    <% } else { %>
+      <div class="auth-intro">
+        <p>This one-time workflow creates the initial administrator account. After it succeeds, normal registration returns to the standard pending-approval flow.</p>
+      </div>
+
+      <form method="POST" action="/setup" class="auth-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="form-group">
+          <label for="bootstrap_token">Setup Token</label>
+          <input type="password" id="bootstrap_token" name="bootstrap_token" required autocomplete="one-time-code">
+          <p class="field-hint">Enter the value of <code>BOOTSTRAP_ADMIN_TOKEN</code>.</p>
+        </div>
+        <div class="form-group">
+          <label for="username">Admin Username</label>
+          <input type="text" id="username" name="username" required autofocus autocomplete="username"
+                 pattern="[a-zA-Z0-9_.\-]+" title="Letters, numbers, _ . - only">
+          <p class="field-hint">At least 3 characters. Letters, numbers, <code>_</code> <code>.</code> <code>-</code> only.</p>
+        </div>
+        <div class="form-group">
+          <label for="email">Email <span class="field-hint-inline">(optional)</span></label>
+          <input type="email" id="email" name="email" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required autocomplete="new-password">
+          <p class="field-hint">At least 8 characters.</p>
+        </div>
+        <div class="form-group">
+          <label for="confirm">Confirm Password</label>
+          <input type="password" id="confirm" name="confirm" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-primary btn-full">Create Administrator</button>
+      </form>
+    <% } %>
+
+    <p class="auth-switch">Already completed setup? <a href="/login">Sign in</a></p>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

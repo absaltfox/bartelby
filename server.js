@@ -47,9 +47,21 @@ const authLimiter = rateLimit({
   message: 'Too many login attempts. Please try again later.',
   skip: () => process.env.NODE_ENV !== 'production'
 });
+
+const mfaLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many verification attempts. Please try again later.',
+  skip: () => process.env.NODE_ENV !== 'production'
+});
+
 app.use('/login', authLimiter);
 app.use('/register', authLimiter);
+app.use('/setup', authLimiter);
 app.use('/reset-password', authLimiter);
+app.use('/login/mfa', mfaLimiter);
 
 // ── Core middleware ────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
@@ -65,18 +77,71 @@ if (!process.env.SESSION_SECRET) {
   console.warn('[security] SESSION_SECRET is not set — using a random secret. Sessions will not persist across restarts. Set SESSION_SECRET in .env for production.');
 }
 const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-app.use(session({
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  name: 'bartelby.sid',
-  cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production'
+
+let redisClient = null;
+let sessionMiddleware = null;
+
+function getSessionOptions(store) {
+  return {
+    store,
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    name: 'bartelby.sid',
+    cookie: {
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production'
+    }
+  };
+}
+
+async function createSessionMiddleware() {
+  const sessionStore = String(config.session.store || 'memory').toLowerCase();
+
+  if (sessionStore === 'redis') {
+    if (!config.session.redisUrl) {
+      throw new Error('SESSION_STORE=redis requires REDIS_URL to be configured.');
+    }
+
+    const redis = require('redis');
+    const connectRedis = require('connect-redis');
+    const RedisStore = connectRedis.RedisStore || connectRedis.default;
+    if (!RedisStore) {
+      throw new Error('Could not initialize connect-redis.');
+    }
+
+    redisClient = redis.createClient({
+      url: config.session.redisUrl
+    });
+
+    redisClient.on('error', (err) => {
+      console.error('[redis] session store error:', err);
+    });
+
+    await redisClient.connect();
+
+    return session(getSessionOptions(new RedisStore({
+      client: redisClient,
+      prefix: 'bartelby:sess:'
+    })));
   }
-}));
+
+  if (sessionStore !== 'memory') {
+    throw new Error(`Unsupported SESSION_STORE "${config.session.store}". Use "memory" or "redis".`);
+  }
+
+  return session(getSessionOptions(undefined));
+}
+
+app.use((req, res, next) => {
+  if (!sessionMiddleware) {
+    return next(new Error('Session middleware is not initialized.'));
+  }
+  return sessionMiddleware(req, res, next);
+});
+
 app.use(cookieParser(sessionSecret));
 
 // ── CSRF protection ─────────────────────────────────────────────────────
@@ -206,6 +271,8 @@ async function start() {
   try {
     await initializeSchema();
     console.log('Database initialized');
+
+    sessionMiddleware = await createSessionMiddleware();
 
     if (config.runtime.startWorker) {
       const { startWorker } = require('./utils/worker');

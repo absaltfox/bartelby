@@ -51,11 +51,31 @@ function withFallback(value, fallback) {
   return (typeof value === 'string' && value.trim()) ? value : fallback;
 }
 
+function sanitizeSvgMarkup(markup, fallback) {
+  const candidate = withFallback(markup, fallback);
+  return String(candidate || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/\s(?:href|xlink:href)\s*=\s*(['"])\s*javascript:[\s\S]*?\1/gi, '')
+    .replace(/\s(?:href|xlink:href)\s*=\s*javascript:[^\s>]+/gi, '')
+    .trim();
+}
+
+function svgToDataUri(svgMarkup) {
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(String(svgMarkup || ''))}`;
+}
+
 function resolveApplicationSettings(cfg = {}) {
+  const appLogoSvg = sanitizeSvgMarkup(cfg.app_logo_svg, DEFAULT_APP_LOGO_SVG);
+  const appFaviconSvg = sanitizeSvgMarkup(cfg.app_favicon_svg, DEFAULT_APP_FAVICON_SVG);
   return {
     appName: withFallback(cfg.app_name, DEFAULT_APP_NAME),
-    appLogoSvg: withFallback(cfg.app_logo_svg, DEFAULT_APP_LOGO_SVG),
-    appFaviconSvg: withFallback(cfg.app_favicon_svg, DEFAULT_APP_FAVICON_SVG),
+    appLogoSvg,
+    appLogoDataUri: svgToDataUri(appLogoSvg),
+    appFaviconSvg,
+    appFaviconDataUri: svgToDataUri(appFaviconSvg),
     deploymentNotice: typeof cfg.deployment_notice === 'string' ? cfg.deployment_notice.trim() : '',
     termsOfService: withFallback(cfg.terms_of_service, DEFAULT_TERMS_OF_SERVICE),
     privacyPolicy: withFallback(cfg.privacy_policy, DEFAULT_PRIVACY_POLICY),
@@ -70,5 +90,7 @@ module.exports = {
   DEFAULT_TERMS_OF_SERVICE,
   DEFAULT_PRIVACY_POLICY,
   DEFAULT_DATA_SECURITY_INFORMATION,
+  sanitizeSvgMarkup,
+  svgToDataUri,
   resolveApplicationSettings
 };

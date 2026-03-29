@@ -145,6 +145,7 @@ code, pre {
   flex-shrink: 0;
 }
 
+.logo-mark img,
 .logo-mark svg,
 .logo-quill {
   width: auto;
@@ -153,6 +154,7 @@ code, pre {
   transition: transform 0.3s ease;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
 }
+.logo:hover .logo-mark img,
 .logo:hover .logo-mark svg,
 .logo:hover .logo-quill { transform: rotate(-8deg) translateY(-1px); }
 
@@ -2387,6 +2389,10 @@ details[open] summary::before { content: '▾ ' !important; }
   max-width: 440px;
 }
 
+.auth-card-wide {
+  max-width: 520px;
+}
+
 .auth-header {
   text-align: center;
   margin-bottom: 28px;
@@ -2420,6 +2426,21 @@ details[open] summary::before { content: '▾ ' !important; }
   margin-top: 22px;
   font-size: 0.875rem;
   color: var(--ink-muted);
+}
+
+.auth-intro {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(201, 144, 106, 0.08);
+  border: 1px solid rgba(201, 144, 106, 0.24);
+  color: var(--ink);
+}
+
+.auth-intro p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.55;
 }
 
 /* ─────────────────────────────────────────

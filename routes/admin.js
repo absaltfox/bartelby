@@ -5,7 +5,7 @@ const { canEncryptSecrets } = require('../utils/secrets');
 const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync } = require('../database/db');
 const { listProviders } = require('../utils/llm');
 const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
-const { resolveApplicationSettings } = require('../utils/application-settings');
+const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
 const importApiRouter = require('./import-api');
 
 const svgUpload = multer({
@@ -26,7 +26,7 @@ function normalizeSvgUpload(file) {
     throw new Error('Uploaded file is not valid SVG markup.');
   }
 
-  return content;
+  return sanitizeSvgMarkup(content, '');
 }
 
 // Admin dashboard
@@ -119,7 +119,10 @@ router.post('/application-settings', svgUpload.fields([
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        await settingsAsync.set(field, req.body[field]);
+        const value = (field === 'app_logo_svg' || field === 'app_favicon_svg')
+          ? sanitizeSvgMarkup(req.body[field], '')
+          : req.body[field];
+        await settingsAsync.set(field, value);
       }
     }
 

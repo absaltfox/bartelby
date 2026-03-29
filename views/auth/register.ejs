@@ -41,7 +41,11 @@
       <button type="submit" class="btn-primary btn-full">Create Account</button>
     </form>
 
-    <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+    <% if (bootstrap && bootstrap.needsSetup) { %>
+      <p class="auth-switch">Initial deployment? <a href="/setup">Run setup</a></p>
+    <% } else { %>
+      <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+    <% } %>
   </div>
 </div>
 
