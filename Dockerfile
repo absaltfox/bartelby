@@ -32,6 +32,9 @@ ENV PORT=3000
 
 EXPOSE 3000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://localhost:3000/healthz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"
+
 # Run as non-root user
 RUN addgroup --system app && adduser --system --ingroup app app
 RUN chown -R app:app /app

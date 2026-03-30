@@ -5,7 +5,7 @@
 
   <div class="admin-header">
     <h1>Collections</h1>
-    <p class="subtitle">Organize documents and control access. Public collections are visible to all logged-in users; private collections require explicit access grants.</p>
+    <p class="subtitle">Organize documents and control access. Private collections require explicit access grants; shared collections are visible to all logged-in users; public collections are open to anyone, including unauthenticated visitors.</p>
   </div>
 
   <% if (saved) { %>
@@ -29,9 +29,18 @@
         <textarea id="col-desc" name="description" rows="2" placeholder="Brief description of this collection"></textarea>
       </div>
       <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="is_public" value="1">
-          <span>Make this collection <strong>public</strong> — accessible to all logged-in users without explicit access grants</span>
+        <label>Visibility</label>
+        <label class="radio-label">
+          <input type="radio" name="visibility" value="private" checked>
+          <span><strong>Private</strong> — only users with explicit access grants</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="visibility" value="authenticated">
+          <span><strong>All users</strong> — visible to all logged-in users without access grants</span>
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="visibility" value="public">
+          <span><strong>Public</strong> — visible to anyone, including unauthenticated visitors</span>
         </label>
       </div>
       <div class="form-group">
@@ -39,6 +48,13 @@
           <input type="checkbox" name="allow_export" value="1">
           <span>Allow export — users can download documents from this collection as PDF or TEI</span>
         </label>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="auto_group_pages" value="1">
+          <span>Enable AI-assisted document grouping during import</span>
+        </label>
+        <p class="field-hint">When enabled, users importing into this collection will see an <strong>Auto-group</strong> button that uses AI to detect archival page numbering and suggest document groups.</p>
       </div>
       <div class="form-actions">
         <button type="submit" class="btn-primary">Create Collection</button>
@@ -56,8 +72,10 @@
             <div class="collection-row-info">
               <div class="collection-row-title">
                 <strong><%= c.name %></strong>
-                <% if (c.is_public) { %>
+                <% if (c.is_world_public) { %>
                   <span class="badge-public">public</span>
+                <% } else if (c.is_public) { %>
+                  <span class="badge-public">all users</span>
                 <% } else { %>
                   <span class="badge-private">private</span>
                 <% } %>
@@ -68,7 +86,7 @@
             <div class="collection-row-actions">
               <button type="button" class="btn-action btn-demote btn-sm js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Edit</button>
               <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Preview Image</button>
-              <% if (!c.is_public) { %>
+              <% if (!c.is_public && !c.is_world_public) { %>
                 <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="access-<%= c.id %>" data-collection-id="<%= c.id %>">Access</button>
               <% } %>
               <form method="POST" action="/admin/collections/<%= c.id %>/delete" style="display:inline"
@@ -92,9 +110,18 @@
                 <textarea name="description" rows="3"><%= c.description || '' %></textarea>
               </div>
               <div class="form-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" name="is_public" value="1" <%= c.is_public ? 'checked' : '' %>>
-                  <span>Public — accessible to all logged-in users</span>
+                <label>Visibility</label>
+                <label class="radio-label">
+                  <input type="radio" name="visibility" value="private" <%= (!c.is_public && !c.is_world_public) ? 'checked' : '' %>>
+                  <span><strong>Private</strong> — only users with explicit access grants</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="visibility" value="authenticated" <%= (c.is_public && !c.is_world_public) ? 'checked' : '' %>>
+                  <span><strong>All users</strong> — visible to all logged-in users</span>
+                </label>
+                <label class="radio-label">
+                  <input type="radio" name="visibility" value="public" <%= c.is_world_public ? 'checked' : '' %>>
+                  <span><strong>Public</strong> — visible to anyone, including unauthenticated visitors</span>
                 </label>
               </div>
               <div class="form-group">
@@ -102,6 +129,13 @@
                   <input type="checkbox" name="allow_export" value="1" <%= c.allow_export ? 'checked' : '' %>>
                   <span>Allow export — users can download documents as PDF or TEI</span>
                 </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="auto_group_pages" value="1" <%= c.auto_group_pages ? 'checked' : '' %>>
+                  <span>Enable AI-assisted document grouping during import</span>
+                </label>
+                <p class="field-hint">When enabled, users importing into this collection will see an <strong>Auto-group</strong> button that uses AI to detect archival page numbering and suggest document groups.</p>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn-primary">Save</button>
@@ -151,7 +185,7 @@
           </div>
 
           <!-- Access management panel (private collections only) -->
-          <% if (!c.is_public) { %>
+          <% if (!c.is_public && !c.is_world_public) { %>
             <div id="access-<%= c.id %>" class="collection-access-panel" style="display:none;">
               <h4>User Access</h4>
 

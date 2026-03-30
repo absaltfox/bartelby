@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const jobsUrl     = cfg.jobsUrl     || '/admin/jobs';
   const documentsUrl = cfg.documentsUrl || '/admin/documents';
   const importUrl   = cfg.importUrl   || '/admin/import';
+  const autoGroupPages = !!cfg.autoGroupPages;
 
   const uploadArea      = document.getElementById('upload-area');
   const fileInput       = document.getElementById('file-input');
@@ -83,6 +84,21 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   if (modeAI)     modeAI.addEventListener('change', updateModeUI);
   if (modeManual) modeManual.addEventListener('change', updateModeUI);
+  if (modeAI)     modeAI.addEventListener('change', updateSuggestGroupsAvailability);
+  if (modeManual) modeManual.addEventListener('change', updateSuggestGroupsAvailability);
+
+  document.querySelectorAll('.page-collection-cb').forEach((cb) => {
+    cb.addEventListener('change', handlePageCollectionSelectionChange);
+  });
+
+  document.querySelectorAll('.review-collection-cb').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (isSyncingCollectionSelection) return;
+      setSelectedCollectionIds(getSelectedCollectionIds('.review-collection-cb'));
+      updateSuggestGroupsAvailability();
+      scheduleGroupingStateSave();
+    });
+  });
 
   function isManualMode() { return modeManual && modeManual.checked; }
 
@@ -98,6 +114,10 @@ document.addEventListener('DOMContentLoaded', function() {
   const reviewForm     = document.getElementById('review-form');
   const cancelBtn      = document.getElementById('cancel-btn');
   const skipBtn        = document.getElementById('skip-btn');
+  const groupingResetModal = document.getElementById('grouping-reset-modal');
+  const groupingResetClose = document.getElementById('grouping-reset-close');
+  const groupingResetCancel = document.getElementById('grouping-reset-cancel');
+  const groupingResetConfirm = document.getElementById('grouping-reset-confirm');
 
   let allTempFiles = [];
   let tempPreviewUrls = {};
@@ -110,11 +130,204 @@ document.addEventListener('DOMContentLoaded', function() {
   let currentQueueIndex = -1;
   let savedDocIds      = [];
   let anyAiQueued      = false;
+  let autoGroupingRequested = false;
+  let autoGroupingCompleted = false;
+  let groupingStateSaveTimer = null;
+  let isSyncingCollectionSelection = false;
+  let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
 
   function getSelectedCollectionIds(selector) {
     return Array.from(document.querySelectorAll(selector + ':checked'))
       .map(cb => parseInt(cb.dataset.id, 10))
       .filter(Number.isInteger);
+  }
+
+  function setSelectedCollectionIds(ids) {
+    const selectedIds = new Set(ids || []);
+    isSyncingCollectionSelection = true;
+    document.querySelectorAll('.page-collection-cb, .review-collection-cb').forEach((cb) => {
+      const id = parseInt(cb.dataset.id, 10);
+      cb.checked = selectedIds.has(id);
+    });
+    isSyncingCollectionSelection = false;
+    lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
+  }
+
+  function selectedCollectionEnablesAutoGrouping(selector) {
+    return Array.from(document.querySelectorAll(selector + ':checked'))
+      .some(cb => cb.dataset.autoGroup === '1');
+  }
+
+  function shouldAutoSuggestGroups() {
+    return !!(
+      (
+        autoGroupPages ||
+        selectedCollectionEnablesAutoGrouping('.page-collection-cb') ||
+        selectedCollectionEnablesAutoGrouping('.review-collection-cb')
+      )
+    );
+  }
+
+  function updateSuggestGroupsAvailability() {
+    const suggestBtn = document.getElementById('suggest-groups-btn');
+    if (!suggestBtn) return;
+
+    const canSuggest = !!(!isManualMode() && providerSelect && allTempFiles.length >= 2);
+    const canShowButton = !!(canSuggest && shouldAutoSuggestGroups());
+    suggestBtn.style.display = canShowButton ? '' : 'none';
+    suggestBtn.disabled = !canShowButton || autoGroupingCompleted;
+    suggestBtn.textContent = autoGroupingCompleted ? 'Auto-grouped' : 'Auto-group';
+  }
+
+  function hasAiGeneratedGroups() {
+    return pageGroups.some((group) => group.source === 'ai');
+  }
+
+  function clearAiGeneratedGroups() {
+    pageGroups = pageGroups.filter((group) => group.source !== 'ai');
+    autoGroupingRequested = false;
+    autoGroupingCompleted = false;
+    applyGroupColors();
+  }
+
+  function confirmAiGroupReset() {
+    if (!groupingResetModal) {
+      return Promise.resolve(window.confirm(
+        'The selected collections do not allow AI-assisted document grouping. ' +
+        'If you continue, only AI-generated groups will be reset. Manual groups will be kept.'
+      ));
+    }
+
+    groupingResetModal.style.display = 'flex';
+
+    return new Promise((resolve) => {
+      function cleanup(result) {
+        groupingResetModal.style.display = 'none';
+        groupingResetConfirm.removeEventListener('click', onConfirm);
+        groupingResetCancel.removeEventListener('click', onCancel);
+        groupingResetClose.removeEventListener('click', onCancel);
+        groupingResetModal.removeEventListener('click', onOverlay);
+        document.removeEventListener('keydown', onKeydown);
+        resolve(result);
+      }
+
+      function onConfirm() { cleanup(true); }
+      function onCancel() { cleanup(false); }
+      function onOverlay(event) {
+        if (event.target === groupingResetModal) cleanup(false);
+      }
+      function onKeydown(event) {
+        if (event.key === 'Escape') cleanup(false);
+      }
+
+      groupingResetConfirm.addEventListener('click', onConfirm);
+      groupingResetCancel.addEventListener('click', onCancel);
+      groupingResetClose.addEventListener('click', onCancel);
+      groupingResetModal.addEventListener('click', onOverlay);
+      document.addEventListener('keydown', onKeydown);
+    });
+  }
+
+  async function handlePageCollectionSelectionChange() {
+    if (isSyncingCollectionSelection) return;
+
+    const selectedIds = getSelectedCollectionIds('.page-collection-cb');
+    const aiAllowed = !!(
+      autoGroupPages ||
+      selectedCollectionEnablesAutoGrouping('.page-collection-cb')
+    );
+
+    if (!aiAllowed && hasAiGeneratedGroups()) {
+      const confirmed = await confirmAiGroupReset();
+
+      if (!confirmed) {
+        setSelectedCollectionIds(lastPageCollectionIds);
+        updateSuggestGroupsAvailability();
+        return;
+      }
+
+      clearAiGeneratedGroups();
+    }
+
+    setSelectedCollectionIds(selectedIds);
+    updateSuggestGroupsAvailability();
+    scheduleGroupingStateSave();
+  }
+
+  function serializeGroupingState() {
+    return {
+      collectionIds: getSelectedCollectionIds('.page-collection-cb'),
+      groups: pageGroups
+        .map((group) => ({
+          label: group.label || null,
+          source: group.source === 'ai' ? 'ai' : 'manual',
+          pages: Array.isArray(group.pages) ? group.pages.slice() : []
+        }))
+        .filter((group) => group.pages.length >= 2)
+    };
+  }
+
+  async function persistGroupingStateNow() {
+    if (!importJobId) return;
+
+    try {
+      await fetch(`${apiBase}/groupings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({
+          importJobId,
+          groupingState: serializeGroupingState()
+        })
+      });
+    } catch (err) {
+      console.error('Failed to persist grouping state:', err);
+    }
+  }
+
+  function scheduleGroupingStateSave() {
+    if (!importJobId) return;
+    clearTimeout(groupingStateSaveTimer);
+    groupingStateSaveTimer = setTimeout(() => {
+      persistGroupingStateNow();
+    }, 200);
+  }
+
+  function restoreGroupingState(groupingState) {
+    const savedGroups = groupingState && Array.isArray(groupingState.groups)
+      ? groupingState.groups
+      : [];
+    const savedCollectionIds = groupingState && Array.isArray(groupingState.collectionIds)
+      ? groupingState.collectionIds
+      : [];
+
+    if (savedCollectionIds.length > 0) {
+      setSelectedCollectionIds(savedCollectionIds);
+      updateSuggestGroupsAvailability();
+    }
+
+    if (savedGroups.length === 0) return;
+
+    pageGroups = [];
+    groupIdCounter = 0;
+
+    savedGroups.forEach((group) => {
+      const filenames = (group.pages || []).filter((filename) => allTempFiles.includes(filename));
+      if (filenames.length < 2) return;
+      groupIdCounter += 1;
+      pageGroups.push({
+        id: groupIdCounter,
+        colorIndex: 0,
+        pages: filenames,
+        label: group.label || `Document (pages ${filenames.map((f) => allTempFiles.indexOf(f) + 1).join(', ')})`,
+        source: group.source === 'ai' ? 'ai' : 'manual'
+      });
+    });
+
+    if (pageGroups.length > 0) {
+      autoGroupingRequested = pageGroups.some((group) => group.source === 'ai');
+      autoGroupingCompleted = autoGroupingRequested;
+      applyGroupColors();
+    }
   }
 
   function setTempPreview(filename, previewUrl) {
@@ -216,6 +429,7 @@ document.addEventListener('DOMContentLoaded', function() {
           aiNote.innerHTML = 'Once processing is complete, click <strong>Continue</strong> in the Jobs tab to group pages and submit for transcription.';
         }
       } else if (data.type === 'pdf') {
+        importJobId = data.importJobId || null;
         await pollPdfJob(data.jobId);
       } else {
         allTempFiles = [data.tempFile];
@@ -276,6 +490,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   let pageGroups    = [];
   let groupIdCounter = 0;
+  const GROUP_COLORS = 8; // number of color slots in CSS
 
   function showPageManager(pages) {
     const grid = document.getElementById('page-grid');
@@ -304,8 +519,12 @@ document.addEventListener('DOMContentLoaded', function() {
       grid.appendChild(div);
     });
     pageGroups = [];
+    autoGroupingRequested = false;
+    autoGroupingCompleted = false;
+    lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
     renderGroups();
     updateSubmitButton();
+    updateSuggestGroupsAvailability();
   }
 
   document.getElementById('select-all-pages').addEventListener('click', () => {
@@ -327,25 +546,49 @@ document.addEventListener('DOMContentLoaded', function() {
     pageGroups = pageGroups.filter(g => g.pages.length > 0);
 
     groupIdCounter++;
-    pageGroups.push({ id: groupIdCounter, pages: filenames, label: `Document (pages ${pageNums.join(', ')})` });
+    const colorIndex = pageGroups.length % GROUP_COLORS;
+    pageGroups.push({ id: groupIdCounter, colorIndex, pages: filenames, label: `Document (pages ${pageNums.join(', ')})`, source: 'manual' });
 
-    selected.forEach(el => {
-      el.classList.remove('selected');
-      el.classList.add('grouped');
-      el.dataset.groupId = groupIdCounter;
-    });
+    applyGroupColors();
+    scheduleGroupingStateSave();
 
     renderGroups();
     updateSubmitButton();
     hideError();
   });
 
+  function applyGroupColors() {
+    // Clear all group styling from thumbs
+    document.querySelectorAll('.page-thumb').forEach(el => {
+      el.classList.remove('grouped', 'selected');
+      delete el.dataset.groupId;
+      delete el.dataset.groupColor;
+      delete el.dataset.groupLabel;
+    });
+    // Re-apply with consistent color indices
+    pageGroups.forEach((g, idx) => {
+      g.colorIndex = idx % GROUP_COLORS;
+      g.pages.forEach(f => {
+        const el = document.querySelector(`.page-thumb[data-filename="${f}"]`);
+        if (el) {
+          el.classList.add('grouped');
+          el.dataset.groupId = g.id;
+          el.dataset.groupColor = g.colorIndex;
+          el.dataset.groupLabel = 'Group ' + (idx + 1);
+        }
+      });
+    });
+    renderGroups();
+    updateSubmitButton();
+  }
+
   function renderGroups() {
     const container = document.getElementById('page-groups');
     container.innerHTML = '';
-    pageGroups.forEach((g) => {
+    pageGroups.forEach((g, idx) => {
       const div = document.createElement('div');
       div.className = 'page-group-card';
+      div.dataset.groupColor = g.colorIndex;
       const thumbs = g.pages.map(f =>
         `<img src="${getTempPreviewUrl(f)}" class="group-thumb" alt="">`
       ).join('');
@@ -363,16 +606,14 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function ungroupPages(groupId) {
-    const group = pageGroups.find(g => g.id === groupId);
-    if (group) {
-      group.pages.forEach(f => {
-        const el = document.querySelector(`.page-thumb[data-filename="${f}"]`);
-        if (el) { el.classList.remove('grouped'); delete el.dataset.groupId; }
-      });
-    }
     pageGroups = pageGroups.filter(g => g.id !== groupId);
-    renderGroups();
-    updateSubmitButton();
+    if (!hasAiGeneratedGroups()) {
+      autoGroupingRequested = false;
+      autoGroupingCompleted = false;
+    }
+    applyGroupColors();
+    scheduleGroupingStateSave();
+    updateSuggestGroupsAvailability();
   }
 
   function updateSubmitButton() {
@@ -439,6 +680,66 @@ document.addEventListener('DOMContentLoaded', function() {
     if (e.key === 'ArrowRight' && zoomIndex < allTempFiles.length - 1) { zoomIndex++; renderZoom(); }
   });
 
+  // ── AI-Assisted Document Grouping ────────────────────────────────
+
+  document.getElementById('suggest-groups-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('suggest-groups-btn');
+    if (allTempFiles.length < 2) { showError('Need at least 2 pages to auto-group a PDF.'); return; }
+    if (autoGroupingCompleted) { return; }
+
+    btn.disabled = true;
+    autoGroupingRequested = true;
+    btn.textContent = 'Analyzing pages...';
+    hideError();
+
+    try {
+      const response = await fetch(`${apiBase}/suggest-groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({
+          tempFiles: allTempFiles,
+          provider: providerSelect ? providerSelect.value : null,
+          credentialSource: credentialSelect ? credentialSelect.value : 'system'
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to auto-group pages');
+
+      if (!data.groups || data.groups.length === 0) {
+        showError('No document groups were detected. The pages may not have visible archival page numbers.');
+        return;
+      }
+
+      // Clear existing groups and apply suggestions
+      pageGroups = [];
+      groupIdCounter = 0;
+
+      data.groups.forEach(g => {
+        groupIdCounter++;
+        const filenames = g.pageIndices.map(idx => allTempFiles[idx]).filter(Boolean);
+        if (filenames.length < 2) return;
+        const pageNums = g.pageIndices.map(idx => idx + 1);
+        pageGroups.push({
+          id: groupIdCounter,
+          colorIndex: 0,
+          pages: filenames,
+          label: g.label || `Document (pages ${pageNums.join(', ')})`,
+          source: 'ai'
+        });
+      });
+
+      applyGroupColors();
+      autoGroupingCompleted = true;
+      scheduleGroupingStateSave();
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      updateSuggestGroupsAvailability();
+    }
+  });
+
   // ── Submit All Pages ────────────────────────────────────────────
 
   document.getElementById('submit-all-btn').addEventListener('click', async () => {
@@ -489,7 +790,11 @@ document.addEventListener('DOMContentLoaded', function() {
       const aiNote  = document.getElementById('complete-ai-note');
 
       heading.textContent = `${data.count} Document${data.count !== 1 ? 's' : ''} Submitted!`;
-      message.textContent = `${data.count} document${data.count !== 1 ? 's have' : ' has'} been created and queued for transcription.`;
+      if (data.background) {
+        message.textContent = `${data.count} document${data.count !== 1 ? 's are' : ' is'} being created and queued for transcription. This may take a few minutes for large imports.`;
+      } else {
+        message.textContent = `${data.count} document${data.count !== 1 ? 's have' : ' has'} been created and queued for transcription.`;
+      }
       viewBtn.href = jobsUrl;
       viewBtn.textContent = 'View Jobs';
       if (aiNote) {
@@ -679,6 +984,7 @@ document.addEventListener('DOMContentLoaded', function() {
   cancelBtn.addEventListener('click', async () => {
     if (allTempFiles.length > 0) {
       try {
+        clearTimeout(groupingStateSaveTimer);
         await fetch(`${apiBase}/cancel-import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
@@ -687,6 +993,10 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch (e) {}
       allTempFiles = [];
       tempPreviewUrls = {};
+      autoGroupingRequested = false;
+      autoGroupingCompleted = false;
+      importJobId = null;
+      lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
     }
     documentQueue = [];
     currentQueueIndex = -1;
@@ -750,7 +1060,10 @@ document.addEventListener('DOMContentLoaded', function() {
     originalName = job.originalName || 'document.pdf';
     setTempPreviews(job.pages);
     allTempFiles = job.pages.map(p => p.filename);
+    autoGroupingRequested = false;
+    autoGroupingCompleted = false;
     showPageManager(job.pages);
+    restoreGroupingState(job.groupingState);
     showStep('pages');
   } else if (resumeJob) {
     showError('This import job could not be resumed because its page data is incomplete.');

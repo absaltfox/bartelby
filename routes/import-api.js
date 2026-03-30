@@ -47,11 +47,76 @@ function attachTempPreview(page) {
   return rest;
 }
 
+function parseGroupingState(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!parsed || !Array.isArray(parsed.groups)) return null;
+    return {
+      collectionIds: Array.isArray(parsed.collectionIds)
+        ? parsed.collectionIds.map((id) => parseInt(id, 10)).filter(Number.isInteger)
+        : [],
+      groups: parsed.groups
+        .map((group) => ({
+          label: String(group.label || '').trim() || null,
+          source: group.source === 'ai' ? 'ai' : 'manual',
+          pages: Array.isArray(group.pages) ? sanitizeTempFiles(group.pages) : []
+        }))
+        .filter((group) => group.pages.length >= 2)
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
 function buildTranscriptPageSegments(results) {
   return results.map((result, index) => ({
     pageNumber: index + 1,
     charLength: String(result.transcription || '').trim().length
   }));
+}
+
+function spawnLocalPdfWorker({ pdfTempFile, jobRef, originalName, onProgress, onDone, onFailed }) {
+  const { fork } = require('child_process');
+  const child = fork(path.join(__dirname, '..', 'utils', 'pdf-worker.js'), [], {
+    stdio: ['pipe', 'inherit', 'inherit', 'ipc']
+  });
+
+  let childDone = false;
+
+  child.send({ pdfTempFile, dbJobId: jobRef, originalName });
+
+  child.on('message', (msg) => {
+    if (msg.type === 'progress') {
+      onProgress && onProgress(msg);
+      return;
+    }
+
+    if (msg.type === 'done') {
+      childDone = true;
+      onDone && onDone(msg);
+      return;
+    }
+
+    if (msg.type === 'failed') {
+      childDone = true;
+      onFailed && onFailed(msg.error || 'PDF processing failed');
+    }
+  });
+
+  child.on('error', (err) => {
+    if (childDone) return;
+    childDone = true;
+    onFailed && onFailed(err.message);
+  });
+
+  child.on('exit', (code) => {
+    if (childDone) return;
+    childDone = true;
+    onFailed && onFailed(`Worker process exited with code ${code}`);
+  });
+
+  return child;
 }
 
 function stripPageMarkers(text) {
@@ -76,34 +141,20 @@ const upload = multer({
 });
 
 // ── API: Upload file (image or PDF) ────────────────────────────────────────
-router.post('/upload', upload.single('file'), async (req, res) => {
+router.post('/upload', upload.single('file'), (req, res, next) => {
+  // CSRF deferred for multipart — validate now that multer has parsed req.body
+  req.app.locals.validateCsrf(req, res, next);
+}, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   if (req.file.mimetype === 'application/pdf') {
     const pdfTempFile = storage.sanitizeTempName(req.file.filename);
     const fileSize = req.file.size || 0;
 
-    const LARGE_PDF_THRESHOLD = 5;
     const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024;
+    const isLargePdf = fileSize >= FILE_SIZE_THRESHOLD;
 
-    let numPages = 0;
-    if (fileSize < FILE_SIZE_THRESHOLD) {
-      try {
-        const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-        const pdfBuffer = storage.readTempFile(pdfTempFile);
-        const pdf = await pdfjsLib.getDocument({
-          data: new Uint8Array(pdfBuffer)
-        }).promise;
-        numPages = pdf.numPages;
-        pdf.destroy();
-      } catch (e) {
-        numPages = LARGE_PDF_THRESHOLD + 1;
-      }
-    } else {
-      numPages = LARGE_PDF_THRESHOLD + 1;
-    }
-
-    if (numPages > LARGE_PDF_THRESHOLD) {
+    if (isLargePdf) {
       const useEphemeralMachine = config.flyMachines.enabled;
       const s3TempKey = useEphemeralMachine ? `import_${Date.now()}.pdf` : null;
 
@@ -112,15 +163,12 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         file_path: useEphemeralMachine ? s3TempKey : pdfTempFile,
         user_id: req.user?.id || null
       });
-      if (numPages > LARGE_PDF_THRESHOLD + 1) {
-        await importJobsAsync.updateProgress(dbJobId, { page_count: numPages });
-      }
 
       res.json({
         success: true,
         type: 'pdf_queued',
         importJobId: dbJobId,
-        pageCount: numPages > LARGE_PDF_THRESHOLD + 1 ? numPages : null,
+        pageCount: null,
         originalName: req.file.originalname
       });
 
@@ -138,135 +186,88 @@ router.post('/upload', upload.single('file'), async (req, res) => {
           importJobsAsync.markFailed(dbJobId, `Failed to launch worker: ${err.message}`).catch(() => {});
         }
       } else {
-        const { fork } = require('child_process');
-        const child = fork(path.join(__dirname, '..', 'utils', 'pdf-worker.js'), [], {
-          stdio: ['pipe', 'inherit', 'inherit', 'ipc']
-        });
-        let childDone = false;
-        child.send({ pdfTempFile, dbJobId, originalName: req.file.originalname });
-        child.on('message', (msg) => {
-          if (msg.type === 'progress') {
-            importJobsAsync.updateProgress(msg.dbJobId, { page_count: msg.pageCount, pagesRendered: msg.pagesRendered }).catch(err => {
+        spawnLocalPdfWorker({
+          pdfTempFile,
+          jobRef: dbJobId,
+          originalName: req.file.originalname,
+          onProgress: (msg) => {
+            importJobsAsync.updateProgress(dbJobId, {
+              page_count: msg.pageCount,
+              pagesRendered: msg.pagesRendered
+            }).catch(err => {
               console.error('Failed to update import job progress:', err);
             });
-          } else if (msg.type === 'done') {
-            childDone = true;
-            importJobsAsync.markDone(msg.dbJobId, msg.pages).catch(err => {
+          },
+          onDone: (msg) => {
+            importJobsAsync.markDone(dbJobId, msg.pages).catch(err => {
               console.error('Failed to mark import job done:', err);
             });
-            console.log(`[import] PDF "${msg.originalName}" processed: ${msg.pages.length} pages`);
-          } else if (msg.type === 'failed') {
-            childDone = true;
-            importJobsAsync.markFailed(msg.dbJobId, msg.error).catch(err => {
-              console.error('Failed to mark import job failed:', err);
-            });
-          }
-        });
-        child.on('error', (err) => {
-          console.error('PDF worker process error:', err);
-          if (!childDone) {
-            importJobsAsync.markFailed(dbJobId, err.message).catch(markErr => {
-              console.error('Failed to persist import worker error:', markErr);
-            });
-          }
-        });
-        child.on('exit', (code) => {
-          if (!childDone) {
-            console.error(`PDF worker exited unexpectedly with code ${code}`);
-            importJobsAsync.markFailed(dbJobId, `Worker process exited with code ${code}`).catch(err => {
-              console.error('Failed to persist import worker exit error:', err);
+            console.log(`[import] PDF "${req.file.originalname}" processed: ${msg.pages.length} pages`);
+          },
+          onFailed: (error) => {
+            console.error('PDF worker process error:', error);
+            importJobsAsync.markFailed(dbJobId, error).catch(err => {
+              console.error('Failed to persist import worker error:', err);
             });
           }
         });
       }
 
     } else {
-      // Small PDF: inline processing with in-memory job
+      // Small PDF: process in a forked worker and expose progress via in-memory job
       const jobId = createJob();
+      const dbJobId = await importJobsAsync.create({
+        original_name: req.file.originalname,
+        file_path: pdfTempFile,
+        user_id: req.user?.id || null
+      });
 
       res.json({
         success: true,
         type: 'pdf',
         jobId,
+        importJobId: dbJobId,
         originalName: req.file.originalname
       });
 
-      setImmediate(async () => {
-        const job = jobs.get(jobId);
-        try {
-          const pdfBuffer = storage.readTempFile(pdfTempFile);
-          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-
-          const { execFileSync } = require('child_process');
-          const prefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-
-          let usePdftoppm = false;
-          try { execFileSync('pdftoppm', ['-v'], { stdio: 'pipe' }); usePdftoppm = true; } catch {}
-
-          if (usePdftoppm) {
-            const pdfTmpName = `inline_${Date.now()}.pdf`;
-            storage.writeTempFile(pdfTmpName, pdfBuffer);
-            const pdfPath = storage.getTempFilePath(pdfTmpName);
-            const outDir = require('path').dirname(pdfPath);
-            const outPrefix = require('path').join(outDir, prefix);
-
-            try {
-              execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
-                stdio: 'pipe', maxBuffer: 50 * 1024 * 1024, timeout: 30 * 60 * 1000
-              });
-            } finally {
-              try { require('fs').unlinkSync(pdfPath); } catch {}
-            }
-
-            const outputFiles = require('fs').readdirSync(outDir)
-              .filter(f => f.startsWith(prefix) && f.endsWith('.png'))
-              .sort();
-            job.pageCount = outputFiles.length;
-
-            for (let i = 0; i < outputFiles.length; i++) {
-              const srcPath = require('path').join(outDir, outputFiles[i]);
-              const filename = `${prefix}_page${i + 1}.png`;
-              const pngBuf = require('fs').readFileSync(srcPath);
-              require('fs').unlinkSync(srcPath);
-              storage.writeTempFile(filename, pngBuf);
-              job.pages.push({
-                pageNumber: i + 1,
-                filename,
-                previewUrl: storage.getTempPreviewUrl(filename)
-              });
-              job.progress = Math.round(((i + 1) / outputFiles.length) * 100);
-            }
-          } else {
-            const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-            const { createCanvas } = require('canvas');
-            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise;
-            job.pageCount = pdf.numPages;
-
-            for (let i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const viewport = page.getViewport({ scale: 2.0 });
-              const canvas = createCanvas(viewport.width, viewport.height);
-              await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-              page.cleanup();
-              const filename = `${prefix}_page${i}.png`;
-              storage.writeTempFile(filename, canvas.toBuffer('image/png'));
-              job.pages.push({
-                pageNumber: i,
-                filename,
-                previewUrl: storage.getTempPreviewUrl(filename)
-              });
-              job.progress = Math.round((i / pdf.numPages) * 100);
-            }
-            pdf.destroy();
-          }
-
+      spawnLocalPdfWorker({
+        pdfTempFile,
+        jobRef: jobId,
+        originalName: req.file.originalname,
+        onProgress: (msg) => {
+          const job = jobs.get(jobId);
+          if (!job) return;
+          job.pageCount = msg.pageCount || job.pageCount;
+          job.progress = job.pageCount
+            ? Math.round((Math.max(msg.pagesRendered || 0, 0) / job.pageCount) * 100)
+            : job.progress;
+          importJobsAsync.updateProgress(dbJobId, {
+            page_count: msg.pageCount,
+            pages_rendered: msg.pagesRendered
+          }).catch((err) => {
+            console.error('Failed to update import job progress:', err);
+          });
+        },
+        onDone: (msg) => {
+          const job = jobs.get(jobId);
+          if (!job) return;
+          job.pages = msg.pages || [];
+          job.pageCount = job.pages.length;
           job.status = 'done';
           job.progress = 100;
-        } catch (err) {
-          console.error('PDF background processing error:', err);
+          importJobsAsync.markDone(dbJobId, msg.pages).catch((err) => {
+            console.error('Failed to mark import job done:', err);
+          });
+        },
+        onFailed: (error) => {
+          const job = jobs.get(jobId);
+          if (!job) return;
+          console.error('PDF background processing error:', error);
           job.status = 'error';
-          job.error = err.message;
-          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
+          job.error = error;
+          importJobsAsync.markFailed(dbJobId, error).catch((err) => {
+            console.error('Failed to mark import job failed:', err);
+          });
         }
       });
     }
@@ -532,6 +533,11 @@ router.post('/save-document', express.json(), async (req, res) => {
 });
 
 // ── API: Bulk submit pages ─────────────────────────────────────────────────
+// For large PDFs (hundreds of pages), each group requires multiple S3 round-trips
+// (existence check, copy temp→permanent, delete temp). Processing sequentially
+// in a single request can take minutes for 600+ pages, causing the user to think
+// the page is hung. Instead, we validate + resolve provider up front, respond
+// immediately, and process groups in the background.
 router.post('/submit-pages', express.json(), async (req, res) => {
   const { groups, originalName, provider, credentialSource, temperature, initiatedBy, collectionIds, importJobId } = req.body;
 
@@ -540,93 +546,321 @@ router.post('/submit-pages', express.json(), async (req, res) => {
   }
 
   try {
+    // Resolve provider selection up front (requires req.user, fast)
     const defaultProvider = await settingsAsync.get('default_provider');
     const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
-
-    const savedDocs = [];
     const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
+    const userId = req.user.id;
 
-    for (const group of groups) {
-      const rawGroupFiles = group.tempFiles;
-      if (!rawGroupFiles || rawGroupFiles.length === 0) continue;
-      const files = sanitizeTempFiles(rawGroupFiles);
-      if (files.length === 0) continue;
-
-      const firstFile = files[0];
-      const existsAsync = storage.tempFileExistsAsync || storage.tempFileExists;
-      if (!(await existsAsync(firstFile))) continue;
-
-      const baseName = originalName || 'document';
-      const ext = '.png';
-      const primaryUpload = await storage.copyTempFileToUpload(firstFile, baseName, ext);
-
-      const additionalPages = [];
-      for (let i = 1; i < files.length; i++) {
-        if (!(await existsAsync(files[i]))) continue;
-        const pageUpload = await storage.copyTempFileToUpload(
-          files[i],
-          `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`,
-          ext
-        );
-        additionalPages.push(pageUpload.url);
-      }
-
-      storage.deleteTempFiles(files);
-      if (storage.deleteTempObject) {
-        for (const f of files) {
-          try { await storage.deleteTempObject(f); } catch (e) {}
-        }
-      }
-
-      const docMetadata = {};
-      if (additionalPages.length > 0) {
-        docMetadata.additional_pages = additionalPages;
-      }
-
-      const docId = await documentsAsync.create({
-        title: group.label || 'Untitled Document',
-        date_created: null,
-        description: null,
-        image_path: primaryUpload.url,
-        metadata: docMetadata
-      });
-
-      if (Array.isArray(collectionIds) && collectionIds.length > 0) {
-        await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
-      }
-
-      const jobId = await transcriptionJobsAsync.create({
-        document_id: docId,
-        provider: selection.provider || provider || null,
-        model: null,
-        temperature: !isNaN(tempVal) ? tempVal : null,
-        initiated_by: initiatedBy || null,
-        image_path: primaryUpload.url,
-        additional_image_paths: additionalPages.length > 0 ? additionalPages : null,
-        provider_key_scope: selection.providerKeyScope,
-        user_api_key_id: selection.userApiKeyId,
-        requested_by_user_id: req.user.id
-      });
-
-      savedDocs.push({ documentId: docId, jobId });
-    }
-
-    await saveDatabase();
-
-    if (importJobId) {
-      try { await importJobsAsync.markSubmitted(parseInt(importJobId)); } catch (e) {}
-    }
-
+    // Respond immediately — background processing follows
     res.json({
       success: true,
-      documents: savedDocs,
-      count: savedDocs.length
+      documents: [],
+      count: groups.length,
+      background: true
+    });
+
+    // ── Background processing ──────────────────────────────────────
+    // Use server-side S3 copy when available (avoids download+re-upload).
+    // Collect all temp file names for a single batch delete at the end.
+    const copyFn = storage.copyTempObjectToUpload || storage.copyTempFileToUpload;
+    const allTempFiles = []; // accumulate for batch delete
+
+    setImmediate(async () => {
+      let processed = 0;
+      try {
+        for (const group of groups) {
+          const rawGroupFiles = group.tempFiles;
+          if (!rawGroupFiles || rawGroupFiles.length === 0) continue;
+          const files = sanitizeTempFiles(rawGroupFiles);
+          if (files.length === 0) continue;
+
+          // Copy all pages to permanent storage in parallel (no existence check —
+          // the worker already created these; if a copy fails we skip it)
+          const baseName = originalName || 'document';
+          const ext = '.png';
+
+          const uploadPromises = files.map(async (file, i) => {
+            const name = i === 0
+              ? baseName
+              : `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`;
+            try {
+              return await copyFn(file, name, ext);
+            } catch (err) {
+              console.error(`[import] Failed to copy page ${file}:`, err.message);
+              return null;
+            }
+          });
+          const uploads = await Promise.all(uploadPromises);
+
+          const primaryUpload = uploads[0];
+          if (!primaryUpload) continue;
+          const additionalPages = uploads.slice(1).filter(Boolean).map(u => u.url);
+
+          // Queue temp files for batch cleanup at the end
+          storage.deleteTempFiles(files); // local cleanup (free)
+          allTempFiles.push(...files);
+
+          const docMetadata = {};
+          if (additionalPages.length > 0) {
+            docMetadata.additional_pages = additionalPages;
+          }
+
+          const docId = await documentsAsync.create({
+            title: group.label || 'Untitled Document',
+            date_created: null,
+            description: null,
+            image_path: primaryUpload.url,
+            metadata: docMetadata
+          });
+
+          if (Array.isArray(collectionIds) && collectionIds.length > 0) {
+            await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
+          }
+
+          await transcriptionJobsAsync.create({
+            document_id: docId,
+            provider: selection.provider || provider || null,
+            model: null,
+            temperature: !isNaN(tempVal) ? tempVal : null,
+            initiated_by: initiatedBy || null,
+            image_path: primaryUpload.url,
+            additional_image_paths: additionalPages.length > 0 ? additionalPages : null,
+            provider_key_scope: selection.providerKeyScope,
+            user_api_key_id: selection.userApiKeyId,
+            requested_by_user_id: userId
+          });
+
+          processed++;
+
+          // Periodic DB save every 25 documents to avoid losing progress
+          if (processed % 25 === 0) {
+            await saveDatabase();
+          }
+        }
+
+        await saveDatabase();
+
+        // Batch-delete all temp objects from S3 in one request (instead of N individual deletes)
+        if (storage.deleteTempObjectsBatch && allTempFiles.length > 0) {
+          try {
+            await storage.deleteTempObjectsBatch(allTempFiles);
+          } catch (err) {
+            console.error('[import] Batch temp cleanup error:', err.message);
+          }
+        } else if (storage.deleteTempObject) {
+          // Fallback: parallel individual deletes
+          await Promise.all(allTempFiles.map(f =>
+            storage.deleteTempObject(f).catch(() => {})
+          ));
+        }
+
+        if (importJobId) {
+          try { await importJobsAsync.markSubmitted(parseInt(importJobId)); } catch (e) {}
+        }
+
+        console.log(`[import] Background submit complete: ${processed} documents created`);
+      } catch (err) {
+        console.error(`[import] Background submit error after ${processed} documents:`, err);
+        // Save whatever progress we made
+        try { await saveDatabase(); } catch (e) {}
+      }
     });
   } catch (err) {
     console.error('Bulk submit error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── API: Persist current grouping state for a resumable import job ─────────
+router.post('/groupings', express.json(), async (req, res) => {
+  const importJobId = parseInt(req.body.importJobId, 10);
+  if (!Number.isInteger(importJobId)) {
+    return res.status(400).json({ error: 'Missing import job ID.' });
+  }
+
+  const groupingState = parseGroupingState(req.body.groupingState);
+
+  try {
+    const job = await importJobsAsync.getById(importJobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Import job not found.' });
+    }
+
+    if (req.user?.role !== 'admin' && job.user_id !== req.user?.id) {
+      return res.status(403).json({ error: 'You do not have access to that import job.' });
+    }
+
+    await importJobsAsync.updateGroupingState(importJobId, groupingState);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Persist grouping state error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── API: AI-suggested page groupings ──────────────────────────────────────
+// Crops the top ~15% of each page image (where archival numbers typically
+// appear), then sends the tiny strips to the cheapest available vision model
+// in batches. This keeps cost minimal — a 600-page PDF produces ~12 API calls
+// with small image payloads instead of 600 full-image calls.
+router.post('/suggest-groups', express.json(), async (req, res) => {
+  const { tempFiles } = req.body;
+  if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
+    return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
+  }
+
+  try {
+    const defaultProvider = await settingsAsync.get('default_provider');
+    const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
+    const provider = await createProvider(providerName, selection.runtimeConfig);
+
+    const { createCanvas, loadImage } = require('canvas');
+    const CROP_RATIO = 0.15; // top 15% of page
+    const BATCH_SIZE = 50;   // small strips → more per batch
+    const pageAnnotations = [];
+
+    for (let i = 0; i < tempFiles.length; i += BATCH_SIZE) {
+      const batch = tempFiles.slice(i, i + BATCH_SIZE);
+      const imageContents = [];
+
+      for (let j = 0; j < batch.length; j++) {
+        const safeName = storage.sanitizeTempName(batch[j]);
+        let buffer;
+        try {
+          if (storage.tempFileExists(safeName)) {
+            buffer = storage.readTempFile(safeName);
+          } else if (storage.getTempObject) {
+            buffer = await storage.getTempObject(safeName);
+          }
+        } catch (e) { continue; }
+        if (!buffer) continue;
+
+        // Crop the top strip of the page
+        try {
+          const img = await loadImage(buffer);
+          const cropHeight = Math.round(img.height * CROP_RATIO);
+          const canvas = createCanvas(img.width, cropHeight);
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, img.width, cropHeight, 0, 0, img.width, cropHeight);
+          buffer = canvas.toBuffer('image/png');
+        } catch (e) {
+          // If cropping fails, skip this page rather than sending the full image
+          continue;
+        }
+
+        imageContents.push(
+          { type: 'text', text: `Image ${i + j + 1}:` },
+          { type: 'image', image: buffer, mimeType: 'image/png' }
+        );
+      }
+
+      if (imageContents.length === 0) continue;
+
+      const result = await provider.generateGroupingSuggestion(imageContents, i, batch.length);
+      if (Array.isArray(result)) {
+        pageAnnotations.push(...result);
+      }
+    }
+
+    const groups = buildGroupsFromAnnotations(pageAnnotations, tempFiles);
+
+    res.json({ success: true, groups });
+  } catch (err) {
+    console.error('Suggest groups error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function buildGroupsFromAnnotations(annotations, tempFiles) {
+  if (!annotations || annotations.length === 0) return [];
+
+  const annotationMap = new Map();
+  annotations.forEach((annotation) => {
+    const page = parseInt(annotation.page, 10);
+    if (!Number.isInteger(page) || page < 1 || page > tempFiles.length) return;
+    const number = annotation.number != null ? parseInt(annotation.number, 10) : null;
+    annotationMap.set(page, Number.isInteger(number) && number > 0 ? number : null);
+  });
+
+  const groups = [];
+  let index = 0;
+
+  function hasUpcomingExpectedNumber(startCursor, expectedNumber) {
+    for (let lookahead = startCursor; lookahead < tempFiles.length; lookahead++) {
+      const upcomingNumber = annotationMap.get(lookahead + 1);
+      if (upcomingNumber === expectedNumber) return true;
+      if (upcomingNumber === 1) return false;
+    }
+    return false;
+  }
+
+  while (index < tempFiles.length) {
+    const startNumber = annotationMap.get(index + 1);
+    if (startNumber !== 1) {
+      index += 1;
+      continue;
+    }
+
+    const pages = [index];
+    let explicitMatches = 1;
+    let expectedNumber = 2;
+    let cursor = index + 1;
+
+    while (cursor < tempFiles.length) {
+      const detectedNumber = annotationMap.get(cursor + 1);
+
+      if (detectedNumber === expectedNumber) {
+        pages.push(cursor);
+        explicitMatches += 1;
+        expectedNumber += 1;
+        cursor += 1;
+        continue;
+      }
+
+      // Allow duplicate numbered pages within the same document run, such as
+      // 1, 2, 2, 3. The duplicate page belongs with the surrounding sequence,
+      // but it should not advance the expected next page number.
+      if (
+        explicitMatches >= 2 &&
+        detectedNumber === expectedNumber - 1 &&
+        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
+      ) {
+        pages.push(cursor);
+        cursor += 1;
+        continue;
+      }
+
+      // Once we've seen a credible numbered run, allow unlabeled trailing pages
+      // until the next explicit start-of-document marker.
+      if (
+        detectedNumber == null &&
+        explicitMatches >= 2 &&
+        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
+      ) {
+        pages.push(cursor);
+        cursor += 1;
+        continue;
+      }
+
+      break;
+    }
+
+    if (explicitMatches >= 2) {
+      groups.push({
+        pageIndices: pages,
+        label: `Document (pages ${pages.map(p => p + 1).join(', ')})`
+      });
+      index = cursor;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return groups;
+}
 
 // ── API: Cancel/cleanup temp files ─────────────────────────────────────────
 router.post('/cancel-import', express.json(), (req, res) => {

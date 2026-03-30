@@ -29,6 +29,17 @@
         <button type="submit" class="btn-primary btn-sm">Save Setting</button>
       </div>
     </form>
+    <form method="POST" action="/manage/collections/<%= collection.id %>/settings/auto-group" class="manage-settings-form" style="margin-top: 12px;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="checkbox-label">
+        <input type="checkbox" name="auto_group_pages" value="1" <%= collection.auto_group_pages ? 'checked' : '' %>>
+        <span>Enable AI-assisted document grouping during import</span>
+      </label>
+      <p class="field-hint">When enabled, users importing into this collection will see an <strong>Auto-group</strong> button that uses AI to detect archival page numbering and suggest document groups.</p>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary btn-sm">Save Setting</button>
+      </div>
+    </form>
   </div>
 
   <% if (typeof allowExport !== 'undefined' && allowExport) { %>

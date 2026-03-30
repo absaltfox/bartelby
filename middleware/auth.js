@@ -90,6 +90,18 @@ function locals(req, res, next) {
   next();
 }
 
+/** Allow unauthenticated visitors through (for world-public content) */
+function optionalAuth(req, res, next) {
+  if (!req.isAuthenticated()) return next();
+  if (req.user.status === 'pending') return res.redirect('/pending');
+  if (req.user.status === 'rejected') {
+    req.logout((err) => {});
+    req.session.authError = 'Your account request was not approved.';
+    return res.redirect('/login');
+  }
+  next();
+}
+
 /** Redirect unauthenticated or non-active requests to /login */
 function requireAuth(req, res, next) {
   if (!req.isAuthenticated()) {
@@ -177,4 +189,4 @@ async function requireAdminOrManager(req, res, next) {
   res.status(403).render('error', { message: 'Admin or collection manager access required.', error: {} });
 }
 
-module.exports = { passport, locals, requireAuth, requireAuthApi, requireAdmin, requireCollectionRole, requireDocumentRole, requireAdminOrManager };
+module.exports = { passport, locals, requireAuth, optionalAuth, requireAuthApi, requireAdmin, requireCollectionRole, requireDocumentRole, requireAdminOrManager };

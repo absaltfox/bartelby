@@ -93,6 +93,14 @@ router.post('/collections/:collectionId/settings/export', requireCollectionRole(
   res.redirect(`/manage/collections/${collectionId}/documents`);
 });
 
+// ── Toggle auto-group pages setting for a managed collection ─────────────────
+router.post('/collections/:collectionId/settings/auto-group', requireCollectionRole('manager'), async (req, res) => {
+  const collectionId = parseInt(req.params.collectionId);
+  const enabled = req.body.auto_group_pages === '1' ? 1 : 0;
+  await collectionsAsync.setAutoGroupPages(collectionId, enabled);
+  res.redirect(`/manage/collections/${collectionId}/documents`);
+});
+
 // ── Move documents between collections ────────────────────────────────────────
 router.post('/collections/:collectionId/documents/move', express.json(), requireCollectionRole('manager'), async (req, res) => {
   const fromCollectionId = parseInt(req.params.collectionId);
@@ -299,10 +307,15 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
   if (req.query.importJobId) {
     const job = await importJobsAsync.getById(parseInt(req.query.importJobId));
     if (job && job.status === 'done' && job.pages && !job.submitted) {
+      let groupingState = null;
+      try {
+        groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;
+      } catch (err) {}
       resumeJob = {
         id: job.id,
         originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview)
+        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview),
+        groupingState
       };
     }
   }
@@ -318,7 +331,8 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
       apiBase: '/manage/api',
       jobsUrl: `/manage/collections/${collectionId}/jobs`,
       documentsUrl: `/manage/collections/${collectionId}/documents`,
-      importUrl: `/manage/collections/${collectionId}/import`
+      importUrl: `/manage/collections/${collectionId}/import`,
+      autoGroupPages: !!collection.auto_group_pages
     }
   });
 });

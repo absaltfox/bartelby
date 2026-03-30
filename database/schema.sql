@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
   provider TEXT NOT NULL,
   label TEXT NOT NULL,
   encrypted_key TEXT NOT NULL,
+  model TEXT,
+  vision_model TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_used_at DATETIME,
@@ -115,8 +117,13 @@ CREATE TABLE IF NOT EXISTS collections (
   name TEXT NOT NULL UNIQUE,
   description TEXT,
   is_public INTEGER NOT NULL DEFAULT 0,
+  is_world_public INTEGER NOT NULL DEFAULT 0,
+  allow_export INTEGER NOT NULL DEFAULT 0,
+  auto_group_pages INTEGER NOT NULL DEFAULT 0,
+  preview_document_id INTEGER,
   created_by INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (preview_document_id) REFERENCES documents(id),
   FOREIGN KEY (created_by) REFERENCES users(id)
 );
 

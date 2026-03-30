@@ -9,7 +9,9 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  HeadObjectCommand
+  DeleteObjectsCommand,
+  HeadObjectCommand,
+  CopyObjectCommand
 } = require('@aws-sdk/client-s3');
 
 const s3Config = config.storage.s3;
@@ -82,6 +84,16 @@ async function getObject(key) {
   return streamToBuffer(response.Body);
 }
 
+async function copyObject(sourceKey, destKey, contentType) {
+  await s3.send(new CopyObjectCommand({
+    Bucket: BUCKET,
+    CopySource: `${BUCKET}/${sourceKey}`,
+    Key: destKey,
+    ContentType: contentType || undefined,
+    MetadataDirective: contentType ? 'REPLACE' : 'COPY'
+  }));
+}
+
 async function deleteObject(key) {
   try {
     await s3.send(new DeleteObjectCommand({
@@ -91,6 +103,28 @@ async function deleteObject(key) {
   } catch (err) {
     // Ignore if already deleted
     if (err.name !== 'NoSuchKey') throw err;
+  }
+}
+
+async function deleteObjectsBatch(keys) {
+  if (!keys || keys.length === 0) return;
+  // S3 DeleteObjects supports up to 1000 keys per request
+  for (let i = 0; i < keys.length; i += 1000) {
+    const batch = keys.slice(i, i + 1000);
+    try {
+      await s3.send(new DeleteObjectsCommand({
+        Bucket: BUCKET,
+        Delete: {
+          Objects: batch.map(key => ({ Key: key })),
+          Quiet: true
+        }
+      }));
+    } catch (err) {
+      // Fall back to individual deletes if batch fails
+      for (const key of batch) {
+        try { await deleteObject(key); } catch (e) {}
+      }
+    }
   }
 }
 
@@ -209,11 +243,42 @@ async function deleteTempObject(name) {
   await deleteObject(TEMP_PREFIX + sanitizeTempName(name));
 }
 
+async function deleteTempObjectsBatch(names) {
+  const keys = (names || [])
+    .map(n => TEMP_PREFIX + sanitizeTempName(n))
+    .filter(k => k !== TEMP_PREFIX);
+  await deleteObjectsBatch(keys);
+}
+
 async function tempObjectExists(name) {
   return objectExists(TEMP_PREFIX + sanitizeTempName(name));
 }
 
 // ── Upload operations (S3-backed) ────────────────────────────────────────
+
+// Server-side S3 copy: moves a temp object to uploads without downloading.
+// Use this when the file is already in S3 (e.g. rendered by ephemeral worker).
+// Falls back to the download+upload path if server-side copy fails.
+async function copyTempObjectToUpload(tempName, originalName, extOverride) {
+  const safeName = sanitizeTempName(tempName);
+  const sourceKey = TEMP_PREFIX + safeName;
+  const filename = makeUniqueFilename(originalName, extOverride);
+  const ext = path.extname(filename).toLowerCase();
+  const contentType = {
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.png': 'image/png', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.pdf': 'application/pdf'
+  }[ext] || 'application/octet-stream';
+  const destKey = UPLOADS_PREFIX + filename;
+
+  try {
+    await copyObject(sourceKey, destKey, contentType);
+    return { filename, url: toUploadsUrl(filename), fullPath: null };
+  } catch (err) {
+    // Fall back to download + upload (e.g. if CopyObject is not supported)
+    return copyTempFileToUpload(tempName, originalName, extOverride);
+  }
+}
 
 async function copyTempFileToUpload(tempName, originalName, extOverride) {
   ensureLocalTempDir();
@@ -302,6 +367,8 @@ module.exports = {
   putTempObject,
   getTempObject,
   deleteTempObject,
+  deleteTempObjectsBatch,
   tempObjectExists,
-  tempFileExistsAsync
+  tempFileExistsAsync,
+  copyTempObjectToUpload
 };

@@ -8,8 +8,10 @@
       <% } %>
     </div>
     <div class="manage-collection-meta">
-      <% if (collection.is_public) { %>
+      <% if (collection.is_world_public) { %>
         <span class="badge-public">public</span>
+      <% } else if (collection.is_public) { %>
+        <span class="badge-public">all users</span>
       <% } else { %>
         <span class="badge-private">private</span>
       <% } %>
@@ -23,7 +25,7 @@
     <a href="/manage/collections/<%= collection.id %>/documents" class="admin-subnav-link <%= activePage === 'documents' ? 'active' : '' %>">Documents</a>
     <a href="/manage/collections/<%= collection.id %>/import" class="admin-subnav-link <%= activePage === 'import' ? 'active' : '' %>">Import</a>
     <a href="/manage/collections/<%= collection.id %>/jobs" class="admin-subnav-link <%= activePage === 'jobs' ? 'active' : '' %>">Jobs</a>
-    <% if (!collection.is_public) { %>
+    <% if (!collection.is_public && !collection.is_world_public) { %>
       <a href="/manage/collections/<%= collection.id %>/users" class="admin-subnav-link <%= activePage === 'users' ? 'active' : '' %>">Users</a>
     <% } %>
   </nav>

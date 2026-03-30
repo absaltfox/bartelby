@@ -363,6 +363,31 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   // v23 — transcript page segmentation metadata for multipage comparison
   `
   ALTER TABLE transcripts ADD COLUMN page_segments TEXT
+  `,
+
+  // v24 — world-public collections (visible to unauthenticated visitors)
+  `
+  ALTER TABLE collections ADD COLUMN is_world_public INTEGER NOT NULL DEFAULT 0
+  `,
+
+  // v25 — per-collection AI page-grouping suggestions during PDF import
+  `
+  ALTER TABLE collections ADD COLUMN auto_group_pages INTEGER NOT NULL DEFAULT 0
+  `,
+
+  // v26 — optional vision model override on personal API keys
+  `
+  ALTER TABLE user_api_keys ADD COLUMN vision_model TEXT
+  `,
+
+  // v27 — optional primary model override on personal API keys
+  `
+  ALTER TABLE user_api_keys ADD COLUMN model TEXT
+  `,
+
+  // v28 — persist manual/AI grouping state on import jobs
+  `
+  ALTER TABLE import_jobs ADD COLUMN grouping_state TEXT
   `
 ];
 
@@ -673,6 +698,14 @@ const importJobs = {
     saveDatabase();
   },
 
+  updateGroupingState(id, groupingState) {
+    db.run("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
+      groupingState ? JSON.stringify(groupingState) : null,
+      id
+    ]);
+    saveDatabase();
+  },
+
   delete(id) {
     return run("DELETE FROM import_jobs WHERE id = ?", [id]);
   }
@@ -717,17 +750,27 @@ const documents = {
     const conditions = [];
     const params = [];
 
-    if (!isAdmin && !accessAll && userId) {
-      conditions.push(`d.id IN (
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-        WHERE uca.user_id = ?
-        UNION
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN collections col ON dc.collection_id = col.id
-        WHERE col.is_public = 1
-      )`);
-      params.push(userId);
+    if (!isAdmin && !accessAll) {
+      if (userId) {
+        // Authenticated user: world-public + all-users + explicitly granted
+        conditions.push(`d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+          WHERE uca.user_id = ?
+          UNION
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_public = 1
+        )`);
+        params.push(userId);
+      } else {
+        // Unauthenticated visitor: world-public only
+        conditions.push(`d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )`);
+      }
     }
 
     return { conditions, params };
@@ -775,11 +818,27 @@ const documents = {
   getAll(limit = 20, offset = 0, opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
 
-    if (isAdmin || accessAll || !userId) {
+    if (isAdmin || accessAll) {
       return all(`
         SELECT d.*,
                (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
         FROM documents d
+        ORDER BY d.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [limit, offset]);
+    }
+
+    if (!userId) {
+      // Unauthenticated: world-public only
+      return all(`
+        SELECT d.*,
+               (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+        FROM documents d
+        WHERE d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )
         ORDER BY d.created_at DESC
         LIMIT ? OFFSET ?
       `, [limit, offset]);
@@ -823,7 +882,16 @@ const documents = {
   // Check if a user can access a specific document
   canAccess(docId, userId, isAdmin, accessAll) {
     if (isAdmin || accessAll) return true;
-    if (!userId) return false;
+    if (!userId) {
+      // Unauthenticated: only world-public
+      const row = get(`
+        SELECT 1 FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE dc.document_id = ? AND col.is_world_public = 1
+        LIMIT 1
+      `, [docId]);
+      return !!row;
+    }
     const row = get(`
       SELECT 1 FROM document_collections dc
       INNER JOIN collections col ON dc.collection_id = col.id
@@ -841,8 +909,22 @@ const documents = {
   getCount(opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
 
-    if (isAdmin || accessAll || !userId) {
+    if (isAdmin || accessAll) {
       const result = get('SELECT COUNT(*) as count FROM documents');
+      return result ? result.count : 0;
+    }
+
+    if (!userId) {
+      // Unauthenticated: count only world-public documents
+      const result = get(`
+        SELECT COUNT(DISTINCT d.id) as count
+        FROM documents d
+        WHERE d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )
+      `);
       return result ? result.count : 0;
     }
 
@@ -1092,17 +1174,25 @@ const transcripts = {
     });
 
     let accessClause = '';
-    if (!isAdmin && !accessAll && userId) {
-      accessClause = `AND d.id IN (
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-        WHERE uca.user_id = ?
-        UNION
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN collections col ON dc.collection_id = col.id
-        WHERE col.is_public = 1
-      )`;
-      params.push(userId);
+    if (!isAdmin && !accessAll) {
+      if (userId) {
+        accessClause = `AND d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+          WHERE uca.user_id = ?
+          UNION
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_public = 1
+        )`;
+        params.push(userId);
+      } else {
+        accessClause = `AND d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )`;
+      }
     }
 
     params.push(limit);
@@ -1372,7 +1462,7 @@ const userInvites = {
 const userApiKeys = {
   getByUserId(userId) {
     return all(`
-      SELECT id, user_id, provider, label, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, model, vision_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -1381,21 +1471,23 @@ const userApiKeys = {
 
   getByIdForUser(id, userId) {
     return get(`
-      SELECT id, user_id, provider, label, encrypted_key, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
   },
 
-  create({ userId, provider, label, apiKey }) {
+  create({ userId, provider, label, apiKey, model, visionModel }) {
     const result = run(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model)
+      VALUES (?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
       label,
-      encryptSecret(apiKey)
+      encryptSecret(apiKey),
+      model || null,
+      visionModel || null
     ]);
     return result.lastInsertRowid;
   },
@@ -1532,7 +1624,12 @@ const collections = {
 
   canAccess(collectionId, userId, isAdmin, accessAll) {
     if (isAdmin || accessAll) return true;
-    if (!userId) return false;
+
+    if (!userId) {
+      // Unauthenticated: world-public only
+      const result = get(`SELECT id FROM collections WHERE id = ? AND is_world_public = 1`, [collectionId]);
+      return !!result;
+    }
 
     const result = get(`
       SELECT c.id
@@ -1546,17 +1643,17 @@ const collections = {
     return !!result;
   },
 
-  create({ name, description, is_public, allow_export, createdBy }) {
+  create({ name, description, is_public, is_world_public, allow_export, createdBy }) {
     const result = run(
-      'INSERT INTO collections (name, description, is_public, allow_export, created_by) VALUES (?, ?, ?, ?, ?)',
-      [name, description || null, is_public ? 1 : 0, allow_export ? 1 : 0, createdBy || null]
+      'INSERT INTO collections (name, description, is_public, is_world_public, allow_export, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, description || null, is_public ? 1 : 0, is_world_public ? 1 : 0, allow_export ? 1 : 0, createdBy || null]
     );
     return result.lastInsertRowid;
   },
 
-  update(id, { name, description, is_public }) {
-    run('UPDATE collections SET name = ?, description = ?, is_public = ? WHERE id = ?',
-      [name, description || null, is_public ? 1 : 0, id]);
+  update(id, { name, description, is_public, is_world_public }) {
+    run('UPDATE collections SET name = ?, description = ?, is_public = ?, is_world_public = ? WHERE id = ?',
+      [name, description || null, is_public ? 1 : 0, is_world_public ? 1 : 0, id]);
   },
 
   setPreviewDocument(id, documentId) {
@@ -1834,6 +1931,14 @@ const importJobsAsync = {
     await saveDatabase();
   },
 
+  async updateGroupingState(id, groupingState) {
+    await db.run("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
+      groupingState ? JSON.stringify(groupingState) : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
   async delete(id) {
     return await runAsync("DELETE FROM import_jobs WHERE id = ?", [id]);
   }
@@ -1849,7 +1954,16 @@ const documentsAsync = {
 
   async canAccess(docId, userId, isAdmin, accessAll) {
     if (isAdmin || accessAll) return true;
-    if (!userId) return false;
+    if (!userId) {
+      // Unauthenticated: only world-public
+      const row = await getAsync(`
+        SELECT 1 FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE dc.document_id = ? AND col.is_world_public = 1
+        LIMIT 1
+      `, [docId]);
+      return !!row;
+    }
     const row = await getAsync(`
       SELECT 1 FROM document_collections dc
       INNER JOIN collections col ON dc.collection_id = col.id
@@ -1867,11 +1981,27 @@ const documentsAsync = {
   async getAll(limit = 20, offset = 0, opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
 
-    if (isAdmin || accessAll || !userId) {
+    if (isAdmin || accessAll) {
       return await allAsync(`
         SELECT d.*,
                (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
         FROM documents d
+        ORDER BY d.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [limit, offset]);
+    }
+
+    if (!userId) {
+      // Unauthenticated: world-public only
+      return await allAsync(`
+        SELECT d.*,
+               (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+        FROM documents d
+        WHERE d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )
         ORDER BY d.created_at DESC
         LIMIT ? OFFSET ?
       `, [limit, offset]);
@@ -1911,8 +2041,22 @@ const documentsAsync = {
   async getCount(opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
 
-    if (isAdmin || accessAll || !userId) {
+    if (isAdmin || accessAll) {
       const result = await getAsync('SELECT COUNT(*) as count FROM documents');
+      return result ? result.count : 0;
+    }
+
+    if (!userId) {
+      // Unauthenticated: count only world-public documents
+      const result = await getAsync(`
+        SELECT COUNT(DISTINCT d.id) as count
+        FROM documents d
+        WHERE d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )
+      `);
       return result ? result.count : 0;
     }
 
@@ -2360,7 +2504,7 @@ const settingsAsync = {
 const userApiKeysAsync = {
   async getByUserId(userId) {
     return await allAsync(`
-      SELECT id, user_id, provider, label, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, model, vision_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -2369,7 +2513,7 @@ const userApiKeysAsync = {
 
   async getByIdForUser(id, userId) {
     return await getAsync(`
-      SELECT id, user_id, provider, label, encrypted_key, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
@@ -2403,17 +2547,26 @@ const userApiKeysAsync = {
     }, {});
   },
 
-  async create({ userId, provider, label, apiKey }) {
+  async create({ userId, provider, label, apiKey, model, visionModel }) {
     const result = await runAsync(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model)
+      VALUES (?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
       label,
-      encryptSecret(apiKey)
+      encryptSecret(apiKey),
+      model || null,
+      visionModel || null
     ]);
     return result.lastInsertRowid;
+  },
+
+  async updateVisionModel(id, userId, visionModel) {
+    await runAsync(
+      'UPDATE user_api_keys SET vision_model = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+      [visionModel || null, id, userId]
+    );
   },
 
   async delete(id, userId) {
@@ -2607,7 +2760,12 @@ const collectionsAsync = {
 
   async canAccess(collectionId, userId, isAdmin, accessAll) {
     if (isAdmin || accessAll) return true;
-    if (!userId) return false;
+
+    if (!userId) {
+      // Unauthenticated: world-public only
+      const result = await getAsync(`SELECT id FROM collections WHERE id = ? AND is_world_public = 1`, [collectionId]);
+      return !!result;
+    }
 
     const result = await getAsync(`
       SELECT c.id
@@ -2621,17 +2779,17 @@ const collectionsAsync = {
     return !!result;
   },
 
-  async create({ name, description, is_public, allow_export, createdBy }) {
+  async create({ name, description, is_public, is_world_public, allow_export, auto_group_pages, createdBy }) {
     const result = await runAsync(
-      'INSERT INTO collections (name, description, is_public, allow_export, created_by) VALUES (?, ?, ?, ?, ?)',
-      [name, description || null, is_public ? 1 : 0, allow_export ? 1 : 0, createdBy || null]
+      'INSERT INTO collections (name, description, is_public, is_world_public, allow_export, auto_group_pages, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name, description || null, is_public ? 1 : 0, is_world_public ? 1 : 0, allow_export ? 1 : 0, auto_group_pages ? 1 : 0, createdBy || null]
     );
     return result.lastInsertRowid;
   },
 
-  async update(id, { name, description, is_public }) {
-    await runAsync('UPDATE collections SET name = ?, description = ?, is_public = ? WHERE id = ?',
-      [name, description || null, is_public ? 1 : 0, id]);
+  async update(id, { name, description, is_public, is_world_public }) {
+    await runAsync('UPDATE collections SET name = ?, description = ?, is_public = ?, is_world_public = ? WHERE id = ?',
+      [name, description || null, is_public ? 1 : 0, is_world_public ? 1 : 0, id]);
   },
 
   async setPreviewDocument(id, documentId) {
@@ -2651,6 +2809,10 @@ const collectionsAsync = {
 
   async setAllowExport(id, allow) {
     await runAsync('UPDATE collections SET allow_export = ? WHERE id = ?', [allow ? 1 : 0, id]);
+  },
+
+  async setAutoGroupPages(id, enabled) {
+    await runAsync('UPDATE collections SET auto_group_pages = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
   async delete(id) {

@@ -215,7 +215,7 @@ async function tick() {
             || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle);
           if (looksGeneric) {
             try {
-              const generated = await generateDocumentTitle(providerName, combined.transcription);
+              const generated = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
               if (generated) {
                 updates.title = generated;
                 await logLine(`Generated title: "${generated}"`);
@@ -227,7 +227,7 @@ async function tick() {
 
           if (!doc.description) {
             try {
-              const summary = await generateDocumentSummary(providerName, combined.transcription);
+              const summary = await generateDocumentSummary(providerName, combined.transcription, runtimeConfig);
               if (summary) {
                 updates.description = summary;
                 await logLine(`Generated summary: "${summary}"`);

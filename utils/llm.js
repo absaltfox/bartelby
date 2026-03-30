@@ -154,6 +154,47 @@ const PROVIDERS = {
   }
 };
 
+// Cheapest vision-capable models per provider — used for lightweight tasks
+// like detecting archival page numbers on cropped image strips.
+const CHEAP_VISION_MODELS = {
+  openai: 'gpt-4o-mini',
+  claude: 'claude-3-5-haiku-20241022',
+  ollama: null,   // use configured model (local, no cost)
+  lmstudio: null  // use configured model (local, no cost)
+};
+
+// Resolve the vision model name for a provider.
+// Priority: runtimeConfig.visionModel (user key) > system setting > hardcoded default.
+async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
+  const cfg = await loadConfig();
+  const userVisionModel = runtimeConfig.visionModel || null;
+
+  switch (providerName) {
+    case 'openai': {
+      const apiKey = runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY;
+      const model = userVisionModel || cfg.openai_vision_model || CHEAP_VISION_MODELS.openai;
+      return createOpenAI({ apiKey })(model);
+    }
+    case 'claude': {
+      const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+      const model = userVisionModel || cfg.anthropic_vision_model || CHEAP_VISION_MODELS.claude;
+      return createAnthropic({ apiKey })(model);
+    }
+    case 'ollama': {
+      const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      const model = userVisionModel || cfg.ollama_model || 'llava';
+      return createOllama({ baseURL })(model);
+    }
+    case 'lmstudio': {
+      const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      const model = userVisionModel || cfg.lmstudio_model || 'local-model';
+      return createOpenAI({ baseURL, apiKey: 'lmstudio' })(model);
+    }
+    default:
+      return null;
+  }
+}
+
 function providerNeedsApiKey(name) {
   return name === 'openai' || name === 'claude';
 }
@@ -174,6 +215,11 @@ async function createProvider(name, runtimeConfig = {}) {
     ...provider,
     transcribeDocument(imageBuffer, mimeType, opts = {}) {
       return provider.transcribeDocument(imageBuffer, mimeType, opts, runtimeConfig);
+    },
+    async generateGroupingSuggestion(imageContents, startIndex, batchSize) {
+      const cheapModel = await getCheapVisionModelInstance(name, runtimeConfig);
+      if (!cheapModel) throw new Error('Could not create model instance for grouping suggestion');
+      return generateGroupingSuggestion(cheapModel, imageContents, startIndex, batchSize);
     }
   };
 }
@@ -193,31 +239,82 @@ async function listConfiguredProviders() {
 }
 
 // Create a model instance for text-only calls (title/summary generation)
-async function getModelInstance(providerName) {
-  const cfg = await loadConfig();
+async function getModelInstance(providerName, runtimeConfig = {}) {
+  const cfg = await mergeConfig(runtimeConfig);
   switch (providerName) {
     case 'openai': {
-      const apiKey = cfg.openai_api_key || process.env.OPENAI_API_KEY;
-      const model = cfg.openai_model || 'gpt-4o';
+      const apiKey = runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY;
+      const model = runtimeConfig.model || cfg.openai_model || 'gpt-4o';
       return createOpenAI({ apiKey })(model);
     }
     case 'claude': {
-      const apiKey = cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
-      const model = cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
+      const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+      const model = runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
       return createAnthropic({ apiKey })(model);
     }
     case 'ollama': {
-      const baseURL = cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-      const model = cfg.ollama_model || 'llava';
+      const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      const model = runtimeConfig.model || cfg.ollama_model || 'llava';
       return createOllama({ baseURL })(model);
     }
     case 'lmstudio': {
-      const baseURL = cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
-      const model = cfg.lmstudio_model || 'local-model';
+      const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      const model = runtimeConfig.model || cfg.lmstudio_model || 'local-model';
       return createOpenAI({ baseURL, apiKey: 'lmstudio' })(model);
     }
     default:
       return null;
+  }
+}
+
+const GROUPING_PROMPT = `You are an expert at reading archival documents. You are examining scanned pages from a batch of historical documents.
+
+For each image, look for any handwritten or stamped page number or folio number, typically found at the top-right, top-center, or top-left corner of the page. These are archival page numbers added by a clerk or archivist — NOT printed page numbers from a book.
+
+Look for:
+- Handwritten numbers like "1", "2", "3" at the top of pages
+- Stamped sequential numbers
+- Folio markings like "f.1", "f.2"
+- Page markings like "p.1", "p.2" or "pg 1", "pg 2"
+
+Respond ONLY with a valid JSON array — no markdown fences, no commentary — in this format:
+[
+  { "page": 1, "number": 1 },
+  { "page": 2, "number": 2 },
+  { "page": 3, "number": null },
+  { "page": 4, "number": 1 }
+]
+
+Where "page" is the image number (starting from the offset I give you) and "number" is the archival page number you detected (as an integer), or null if no page number is visible.`;
+
+async function generateGroupingSuggestion(modelInstance, imageContents, startIndex, batchSize) {
+  const { text } = await generateText({
+    model: modelInstance,
+    system: GROUPING_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          ...imageContents,
+          { type: 'text', text: `These are images ${startIndex + 1} through ${startIndex + batchSize}. For each image, detect any archival page number. Return a JSON array.` }
+        ]
+      }
+    ],
+    temperature: 0.1
+  });
+
+  // Parse JSON array from response
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const arr = JSON.parse(match[0]);
+    return arr.map(item => ({
+      page: item.page,
+      number: item.number != null ? parseInt(item.number, 10) || null : null
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -227,8 +324,8 @@ Do NOT just name the document type and date (e.g. "Letter dated January 1872").
 Instead, capture the substance (e.g. "Request for Military Pension Disbursement" or "Sale of Land on Elm Street to J. Harper").
 Respond with ONLY the title — no quotes, no explanation, no trailing punctuation.`;
 
-async function generateDocumentTitle(providerName, transcription) {
-  const modelInstance = await getModelInstance(providerName);
+async function generateDocumentTitle(providerName, transcription, runtimeConfig = {}) {
+  const modelInstance = await getModelInstance(providerName, runtimeConfig);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);
@@ -249,8 +346,8 @@ The summary should capture the key subject matter, people involved, and purpose 
 Write in a neutral, informative tone suitable for a library catalog entry.
 Respond with ONLY the summary — no quotes, no labels, no preamble.`;
 
-async function generateDocumentSummary(providerName, transcription) {
-  const modelInstance = await getModelInstance(providerName);
+async function generateDocumentSummary(providerName, transcription, runtimeConfig = {}) {
+  const modelInstance = await getModelInstance(providerName, runtimeConfig);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);

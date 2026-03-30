@@ -133,7 +133,7 @@
             <input type="checkbox" class="tag-cb" value="<%= c.id %>">
             <span>
               <strong><%= c.name %></strong>
-              <% if (c.is_public) { %><span class="badge-public">public</span><% } %>
+              <% if (c.is_world_public) { %><span class="badge-public">public</span><% } else if (c.is_public) { %><span class="badge-public">all users</span><% } %>
               <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
             </span>
           </label>

@@ -77,8 +77,8 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
     const plainFields = [
       'default_provider',
       'transcription_prompt',
-      'openai_model',
-      'anthropic_model',
+      'openai_model', 'openai_vision_model',
+      'anthropic_model', 'anthropic_vision_model',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];
@@ -105,7 +105,10 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
 router.post('/application-settings', svgUpload.fields([
   { name: 'app_logo_svg_file', maxCount: 1 },
   { name: 'app_favicon_svg_file', maxCount: 1 }
-]), async (req, res) => {
+]), (req, res, next) => {
+  // CSRF deferred for multipart — validate now that multer has parsed req.body
+  req.app.locals.validateCsrf(req, res, next);
+}, async (req, res) => {
   try {
     const fields = [
       'app_name',
@@ -151,10 +154,15 @@ router.get('/import', async (req, res) => {
   if (req.query.importJobId) {
     const job = await importJobsAsync.getById(parseInt(req.query.importJobId));
     if (job && job.status === 'done' && job.pages && !job.submitted) {
+      let groupingState = null;
+      try {
+        groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;
+      } catch (err) {}
       resumeJob = {
         id: job.id,
         originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview)
+        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview),
+        groupingState
       };
     }
   }
@@ -171,7 +179,8 @@ router.get('/import', async (req, res) => {
       documentsUrl: '/admin/documents',
       importUrl: '/admin/import',
       settingsUrl: '/admin/settings',
-      collectionsUrl: '/admin/collections'
+      collectionsUrl: '/admin/collections',
+      autoGroupPages: false
     }
   });
 });

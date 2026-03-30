@@ -71,6 +71,8 @@ router.post('/api-keys', async (req, res) => {
   const provider = normalizeProvider(req.body.provider);
   const label = (req.body.label || '').trim();
   const apiKey = (req.body.api_key || '').trim();
+  const model = (req.body.model || '').trim() || null;
+  const visionModel = (req.body.vision_model || '').trim() || null;
 
   if (!provider || !label || !apiKey) {
     return res.redirect('/account?error=' + encodeURIComponent('Provider, label, and API key are required.'));
@@ -80,7 +82,9 @@ router.post('/api-keys', async (req, res) => {
     userId: req.user.id,
     provider,
     label,
-    apiKey
+    apiKey,
+    model,
+    visionModel
   });
   res.redirect('/account?saved=1');
 });

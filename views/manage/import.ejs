@@ -89,7 +89,7 @@
         <div class="collection-checkboxes" id="step-pages-collection-checkboxes">
           <% managedCollections.forEach(function(c) { %>
             <label class="collection-access-item">
-              <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>" <%= c.id === collection.id ? 'checked' : '' %>>
+              <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" <%= c.id === collection.id ? 'checked' : '' %>>
               <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
             </label>
           <% }) %>
@@ -105,6 +105,7 @@
         <button type="button" class="btn-secondary" id="select-all-pages">Select All</button>
         <button type="button" class="btn-secondary" id="deselect-all-pages">Deselect All</button>
         <button type="button" class="btn-primary" id="group-selected">Group Selected Pages</button>
+        <button type="button" class="btn-secondary" id="suggest-groups-btn" title="Use AI-assisted document grouping for this collection" style="display:none;">Auto-group</button>
         <span style="flex:1"></span>
         <button type="button" class="btn-primary" id="submit-all-btn">
           Submit All for Transcription
@@ -234,7 +235,7 @@
           <div class="collection-checkboxes" id="collection-checkboxes">
             <% managedCollections.forEach(function(c) { %>
               <label class="collection-access-item">
-                <input type="checkbox" class="review-collection-cb" data-id="<%= c.id %>" <%= c.id === collection.id ? 'checked' : '' %>>
+                <input type="checkbox" class="review-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" <%= c.id === collection.id ? 'checked' : '' %>>
                 <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
               </label>
             <% }) %>
@@ -276,6 +277,23 @@
   <div id="error-message" class="error-banner" style="display: none;">
     <span id="error-text"></span>
     <button type="button" class="error-close" onclick="hideError()">&times;</button>
+  </div>
+
+  <div class="modal-overlay" id="grouping-reset-modal" style="display:none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Reset AI Groups?</h3>
+        <button type="button" class="modal-close" id="grouping-reset-close">&times;</button>
+      </div>
+      <div class="modal-body modal-body--warning">
+        <p class="modal-lead">Your current collection selection does not support AI-assisted document grouping.</p>
+        <p class="modal-detail">If you continue, AI-generated groups will be removed. Any groups you created manually will stay in place.</p>
+        <div class="form-actions" style="margin-top:16px;">
+          <button type="button" class="btn-secondary" id="grouping-reset-cancel">Cancel</button>
+          <button type="button" class="btn-primary" id="grouping-reset-confirm">OK</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -8,6 +8,7 @@ services:
       PORT: 3000
       SESSION_SECRET: ${SESSION_SECRET}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
       # Database — use 'turso' for Turso, 'sqljs' for local SQLite
       DATABASE_DRIVER: ${DATABASE_DRIVER:-sqljs}
       TURSO_DATABASE_URL: ${TURSO_DATABASE_URL:-}
@@ -21,6 +22,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      # Session store — use 'redis' for Redis, 'memory' for in-process
+      SESSION_STORE: ${SESSION_STORE:-memory}
+      REDIS_URL: ${REDIS_URL:-}
       # LLM providers
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -32,6 +36,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
     volumes:
       # Only needed for DATABASE_DRIVER=sqljs (local SQLite)
       - app-data:/app/data
@@ -42,6 +48,12 @@ services:
       minio:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/healthz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
   # MinIO — S3-compatible object storage (only needed when STORAGE_DRIVER=s3)
   minio:

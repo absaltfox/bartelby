@@ -81,6 +81,13 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                placeholder="gpt-4o">
         <p class="field-hint">Must support vision (image input). Recommended: <code>gpt-4o</code></p>
       </div>
+      <div class="form-group">
+        <label for="openai_vision_model">Vision model <span class="field-hint-inline">(for page grouping)</span></label>
+        <input type="text" id="openai_vision_model" name="openai_vision_model"
+               value="<%= cfg.openai_vision_model || '' %>"
+               placeholder="gpt-4o-mini">
+        <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code>gpt-4o-mini</code></p>
+      </div>
     </section>
 
     <section class="settings-section">
@@ -101,6 +108,13 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                value="<%= cfg.anthropic_model || 'claude-3-5-sonnet-20241022' %>"
                placeholder="claude-3-5-sonnet-20241022">
         <p class="field-hint">Must support vision. Recommended: <code>claude-3-5-sonnet-20241022</code></p>
+      </div>
+      <div class="form-group">
+        <label for="anthropic_vision_model">Vision model <span class="field-hint-inline">(for page grouping)</span></label>
+        <input type="text" id="anthropic_vision_model" name="anthropic_vision_model"
+               value="<%= cfg.anthropic_vision_model || '' %>"
+               placeholder="claude-3-5-haiku-20241022">
+        <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code>claude-3-5-haiku-20241022</code></p>
       </div>
     </section>
 

@@ -44,13 +44,16 @@ router.get('/', async (req, res) => {
 router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
-  const is_public = req.body.is_public === '1';
+  const visibility = req.body.visibility || 'private';
+  const is_public = visibility === 'authenticated' || visibility === 'public';
+  const is_world_public = visibility === 'public';
   const allow_export = req.body.allow_export === '1';
+  const auto_group_pages = req.body.auto_group_pages === '1';
 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
-    await collectionsAsync.create({ name, description, is_public, allow_export, createdBy: req.user.id });
+    await collectionsAsync.create({ name, description, is_public, is_world_public, allow_export, auto_group_pages, createdBy: req.user.id });
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE')) {
@@ -66,14 +69,18 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), async (req, re
   const id = parseInt(req.params.id);
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
-  const is_public = req.body.is_public === '1';
+  const visibility = req.body.visibility || 'private';
+  const is_public = visibility === 'authenticated' || visibility === 'public';
+  const is_world_public = visibility === 'public';
   const allow_export = req.body.allow_export === '1' ? 1 : 0;
+  const auto_group_pages = req.body.auto_group_pages === '1' ? 1 : 0;
 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
   try {
-    await collectionsAsync.update(id, { name, description, is_public });
+    await collectionsAsync.update(id, { name, description, is_public, is_world_public });
     await collectionsAsync.setAllowExport(id, allow_export);
+    await collectionsAsync.setAutoGroupPages(id, auto_group_pages);
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));

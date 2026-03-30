@@ -6,19 +6,21 @@
 </div>
 
 <div class="collections-grid">
-  <!-- All Documents card -->
-  <a href="/collections/all" class="collection-card collection-card--special">
-    <div class="collection-card-thumb collection-card-thumb--icon">
-      <span class="collection-card-icon">&#128218;</span>
-    </div>
-    <div class="collection-card-body">
-      <h2 class="collection-card-title">All Documents</h2>
-      <p class="collection-card-desc">Browse every document across all collections.</p>
-      <div class="collection-card-stats">
-        <span class="collection-card-count"><%= totalDocCount %> document<%= totalDocCount !== 1 ? 's' : '' %></span>
+  <% if (currentUser && collections.length > 1) { %>
+    <!-- All Documents card -->
+    <a href="/collections/all" class="collection-card collection-card--special">
+      <div class="collection-card-thumb collection-card-thumb--icon">
+        <span class="collection-card-icon">&#128218;</span>
       </div>
-    </div>
-  </a>
+      <div class="collection-card-body">
+        <h2 class="collection-card-title">All Documents</h2>
+        <p class="collection-card-desc">Browse every document across all collections.</p>
+        <div class="collection-card-stats">
+          <span class="collection-card-count"><%= totalDocCount %> document<%= totalDocCount !== 1 ? 's' : '' %></span>
+        </div>
+      </div>
+    </a>
+  <% } %>
 
   <% collections.forEach(function(c) { %>
     <a href="/collections/<%= c.id %>" class="collection-card">
@@ -35,8 +37,10 @@
         <% } %>
         <div class="collection-card-stats">
           <span class="collection-card-count"><%= c.document_count %> document<%= c.document_count !== 1 ? 's' : '' %></span>
-          <% if (c.is_public) { %>
+          <% if (c.is_world_public) { %>
             <span class="collection-card-badge">Public</span>
+          <% } else if (c.is_public) { %>
+            <span class="collection-card-badge">All Users</span>
           <% } %>
         </div>
       </div>

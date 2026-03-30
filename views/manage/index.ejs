@@ -16,8 +16,10 @@
             <div class="collection-row-info">
               <div class="collection-row-title">
                 <strong><%= c.name %></strong>
-                <% if (c.is_public) { %>
+                <% if (c.is_world_public) { %>
                   <span class="badge-public">public</span>
+                <% } else if (c.is_public) { %>
+                  <span class="badge-public">all users</span>
                 <% } else { %>
                   <span class="badge-private">private</span>
                 <% } %>
@@ -32,7 +34,7 @@
               <a href="/manage/collections/<%= c.id %>/documents" class="btn-action btn-sm">Documents</a>
               <a href="/manage/collections/<%= c.id %>/import" class="btn-action btn-sm">Import</a>
               <a href="/manage/collections/<%= c.id %>/jobs" class="btn-action btn-sm">Jobs</a>
-              <% if (!c.is_public) { %>
+              <% if (!c.is_public && !c.is_world_public) { %>
                 <a href="/manage/collections/<%= c.id %>/users" class="btn-action btn-sm">Users</a>
               <% } %>
             </div>

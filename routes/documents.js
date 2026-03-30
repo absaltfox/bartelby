@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase } = require('../database/db');
-const { requireAuth, requireDocumentRole } = require('../middleware/auth');
+const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 const { buildProviderAccessOptionsAsync, resolveProviderSelectionAsync } = require('../utils/provider-access');
 
-// All document routes require authentication
-router.use(requireAuth);
+// Allow unauthenticated visitors for world-public collections
+router.use(optionalAuth);
 
 // Build a compact line-oriented diff summary between two text strings.
 // Uses an LCS pass so repeated/reordered lines are handled more accurately
@@ -269,22 +269,28 @@ function buildComparisonPages(document, transcript) {
 
 // ── Collections landing page ────────────────────────────────────────────────
 router.get('/', async (req, res) => {
+  const user = req.user;
   const opts = {
-    userId: req.user.id,
-    isAdmin: req.user.role === 'admin',
-    accessAll: !!req.user.access_all
+    userId: user ? user.id : null,
+    isAdmin: user ? user.role === 'admin' : false,
+    accessAll: user ? !!user.access_all : false
   };
 
   // Get collections the user can see
   let allCollections;
   if (opts.isAdmin || opts.accessAll) {
     allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
-  } else {
-    const accessIds = await userCollectionAccessAsync.getIdsByUserId(req.user.id);
-    // Regular user: show public collections + ones they have access to
+  } else if (user) {
+    const accessIds = await userCollectionAccessAsync.getIdsByUserId(user.id);
+    // Authenticated user: show public + all-users collections + ones they have access to
     allCollections = (await collectionsAsync.getAllWithThumbnails()).filter(c => {
-      if (c.is_public) return true;
+      if (c.is_public || c.is_world_public) return true;
       return accessIds.includes(c.id);
+    }).map(normalizeCollectionAssets);
+  } else {
+    // Unauthenticated visitor: only world-public collections
+    allCollections = (await collectionsAsync.getAllWithThumbnails()).filter(c => {
+      return !!c.is_world_public;
     }).map(normalizeCollectionAssets);
   }
 
@@ -310,11 +316,18 @@ router.get('/collections/:id', async (req, res) => {
   const isAll = collectionId === 'all';
   const isUncollected = collectionId === 'uncollected';
 
+  const user = req.user;
   const opts = {
-    userId: req.user.id,
-    isAdmin: req.user.role === 'admin',
-    accessAll: !!req.user.access_all
+    userId: user ? user.id : null,
+    isAdmin: user ? user.role === 'admin' : false,
+    accessAll: user ? !!user.access_all : false
   };
+
+  // "All" and "Uncollected" views require authentication
+  if ((isAll || isUncollected) && !user) {
+    req.session.returnTo = req.originalUrl;
+    return res.redirect('/login');
+  }
 
   let collection = null;
   if (!isAll && !isUncollected) {
@@ -322,7 +335,11 @@ router.get('/collections/:id', async (req, res) => {
     if (!collection) {
       return res.status(404).render('error', { message: 'Collection not found', error: {} });
     }
-    if (!(await collectionsAsync.canAccess(collection.id, req.user.id, opts.isAdmin, opts.accessAll))) {
+    if (!(await collectionsAsync.canAccess(collection.id, user ? user.id : null, opts.isAdmin, opts.accessAll))) {
+      if (!user) {
+        req.session.returnTo = req.originalUrl;
+        return res.redirect('/login');
+      }
       return res.status(403).render('error', { message: 'You do not have access to this collection.', error: {} });
     }
   } else if (isUncollected && !opts.isAdmin) {
@@ -427,9 +444,14 @@ router.get('/documents/:id', async (req, res) => {
   }
 
   // Check collection access
-  const isAdmin = req.user.role === 'admin';
-  const accessAll = !!req.user.access_all;
-  if (!(await documentsAsync.canAccess(doc.id, req.user.id, isAdmin, accessAll))) {
+  const user = req.user;
+  const isAdmin = user ? user.role === 'admin' : false;
+  const accessAll = user ? !!user.access_all : false;
+  if (!(await documentsAsync.canAccess(doc.id, user ? user.id : null, isAdmin, accessAll))) {
+    if (!user) {
+      req.session.returnTo = req.originalUrl;
+      return res.redirect('/login');
+    }
     return res.status(403).render('error', { message: 'You do not have access to this document.', error: {} });
   }
 
@@ -461,9 +483,12 @@ router.get('/documents/:id', async (req, res) => {
   // Determine user's permission level on this document
   let canEdit = isAdmin;
   let canManage = isAdmin;
-  if (!isAdmin && !accessAll) {
-    canEdit = await userCollectionAccessAsync.hasRoleOnDocumentCollections(req.user.id, doc.id, 'editor');
-    canManage = await userCollectionAccessAsync.hasRoleOnDocumentCollections(req.user.id, doc.id, 'manager');
+  if (!user) {
+    canEdit = false;
+    canManage = false;
+  } else if (!isAdmin && !accessAll) {
+    canEdit = await userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'editor');
+    canManage = await userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'manager');
   } else if (accessAll) {
     canEdit = false;
     canManage = false;
@@ -754,6 +779,8 @@ router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), asyn
 
 // ── Document history (API) ───────────────────────────────────────────────────
 router.get('/documents/:id/history', async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ error: 'Authentication required' });
+
   const doc = await documentsAsync.getById(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 

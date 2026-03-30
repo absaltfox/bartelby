@@ -158,6 +158,11 @@ app.use((req, res, next) => {
 function validateCsrf(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
+  // Skip for multipart/form-data — body hasn't been parsed yet.
+  // These routes must call validateCsrf manually after multer runs.
+  const ct = req.headers['content-type'] || '';
+  if (ct.startsWith('multipart/form-data')) return next();
+
   const token = req.body?._csrf || req.headers['x-csrf-token'];
   const valid = token && req.session.csrfToken &&
     (() => {
@@ -253,6 +258,9 @@ app.use('/manage', require('./routes/manage')); // has its own requireAdminOrMan
 // Export CSRF validator for routes that need it
 app.locals.validateCsrf = validateCsrf;
 
+// ── Health check (used by fly.io and Docker) ─────────────────────────────
+app.get('/healthz', (req, res) => res.status(200).send('ok'));
+
 // ── Error handling ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -281,9 +289,34 @@ async function start() {
       console.log('Background worker startup disabled by configuration');
     }
 
-    app.listen(PORT, () => {
-      console.log(`Bartelby running at http://localhost:${PORT}`);
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Bartelby running on port ${PORT}`);
     });
+
+    // ── Graceful shutdown (fly.io sends SIGTERM on deploy) ──────────────
+    const { saveDatabase } = require('./database/db');
+
+    async function shutdown(signal) {
+      console.log(`${signal} received — shutting down gracefully…`);
+      server.close(async () => {
+        try {
+          if (redisClient) await redisClient.quit().catch(() => {});
+          await saveDatabase();
+        } catch (err) {
+          console.error('Shutdown cleanup error:', err);
+        }
+        process.exit(0);
+      });
+
+      // Force exit after 10s if graceful shutdown stalls
+      setTimeout(() => {
+        console.error('Graceful shutdown timed out — forcing exit');
+        process.exit(1);
+      }, 10_000).unref();
+    }
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

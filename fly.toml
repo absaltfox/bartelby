@@ -1,15 +1,12 @@
-# fly.toml app configuration file generated for bartelby on 2026-03-22T07:05:33Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# fly.toml — Bartelby app configuration for Fly.io
 
 app = 'bartelby'
 primary_region = 'iad'
 
+[build]
+
 [env]
   FLY_MACHINES_ENABLED = "true"
-
-[build]
 
 [http_service]
   internal_port = 3000
@@ -19,8 +16,19 @@ primary_region = 'iad'
   min_machines_running = 1
   processes = ['app']
 
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024

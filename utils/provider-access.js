@@ -133,11 +133,15 @@ function resolveProviderSelection(user, provider, sourceValue) {
     throw new Error('That personal API key is not available for your account.');
   }
 
+  const rc = { apiKey: key.api_key };
+  if (key.model) rc.model = key.model;
+  if (key.vision_model) rc.visionModel = key.vision_model;
+
   return {
     provider,
     providerKeyScope: 'user',
     userApiKeyId: key.id,
-    runtimeConfig: { apiKey: key.api_key }
+    runtimeConfig: rc
   };
 }
 
@@ -169,11 +173,15 @@ async function resolveProviderSelectionAsync(user, provider, sourceValue) {
     throw new Error('That personal API key is not available for your account.');
   }
 
+  const rc = { apiKey: key.api_key };
+  if (key.model) rc.model = key.model;
+  if (key.vision_model) rc.visionModel = key.vision_model;
+
   return {
     provider,
     providerKeyScope: 'user',
     userApiKeyId: key.id,
-    runtimeConfig: { apiKey: key.api_key }
+    runtimeConfig: rc
   };
 }
 

@@ -2,9 +2,13 @@ node_modules
 .git
 .env
 .env.local
+.env*.local
 data/*.db
+data/
 temp/
 documents/
 public/uploads/*
 *.md
 .claude
+.DS_Store
+package-lock 2.json
