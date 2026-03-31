@@ -759,9 +759,14 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
         try {
           const img = await loadImage(buffer);
           const cropHeight = Math.round(img.height * CROP_RATIO);
-          const canvas = createCanvas(img.width, cropHeight);
+          // Anthropic's many-image API limit: each dimension must be ≤ 1999px
+          const MAX_DIM = 1999;
+          const scale = Math.min(1, MAX_DIM / img.width, MAX_DIM / cropHeight);
+          const outW = Math.round(img.width * scale);
+          const outH = Math.round(cropHeight * scale);
+          const canvas = createCanvas(outW, outH);
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, img.width, cropHeight, 0, 0, img.width, cropHeight);
+          ctx.drawImage(img, 0, 0, img.width, cropHeight, 0, 0, outW, outH);
           buffer = canvas.toBuffer('image/png');
         } catch (e) {
           // If cropping fails, skip this page rather than sending the full image
