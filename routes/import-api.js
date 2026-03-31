@@ -137,7 +137,7 @@ function stripPageMarkers(text) {
 // Configure multer for temporary file uploads (images + PDFs)
 const upload = multer({
   dest: config.app.tempDir,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff',
@@ -149,7 +149,17 @@ const upload = multer({
 });
 
 // ── API: Upload file (image or PDF) ────────────────────────────────────────
-router.post('/upload', upload.single('file'), (req, res, next) => {
+router.post('/upload', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'File too large. Maximum upload size is 200MB.'
+        : (err.message || 'Upload failed');
+      return res.status(400).json({ error: msg });
+    }
+    next();
+  });
+}, (req, res, next) => {
   // CSRF deferred for multipart — validate now that multer has parsed req.body
   req.app.locals.validateCsrf(req, res, next);
 }, async (req, res) => {
