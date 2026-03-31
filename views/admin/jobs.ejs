@@ -74,15 +74,14 @@
             <th>Status</th>
             <th>Document</th>
             <th>Provider</th>
-            <th>Queued</th>
-            <th>Duration</th>
-            <th>Actions</th>
+            <th>Time</th>
+            <th class="col-actions">Actions</th>
           </tr>
         </thead>
         <tbody id="jobs-tbody">
           <% jobs.forEach(function(job) { %>
             <%
-              let durationStr = '—';
+              let durationStr = '';
               if (job.started_at && job.completed_at) {
                 const ms = new Date(job.completed_at) - new Date(job.started_at);
                 durationStr = (ms / 1000).toFixed(1) + 's';
@@ -128,26 +127,30 @@
                 <% } %>
               </td>
               <td><%= job.provider || '—' %></td>
-              <td class="muted"><%= new Date(job.created_at).toLocaleString() %></td>
-              <td><%= durationStr %></td>
-              <td class="job-actions">
-                <% if (!isImport) { %>
-                  <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
-                <% } %>
-                <% if (isImport && job.status === 'done' && !job.submitted) { %>
-                  <a href="/admin/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-primary">Continue</a>
-                <% } %>
-                <% if (canRetry) { %>
-                  <button type="button" class="btn-action btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
-                <% } %>
-                <% if (canDelete) { %>
-                  <button type="button" class="btn-action btn-delete btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>
-                <% } %>
+              <td class="job-time-cell">
+                <span class="muted"><%= new Date(job.created_at).toLocaleString() %></span>
+                <% if (durationStr) { %><span class="job-duration"><%= durationStr %></span><% } %>
+              </td>
+              <td class="job-actions-cell">
+                <div class="job-actions">
+                  <% if (!isImport) { %>
+                    <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
+                  <% } %>
+                  <% if (isImport && job.status === 'done' && !job.submitted) { %>
+                    <a href="/admin/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-promote">Continue</a>
+                  <% } %>
+                  <% if (canRetry) { %>
+                    <button type="button" class="btn-action btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
+                  <% } %>
+                  <% if (canDelete) { %>
+                    <button type="button" class="btn-action btn-delete btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>
+                  <% } %>
+                </div>
               </td>
             </tr>
             <% if (!isImport) { %>
               <tr class="log-row" id="log-row-<%= job.id %>" style="display:none;">
-                <td colspan="8">
+                <td colspan="7">
                   <% if (job.error) { %>
                     <div class="job-error">Error: <%= job.error %></div>
                   <% } %>
@@ -372,7 +375,16 @@
 
           // Update duration
           var cells = row.querySelectorAll('td');
-          if (cells[6]) cells[6].textContent = formatDuration(job);
+          var timeCell = row.querySelector('.job-time-cell');
+          if (timeCell) {
+            var durEl = timeCell.querySelector('.job-duration');
+            var dur = formatDuration(job);
+            if (dur && durEl) {
+              durEl.textContent = dur;
+            } else if (dur && !durEl) {
+              timeCell.insertAdjacentHTML('beforeend', '<span class="job-duration">' + dur + '</span>');
+            }
+          }
 
           // Update import progress
           if (job.job_type === 'import') {

@@ -306,6 +306,9 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
   let resumeJob = null;
   if (req.query.importJobId) {
     const job = await importJobsAsync.getById(parseInt(req.query.importJobId));
+    if (job && req.user.role !== 'admin' && job.user_id !== req.user.id) {
+      return res.status(403).render('error', { message: 'You do not have access to that import job.', error: {} });
+    }
     if (job && job.status === 'done' && job.pages && !job.submitted) {
       let groupingState = null;
       try {

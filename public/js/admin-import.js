@@ -415,22 +415,8 @@ document.addEventListener('DOMContentLoaded', function() {
       originalName = data.originalName;
 
       if (data.type === 'pdf_queued') {
-        // Large PDF — queued as background job, direct user to Jobs
-        showStep('complete');
-        document.getElementById('complete-heading').textContent = 'PDF Queued for Processing';
-        document.getElementById('complete-message').textContent = data.pageCount
-          ? `"${data.originalName}" (${data.pageCount} pages) has been queued for background processing.`
-          : `"${data.originalName}" has been queued for background processing.`;
-        document.getElementById('view-document-btn').href = jobsUrl;
-        document.getElementById('view-document-btn').textContent = 'Go to Jobs';
-        var aiNote = document.getElementById('complete-ai-note');
-        if (aiNote) {
-          aiNote.style.display = '';
-          aiNote.innerHTML = 'Once processing is complete, click <strong>Continue</strong> in the Jobs tab to group pages and submit for transcription.';
-        }
-      } else if (data.type === 'pdf') {
         importJobId = data.importJobId || null;
-        await pollPdfJob(data.jobId);
+        await pollImportJob(data.importJobId);
       } else {
         allTempFiles = [data.tempFile];
         setTempPreview(data.tempFile, data.previewUrl);
@@ -443,46 +429,52 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // ── PDF Job Polling (small PDFs, in-memory) ─────────────────────
+  // ── PDF Job Polling (DB-backed import job) ──────────────────────
 
-  async function pollPdfJob(jobId) {
+  async function pollImportJob(importId) {
     const progressWrap = document.getElementById('progress-bar-wrap');
     const progressBar  = document.getElementById('progress-bar');
+    const navHint      = document.getElementById('processing-nav-hint');
     progressWrap.style.display = '';
     progressBar.style.width = '0%';
+    if (navHint) navHint.style.display = '';
+
+    processingText.textContent = 'Rendering PDF pages...';
 
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {
         try {
-          const res = await fetch(`${apiBase}/job/${jobId}`);
+          const res = await fetch(`${apiBase}/import-job/${importId}`);
+          if (!res.ok) throw new Error('Failed to check job status');
           const job = await res.json();
 
-          progressBar.style.width = `${job.progress}%`;
-          if (job.pageCount) {
-            const rendered = Math.round(job.progress / 100 * job.pageCount);
-            processingText.textContent = `Rendering page ${Math.min(rendered, job.pageCount)} of ${job.pageCount}...`;
-          } else {
-            processingText.textContent = 'Rendering PDF pages...';
+          if (job.page_count && job.pages_rendered != null) {
+            const pct = Math.round((job.pages_rendered / job.page_count) * 100);
+            progressBar.style.width = `${pct}%`;
+            processingText.textContent = `Rendering page ${job.pages_rendered} of ${job.page_count}...`;
           }
 
           if (job.status === 'done') {
             clearInterval(interval);
             progressWrap.style.display = 'none';
+            if (navHint) navHint.style.display = 'none';
             setTempPreviews(job.pages);
             allTempFiles = job.pages.map(p => p.filename);
             showPageManager(job.pages);
             showStep('pages');
             resolve();
-          } else if (job.status === 'error') {
+          } else if (job.status === 'failed') {
             clearInterval(interval);
             progressWrap.style.display = 'none';
+            if (navHint) navHint.style.display = 'none';
             reject(new Error(job.error || 'PDF processing failed'));
           }
         } catch (err) {
           clearInterval(interval);
+          if (navHint) navHint.style.display = 'none';
           reject(err);
         }
-      }, 1500);
+      }, 2000);
     });
   }
 

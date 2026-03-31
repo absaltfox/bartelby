@@ -31,7 +31,7 @@ function normalizeSvgUpload(file) {
 
 // Admin dashboard
 router.get('/', async (req, res) => {
-  const docCount        = await documentsAsync.getCount();
+  const docCount        = await documentsAsync.getCount({ isAdmin: true });
   const pendingCount    = (await usersAsync.getPending()).length;
   const collectionCount = (await collectionsAsync.getAll()).length;
   const allUsers        = await usersAsync.getAll();

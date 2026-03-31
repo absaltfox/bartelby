@@ -7,7 +7,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
-const { initializeSchema, settingsAsync } = require('./database/db');
+const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
 const { resolveApplicationSettings } = require('./utils/application-settings');
 
@@ -220,9 +220,36 @@ const { requireAuth, requireAdmin, requireAuthApi } = require('./middleware/auth
 
 if (config.storage.driver === 's3') {
   const storage = require('./utils/storage');
-  app.get('/uploads/:filename', requireAuth, async (req, res) => {
+  app.get('/uploads/:filename', async (req, res) => {
     try {
-      const buffer = await storage.readUploadByUrl(`/uploads/${req.params.filename}`);
+      const safeFilename = path.basename(String(req.params.filename || ''));
+      const uploadUrl = `/uploads/${safeFilename}`;
+      const userId = req.user ? req.user.id : null;
+      const isAdmin = req.user ? req.user.role === 'admin' : false;
+      const accessAll = req.user ? !!req.user.access_all : false;
+      const matchingDocIds = await documentsAsync.getIdsByUploadUrl(uploadUrl);
+
+      if (matchingDocIds.length === 0) {
+        return res.status(404).end();
+      }
+
+      let canRead = false;
+      for (const docId of matchingDocIds) {
+        if (await documentsAsync.canAccess(docId, userId, isAdmin, accessAll)) {
+          canRead = true;
+          break;
+        }
+      }
+
+      if (!canRead) {
+        if (!req.isAuthenticated || !req.isAuthenticated()) {
+          req.session.returnTo = req.originalUrl;
+          return res.redirect('/login');
+        }
+        return res.status(403).end();
+      }
+
+      const buffer = await storage.readUploadByUrl(uploadUrl);
       const ext = path.extname(req.params.filename).toLowerCase();
       const mimeTypes = {
         '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',

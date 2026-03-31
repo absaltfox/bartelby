@@ -26,8 +26,8 @@ router.get('/', async (req, res) => {
       ? await documentsAsync.getByIds(docIds, limit, offset)
       : [];
   } else {
-    totalCount = await documentsAsync.getCount();
-    allDocs = await documentsAsync.getAll(limit, offset);
+    totalCount = await documentsAsync.getCount({ isAdmin: true });
+    allDocs = await documentsAsync.getAll(limit, offset, { isAdmin: true });
   }
 
   const totalPages = Math.ceil(totalCount / limit);

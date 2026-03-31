@@ -158,7 +158,7 @@ const PROVIDERS = {
 // like detecting archival page numbers on cropped image strips.
 const CHEAP_VISION_MODELS = {
   openai: 'gpt-4o-mini',
-  claude: 'claude-3-5-haiku-20241022',
+  claude: 'claude-haiku-4-5-20251001',
   ollama: null,   // use configured model (local, no cost)
   lmstudio: null  // use configured model (local, no cost)
 };

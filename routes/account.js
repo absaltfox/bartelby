@@ -71,8 +71,13 @@ router.post('/api-keys', async (req, res) => {
   const provider = normalizeProvider(req.body.provider);
   const label = (req.body.label || '').trim();
   const apiKey = (req.body.api_key || '').trim();
-  const model = (req.body.model || '').trim() || null;
-  const visionModel = (req.body.vision_model || '').trim() || null;
+  const modelRaw = (req.body.model || '').trim() || null;
+  const visionModelRaw = (req.body.vision_model || '').trim() || null;
+
+  // Validate model name format (alphanumeric, hyphens, dots, colons, slashes; max 100 chars)
+  const MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]{1,100}$/;
+  const model = modelRaw && MODEL_NAME_RE.test(modelRaw) ? modelRaw : null;
+  const visionModel = visionModelRaw && MODEL_NAME_RE.test(visionModelRaw) ? visionModelRaw : null;
 
   if (!provider || !label || !apiKey) {
     return res.redirect('/account?error=' + encodeURIComponent('Provider, label, and API key are required.'));

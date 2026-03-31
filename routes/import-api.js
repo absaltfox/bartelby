@@ -2,7 +2,6 @@
 
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const config = require('../config');
@@ -10,29 +9,13 @@ const storage = require('../utils/storage');
 const {
   documentsAsync, transcriptsAsync, settingsAsync, collectionsAsync,
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
-  saveDatabase, userApiKeysAsync
+  saveDatabase, userApiKeysAsync, userCollectionAccessAsync
 } = require('../database/db');
 const { createProvider } = require('../utils/llm');
 const { resolveProviderSelectionAsync } = require('../utils/provider-access');
 
 // Initialize storage (temp dirs, etc.)
 storage.init();
-
-// ── In-memory job store for background PDF processing ──────────────────────
-const jobs = new Map(); // jobId → { status, progress, pageCount, pages, error, createdAt }
-const JOB_TTL_MS = 30 * 60 * 1000; // 30 minutes
-
-function createJob() {
-  const id = crypto.randomBytes(16).toString('hex');
-  jobs.set(id, { status: 'processing', progress: 0, pageCount: null, pages: [], error: null, createdAt: Date.now() });
-  if (jobs.size > 50) {
-    const now = Date.now();
-    for (const [key, job] of jobs) {
-      if (now - job.createdAt > JOB_TTL_MS) jobs.delete(key);
-    }
-  }
-  return id;
-}
 
 function sanitizeTempFiles(files) {
   return (files || [])
@@ -74,6 +57,31 @@ function buildTranscriptPageSegments(results) {
     pageNumber: index + 1,
     charLength: String(result.transcription || '').trim().length
   }));
+}
+
+function normalizeCollectionIds(collectionIds) {
+  if (!Array.isArray(collectionIds)) return [];
+  return [...new Set(collectionIds
+    .map((id) => parseInt(id, 10))
+    .filter(Number.isInteger))];
+}
+
+async function getAuthorizedCollectionIds(req, collectionIds) {
+  const normalized = normalizeCollectionIds(collectionIds);
+  if (normalized.length === 0) return [];
+
+  if (req.user?.role === 'admin') {
+    return normalized;
+  }
+
+  const managedIds = req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
+  if (!normalized.every((id) => managedIds.includes(id))) {
+    const err = new Error('You do not have permission to import into one or more selected collections.');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return normalized;
 }
 
 function spawnLocalPdfWorker({ pdfTempFile, jobRef, originalName, onProgress, onDone, onFailed }) {
@@ -193,7 +201,7 @@ router.post('/upload', upload.single('file'), (req, res, next) => {
           onProgress: (msg) => {
             importJobsAsync.updateProgress(dbJobId, {
               page_count: msg.pageCount,
-              pagesRendered: msg.pagesRendered
+              pages_rendered: msg.pagesRendered
             }).catch(err => {
               console.error('Failed to update import job progress:', err);
             });
@@ -214,8 +222,7 @@ router.post('/upload', upload.single('file'), (req, res, next) => {
       }
 
     } else {
-      // Small PDF: process in a forked worker and expose progress via in-memory job
-      const jobId = createJob();
+      // Small PDF: process in a forked worker, track via DB job
       const dbJobId = await importJobsAsync.create({
         original_name: req.file.originalname,
         file_path: pdfTempFile,
@@ -224,23 +231,17 @@ router.post('/upload', upload.single('file'), (req, res, next) => {
 
       res.json({
         success: true,
-        type: 'pdf',
-        jobId,
+        type: 'pdf_queued',
         importJobId: dbJobId,
+        pageCount: null,
         originalName: req.file.originalname
       });
 
       spawnLocalPdfWorker({
         pdfTempFile,
-        jobRef: jobId,
+        jobRef: dbJobId,
         originalName: req.file.originalname,
         onProgress: (msg) => {
-          const job = jobs.get(jobId);
-          if (!job) return;
-          job.pageCount = msg.pageCount || job.pageCount;
-          job.progress = job.pageCount
-            ? Math.round((Math.max(msg.pagesRendered || 0, 0) / job.pageCount) * 100)
-            : job.progress;
           importJobsAsync.updateProgress(dbJobId, {
             page_count: msg.pageCount,
             pages_rendered: msg.pagesRendered
@@ -249,22 +250,13 @@ router.post('/upload', upload.single('file'), (req, res, next) => {
           });
         },
         onDone: (msg) => {
-          const job = jobs.get(jobId);
-          if (!job) return;
-          job.pages = msg.pages || [];
-          job.pageCount = job.pages.length;
-          job.status = 'done';
-          job.progress = 100;
           importJobsAsync.markDone(dbJobId, msg.pages).catch((err) => {
             console.error('Failed to mark import job done:', err);
           });
+          console.log(`[import] PDF "${req.file.originalname}" processed: ${(msg.pages || []).length} pages`);
         },
         onFailed: (error) => {
-          const job = jobs.get(jobId);
-          if (!job) return;
           console.error('PDF background processing error:', error);
-          job.status = 'error';
-          job.error = error;
           importJobsAsync.markFailed(dbJobId, error).catch((err) => {
             console.error('Failed to mark import job failed:', err);
           });
@@ -284,15 +276,26 @@ router.post('/upload', upload.single('file'), (req, res, next) => {
   }
 });
 
-// ── API: Poll job status ───────────────────────────────────────────────────
-router.get('/job/:id', (req, res) => {
-  const job = jobs.get(req.params.id);
+// ── API: Poll import job status (DB-backed) ──────────────────────────────
+router.get('/import-job/:id', async (req, res) => {
+  const job = await importJobsAsync.getById(parseInt(req.params.id, 10));
   if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (req.user?.role !== 'admin' && job.user_id !== req.user?.id) {
+    return res.status(403).json({ error: 'You do not have access to that job.' });
+  }
+
+  let pages = [];
+  if (job.status === 'done' && job.pages) {
+    try {
+      pages = JSON.parse(job.pages).map(attachTempPreview);
+    } catch (e) {}
+  }
+
   res.json({
     status: job.status,
-    progress: job.progress,
-    pageCount: job.pageCount,
-    pages: job.status === 'done' ? job.pages.map(attachTempPreview) : [],
+    page_count: job.page_count || null,
+    pages_rendered: job.pages_rendered || 0,
+    pages,
     error: job.error || null
   });
 });
@@ -352,7 +355,7 @@ router.post('/transcribe', express.json(), async (req, res) => {
     }
   } catch (err) {
     console.error('Transcription error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Transcription failed' });
   }
 });
 
@@ -405,7 +408,7 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
     }
   } catch (err) {
     console.error('Group transcription error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Group transcription failed' });
   }
 });
 
@@ -435,6 +438,7 @@ router.post('/save-document', express.json(), async (req, res) => {
   }
 
   try {
+    const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
     const firstFile = files[0];
     if (!storage.tempFileExists(firstFile)) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
@@ -472,8 +476,8 @@ router.post('/save-document', express.json(), async (req, res) => {
       metadata: docMetadata
     });
 
-    if (Array.isArray(collectionIds) && collectionIds.length > 0) {
-      await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
+    if (authorizedCollectionIds.length > 0) {
+      await documentCollectionsAsync.setForDocument(docId, authorizedCollectionIds);
     }
 
     let transcriptId = null;
@@ -528,7 +532,7 @@ router.post('/save-document', express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('Save document error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -546,6 +550,7 @@ router.post('/submit-pages', express.json(), async (req, res) => {
   }
 
   try {
+    const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
     // Resolve provider selection up front (requires req.user, fast)
     const defaultProvider = await settingsAsync.get('default_provider');
     const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
@@ -614,8 +619,8 @@ router.post('/submit-pages', express.json(), async (req, res) => {
             metadata: docMetadata
           });
 
-          if (Array.isArray(collectionIds) && collectionIds.length > 0) {
-            await documentCollectionsAsync.setForDocument(docId, collectionIds.map(Number));
+          if (authorizedCollectionIds.length > 0) {
+            await documentCollectionsAsync.setForDocument(docId, authorizedCollectionIds);
           }
 
           await transcriptionJobsAsync.create({
@@ -668,7 +673,7 @@ router.post('/submit-pages', express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('Bulk submit error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -695,7 +700,7 @@ router.post('/groupings', express.json(), async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Persist grouping state error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to save grouping state' });
   }
 });
 
@@ -708,6 +713,9 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   const { tempFiles } = req.body;
   if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
     return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
+  }
+  if (tempFiles.length > 2000) {
+    return res.status(400).json({ error: 'Too many pages (max 2000) for grouping analysis' });
   }
 
   try {
@@ -769,7 +777,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
     res.json({ success: true, groups });
   } catch (err) {
     console.error('Suggest groups error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to generate grouping suggestions' });
   }
 });
 

@@ -1952,6 +1952,21 @@ const documentsAsync = {
     return await getAsync('SELECT * FROM documents WHERE id = ?', [id]);
   },
 
+  async getIdsByUploadUrl(uploadUrl) {
+    if (!uploadUrl) return [];
+    const rows = await allAsync(`
+      SELECT DISTINCT d.id
+      FROM documents d
+      WHERE d.image_path = ?
+         OR EXISTS (
+           SELECT 1
+           FROM json_each(COALESCE(d.metadata, '{}'), '$.additional_pages')
+           WHERE value = ?
+         )
+    `, [uploadUrl, uploadUrl]);
+    return rows.map((row) => row.id);
+  },
+
   async canAccess(docId, userId, isAdmin, accessAll) {
     if (isAdmin || accessAll) return true;
     if (!userId) {

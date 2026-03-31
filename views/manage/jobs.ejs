@@ -62,15 +62,14 @@
             <th>Status</th>
             <th>Document / File</th>
             <th>Provider</th>
-            <th>Queued</th>
-            <th>Duration</th>
-            <th>Actions</th>
+            <th>Time</th>
+            <th class="col-actions">Actions</th>
           </tr>
         </thead>
         <tbody id="jobs-tbody">
           <% jobs.forEach(function(job) { %>
             <%
-              let durationStr = '—';
+              let durationStr = '';
               if (job.started_at && job.completed_at) {
                 const ms = new Date(job.completed_at) - new Date(job.started_at);
                 durationStr = (ms / 1000).toFixed(1) + 's';
@@ -108,20 +107,24 @@
                 <% } %>
               </td>
               <td><%= isImport ? '—' : (job.provider || '—') %></td>
-              <td class="muted"><%= new Date(job.created_at).toLocaleString() %></td>
-              <td><%= durationStr %></td>
-              <td class="job-actions">
-                <% if (!isImport) { %>
-                  <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>">Log</button>
-                <% } %>
-                <% if (isImport && job.status === 'done' && !job.submitted) { %>
-                  <a href="/manage/collections/<%= collection.id %>/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-primary">Continue</a>
-                <% } %>
+              <td class="job-time-cell">
+                <span class="muted"><%= new Date(job.created_at).toLocaleString() %></span>
+                <% if (durationStr) { %><span class="job-duration"><%= durationStr %></span><% } %>
+              </td>
+              <td class="job-actions-cell">
+                <div class="job-actions">
+                  <% if (!isImport) { %>
+                    <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>">Log</button>
+                  <% } %>
+                  <% if (isImport && job.status === 'done' && !job.submitted) { %>
+                    <a href="/manage/collections/<%= collection.id %>/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-promote">Continue</a>
+                  <% } %>
+                </div>
               </td>
             </tr>
             <% if (!isImport) { %>
               <tr class="log-row" id="log-row-<%= job.id %>" style="display:none;">
-                <td colspan="7">
+                <td colspan="6">
                   <% if (job.error) { %>
                     <div class="job-error">Error: <%= job.error %></div>
                   <% } %>
@@ -223,7 +226,16 @@
           }
 
           var cells = row.querySelectorAll('td');
-          if (cells[5]) cells[5].textContent = formatDuration(job);
+          var timeCell = row.querySelector('.job-time-cell');
+          if (timeCell) {
+            var durEl = timeCell.querySelector('.job-duration');
+            var dur = formatDuration(job);
+            if (dur && durEl) {
+              durEl.textContent = dur;
+            } else if (dur && !durEl) {
+              timeCell.insertAdjacentHTML('beforeend', '<span class="job-duration">' + dur + '</span>');
+            }
+          }
 
           if (job.job_type === 'import') {
             var docCell = cells[2];

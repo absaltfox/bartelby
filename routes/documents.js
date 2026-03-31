@@ -582,7 +582,10 @@ router.post('/documents/:id/metadata', requireDocumentRole('editor'), async (req
   if (req.is('json') || req.headers.accept === 'application/json') {
     return res.json({ ok: true });
   }
-  const back = req.body.back || `/documents/${doc.id}`;
+  const requestedBack = typeof req.body.back === 'string' ? req.body.back : '';
+  const back = (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//'))
+    ? requestedBack
+    : `/documents/${doc.id}`;
   res.redirect(back);
 });
 
