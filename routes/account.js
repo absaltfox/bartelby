@@ -76,6 +76,8 @@ router.post('/api-keys', async (req, res) => {
   const utilityModelRaw = (req.body.utility_model || '').trim() || null;
   const inputCostRaw = (req.body.input_cost_per_mtok || '').trim();
   const outputCostRaw = (req.body.output_cost_per_mtok || '').trim();
+  const utilityInputCostRaw = (req.body.utility_input_cost_per_mtok || '').trim();
+  const utilityOutputCostRaw = (req.body.utility_output_cost_per_mtok || '').trim();
 
   // Validate model name format (alphanumeric, hyphens, dots, colons, slashes; max 100 chars)
   const MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]{1,100}$/;
@@ -85,8 +87,10 @@ router.post('/api-keys', async (req, res) => {
 
   const inputCostPerMtok = inputCostRaw !== '' ? parseFloat(inputCostRaw) : null;
   const outputCostPerMtok = outputCostRaw !== '' ? parseFloat(outputCostRaw) : null;
-  if ((inputCostPerMtok != null && (isNaN(inputCostPerMtok) || inputCostPerMtok < 0)) ||
-      (outputCostPerMtok != null && (isNaN(outputCostPerMtok) || outputCostPerMtok < 0))) {
+  const utilityInputCostPerMtok = utilityInputCostRaw !== '' ? parseFloat(utilityInputCostRaw) : null;
+  const utilityOutputCostPerMtok = utilityOutputCostRaw !== '' ? parseFloat(utilityOutputCostRaw) : null;
+  const allRates = [inputCostPerMtok, outputCostPerMtok, utilityInputCostPerMtok, utilityOutputCostPerMtok];
+  if (allRates.some(r => r != null && (isNaN(r) || r < 0))) {
     return res.redirect('/account?error=' + encodeURIComponent('Cost rates must be non-negative numbers.'));
   }
 
@@ -103,7 +107,9 @@ router.post('/api-keys', async (req, res) => {
     visionModel,
     utilityModel,
     inputCostPerMtok,
-    outputCostPerMtok
+    outputCostPerMtok,
+    utilityInputCostPerMtok,
+    utilityOutputCostPerMtok
   });
   res.redirect('/account?saved=1');
 });

@@ -97,19 +97,33 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="openai_input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <label for="openai_input_cost_per_mtok">Transcription model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="openai_input_cost_per_mtok" name="openai_input_cost_per_mtok"
                  value="<%= cfg.openai_input_cost_per_mtok || '' %>"
                  placeholder="e.g. 2.50" step="any" min="0">
         </div>
         <div class="form-group">
-          <label for="openai_output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <label for="openai_output_cost_per_mtok">Transcription model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="openai_output_cost_per_mtok" name="openai_output_cost_per_mtok"
                  value="<%= cfg.openai_output_cost_per_mtok || '' %>"
                  placeholder="e.g. 10.00" step="any" min="0">
         </div>
       </div>
-      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost. Leave blank to skip cost tracking. Applies to all OpenAI models configured above.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="openai_utility_input_cost_per_mtok">Utility model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="openai_utility_input_cost_per_mtok" name="openai_utility_input_cost_per_mtok"
+                 value="<%= cfg.openai_utility_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 0.15" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="openai_utility_output_cost_per_mtok">Utility model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="openai_utility_output_cost_per_mtok" name="openai_utility_output_cost_per_mtok"
+                 value="<%= cfg.openai_utility_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 0.60" step="any" min="0">
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Transcription model rates apply to document transcription; utility model rates apply to title and summary generation. If utility rates are blank, transcription rates are used as a fallback.</p>
     </section>
 
     <section class="settings-section">
@@ -147,19 +161,33 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="anthropic_input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <label for="anthropic_input_cost_per_mtok">Transcription model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="anthropic_input_cost_per_mtok" name="anthropic_input_cost_per_mtok"
                  value="<%= cfg.anthropic_input_cost_per_mtok || '' %>"
                  placeholder="e.g. 3.00" step="any" min="0">
         </div>
         <div class="form-group">
-          <label for="anthropic_output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <label for="anthropic_output_cost_per_mtok">Transcription model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="anthropic_output_cost_per_mtok" name="anthropic_output_cost_per_mtok"
                  value="<%= cfg.anthropic_output_cost_per_mtok || '' %>"
                  placeholder="e.g. 15.00" step="any" min="0">
         </div>
       </div>
-      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost. Leave blank to skip cost tracking. Applies to all Anthropic models configured above.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="anthropic_utility_input_cost_per_mtok">Utility model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="anthropic_utility_input_cost_per_mtok" name="anthropic_utility_input_cost_per_mtok"
+                 value="<%= cfg.anthropic_utility_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 0.80" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="anthropic_utility_output_cost_per_mtok">Utility model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="anthropic_utility_output_cost_per_mtok" name="anthropic_utility_output_cost_per_mtok"
+                 value="<%= cfg.anthropic_utility_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 4.00" step="any" min="0">
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Transcription model rates apply to document transcription; utility model rates apply to title and summary generation. If utility rates are blank, transcription rates are used as a fallback.</p>
     </section>
 
     <section class="settings-section">

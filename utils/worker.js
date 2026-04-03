@@ -286,42 +286,53 @@ async function tick() {
 
     const pd = combined.paradata || {};
 
-    // Aggregate token usage across all transcribed pages
-    const totalInputTokens = results.reduce((sum, r) => sum + (r.paradata?.input_tokens || 0), 0)
-      + (combined.utilityInputTokens || 0);
-    const totalOutputTokens = results.reduce((sum, r) => sum + (r.paradata?.output_tokens || 0), 0)
-      + (combined.utilityOutputTokens || 0);
+    // Token counts split by tier for per-tier rate application
+    const transcriptionInputTokens = results.reduce((sum, r) => sum + (r.paradata?.input_tokens || 0), 0);
+    const transcriptionOutputTokens = results.reduce((sum, r) => sum + (r.paradata?.output_tokens || 0), 0);
+    const utilityInputTokens = combined.utilityInputTokens || 0;
+    const utilityOutputTokens = combined.utilityOutputTokens || 0;
+    const totalInputTokens = transcriptionInputTokens + utilityInputTokens;
+    const totalOutputTokens = transcriptionOutputTokens + utilityOutputTokens;
 
-    // Resolve cost rates: user API key first, then system settings per provider
+    // Resolve cost rates: user API key first, then system settings per provider.
+    // Utility rates fall back to transcription rates if not separately configured.
     let costUsd = null;
     if (totalInputTokens > 0 || totalOutputTokens > 0) {
-      let inputRate = null;
-      let outputRate = null;
+      let txInputRate = null, txOutputRate = null;
+      let utInputRate = null, utOutputRate = null;
 
       if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
         const { userApiKeysAsync: uak } = require('../database/db');
         const key = await uak.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
         if (key) {
-          inputRate = key.input_cost_per_mtok != null ? key.input_cost_per_mtok : null;
-          outputRate = key.output_cost_per_mtok != null ? key.output_cost_per_mtok : null;
+          txInputRate = key.input_cost_per_mtok ?? null;
+          txOutputRate = key.output_cost_per_mtok ?? null;
+          utInputRate = key.utility_input_cost_per_mtok ?? null;
+          utOutputRate = key.utility_output_cost_per_mtok ?? null;
         }
       }
 
-      if (inputRate == null && outputRate == null) {
+      if (txInputRate == null && txOutputRate == null) {
         const { settingsAsync: sa } = require('../database/db');
         const cfg = await sa.getAll();
-        if (providerName === 'openai') {
-          inputRate = cfg.openai_input_cost_per_mtok != null ? parseFloat(cfg.openai_input_cost_per_mtok) : null;
-          outputRate = cfg.openai_output_cost_per_mtok != null ? parseFloat(cfg.openai_output_cost_per_mtok) : null;
-        } else if (providerName === 'claude') {
-          inputRate = cfg.anthropic_input_cost_per_mtok != null ? parseFloat(cfg.anthropic_input_cost_per_mtok) : null;
-          outputRate = cfg.anthropic_output_cost_per_mtok != null ? parseFloat(cfg.anthropic_output_cost_per_mtok) : null;
+        const prefix = providerName === 'openai' ? 'openai' : providerName === 'claude' ? 'anthropic' : null;
+        if (prefix) {
+          txInputRate = cfg[`${prefix}_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_input_cost_per_mtok`]) : null;
+          txOutputRate = cfg[`${prefix}_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_output_cost_per_mtok`]) : null;
+          utInputRate = cfg[`${prefix}_utility_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_utility_input_cost_per_mtok`]) : null;
+          utOutputRate = cfg[`${prefix}_utility_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_utility_output_cost_per_mtok`]) : null;
         }
       }
 
-      if (inputRate != null || outputRate != null) {
-        costUsd = (totalInputTokens / 1_000_000) * (inputRate || 0)
-                + (totalOutputTokens / 1_000_000) * (outputRate || 0);
+      // Fall back to transcription rates for utility tier if not separately configured
+      const effUtInputRate = utInputRate ?? txInputRate;
+      const effUtOutputRate = utOutputRate ?? txOutputRate;
+
+      if (txInputRate != null || txOutputRate != null || effUtInputRate != null || effUtOutputRate != null) {
+        costUsd = (transcriptionInputTokens / 1_000_000) * (txInputRate || 0)
+                + (transcriptionOutputTokens / 1_000_000) * (txOutputRate || 0)
+                + (utilityInputTokens / 1_000_000) * (effUtInputRate || 0)
+                + (utilityOutputTokens / 1_000_000) * (effUtOutputRate || 0);
       }
     }
 

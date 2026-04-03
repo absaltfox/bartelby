@@ -76,15 +76,25 @@
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label for="input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD, optional)</span></label>
+          <label for="input_cost_per_mtok">Transcription model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="input_cost_per_mtok" name="input_cost_per_mtok" placeholder="e.g. 2.50" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
         </div>
         <div class="form-group">
-          <label for="output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD, optional)</span></label>
+          <label for="output_cost_per_mtok">Transcription model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
           <input type="number" id="output_cost_per_mtok" name="output_cost_per_mtok" placeholder="e.g. 10.00" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
         </div>
       </div>
-      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost per run. Leave blank to skip cost tracking for this key.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="utility_input_cost_per_mtok">Utility model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="utility_input_cost_per_mtok" name="utility_input_cost_per_mtok" placeholder="e.g. 0.15" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        </div>
+        <div class="form-group">
+          <label for="utility_output_cost_per_mtok">Utility model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="utility_output_cost_per_mtok" name="utility_output_cost_per_mtok" placeholder="e.g. 0.60" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost per run. Utility rates apply to title/summary generation; if blank, transcription rates are used as a fallback.</p>
       <div class="form-actions">
         <button type="submit" class="btn-primary" <%= canEncryptSecrets ? '' : 'disabled' %>>Add Personal Key</button>
       </div>
@@ -102,8 +112,10 @@
               <th>Model</th>
               <th>Vision Model</th>
               <th>Utility Model</th>
-              <th>Input $/1M</th>
-              <th>Output $/1M</th>
+              <th>Transcription $/1M in</th>
+              <th>Transcription $/1M out</th>
+              <th>Utility $/1M in</th>
+              <th>Utility $/1M out</th>
               <th>Added</th>
               <th>Last Used</th>
               <th>Actions</th>
@@ -119,6 +131,8 @@
                 <td class="muted"><%= key.utility_model || '—' %></td>
                 <td class="muted"><%= key.input_cost_per_mtok != null ? '$' + key.input_cost_per_mtok : '—' %></td>
                 <td class="muted"><%= key.output_cost_per_mtok != null ? '$' + key.output_cost_per_mtok : '—' %></td>
+                <td class="muted"><%= key.utility_input_cost_per_mtok != null ? '$' + key.utility_input_cost_per_mtok : '—' %></td>
+                <td class="muted"><%= key.utility_output_cost_per_mtok != null ? '$' + key.utility_output_cost_per_mtok : '—' %></td>
                 <td class="user-date-cell"><%= new Date(key.created_at).toLocaleDateString() %></td>
                 <td class="user-date-cell"><%= key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : '—' %></td>
                 <td class="user-actions-cell">

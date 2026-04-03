@@ -416,6 +416,12 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   // v33 — model-reported transcription confidence (0-100)
   `
   ALTER TABLE transcripts ADD COLUMN confidence INTEGER
+  `,
+
+  // v34 — separate cost-per-token rates for the utility model tier on personal API keys
+  `
+  ALTER TABLE user_api_keys ADD COLUMN utility_input_cost_per_mtok REAL;
+  ALTER TABLE user_api_keys ADD COLUMN utility_output_cost_per_mtok REAL
   `
 ];
 
@@ -2696,7 +2702,9 @@ const userApiKeysAsync = {
   async getByUserId(userId) {
     return await allAsync(`
       SELECT id, user_id, provider, label, model, vision_model, utility_model,
-             input_cost_per_mtok, output_cost_per_mtok, created_at, updated_at, last_used_at
+             input_cost_per_mtok, output_cost_per_mtok,
+             utility_input_cost_per_mtok, utility_output_cost_per_mtok,
+             created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -2706,7 +2714,9 @@ const userApiKeysAsync = {
   async getByIdForUser(id, userId) {
     return await getAsync(`
       SELECT id, user_id, provider, label, encrypted_key, model, vision_model, utility_model,
-             input_cost_per_mtok, output_cost_per_mtok, created_at, updated_at, last_used_at
+             input_cost_per_mtok, output_cost_per_mtok,
+             utility_input_cost_per_mtok, utility_output_cost_per_mtok,
+             created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
@@ -2740,10 +2750,10 @@ const userApiKeysAsync = {
     }, {});
   },
 
-  async create({ userId, provider, label, apiKey, model, visionModel, utilityModel, inputCostPerMtok, outputCostPerMtok }) {
+  async create({ userId, provider, label, apiKey, model, visionModel, utilityModel, inputCostPerMtok, outputCostPerMtok, utilityInputCostPerMtok, utilityOutputCostPerMtok }) {
     const result = await runAsync(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model, input_cost_per_mtok, output_cost_per_mtok)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model, input_cost_per_mtok, output_cost_per_mtok, utility_input_cost_per_mtok, utility_output_cost_per_mtok)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
@@ -2753,7 +2763,9 @@ const userApiKeysAsync = {
       visionModel || null,
       utilityModel || null,
       inputCostPerMtok != null ? inputCostPerMtok : null,
-      outputCostPerMtok != null ? outputCostPerMtok : null
+      outputCostPerMtok != null ? outputCostPerMtok : null,
+      utilityInputCostPerMtok != null ? utilityInputCostPerMtok : null,
+      utilityOutputCostPerMtok != null ? utilityOutputCostPerMtok : null
     ]);
     return result.lastInsertRowid;
   },
