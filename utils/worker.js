@@ -41,6 +41,24 @@ function startWorker() {
   setInterval(checkStaleImportJobs, 60000);
   // Clean up expired MFA remember tokens once per hour
   setInterval(cleanExpiredMfaTokens, 60 * 60 * 1000);
+  // Analytics: check every 15 minutes
+  const { runScheduledAnalytics } = require('./analytics');
+  const ANALYTICS_INTERVAL_MS = 15 * 60 * 1000;
+  let analyticsRunning = false;
+
+  setInterval(async () => {
+    if (analyticsRunning) return;
+    analyticsRunning = true;
+    try {
+      await runScheduledAnalytics();
+    } catch (err) {
+      console.error('[worker] analytics error:', err.message);
+    } finally {
+      analyticsRunning = false;
+    }
+  }, ANALYTICS_INTERVAL_MS);
+
+  console.log('[worker] analytics scheduler started (15 min interval)');
   console.log('Transcription worker started (polling every 5s)');
 }
 
