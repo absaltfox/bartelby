@@ -436,12 +436,12 @@ router.get('/collections/:id', async (req, res) => {
 });
 
 // ── Collection analytics view ─────────────────────────────────────────────────
-router.get('/collections/:id/analytics', optionalAuth, async (req, res) => {
-  const collectionId = parseInt(req.params.id);
-  if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', pageTitle: 'Not Found', currentUser: req.user || null });
+router.get('/collections/:id/analytics', async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', error: {} });
 
   const collection = await collectionsAsync.getById(collectionId);
-  if (!collection) return res.status(404).render('error', { message: 'Collection not found', pageTitle: 'Not Found', currentUser: req.user || null });
+  if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
 
   const user = req.user;
   const userId = user ? user.id : null;
@@ -451,9 +451,9 @@ router.get('/collections/:id/analytics', optionalAuth, async (req, res) => {
   if (!(await collectionsAsync.canAccess(collection.id, userId, isAdmin, accessAll))) {
     if (!user) {
       req.session.returnTo = req.originalUrl;
-      return res.redirect(`/login?next=/collections/${collectionId}/analytics`);
+      return res.redirect('/login');
     }
-    return res.status(403).render('error', { message: 'Access denied', pageTitle: 'Access Denied', currentUser: req.user || null });
+    return res.status(403).render('error', { message: 'Access denied', error: {} });
   }
 
   const analytics = await collectionAnalyticsAsync.getLatest(collectionId);
