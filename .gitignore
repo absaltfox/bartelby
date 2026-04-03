@@ -10,3 +10,4 @@ documents/
 *.swp
 *.swo
 .claude/
+.worktrees/
