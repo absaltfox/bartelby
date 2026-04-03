@@ -1,0 +1,273 @@
+<%- include('partials/header', { pageTitle: pageTitle, query: '' }) %>
+<%
+function formatBytes(bytes) {
+  if (!bytes) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+%>
+
+<div class="page-header">
+  <div class="breadcrumb">
+    <a href="/">Collections</a> <span class="breadcrumb-sep">/</span>
+    <a href="/collections/<%= collectionId %>"><%= collection.name %></a> <span class="breadcrumb-sep">/</span>
+  </div>
+  <h1><%= collection.name %></h1>
+  <p class="subtitle">Document Analytics</p>
+</div>
+
+<div class="collection-tabs">
+  <a href="/collections/<%= collectionId %>" class="collection-tab">Documents</a>
+  <a href="/collections/<%= collectionId %>/analytics" class="collection-tab collection-tab-active">Analytics</a>
+</div>
+
+<% if (!analytics) { %>
+  <div class="analytics-empty">
+    <p>No analytics have been computed for this collection yet.</p>
+    <p class="muted">Analytics run on a schedule. An admin can trigger a manual run from
+      <a href="/admin/analytics-settings">Admin → Analytics</a>.</p>
+  </div>
+<% } else { %>
+
+  <!-- Analytics tabs -->
+  <div class="analytics-subtabs">
+    <button class="analytics-subtab analytics-subtab-active" data-tab="dashboard">Dashboard</button>
+    <button class="analytics-subtab" data-tab="topics">Topics</button>
+  </div>
+
+  <!-- Dashboard tab -->
+  <div class="analytics-tab-panel" id="tab-dashboard">
+    <div class="analytics-updated">
+      Last computed: <%= new Date(analytics.computed_at).toLocaleString() %>
+    </div>
+
+    <div class="analytics-stat-grid">
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value"><%= analytics.document_count.toLocaleString() %></div>
+        <div class="analytics-stat-label">Documents</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value"><%= formatBytes(analytics.storage_bytes) %></div>
+        <div class="analytics-stat-label">Storage</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value"><%= analytics.transcribed_count.toLocaleString() %></div>
+        <div class="analytics-stat-label">Transcribed</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value"><%= analytics.untranscribed_count.toLocaleString() %></div>
+        <div class="analytics-stat-label">Untranscribed</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value">
+          <% if (analytics.total_cost_usd != null) { %>
+            $<%= analytics.total_cost_usd.toFixed(4) %>
+          <% } else { %>—<% } %>
+        </div>
+        <div class="analytics-stat-label">Total Transcription Cost</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value">
+          <% if (analytics.avg_confidence != null) { %>
+            <%= Math.round(analytics.avg_confidence) %>%
+          <% } else { %>—<% } %>
+        </div>
+        <div class="analytics-stat-label">Avg. Confidence</div>
+      </div>
+      <div class="analytics-stat-card">
+        <div class="analytics-stat-value">
+          <% if (analytics.avg_unknown_words != null) { %>
+            <%= analytics.avg_unknown_words.toFixed(1) %>
+          <% } else { %>—<% } %>
+        </div>
+        <div class="analytics-stat-label">Avg. Unknown Words / Doc</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Topics tab -->
+  <div class="analytics-tab-panel" id="tab-topics" hidden>
+    <% if (!analytics.topics_computed || topics.length === 0) { %>
+      <div class="analytics-empty">
+        <p>Topics have not been computed for this collection.</p>
+        <p class="muted">Topics require at least 5 transcribed documents and are generated during the scheduled analytics run.</p>
+      </div>
+    <% } else { %>
+
+      <!-- Document Similarity Cluster Chart -->
+      <section class="analytics-section">
+        <h2>Document Similarity Clusters</h2>
+        <p class="analytics-section-subtitle">Documents positioned by semantic similarity. Colour indicates topic.</p>
+        <div id="cluster-chart" class="analytics-chart-container"></div>
+      </section>
+
+      <!-- Topic Hierarchy -->
+      <section class="analytics-section">
+        <h2>Topic Hierarchy</h2>
+        <div id="topic-hierarchy" class="topic-hierarchy-container">
+          <% topics.forEach(function(topic) { %>
+            <div class="topic-card">
+              <div class="topic-card-header">
+                <span class="topic-card-label"><%= topic.topic_label %></span>
+                <span class="topic-card-count"><%= topic.document_count %> docs</span>
+              </div>
+              <div class="topic-card-words">
+                <% topic.topic_words.slice(0, 6).forEach(function(w) { %>
+                  <span class="topic-word" style="opacity: <%= 0.5 + 0.5 * (w.weight / topic.topic_words[0].weight) %>"><%= w.word %></span>
+                <% }); %>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+      </section>
+
+      <!-- Topic Evolution -->
+      <% if (evolution.length > 0) { %>
+      <section class="analytics-section">
+        <h2>Topic Evolution Over Time</h2>
+        <p class="analytics-section-subtitle">How topic prevalence has changed across document dates.</p>
+        <canvas id="evolution-chart" class="analytics-chart-canvas"></canvas>
+      </section>
+      <% } %>
+
+    <% } %>
+  </div>
+
+<% } %>
+
+<!-- Inline data for charts -->
+<% if (analytics && analytics.topics_computed) { %>
+<script>
+window.__analyticsData = {
+  assignments: <%- JSON.stringify(assignments) %>,
+  topics: <%- JSON.stringify(topics) %>,
+  evolution: <%- JSON.stringify(evolution) %>
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Helper: generate N distinct colours
+function topicColours(n) {
+  const palette = [
+    '#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6',
+    '#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'
+  ];
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(palette[i % palette.length]);
+  return out;
+}
+
+// ── Cluster chart (scatter) ────────────────────────────────────────────────
+(function() {
+  const { assignments, topics } = window.__analyticsData;
+  if (!assignments.length) return;
+
+  const topicIds = [...new Set(assignments.map(a => a.topic_id))].sort((a,b)=>a-b);
+  const colours = topicColours(topicIds.length);
+  const topicColourMap = {};
+  topicIds.forEach((tid, i) => { topicColourMap[tid] = colours[i]; });
+
+  const topicLabelMap = {};
+  topics.forEach(t => { topicLabelMap[t.topic_id] = t.topic_label; });
+
+  // Group assignments by topic for separate datasets (for legend)
+  const datasets = topicIds.map((tid, i) => {
+    const pts = assignments.filter(a => a.topic_id === tid);
+    return {
+      label: topicLabelMap[tid] || `Topic ${tid}`,
+      data: pts.map(a => ({
+        x: a.x_coord,
+        y: a.y_coord,
+        title: a.title,
+        topic: topicLabelMap[tid] || `Topic ${tid}`
+      })),
+      backgroundColor: colours[i] + 'aa',
+      pointRadius: 6,
+      pointHoverRadius: 8
+    };
+  });
+
+  const ctx = document.getElementById('cluster-chart');
+  if (!ctx) return;
+  ctx.innerHTML = ''; // clear placeholder
+  const canvas = document.createElement('canvas');
+  canvas.height = 400;
+  ctx.appendChild(canvas);
+
+  new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right' },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.raw.title || 'Untitled'} (${ctx.raw.topic})`
+          }
+        }
+      },
+      scales: {
+        x: { display: false },
+        y: { display: false }
+      }
+    }
+  });
+})();
+
+// ── Evolution chart (line) ─────────────────────────────────────────────────
+(function() {
+  const { evolution, topics } = window.__analyticsData;
+  const canvas = document.getElementById('evolution-chart');
+  if (!canvas || !evolution.length) return;
+
+  const periods = [...new Set(evolution.map(e => e.time_period))].sort();
+  const topicIds = [...new Set(evolution.map(e => e.topic_id))];
+  const colours = topicColours(topicIds.length);
+  const topicLabelMap = {};
+  topics.forEach(t => { topicLabelMap[t.topic_id] = t.topic_label; });
+
+  const datasets = topicIds.map((tid, i) => ({
+    label: topicLabelMap[tid] || `Topic ${tid}`,
+    data: periods.map(p => {
+      const row = evolution.find(e => e.topic_id === tid && e.time_period === p);
+      return row ? row.document_count : 0;
+    }),
+    borderColor: colours[i],
+    backgroundColor: colours[i] + '33',
+    fill: true,
+    tension: 0.3
+  }));
+
+  new Chart(canvas, {
+    type: 'line',
+    data: { labels: periods, datasets },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'right' } },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Documents' } },
+        x: { title: { display: true, text: 'Period' } }
+      }
+    }
+  });
+})();
+</script>
+<% } %>
+
+<!-- Tab switching -->
+<script>
+document.querySelectorAll('.analytics-subtab').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.analytics-subtab').forEach(b => b.classList.remove('analytics-subtab-active'));
+    document.querySelectorAll('.analytics-tab-panel').forEach(p => p.hidden = true);
+    btn.classList.add('analytics-subtab-active');
+    document.getElementById('tab-' + btn.dataset.tab).hidden = false;
+  });
+});
+</script>
+
+<%- include('partials/footer') %>
