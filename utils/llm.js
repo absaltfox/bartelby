@@ -28,7 +28,8 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     "location": "<place of origin or null>",
     "condition": "<good|fair|poor or null>"
   },
-  "notes": "<observations about illegible sections or difficulties, or null>"
+  "notes": "<observations about illegible sections or difficulties, or null>",
+  "confidence": <integer 0-100 reflecting overall transcription confidence: 100 = fully legible, 0 = almost entirely illegible>
 }`;
 
 function getSystemPrompt(cfg = {}) {
@@ -52,17 +53,22 @@ function parseResponse(text) {
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) {
-    return { transcription: text, metadata: {}, notes: 'Could not parse structured response.' };
+    return { transcription: text, metadata: {}, notes: 'Could not parse structured response.', confidence: null };
   }
   try {
     const parsed = JSON.parse(match[0]);
+    const rawConfidence = parsed.confidence;
+    const confidence = (typeof rawConfidence === 'number' && rawConfidence >= 0 && rawConfidence <= 100)
+      ? Math.round(rawConfidence)
+      : null;
     return {
       transcription: parsed.transcription || text,
       metadata: parsed.metadata || {},
-      notes: parsed.notes || null
+      notes: parsed.notes || null,
+      confidence
     };
   } catch {
-    return { transcription: text, metadata: {}, notes: 'JSON parse error.' };
+    return { transcription: text, metadata: {}, notes: 'JSON parse error.', confidence: null };
   }
 }
 
@@ -83,7 +89,7 @@ async function mergeConfig(overrides = {}) {
 async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType, cfg = {}) {
   const startMs = Date.now();
   const systemPrompt = getSystemPrompt(cfg);
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: modelInstance,
     system: systemPrompt,
     temperature: temperature != null ? temperature : undefined,
@@ -98,7 +104,9 @@ async function runTranscription(modelInstance, providerName, modelName, temperat
       model: modelName,
       prompt: systemPrompt,
       temperature: temperature != null ? temperature : null,
-      run_duration_ms: durationMs
+      run_duration_ms: durationMs,
+      input_tokens: usage?.inputTokens ?? null,
+      output_tokens: usage?.outputTokens ?? null
     }
   };
 }
@@ -338,10 +346,10 @@ Respond with ONLY the title — no quotes, no explanation, no trailing punctuati
 
 async function generateDocumentTitle(providerName, transcription, runtimeConfig = {}) {
   const modelInstance = await getUtilityModelInstance(providerName, runtimeConfig);
-  if (!modelInstance) return null;
+  if (!modelInstance) return { title: null, usage: null };
 
   const excerpt = transcription.substring(0, 3000);
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: modelInstance,
     system: TITLE_PROMPT,
     prompt: `Generate a short descriptive title (5-10 words) for this document:\n\n${excerpt}`,
@@ -349,8 +357,8 @@ async function generateDocumentTitle(providerName, transcription, runtimeConfig 
   });
 
   let title = text.trim().replace(/^["']+|["']+$/g, '').replace(/[.!]+$/, '').trim();
-  if (!title || title.length > 120) return null;
-  return title;
+  if (!title || title.length > 120) return { title: null, usage };
+  return { title, usage };
 }
 
 const SUMMARY_PROMPT = `You summarize historical documents in 1-2 concise sentences based on their transcribed content.
@@ -360,10 +368,10 @@ Respond with ONLY the summary — no quotes, no labels, no preamble.`;
 
 async function generateDocumentSummary(providerName, transcription, runtimeConfig = {}) {
   const modelInstance = await getUtilityModelInstance(providerName, runtimeConfig);
-  if (!modelInstance) return null;
+  if (!modelInstance) return { summary: null, usage: null };
 
   const excerpt = transcription.substring(0, 3000);
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: modelInstance,
     system: SUMMARY_PROMPT,
     prompt: `Summarize this historical document in 1-2 sentences:\n\n${excerpt}`,
@@ -371,8 +379,8 @@ async function generateDocumentSummary(providerName, transcription, runtimeConfi
   });
 
   let summary = text.trim().replace(/^["']+|["']+$/g, '').trim();
-  if (!summary || summary.length > 500) return null;
-  return summary;
+  if (!summary || summary.length > 500) return { summary: null, usage };
+  return { summary, usage };
 }
 
 module.exports = {

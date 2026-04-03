@@ -74,6 +74,17 @@
         <input type="text" id="utility_model" name="utility_model" placeholder="e.g. gpt-4o-mini or claude-haiku-4-5-20251001" <%= canEncryptSecrets ? '' : 'disabled' %>>
         <p class="field-hint">Cheap text model for generating document titles and summaries. Leave blank to use the system default.</p>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD, optional)</span></label>
+          <input type="number" id="input_cost_per_mtok" name="input_cost_per_mtok" placeholder="e.g. 2.50" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        </div>
+        <div class="form-group">
+          <label for="output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD, optional)</span></label>
+          <input type="number" id="output_cost_per_mtok" name="output_cost_per_mtok" placeholder="e.g. 10.00" step="any" min="0" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost per run. Leave blank to skip cost tracking for this key.</p>
       <div class="form-actions">
         <button type="submit" class="btn-primary" <%= canEncryptSecrets ? '' : 'disabled' %>>Add Personal Key</button>
       </div>
@@ -91,6 +102,8 @@
               <th>Model</th>
               <th>Vision Model</th>
               <th>Utility Model</th>
+              <th>Input $/1M</th>
+              <th>Output $/1M</th>
               <th>Added</th>
               <th>Last Used</th>
               <th>Actions</th>
@@ -104,6 +117,8 @@
                 <td class="muted"><%= key.model || '—' %></td>
                 <td class="muted"><%= key.vision_model || '—' %></td>
                 <td class="muted"><%= key.utility_model || '—' %></td>
+                <td class="muted"><%= key.input_cost_per_mtok != null ? '$' + key.input_cost_per_mtok : '—' %></td>
+                <td class="muted"><%= key.output_cost_per_mtok != null ? '$' + key.output_cost_per_mtok : '—' %></td>
                 <td class="user-date-cell"><%= new Date(key.created_at).toLocaleDateString() %></td>
                 <td class="user-date-cell"><%= key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : '—' %></td>
                 <td class="user-actions-cell">

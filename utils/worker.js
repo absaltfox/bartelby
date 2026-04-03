@@ -181,12 +181,15 @@ async function tick() {
     }
 
     // Combine multi-page results
+    const pageConfidences = results.map(r => r.confidence).filter(c => c != null && Number.isFinite(c));
     const combined = {
       transcription: results.map(r => String(r.transcription || '').trim()).join('\n\n'),
       page_segments: results.length > 1 ? buildTranscriptPageSegments(results) : null,
       metadata: results[0].metadata,
       notes: results.map(r => r.notes).filter(Boolean).join(' | ') || null,
-      paradata: results[0].paradata
+      paradata: results[0].paradata,
+      // For multi-page docs use the minimum — the weakest page drives overall confidence
+      confidence: pageConfidences.length > 0 ? Math.min(...pageConfidences) : null
     };
 
     if (combined.paradata && results.length > 1) {
@@ -244,7 +247,11 @@ async function tick() {
               await logLine(`Using extracted title: "${extractedTitle}"`);
             } else {
               try {
-                const generated = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
+                const { title: generated, usage: titleUsage } = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
+                if (titleUsage) {
+                  combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (titleUsage.inputTokens || 0);
+                  combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (titleUsage.outputTokens || 0);
+                }
                 if (generated) {
                   updates.title = generated;
                   await logLine(`Generated title: "${generated}"`);
@@ -257,10 +264,14 @@ async function tick() {
 
           if (!doc.description) {
             try {
-              const summary = await generateDocumentSummary(providerName, combined.transcription, runtimeConfig);
-              if (summary) {
-                updates.description = summary;
-                await logLine(`Generated summary: "${summary}"`);
+              const { summary: generated, usage: sumUsage } = await generateDocumentSummary(providerName, combined.transcription, runtimeConfig);
+              if (sumUsage) {
+                combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (sumUsage.inputTokens || 0);
+                combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (sumUsage.outputTokens || 0);
+              }
+              if (generated) {
+                updates.description = generated;
+                await logLine(`Generated summary: "${generated}"`);
               }
             } catch (sumErr) {
               await logLine(`Summary generation failed (non-fatal): ${sumErr.message}`);
@@ -274,6 +285,53 @@ async function tick() {
     }
 
     const pd = combined.paradata || {};
+
+    // Aggregate token usage across all transcribed pages
+    const totalInputTokens = results.reduce((sum, r) => sum + (r.paradata?.input_tokens || 0), 0)
+      + (combined.utilityInputTokens || 0);
+    const totalOutputTokens = results.reduce((sum, r) => sum + (r.paradata?.output_tokens || 0), 0)
+      + (combined.utilityOutputTokens || 0);
+
+    // Resolve cost rates: user API key first, then system settings per provider
+    let costUsd = null;
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      let inputRate = null;
+      let outputRate = null;
+
+      if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
+        const { userApiKeysAsync: uak } = require('../database/db');
+        const key = await uak.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
+        if (key) {
+          inputRate = key.input_cost_per_mtok != null ? key.input_cost_per_mtok : null;
+          outputRate = key.output_cost_per_mtok != null ? key.output_cost_per_mtok : null;
+        }
+      }
+
+      if (inputRate == null && outputRate == null) {
+        const { settingsAsync: sa } = require('../database/db');
+        const cfg = await sa.getAll();
+        if (providerName === 'openai') {
+          inputRate = cfg.openai_input_cost_per_mtok != null ? parseFloat(cfg.openai_input_cost_per_mtok) : null;
+          outputRate = cfg.openai_output_cost_per_mtok != null ? parseFloat(cfg.openai_output_cost_per_mtok) : null;
+        } else if (providerName === 'claude') {
+          inputRate = cfg.anthropic_input_cost_per_mtok != null ? parseFloat(cfg.anthropic_input_cost_per_mtok) : null;
+          outputRate = cfg.anthropic_output_cost_per_mtok != null ? parseFloat(cfg.anthropic_output_cost_per_mtok) : null;
+        }
+      }
+
+      if (inputRate != null || outputRate != null) {
+        costUsd = (totalInputTokens / 1_000_000) * (inputRate || 0)
+                + (totalOutputTokens / 1_000_000) * (outputRate || 0);
+      }
+    }
+
+    if (combined.confidence != null) {
+      await logLine(`Confidence: ${combined.confidence}/100`);
+    }
+    if (totalInputTokens > 0 || totalOutputTokens > 0) {
+      await logLine(`Token usage: ${totalInputTokens.toLocaleString()} in / ${totalOutputTokens.toLocaleString()} out${costUsd != null ? ` — est. $${costUsd.toFixed(4)}` : ''}`);
+    }
+
     // Only set as best if no existing best transcript (protects human-curated transcripts)
     const existingBest = await transcriptsAsync.getBestByDocumentId(job.document_id);
     const shouldBeBest = !existingBest;
@@ -291,7 +349,11 @@ async function tick() {
       initiated_by: job.initiated_by || null,
       run_duration_ms: pd.run_duration_ms || null,
       provider_key_scope: job.provider_key_scope || null,
-      is_best: shouldBeBest
+      is_best: shouldBeBest,
+      input_tokens: totalInputTokens > 0 ? totalInputTokens : null,
+      output_tokens: totalOutputTokens > 0 ? totalOutputTokens : null,
+      cost_usd: costUsd,
+      confidence: combined.confidence
     });
 
     const totalDur = pd.run_duration_ms;

@@ -74,12 +74,21 @@ router.post('/api-keys', async (req, res) => {
   const modelRaw = (req.body.model || '').trim() || null;
   const visionModelRaw = (req.body.vision_model || '').trim() || null;
   const utilityModelRaw = (req.body.utility_model || '').trim() || null;
+  const inputCostRaw = (req.body.input_cost_per_mtok || '').trim();
+  const outputCostRaw = (req.body.output_cost_per_mtok || '').trim();
 
   // Validate model name format (alphanumeric, hyphens, dots, colons, slashes; max 100 chars)
   const MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]{1,100}$/;
   const model = modelRaw && MODEL_NAME_RE.test(modelRaw) ? modelRaw : null;
   const visionModel = visionModelRaw && MODEL_NAME_RE.test(visionModelRaw) ? visionModelRaw : null;
   const utilityModel = utilityModelRaw && MODEL_NAME_RE.test(utilityModelRaw) ? utilityModelRaw : null;
+
+  const inputCostPerMtok = inputCostRaw !== '' ? parseFloat(inputCostRaw) : null;
+  const outputCostPerMtok = outputCostRaw !== '' ? parseFloat(outputCostRaw) : null;
+  if ((inputCostPerMtok != null && (isNaN(inputCostPerMtok) || inputCostPerMtok < 0)) ||
+      (outputCostPerMtok != null && (isNaN(outputCostPerMtok) || outputCostPerMtok < 0))) {
+    return res.redirect('/account?error=' + encodeURIComponent('Cost rates must be non-negative numbers.'));
+  }
 
   if (!provider || !label || !apiKey) {
     return res.redirect('/account?error=' + encodeURIComponent('Provider, label, and API key are required.'));
@@ -92,7 +101,9 @@ router.post('/api-keys', async (req, res) => {
     apiKey,
     model,
     visionModel,
-    utilityModel
+    utilityModel,
+    inputCostPerMtok,
+    outputCostPerMtok
   });
   res.redirect('/account?saved=1');
 });

@@ -78,7 +78,9 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
       'default_provider',
       'transcription_prompt',
       'openai_model', 'openai_vision_model', 'openai_utility_model',
+      'openai_input_cost_per_mtok', 'openai_output_cost_per_mtok',
       'anthropic_model', 'anthropic_vision_model', 'anthropic_utility_model',
+      'anthropic_input_cost_per_mtok', 'anthropic_output_cost_per_mtok',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];

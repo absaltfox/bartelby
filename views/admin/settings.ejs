@@ -95,6 +95,21 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                placeholder="gpt-4o-mini">
         <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code>gpt-4o-mini</code></p>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="openai_input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="openai_input_cost_per_mtok" name="openai_input_cost_per_mtok"
+                 value="<%= cfg.openai_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 2.50" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="openai_output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="openai_output_cost_per_mtok" name="openai_output_cost_per_mtok"
+                 value="<%= cfg.openai_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 10.00" step="any" min="0">
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost. Leave blank to skip cost tracking. Applies to all OpenAI models configured above.</p>
     </section>
 
     <section class="settings-section">
@@ -130,6 +145,21 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                placeholder="claude-haiku-4-5-20251001">
         <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code>claude-haiku-4-5-20251001</code></p>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="anthropic_input_cost_per_mtok">Input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="anthropic_input_cost_per_mtok" name="anthropic_input_cost_per_mtok"
+                 value="<%= cfg.anthropic_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 3.00" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="anthropic_output_cost_per_mtok">Output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="anthropic_output_cost_per_mtok" name="anthropic_output_cost_per_mtok"
+                 value="<%= cfg.anthropic_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 15.00" step="any" min="0">
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Used to estimate transcription cost. Leave blank to skip cost tracking. Applies to all Anthropic models configured above.</p>
     </section>
 
     <section class="settings-section">

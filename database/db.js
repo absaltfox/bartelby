@@ -398,6 +398,24 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   // v30 — checkpoint partial page results so retried jobs resume from the failed page
   `
   ALTER TABLE transcription_jobs ADD COLUMN partial_results TEXT
+  `,
+
+  // v31 — token usage and estimated cost on transcripts
+  `
+  ALTER TABLE transcripts ADD COLUMN input_tokens INTEGER;
+  ALTER TABLE transcripts ADD COLUMN output_tokens INTEGER;
+  ALTER TABLE transcripts ADD COLUMN cost_usd REAL
+  `,
+
+  // v32 — cost-per-token rates on personal API keys (per million tokens)
+  `
+  ALTER TABLE user_api_keys ADD COLUMN input_cost_per_mtok REAL;
+  ALTER TABLE user_api_keys ADD COLUMN output_cost_per_mtok REAL
+  `,
+
+  // v33 — model-reported transcription confidence (0-100)
+  `
+  ALTER TABLE transcripts ADD COLUMN confidence INTEGER
   `
 ];
 
@@ -2511,8 +2529,9 @@ const transcriptsAsync = {
       INSERT INTO transcripts (
         document_id, content, transcriber, version, notes,
         provider, model, prompt, temperature, initiated_by, run_duration_ms,
-        is_best, created_by_user_id, provider_key_scope, page_segments
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_best, created_by_user_id, provider_key_scope, page_segments,
+        input_tokens, output_tokens, cost_usd, confidence
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -2528,7 +2547,11 @@ const transcriptsAsync = {
       transcript.is_best ? 1 : 0,
       transcript.created_by_user_id || null,
       transcript.provider_key_scope || null,
-      transcript.page_segments ? JSON.stringify(transcript.page_segments) : null
+      transcript.page_segments ? JSON.stringify(transcript.page_segments) : null,
+      transcript.input_tokens != null ? transcript.input_tokens : null,
+      transcript.output_tokens != null ? transcript.output_tokens : null,
+      transcript.cost_usd != null ? transcript.cost_usd : null,
+      transcript.confidence != null ? transcript.confidence : null
     ]);
     return result.lastInsertRowid;
   },
@@ -2672,7 +2695,8 @@ const settingsAsync = {
 const userApiKeysAsync = {
   async getByUserId(userId) {
     return await allAsync(`
-      SELECT id, user_id, provider, label, model, vision_model, utility_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, model, vision_model, utility_model,
+             input_cost_per_mtok, output_cost_per_mtok, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -2681,7 +2705,8 @@ const userApiKeysAsync = {
 
   async getByIdForUser(id, userId) {
     return await getAsync(`
-      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, utility_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, utility_model,
+             input_cost_per_mtok, output_cost_per_mtok, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
@@ -2715,10 +2740,10 @@ const userApiKeysAsync = {
     }, {});
   },
 
-  async create({ userId, provider, label, apiKey, model, visionModel, utilityModel }) {
+  async create({ userId, provider, label, apiKey, model, visionModel, utilityModel, inputCostPerMtok, outputCostPerMtok }) {
     const result = await runAsync(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model, input_cost_per_mtok, output_cost_per_mtok)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
@@ -2726,7 +2751,9 @@ const userApiKeysAsync = {
       encryptSecret(apiKey),
       model || null,
       visionModel || null,
-      utilityModel || null
+      utilityModel || null,
+      inputCostPerMtok != null ? inputCostPerMtok : null,
+      outputCostPerMtok != null ? outputCostPerMtok : null
     ]);
     return result.lastInsertRowid;
   },

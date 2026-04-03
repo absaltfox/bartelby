@@ -262,6 +262,26 @@
                 <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
                 <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
                 <% if (selectedTranscript.run_duration_ms) { %><dt>Duration</dt><dd><%= (selectedTranscript.run_duration_ms / 1000).toFixed(1) %>s</dd><% } %>
+                <% if (selectedTranscript.input_tokens != null || selectedTranscript.output_tokens != null) { %>
+                  <dt>Tokens</dt>
+                  <dd><%= (selectedTranscript.input_tokens || 0).toLocaleString() %> in / <%= (selectedTranscript.output_tokens || 0).toLocaleString() %> out</dd>
+                <% } %>
+                <% if (selectedTranscript.cost_usd != null) { %>
+                  <dt>Est. cost</dt>
+                  <dd>$<%= selectedTranscript.cost_usd < 0.01 ? selectedTranscript.cost_usd.toFixed(4) : selectedTranscript.cost_usd.toFixed(2) %> <span class="field-hint-inline">(estimated)</span></dd>
+                <% } %>
+                <% if (selectedTranscript.confidence != null) { %>
+                  <dt>Confidence</dt>
+                  <dd><%= selectedTranscript.confidence %>/100 <span class="field-hint-inline">(model self-assessment)</span></dd>
+                <% } %>
+                <%
+                  const _markerCount = ((selectedTranscript.content || '').match(/\[[^\]]+\]/g) || []).length;
+                  const _usesDefaultTaxonomy = selectedTranscript.prompt && selectedTranscript.prompt.includes('[illegible]');
+                %>
+                <% if (_markerCount > 0 || _usesDefaultTaxonomy) { %>
+                  <dt>Uncertainty markers</dt>
+                  <dd><%= _markerCount %> <span class="field-hint-inline">(<code>[…]</code> patterns in transcript<% if (selectedTranscript.prompt && !_usesDefaultTaxonomy) { %> — custom prompt, taxonomy may differ<% } else if (!selectedTranscript.prompt) { %> — prompt not recorded<% } %>)</span></dd>
+                <% } %>
                 <% if (selectedTranscript.provider_key_scope) { %><dt>Credentials</dt><dd><%= selectedTranscript.provider_key_scope === 'user' ? 'Personal API key' : 'System API key' %></dd><% } %>
                 <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
               </dl>
