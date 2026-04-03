@@ -422,6 +422,79 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   `
   ALTER TABLE user_api_keys ADD COLUMN utility_input_cost_per_mtok REAL;
   ALTER TABLE user_api_keys ADD COLUMN utility_output_cost_per_mtok REAL
+  `,
+
+  // v35 — unknown word count per transcript (count of [illegible] and [unclear:...])
+  `ALTER TABLE transcripts ADD COLUMN unknown_word_count INTEGER`,
+
+  // v36 — per-collection analytics snapshot
+  `
+  CREATE TABLE IF NOT EXISTS collection_analytics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    document_count INTEGER NOT NULL DEFAULT 0,
+    storage_bytes INTEGER NOT NULL DEFAULT 0,
+    transcribed_count INTEGER NOT NULL DEFAULT 0,
+    untranscribed_count INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd REAL,
+    avg_confidence REAL,
+    avg_unknown_words REAL,
+    page_count_at_run INTEGER NOT NULL DEFAULT 0,
+    topics_computed INTEGER NOT NULL DEFAULT 0
+  )
+  `,
+
+  // v37 — per-document embeddings (keyed on document_id + collection_id)
+  `
+  CREATE TABLE IF NOT EXISTS document_embeddings (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    embedding TEXT NOT NULL,
+    embedding_model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (document_id, collection_id)
+  )
+  `,
+
+  // v38 — topic definitions per collection (replaced on every analytics run)
+  `
+  CREATE TABLE IF NOT EXISTS collection_topics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL,
+    topic_label TEXT NOT NULL,
+    topic_words TEXT NOT NULL,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    parent_topic_id INTEGER,
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now'))
+  )
+  `,
+
+  // v39 — per-document topic assignments + UMAP coordinates (replaced on every analytics run)
+  `
+  CREATE TABLE IF NOT EXISTS document_topic_assignments (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL,
+    probability REAL,
+    x_coord REAL,
+    y_coord REAL,
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (document_id, collection_id)
+  )
+  `,
+
+  // v40 — topic evolution over time (replaced on every analytics run)
+  `
+  CREATE TABLE IF NOT EXISTS topic_evolution (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL,
+    time_period TEXT NOT NULL,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now'))
+  )
   `
 ];
 
@@ -2665,6 +2738,133 @@ const transcriptsAsync = {
   }
 };
 
+const collectionAnalyticsAsync = {
+  async getLatest(collectionId) {
+    return await getAsync(
+      `SELECT * FROM collection_analytics WHERE collection_id = ? ORDER BY computed_at DESC LIMIT 1`,
+      [collectionId]
+    );
+  },
+
+  async upsert(data) {
+    const { collection_id, document_count, storage_bytes, transcribed_count,
+            untranscribed_count, total_cost_usd, avg_confidence, avg_unknown_words,
+            page_count_at_run, topics_computed } = data;
+    const result = await runAsync(`
+      INSERT INTO collection_analytics
+        (collection_id, document_count, storage_bytes, transcribed_count,
+         untranscribed_count, total_cost_usd, avg_confidence, avg_unknown_words,
+         page_count_at_run, topics_computed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [collection_id, document_count, storage_bytes, transcribed_count,
+        untranscribed_count, total_cost_usd, avg_confidence, avg_unknown_words,
+        page_count_at_run, topics_computed ? 1 : 0]);
+    return result.lastInsertRowid;
+  },
+
+  async getAllLatest() {
+    return await allAsync(`
+      SELECT ca.*, c.name as collection_name
+      FROM collection_analytics ca
+      JOIN collections c ON c.id = ca.collection_id
+      WHERE ca.computed_at = (
+        SELECT MAX(ca2.computed_at) FROM collection_analytics ca2
+        WHERE ca2.collection_id = ca.collection_id
+      )
+      ORDER BY c.name
+    `);
+  }
+};
+
+const documentEmbeddingsAsync = {
+  async getByCollection(collectionId) {
+    const rows = await allAsync(
+      `SELECT document_id, embedding, embedding_model, computed_at
+       FROM document_embeddings WHERE collection_id = ?`,
+      [collectionId]
+    );
+    return rows.map(r => ({ ...r, embedding: JSON.parse(r.embedding) }));
+  },
+
+  async upsert(documentId, collectionId, embedding, model) {
+    await runAsync(`
+      INSERT OR REPLACE INTO document_embeddings
+        (document_id, collection_id, embedding, embedding_model, computed_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `, [documentId, collectionId, JSON.stringify(embedding), model]);
+  },
+
+  async bulkUpsert(collectionId, entries) {
+    for (const e of entries) {
+      await this.upsert(e.document_id, collectionId, e.embedding, e.embedding_model);
+    }
+  }
+};
+
+const collectionTopicsAsync = {
+  async getByCollection(collectionId) {
+    const rows = await allAsync(
+      `SELECT * FROM collection_topics WHERE collection_id = ? ORDER BY document_count DESC`,
+      [collectionId]
+    );
+    return rows.map(r => ({ ...r, topic_words: JSON.parse(r.topic_words) }));
+  },
+
+  async replaceForCollection(collectionId, topics) {
+    await runAsync(`DELETE FROM collection_topics WHERE collection_id = ?`, [collectionId]);
+    for (const t of topics) {
+      await runAsync(`
+        INSERT INTO collection_topics
+          (collection_id, topic_id, topic_label, topic_words, document_count, parent_topic_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [collectionId, t.topic_id, t.topic_label, JSON.stringify(t.topic_words),
+          t.document_count, t.parent_topic_id ?? null]);
+    }
+  }
+};
+
+const documentTopicAssignmentsAsync = {
+  async getByCollection(collectionId) {
+    return await allAsync(`
+      SELECT dta.*, d.title, d.date_created
+      FROM document_topic_assignments dta
+      JOIN documents d ON d.id = dta.document_id
+      WHERE dta.collection_id = ?
+    `, [collectionId]);
+  },
+
+  async replaceForCollection(collectionId, assignments) {
+    await runAsync(`DELETE FROM document_topic_assignments WHERE collection_id = ?`, [collectionId]);
+    for (const a of assignments) {
+      await runAsync(`
+        INSERT INTO document_topic_assignments
+          (document_id, collection_id, topic_id, probability, x_coord, y_coord)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [a.document_id, collectionId, a.topic_id, a.probability ?? null,
+          a.x_coord ?? null, a.y_coord ?? null]);
+    }
+  }
+};
+
+const topicEvolutionAsync = {
+  async getByCollection(collectionId) {
+    return await allAsync(
+      `SELECT * FROM topic_evolution WHERE collection_id = ? ORDER BY time_period, topic_id`,
+      [collectionId]
+    );
+  },
+
+  async replaceForCollection(collectionId, evolutionData) {
+    await runAsync(`DELETE FROM topic_evolution WHERE collection_id = ?`, [collectionId]);
+    for (const e of evolutionData) {
+      await runAsync(`
+        INSERT INTO topic_evolution (collection_id, topic_id, time_period, document_count)
+        VALUES (?, ?, ?, ?)
+      `, [collectionId, e.topic_id, e.time_period, e.document_count]);
+    }
+  }
+};
+
 const settingsAsync = {
   async get(key) {
     const row = await getAsync('SELECT value FROM settings WHERE key = ?', [key]);
@@ -3364,5 +3564,10 @@ module.exports = {
   userApiKeysAsync,
   mfaRememberTokensAsync,
   documentEventsAsync,
-  roleAtLeast
+  roleAtLeast,
+  collectionAnalyticsAsync,
+  documentEmbeddingsAsync,
+  collectionTopicsAsync,
+  documentTopicAssignmentsAsync,
+  topicEvolutionAsync
 };
