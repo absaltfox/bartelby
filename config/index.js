@@ -46,7 +46,8 @@ const config = {
     imageRef: process.env.FLY_IMAGE_REF || '',
     region: process.env.FLY_REGION || process.env.PRIMARY_REGION || 'iad',
     workerCpus: parseInt(process.env.PDF_WORKER_CPUS || '4', 10),
-    workerMemoryMb: parseInt(process.env.PDF_WORKER_MEMORY_MB || '2048', 10)
+    workerMemoryMb: parseInt(process.env.PDF_WORKER_MEMORY_MB || '2048', 10),
+    analyticsWorkerMemoryMb: parseInt(process.env.ANALYTICS_WORKER_MEMORY_MB || '4096', 10)
   },
   database: {
     driver: process.env.DATABASE_DRIVER || 'sqljs',

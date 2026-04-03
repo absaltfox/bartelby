@@ -182,11 +182,138 @@ async function shouldRunAnalytics(collectionId) {
   return (Date.now() - lastRun) >= intervalMs;
 }
 
+const { spawn } = require('child_process');
+const os = require('os');
+
+async function runBertopicAnalysis(collectionId) {
+  const cfg = require('../config');
+
+  // On Fly: dispatch to ephemeral machine with enough RAM for ML workloads.
+  // Machine writes results to DB and sets topics_computed = 1 when done.
+  if (cfg.flyMachines.enabled) {
+    const { runEphemeralBertopicWorker } = require('./fly-machines');
+    await runEphemeralBertopicWorker(collectionId);
+    return 'dispatched';
+  }
+
+  // Local path: spawn Python directly
+  const db = require('../database/db');
+
+  const docs = await allAsync(`
+    SELECT d.id, d.title, d.date_created, t.content
+    FROM documents d
+    JOIN document_collections dc ON dc.document_id = d.id
+    JOIN transcripts t ON t.document_id = d.id AND t.is_best = 1
+    WHERE dc.collection_id = ?
+  `, [collectionId]);
+
+  if (docs.length < 5) {
+    console.log(`[analytics] collection ${collectionId}: fewer than 5 transcribed docs, skipping BERTopic`);
+    return false;
+  }
+
+  const existingRows = await db.documentEmbeddingsAsync.getByCollection(collectionId);
+  const existingEmbeddings = {};
+  for (const row of existingRows) {
+    existingEmbeddings[String(row.document_id)] = row.embedding;
+  }
+
+  const inputPath = path.join(os.tmpdir(), `bertopic_in_${collectionId}_${Date.now()}.json`);
+  const outputPath = path.join(os.tmpdir(), `bertopic_out_${collectionId}_${Date.now()}.json`);
+
+  fs.writeFileSync(inputPath, JSON.stringify({
+    collection_id: collectionId,
+    documents: docs.map(d => ({
+      id: d.id,
+      text: d.content || d.title || '',
+      date_created: d.date_created || null
+    })),
+    existing_embeddings: existingEmbeddings,
+    embedding_model: 'all-MiniLM-L6-v2'
+  }));
+
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'bertopic_analysis.py');
+  await new Promise((resolve, reject) => {
+    const proc = spawn('python3', [scriptPath, '--input', inputPath, '--output', outputPath], {
+      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    });
+    const stderr = [];
+    proc.stderr.on('data', d => stderr.push(d.toString()));
+    proc.on('close', code => {
+      console.log(`[analytics] BERTopic stderr: ${stderr.join('')}`);
+      if (code !== 0) reject(new Error(`BERTopic exited with code ${code}: ${stderr.join('')}`));
+      else resolve();
+    });
+  });
+
+  const raw = fs.readFileSync(outputPath, 'utf8');
+  const result = JSON.parse(raw);
+  try { fs.unlinkSync(inputPath); } catch {}
+  try { fs.unlinkSync(outputPath); } catch {}
+
+  if (result.error || result.skipped) {
+    console.log(`[analytics] BERTopic skipped for collection ${collectionId}: ${result.reason || result.error}`);
+    return false;
+  }
+
+  if (result.new_embeddings && Object.keys(result.new_embeddings).length > 0) {
+    const entries = Object.entries(result.new_embeddings).map(([docId, emb]) => ({
+      document_id: parseInt(docId),
+      embedding: emb,
+      embedding_model: 'all-MiniLM-L6-v2'
+    }));
+    await db.documentEmbeddingsAsync.bulkUpsert(collectionId, entries);
+  }
+
+  if (result.topics?.length) await db.collectionTopicsAsync.replaceForCollection(collectionId, result.topics);
+  if (result.assignments?.length) await db.documentTopicAssignmentsAsync.replaceForCollection(collectionId, result.assignments);
+  if (result.evolution?.length) await db.topicEvolutionAsync.replaceForCollection(collectionId, result.evolution);
+
+  return true;
+}
+
+async function runAnalyticsForCollection(collectionId) {
+  console.log(`[analytics] starting for collection ${collectionId}`);
+  const db = require('../database/db');
+
+  const stats = await computeCollectionStats(collectionId);
+
+  let topicsOk = false;
+  if (stats.transcribed_count >= 5) {
+    const result = await runBertopicAnalysis(collectionId).catch(err => {
+      console.error(`[analytics] BERTopic failed for collection ${collectionId}:`, err.message);
+      return false;
+    });
+    // 'dispatched' = Fly machine will update topics_computed async
+    topicsOk = result === 'dispatched' ? false : result;
+  }
+
+  stats.topics_computed = topicsOk;
+  await db.collectionAnalyticsAsync.upsert(stats);
+
+  console.log(`[analytics] done for collection ${collectionId}. topics_computed=${topicsOk}`);
+  return stats;
+}
+
+async function runScheduledAnalytics() {
+  const collections = await allAsync(`SELECT id FROM collections`);
+  for (const col of collections) {
+    if (await shouldRunAnalytics(col.id)) {
+      await runAnalyticsForCollection(col.id).catch(err => {
+        console.error(`[analytics] error for collection ${col.id}:`, err.message);
+      });
+    }
+  }
+}
+
 module.exports = {
   countUnknownWords,
   computeCollectionStats,
   computeStorageBytes,
   hasSignificantChange,
   shouldRunAnalytics,
-  getScheduleIntervalMs
+  getScheduleIntervalMs,
+  runBertopicAnalysis,
+  runAnalyticsForCollection,
+  runScheduledAnalytics
 };
