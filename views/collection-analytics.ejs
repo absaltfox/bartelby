@@ -115,7 +115,7 @@ function formatBytes(bytes) {
               </div>
               <div class="topic-card-words">
                 <% topic.topic_words.slice(0, 6).forEach(function(w) { %>
-                  <span class="topic-word" style="opacity: <%= 0.5 + 0.5 * (w.weight / topic.topic_words[0].weight) %>"><%= w.word %></span>
+                  <span class="topic-word" style="opacity: <%= topic.topic_words[0].weight ? (0.5 + 0.5 * (w.weight / topic.topic_words[0].weight)).toFixed(3) : 1 %>"><%= w.word %></span>
                 <% }); %>
               </div>
             </div>
