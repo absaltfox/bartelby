@@ -483,6 +483,7 @@ router.get('/documents/:id', async (req, res) => {
   // Determine user's permission level on this document
   let canEdit = isAdmin;
   let canManage = isAdmin;
+  let jobsHref = null;
   if (!user) {
     canEdit = false;
     canManage = false;
@@ -492,6 +493,15 @@ router.get('/documents/:id', async (req, res) => {
   } else if (accessAll) {
     canEdit = false;
     canManage = false;
+  }
+
+  if (pendingJob) {
+    if (isAdmin) {
+      jobsHref = '/admin/jobs';
+    } else if (canManage && user) {
+      const managerCollectionId = await userCollectionAccessAsync.getManagerCollectionIdForDocument(user.id, doc.id);
+      if (managerCollectionId) jobsHref = `/manage/collections/${managerCollectionId}/jobs`;
+    }
   }
 
   // Check if export is allowed on any of this document's collections
@@ -507,6 +517,7 @@ router.get('/documents/:id', async (req, res) => {
     annotations: transcriptAnnotations,
     docCollections,
     pendingJob: pendingJob || null,
+    jobsHref,
     backHref,
     canEdit: canEdit || canManage,
     canManage,

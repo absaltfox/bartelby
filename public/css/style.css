@@ -3395,6 +3395,29 @@ details[open] summary::before { content: '▾ ' !important; }
   font-size: 0.88rem;
 }
 
+.pagination-btn {
+  display: inline-block;
+  padding: 5px 14px;
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: var(--surface);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.pagination-btn:hover {
+  background: var(--accent);
+  color: var(--parchment);
+  border-color: var(--accent);
+}
+.pagination-btn--disabled {
+  color: var(--ink-muted);
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.45;
+}
+
 .btn-sm {
   min-height: var(--btn-height-sm);
   padding: 4px 10px;

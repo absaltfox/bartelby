@@ -163,11 +163,14 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
 
   const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
 
-  const allTJobs = await transcriptionJobsAsync.getAll();
-  const tJobs = allTJobs.filter(j => docIds.includes(j.document_id)).map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobs = (await importJobsAsync.getByUserId(req.user.id)).map(j => ({ ...j, job_type: 'import' }));
+  const [tJobsRaw, iJobs] = await Promise.all([
+    transcriptionJobsAsync.getByDocumentIds(docIds),
+    importJobsAsync.getByUserId(req.user.id)
+  ]);
+  const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
+  const iJobsTagged = iJobs.map(j => ({ ...j, job_type: 'import' }));
 
-  let jobs = [...iJobs, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  let jobs = [...iJobsTagged, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const counts = {
     total: jobs.length,
@@ -178,7 +181,7 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
   };
 
   const typeCounts = {
-    import: iJobs.length,
+    import: iJobsTagged.length,
     transcription: tJobs.length
   };
 
@@ -218,9 +221,12 @@ router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager
   const collectionId = parseInt(req.params.collectionId);
   const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
 
-  const allTJobs = await transcriptionJobsAsync.getAll();
-  const tJobs = allTJobs.filter(j => docIds.includes(j.document_id)).map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobs = (await importJobsAsync.getByUserId(req.user.id)).map(j => ({ ...j, job_type: 'import' }));
+  const [tJobsRaw, iJobsRaw] = await Promise.all([
+    transcriptionJobsAsync.getByDocumentIds(docIds),
+    importJobsAsync.getByUserId(req.user.id)
+  ]);
+  const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
+  const iJobs = iJobsRaw.map(j => ({ ...j, job_type: 'import' }));
   const jobs = [...iJobs, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const counts = {

@@ -388,6 +388,16 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   // v28 — persist manual/AI grouping state on import jobs
   `
   ALTER TABLE import_jobs ADD COLUMN grouping_state TEXT
+  `,
+
+  // v29 — optional utility model override on personal API keys (title/summary generation)
+  `
+  ALTER TABLE user_api_keys ADD COLUMN utility_model TEXT
+  `,
+
+  // v30 — checkpoint partial page results so retried jobs resume from the failed page
+  `
+  ALTER TABLE transcription_jobs ADD COLUMN partial_results TEXT
   `
 ];
 
@@ -1462,7 +1472,7 @@ const userInvites = {
 const userApiKeys = {
   getByUserId(userId) {
     return all(`
-      SELECT id, user_id, provider, label, model, vision_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, model, vision_model, utility_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -1471,23 +1481,24 @@ const userApiKeys = {
 
   getByIdForUser(id, userId) {
     return get(`
-      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, utility_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
   },
 
-  create({ userId, provider, label, apiKey, model, visionModel }) {
+  create({ userId, provider, label, apiKey, model, visionModel, utilityModel }) {
     const result = run(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
       label,
       encryptSecret(apiKey),
       model || null,
-      visionModel || null
+      visionModel || null,
+      utilityModel || null
     ]);
     return result.lastInsertRowid;
   },
@@ -1870,6 +1881,44 @@ const transcriptionJobsAsync = {
     `);
   },
 
+  async getByDocumentIds(docIds) {
+    if (!docIds || docIds.length === 0) return [];
+    const placeholders = docIds.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.document_id IN (${placeholders})
+      ORDER BY j.created_at DESC
+    `, docIds);
+  },
+
+  async getActiveByDocumentIds(docIds) {
+    if (!docIds || docIds.length === 0) return [];
+    const placeholders = docIds.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.document_id IN (${placeholders}) AND j.status IN ('queued','running')
+      ORDER BY j.created_at DESC
+    `, docIds);
+  },
+
+  async savePartialResults(id, results) {
+    await db.run('UPDATE transcription_jobs SET partial_results = ? WHERE id = ?', [JSON.stringify(results), id]);
+  },
+
+  async getPartialResults(id) {
+    const row = await getAsync('SELECT partial_results FROM transcription_jobs WHERE id = ?', [id]);
+    if (!row || !row.partial_results) return [];
+    try { return JSON.parse(row.partial_results); } catch { return []; }
+  },
+
+  async clearPartialResults(id) {
+    await db.run('UPDATE transcription_jobs SET partial_results = NULL WHERE id = ?', [id]);
+  },
+
   async retry(id) {
     await db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ? AND status = 'failed'", [id]);
     await saveDatabase();
@@ -1941,6 +1990,107 @@ const importJobsAsync = {
 
   async delete(id) {
     return await runAsync("DELETE FROM import_jobs WHERE id = ?", [id]);
+  }
+};
+
+// Combined admin jobs helpers (paginated UNION across both job tables)
+const adminJobsAsync = {
+  // Overall + per-type counts (no filter applied — used for tab badges)
+  async getCounts() {
+    const row = await getAsync(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
+        SUM(CASE WHEN status IN ('running','processing') THEN 1 ELSE 0 END) AS running,
+        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN job_type = 'import' THEN 1 ELSE 0 END) AS import_count,
+        SUM(CASE WHEN job_type = 'transcription' THEN 1 ELSE 0 END) AS transcription_count
+      FROM (
+        SELECT status, 'transcription' AS job_type FROM transcription_jobs
+        UNION ALL
+        SELECT status, 'import' AS job_type FROM import_jobs
+      )
+    `);
+    return {
+      counts: {
+        total: row.total || 0,
+        queued: row.queued || 0,
+        running: row.running || 0,
+        done: row.done || 0,
+        failed: row.failed || 0
+      },
+      typeCounts: {
+        import: row.import_count || 0,
+        transcription: row.transcription_count || 0
+      }
+    };
+  },
+
+  // Total count for the current filter combination (for page count)
+  async getFilteredCount(statusFilter, typeFilter) {
+    const statusCond = statusFilter === 'all' ? '1=1'
+      : statusFilter === 'running' ? "status IN ('running','processing')"
+      : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
+    const typeCond = typeFilter === 'all' ? '1=1'
+      : "job_type = '" + (typeFilter === 'import' ? 'import' : 'transcription') + "'";
+    const row = await getAsync(`
+      SELECT COUNT(*) AS n FROM (
+        SELECT status, 'transcription' AS job_type FROM transcription_jobs
+        UNION ALL
+        SELECT status, 'import' AS job_type FROM import_jobs
+      ) WHERE ${statusCond} AND ${typeCond}
+    `);
+    return row ? (row.n || 0) : 0;
+  },
+
+  // Paginated combined job list
+  async getPage(limit, offset, statusFilter, typeFilter) {
+    const statusCond = statusFilter === 'all' ? '1=1'
+      : statusFilter === 'running' ? "status IN ('running','processing')"
+      : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
+    const typeCond = typeFilter === 'all' ? '1=1'
+      : "job_type = '" + (typeFilter === 'import' ? 'import' : 'transcription') + "'";
+    return await allAsync(`
+      SELECT * FROM (
+        SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
+               j.document_id, j.started_at, j.completed_at, j.error, j.log,
+               j.provider, j.model, d.title AS document_title,
+               NULL AS original_name, NULL AS page_count, NULL AS pages_rendered, NULL AS submitted
+        FROM transcription_jobs j
+        LEFT JOIN documents d ON j.document_id = d.id
+        UNION ALL
+        SELECT id, created_at, status, 'import' AS job_type,
+               NULL AS document_id, started_at, completed_at, error, NULL AS log,
+               NULL AS provider, NULL AS model, NULL AS document_title,
+               original_name, page_count, pages_rendered, submitted
+        FROM import_jobs
+      ) combined
+      WHERE ${statusCond} AND ${typeCond}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+  },
+
+  // Active jobs only (for AJAX polling — avoids full table scan)
+  async getActive() {
+    return await allAsync(`
+      SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
+             j.document_id, j.started_at, j.completed_at, j.error,
+             j.provider, d.title AS document_title,
+             NULL AS original_name, NULL AS page_count, NULL AS pages_rendered
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.status IN ('queued','running')
+      UNION ALL
+      SELECT id, created_at, status, 'import' AS job_type,
+             NULL AS document_id, started_at, completed_at, error,
+             NULL AS provider, NULL AS document_title,
+             original_name, page_count, pages_rendered
+      FROM import_jobs
+      WHERE status IN ('processing','queued')
+      ORDER BY created_at DESC
+    `);
   }
 };
 
@@ -2519,7 +2669,7 @@ const settingsAsync = {
 const userApiKeysAsync = {
   async getByUserId(userId) {
     return await allAsync(`
-      SELECT id, user_id, provider, label, model, vision_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, model, vision_model, utility_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE user_id = ?
       ORDER BY provider, label, created_at
@@ -2528,7 +2678,7 @@ const userApiKeysAsync = {
 
   async getByIdForUser(id, userId) {
     return await getAsync(`
-      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, created_at, updated_at, last_used_at
+      SELECT id, user_id, provider, label, encrypted_key, model, vision_model, utility_model, created_at, updated_at, last_used_at
       FROM user_api_keys
       WHERE id = ? AND user_id = ?
     `, [id, userId]);
@@ -2562,17 +2712,18 @@ const userApiKeysAsync = {
     }, {});
   },
 
-  async create({ userId, provider, label, apiKey, model, visionModel }) {
+  async create({ userId, provider, label, apiKey, model, visionModel, utilityModel }) {
     const result = await runAsync(`
-      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO user_api_keys (user_id, provider, label, encrypted_key, model, vision_model, utility_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       userId,
       provider,
       label,
       encryptSecret(apiKey),
       model || null,
-      visionModel || null
+      visionModel || null,
+      utilityModel || null
     ]);
     return result.lastInsertRowid;
   },
@@ -2729,6 +2880,16 @@ const userCollectionAccessAsync = {
   async getEditableCollectionIds(userId) {
     const rows = await allAsync("SELECT collection_id FROM user_collection_access WHERE user_id = ? AND role IN ('editor', 'manager')", [userId]);
     return rows.map(r => r.collection_id);
+  },
+
+  async getManagerCollectionIdForDocument(userId, documentId) {
+    const row = await getAsync(`
+      SELECT uca.collection_id FROM user_collection_access uca
+      INNER JOIN document_collections dc ON dc.collection_id = uca.collection_id
+      WHERE uca.user_id = ? AND dc.document_id = ? AND uca.role = 'manager'
+      LIMIT 1
+    `, [userId, documentId]);
+    return row ? row.collection_id : null;
   },
 
   async hasRoleOnDocumentCollections(userId, documentId, minRole) {
@@ -3151,6 +3312,7 @@ module.exports = {
   transcriptionJobsAsync,
   importJobs,
   importJobsAsync,
+  adminJobsAsync,
   documentsAsync,
   transcriptsAsync,
   annotationsAsync,

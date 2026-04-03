@@ -77,8 +77,8 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
     const plainFields = [
       'default_provider',
       'transcription_prompt',
-      'openai_model', 'openai_vision_model',
-      'anthropic_model', 'anthropic_vision_model',
+      'openai_model', 'openai_vision_model', 'openai_utility_model',
+      'anthropic_model', 'anthropic_vision_model', 'anthropic_utility_model',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];

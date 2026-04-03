@@ -136,6 +136,7 @@ function resolveProviderSelection(user, provider, sourceValue) {
   const rc = { apiKey: key.api_key };
   if (key.model) rc.model = key.model;
   if (key.vision_model) rc.visionModel = key.vision_model;
+  if (key.utility_model) rc.utilityModel = key.utility_model;
 
   return {
     provider,
@@ -176,6 +177,7 @@ async function resolveProviderSelectionAsync(user, provider, sourceValue) {
   const rc = { apiKey: key.api_key };
   if (key.model) rc.model = key.model;
   if (key.vision_model) rc.visionModel = key.vision_model;
+  if (key.utility_model) rc.utilityModel = key.utility_model;
 
   return {
     provider,

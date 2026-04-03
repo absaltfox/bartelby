@@ -66,8 +66,13 @@
       </div>
       <div class="form-group">
         <label for="vision_model">Vision model <span class="field-hint-inline">(optional)</span></label>
-        <input type="text" id="vision_model" name="vision_model" placeholder="e.g. gpt-4o-mini or claude-3-5-haiku-20241022" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        <input type="text" id="vision_model" name="vision_model" placeholder="e.g. gpt-4o-mini or claude-haiku-4-5-20251001" <%= canEncryptSecrets ? '' : 'disabled' %>>
         <p class="field-hint">Cheap vision model for detecting archival page numbers during PDF import. Leave blank to use the system default.</p>
+      </div>
+      <div class="form-group">
+        <label for="utility_model">Utility model <span class="field-hint-inline">(optional)</span></label>
+        <input type="text" id="utility_model" name="utility_model" placeholder="e.g. gpt-4o-mini or claude-haiku-4-5-20251001" <%= canEncryptSecrets ? '' : 'disabled' %>>
+        <p class="field-hint">Cheap text model for generating document titles and summaries. Leave blank to use the system default.</p>
       </div>
       <div class="form-actions">
         <button type="submit" class="btn-primary" <%= canEncryptSecrets ? '' : 'disabled' %>>Add Personal Key</button>
@@ -85,6 +90,7 @@
               <th>Label</th>
               <th>Model</th>
               <th>Vision Model</th>
+              <th>Utility Model</th>
               <th>Added</th>
               <th>Last Used</th>
               <th>Actions</th>
@@ -97,6 +103,7 @@
                 <td><%= key.label %></td>
                 <td class="muted"><%= key.model || '—' %></td>
                 <td class="muted"><%= key.vision_model || '—' %></td>
+                <td class="muted"><%= key.utility_model || '—' %></td>
                 <td class="user-date-cell"><%= new Date(key.created_at).toLocaleDateString() %></td>
                 <td class="user-date-cell"><%= key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : '—' %></td>
                 <td class="user-actions-cell">

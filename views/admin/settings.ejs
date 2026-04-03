@@ -88,6 +88,13 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                placeholder="gpt-4o-mini">
         <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code>gpt-4o-mini</code></p>
       </div>
+      <div class="form-group">
+        <label for="openai_utility_model">Utility model <span class="field-hint-inline">(for title &amp; summary)</span></label>
+        <input type="text" id="openai_utility_model" name="openai_utility_model"
+               value="<%= cfg.openai_utility_model || '' %>"
+               placeholder="gpt-4o-mini">
+        <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code>gpt-4o-mini</code></p>
+      </div>
     </section>
 
     <section class="settings-section">
@@ -115,6 +122,13 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                value="<%= cfg.anthropic_vision_model || '' %>"
                placeholder="claude-3-5-haiku-20241022">
         <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code>claude-3-5-haiku-20241022</code></p>
+      </div>
+      <div class="form-group">
+        <label for="anthropic_utility_model">Utility model <span class="field-hint-inline">(for title &amp; summary)</span></label>
+        <input type="text" id="anthropic_utility_model" name="anthropic_utility_model"
+               value="<%= cfg.anthropic_utility_model || '' %>"
+               placeholder="claude-haiku-4-5-20251001">
+        <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code>claude-haiku-4-5-20251001</code></p>
       </div>
     </section>
 

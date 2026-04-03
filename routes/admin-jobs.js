@@ -1,52 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobsAsync, importJobsAsync } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync, adminJobsAsync } = require('../database/db');
 
 router.use(requireAdmin);
 
-// Jobs list page — combined import + transcription jobs
+const PAGE_SIZE = 50;
+
+// Jobs list page — combined import + transcription jobs (paginated)
 router.get('/', async (req, res) => {
   const filter = req.query.filter || 'all';
   const typeFilter = req.query.type || 'all';
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
 
-  // Get transcription jobs and tag them
-  let tJobs = (await transcriptionJobsAsync.getAll()).map(j => ({ ...j, job_type: 'transcription' }));
-  // Get import jobs and tag them
-  let iJobs = (await importJobsAsync.getAll()).map(j => ({ ...j, job_type: 'import' }));
+  const [{ counts, typeCounts }, filteredTotal, jobs] = await Promise.all([
+    adminJobsAsync.getCounts(),
+    adminJobsAsync.getFilteredCount(filter, typeFilter),
+    adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter)
+  ]);
 
-  // Combine and sort by created_at descending
-  let jobs = [...tJobs, ...iJobs].sort((a, b) =>
-    new Date(b.created_at) - new Date(a.created_at)
-  );
-
-  // Compute counts before filtering
-  const counts = {
-    total: jobs.length,
-    queued: jobs.filter(j => j.status === 'queued').length,
-    running: jobs.filter(j => j.status === 'running' || j.status === 'processing').length,
-    done: jobs.filter(j => j.status === 'done').length,
-    failed: jobs.filter(j => j.status === 'failed').length
-  };
-
-  const typeCounts = {
-    import: iJobs.length,
-    transcription: tJobs.length
-  };
-
-  // Apply type filter
-  if (typeFilter !== 'all') {
-    jobs = jobs.filter(j => j.job_type === typeFilter);
-  }
-
-  // Apply status filter
-  if (filter !== 'all') {
-    if (filter === 'running') {
-      jobs = jobs.filter(j => j.status === 'running' || j.status === 'processing');
-    } else {
-      jobs = jobs.filter(j => j.status === filter);
-    }
-  }
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
 
   res.render('admin/jobs', {
     pageTitle: 'Jobs',
@@ -54,7 +28,10 @@ router.get('/', async (req, res) => {
     filter,
     typeFilter,
     counts,
-    typeCounts
+    typeCounts,
+    page,
+    totalPages,
+    filteredTotal
   });
 });
 
@@ -87,21 +64,12 @@ router.post('/api/bulk/delete', express.json(), async (req, res) => {
   res.json({ success: true, count });
 });
 
-// API: combined job list with counts (for AJAX polling)
+// API: active jobs + global counts (for AJAX polling — does not scan historical done/failed rows)
 router.get('/api/all', async (req, res) => {
-  const tJobs = (await transcriptionJobsAsync.getAll()).map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobs = (await importJobsAsync.getAll()).map(j => ({ ...j, job_type: 'import' }));
-  let jobs = [...tJobs, ...iJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  const counts = {
-    total: jobs.length,
-    queued: jobs.filter(j => j.status === 'queued').length,
-    running: jobs.filter(j => j.status === 'running' || j.status === 'processing').length,
-    done: jobs.filter(j => j.status === 'done').length,
-    failed: jobs.filter(j => j.status === 'failed').length
-  };
-  const typeCounts = { import: iJobs.length, transcription: tJobs.length };
-
+  const [{ counts, typeCounts }, jobs] = await Promise.all([
+    adminJobsAsync.getCounts(),
+    adminJobsAsync.getActive()
+  ]);
   res.json({ jobs, counts, typeCounts });
 });
 

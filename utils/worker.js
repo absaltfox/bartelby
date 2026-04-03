@@ -126,8 +126,20 @@ async function tick() {
       } catch (e) {}
     }
 
+    // Load any partial results saved from a previous attempt (checkpoint resume)
+    const savedPartials = await transcriptionJobsAsync.getPartialResults(job.id);
+    const savedByIndex = {};
+    for (const p of savedPartials) savedByIndex[p.pageIndex] = p;
+
     const results = [];
     for (let i = 0; i < imagePaths.length; i++) {
+      // Resume from checkpoint if this page was already transcribed in a prior attempt
+      if (savedByIndex[i]) {
+        await logLine(`Page ${i + 1} of ${imagePaths.length}: resuming from checkpoint`);
+        results.push(savedByIndex[i].result);
+        continue;
+      }
+
       const relPath = imagePaths[i];
       await logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
 
@@ -135,13 +147,11 @@ async function tick() {
 
       // Retry individual page transcription with exponential backoff
       let result;
-      let lastErr;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           result = await provider.transcribeDocument(imageBuffer, 'image/png', opts);
           break;
         } catch (pageErr) {
-          lastErr = pageErr;
           if (isTransientError(pageErr) && attempt < 2) {
             const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
             await logLine(`Transient error on page ${i + 1} (attempt ${attempt + 1}/3): ${pageErr.message}. Retrying in ${delay / 1000}s...`);
@@ -155,6 +165,11 @@ async function tick() {
       results.push(result);
       const dur = result.paradata?.run_duration_ms;
       await logLine(`Page ${i + 1} transcribed${dur ? ` (${(dur / 1000).toFixed(1)}s)` : ''}`);
+
+      // Checkpoint: persist this page's result so a job-level retry can resume here
+      const checkpoint = savedPartials.filter(p => p.pageIndex < i);
+      checkpoint.push({ pageIndex: i, result });
+      await transcriptionJobsAsync.savePartialResults(job.id, checkpoint);
     }
 
     // Combine multi-page results
@@ -214,14 +229,21 @@ async function tick() {
             || /^(untitled|document|page\s*\d*|pdf)/i.test(currentTitle)
             || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle);
           if (looksGeneric) {
-            try {
-              const generated = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
-              if (generated) {
-                updates.title = generated;
-                await logLine(`Generated title: "${generated}"`);
+            // Prefer the title already extracted by the transcription model — avoids a second API call
+            const extractedTitle = (llmMeta.title || '').trim() || null;
+            if (extractedTitle) {
+              updates.title = extractedTitle;
+              await logLine(`Using extracted title: "${extractedTitle}"`);
+            } else {
+              try {
+                const generated = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
+                if (generated) {
+                  updates.title = generated;
+                  await logLine(`Generated title: "${generated}"`);
+                }
+              } catch (titleErr) {
+                await logLine(`Title generation failed (non-fatal): ${titleErr.message}`);
               }
-            } catch (titleErr) {
-              await logLine(`Title generation failed (non-fatal): ${titleErr.message}`);
             }
           }
 
@@ -269,6 +291,7 @@ async function tick() {
     if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
       await userApiKeysAsync.markUsed(job.user_api_key_id, job.requested_by_user_id);
     }
+    await transcriptionJobsAsync.clearPartialResults(job.id);
     await transcriptionJobsAsync.markDone(job.id);
   } catch (err) {
     const msg = err.message || String(err);

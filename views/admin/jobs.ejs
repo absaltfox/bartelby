@@ -15,6 +15,14 @@
         var params = [];
         if (f !== 'all') params.push('filter=' + f);
         if (t !== 'all') params.push('type=' + t);
+        // Reset to page 1 when changing filters
+        return '/admin/jobs' + (params.length ? '?' + params.join('&') : '');
+      }
+      function pageHref(p) {
+        var params = [];
+        if (filter !== 'all') params.push('filter=' + filter);
+        if (typeFilter !== 'all') params.push('type=' + typeFilter);
+        if (p > 1) params.push('page=' + p);
         return '/admin/jobs' + (params.length ? '?' + params.join('&') : '');
       }
     %>
@@ -66,7 +74,7 @@
     </div>
   <% } else { %>
     <div class="workflows-table-wrap">
-      <table class="workflows-table">
+      <table class="workflows-table" style="table-layout:auto;">
         <thead>
           <tr>
             <th class="th-cb"><input type="checkbox" id="header-select-all"></th>
@@ -162,6 +170,27 @@
         </tbody>
       </table>
     </div>
+
+    <% if (totalPages > 1) { %>
+      <div class="pagination">
+        <% if (page > 1) { %>
+          <a href="<%= pageHref(page - 1) %>" class="pagination-btn">&lsaquo; Prev</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+        <% } %>
+
+        <span class="pagination-info">
+          Page <%= page %> of <%= totalPages %>
+          <span class="muted">(<%= filteredTotal %> jobs)</span>
+        </span>
+
+        <% if (page < totalPages) { %>
+          <a href="<%= pageHref(page + 1) %>" class="pagination-btn">Next &rsaquo;</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+        <% } %>
+      </div>
+    <% } %>
   <% } %>
 </div>
 

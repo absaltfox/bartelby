@@ -52,23 +52,26 @@
     <div class="transcription-pending-banner" id="transcription-pending-banner">
       <span class="pending-icon">&#9203;</span>
       <strong>Transcription <%= pendingJob.status === 'running' ? 'in progress' : 'queued' %>.</strong>
-      This document is being transcribed in the background.
-      <a href="/admin/workflows">View workflows</a>
+      This document is being transcribed in the background.<% if (jobsHref) { %>
+      <a href="<%= jobsHref %>">View jobs</a><% } %>
     </div>
     <script>
     (function() {
       var jobId = <%= pendingJob.id %>;
+      var jobsHref = <%- JSON.stringify(jobsHref) %>;
       var banner = document.getElementById('transcription-pending-banner');
       var interval = setInterval(async function() {
         try {
-          var res = await fetch('/admin/workflows/api/' + jobId);
+          var res = await fetch('/admin/jobs/api/' + jobId);
           var job = await res.json();
           if (job.status === 'done') {
             clearInterval(interval);
             window.location.reload();
           } else if (job.status === 'failed') {
             clearInterval(interval);
-            banner.innerHTML = '<span style="color:var(--red)">&#9888; Transcription failed.</span> <a href="/admin/workflows">View details</a>';
+            var msg = '<span style="color:var(--red)">&#9888; Transcription failed.</span>';
+            if (jobsHref) msg += ' <a href="' + jobsHref + '">View details</a>';
+            banner.innerHTML = msg;
           }
         } catch(e) {}
       }, 4000);

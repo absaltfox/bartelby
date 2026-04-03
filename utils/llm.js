@@ -163,6 +163,15 @@ const CHEAP_VISION_MODELS = {
   lmstudio: null  // use configured model (local, no cost)
 };
 
+// Cheapest text models per provider — used for title and summary generation
+// (no image needed; these are fast, cheap text tasks).
+const CHEAP_UTILITY_MODELS = {
+  openai: 'gpt-4o-mini',
+  claude: 'claude-haiku-4-5-20251001',
+  ollama: null,
+  lmstudio: null
+};
+
 // Resolve the vision model name for a provider.
 // Priority: runtimeConfig.visionModel (user key) > system setting > hardcoded default.
 async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
@@ -238,28 +247,31 @@ async function listConfiguredProviders() {
   });
 }
 
-// Create a model instance for text-only calls (title/summary generation)
-async function getModelInstance(providerName, runtimeConfig = {}) {
+// Create a model instance for text-only utility calls (title/summary generation).
+// Uses the cheapest configured model — no image capability required.
+async function getUtilityModelInstance(providerName, runtimeConfig = {}) {
   const cfg = await mergeConfig(runtimeConfig);
+  const userUtilityModel = runtimeConfig.utilityModel || null;
+
   switch (providerName) {
     case 'openai': {
       const apiKey = runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY;
-      const model = runtimeConfig.model || cfg.openai_model || 'gpt-4o';
+      const model = userUtilityModel || cfg.openai_utility_model || CHEAP_UTILITY_MODELS.openai;
       return createOpenAI({ apiKey })(model);
     }
     case 'claude': {
       const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
-      const model = runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
+      const model = userUtilityModel || cfg.anthropic_utility_model || CHEAP_UTILITY_MODELS.claude;
       return createAnthropic({ apiKey })(model);
     }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-      const model = runtimeConfig.model || cfg.ollama_model || 'llava';
+      const model = userUtilityModel || cfg.ollama_model || 'llava';
       return createOllama({ baseURL })(model);
     }
     case 'lmstudio': {
       const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
-      const model = runtimeConfig.model || cfg.lmstudio_model || 'local-model';
+      const model = userUtilityModel || cfg.lmstudio_model || 'local-model';
       return createOpenAI({ baseURL, apiKey: 'lmstudio' })(model);
     }
     default:
@@ -325,7 +337,7 @@ Instead, capture the substance (e.g. "Request for Military Pension Disbursement"
 Respond with ONLY the title — no quotes, no explanation, no trailing punctuation.`;
 
 async function generateDocumentTitle(providerName, transcription, runtimeConfig = {}) {
-  const modelInstance = await getModelInstance(providerName, runtimeConfig);
+  const modelInstance = await getUtilityModelInstance(providerName, runtimeConfig);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);
@@ -347,7 +359,7 @@ Write in a neutral, informative tone suitable for a library catalog entry.
 Respond with ONLY the summary — no quotes, no labels, no preamble.`;
 
 async function generateDocumentSummary(providerName, transcription, runtimeConfig = {}) {
-  const modelInstance = await getModelInstance(providerName, runtimeConfig);
+  const modelInstance = await getUtilityModelInstance(providerName, runtimeConfig);
   if (!modelInstance) return null;
 
   const excerpt = transcription.substring(0, 3000);
