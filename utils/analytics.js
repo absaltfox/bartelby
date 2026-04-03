@@ -124,8 +124,69 @@ async function computeCollectionStats(collectionId) {
   };
 }
 
+/**
+ * Returns the analytics schedule interval in milliseconds.
+ * Setting key: analytics_schedule_interval (hours string, default '168' = weekly)
+ */
+async function getScheduleIntervalMs() {
+  const db = require('../database/db');
+  const val = await db.settingsAsync.get('analytics_schedule_interval');
+  const hours = val ? parseFloat(val) : 168;
+  return hours * 60 * 60 * 1000;
+}
+
+/**
+ * Returns true if the collection's document count has grown by more than
+ * thresholdFraction (default 0.10 = 10%) since the last analytics run.
+ * Returns true if analytics have never been run and there are documents.
+ */
+async function hasSignificantChange(collectionId, thresholdFraction = 0.10) {
+  const db = require('../database/db');
+  const latest = await db.collectionAnalyticsAsync.getLatest(collectionId);
+  const row = await getAsync(
+    `SELECT COUNT(*) as cnt FROM document_collections WHERE collection_id = ?`,
+    [collectionId]
+  );
+  const current = row?.cnt ?? 0;
+
+  if (!latest) return current > 0;
+  if (latest.page_count_at_run === 0) return current > 0;
+
+  const delta = current - latest.page_count_at_run;
+  return delta / latest.page_count_at_run > thresholdFraction;
+}
+
+/**
+ * Returns true if analytics should run for the given collection.
+ * Checks: enabled setting, has documents, schedule elapsed, or significant change.
+ */
+async function shouldRunAnalytics(collectionId) {
+  const db = require('../database/db');
+
+  const enabled = await db.settingsAsync.get('analytics_enabled');
+  if (enabled === '0') return false;
+
+  const row = await getAsync(
+    `SELECT COUNT(*) as cnt FROM document_collections WHERE collection_id = ?`,
+    [collectionId]
+  );
+  if (!row?.cnt) return false;
+
+  if (await hasSignificantChange(collectionId)) return true;
+
+  const latest = await db.collectionAnalyticsAsync.getLatest(collectionId);
+  if (!latest) return true;
+
+  const intervalMs = await getScheduleIntervalMs();
+  const lastRun = new Date(latest.computed_at).getTime();
+  return (Date.now() - lastRun) >= intervalMs;
+}
+
 module.exports = {
   countUnknownWords,
   computeCollectionStats,
-  computeStorageBytes
+  computeStorageBytes,
+  hasSignificantChange,
+  shouldRunAnalytics,
+  getScheduleIntervalMs
 };
