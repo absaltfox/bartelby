@@ -2,6 +2,7 @@
 // and processes one job at a time, with retry for transient errors.
 
 const storage = require('./storage');
+const { countUnknownWords } = require('./analytics');
 
 let busy = false;
 
@@ -364,7 +365,8 @@ async function tick() {
       input_tokens: totalInputTokens > 0 ? totalInputTokens : null,
       output_tokens: totalOutputTokens > 0 ? totalOutputTokens : null,
       cost_usd: costUsd,
-      confidence: combined.confidence
+      confidence: combined.confidence,
+      unknown_word_count: countUnknownWords(combined.transcription)
     });
 
     const totalDur = pd.run_duration_ms;

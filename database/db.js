@@ -2609,8 +2609,8 @@ const transcriptsAsync = {
         document_id, content, transcriber, version, notes,
         provider, model, prompt, temperature, initiated_by, run_duration_ms,
         is_best, created_by_user_id, provider_key_scope, page_segments,
-        input_tokens, output_tokens, cost_usd, confidence
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        input_tokens, output_tokens, cost_usd, confidence, unknown_word_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -2630,7 +2630,8 @@ const transcriptsAsync = {
       transcript.input_tokens != null ? transcript.input_tokens : null,
       transcript.output_tokens != null ? transcript.output_tokens : null,
       transcript.cost_usd != null ? transcript.cost_usd : null,
-      transcript.confidence != null ? transcript.confidence : null
+      transcript.confidence != null ? transcript.confidence : null,
+      transcript.unknown_word_count ?? null
     ]);
     return result.lastInsertRowid;
   },
