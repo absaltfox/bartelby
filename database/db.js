@@ -435,7 +435,10 @@ function saveDatabase() {
     _saveTimer = null;
     _saveResolve = null;
     _saveReject = null;
-    try { resolve(db.persist()); } catch (e) { reject(e); }
+    try { resolve(db.persist()); } catch (e) {
+      console.error('[db] Failed to persist database:', e.message);
+      resolve(); // resolve so fire-and-forget callers don't get unhandled rejections
+    }
   }, 300);
   return _savePending;
 }

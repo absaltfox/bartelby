@@ -77,11 +77,18 @@ async function tick() {
   if (busy) return;
 
   const { transcriptionJobsAsync, transcriptsAsync } = require('../database/db');
-  const job = await transcriptionJobsAsync.getNextQueued();
+
+  // getNextQueued outside try/catch would cause an unhandled rejection on DB error
+  let job;
+  try {
+    job = await transcriptionJobsAsync.getNextQueued();
+  } catch (err) {
+    console.error('[worker] Failed to query job queue:', err.message);
+    return;
+  }
   if (!job) return;
 
   busy = true;
-  await transcriptionJobsAsync.markRunning(job.id);
 
   const ts = () => new Date().toISOString();
   const logLine = async (msg) => {
@@ -91,6 +98,7 @@ async function tick() {
   };
 
   try {
+    await transcriptionJobsAsync.markRunning(job.id);
     await logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
 
     const { createProvider } = require('./llm');

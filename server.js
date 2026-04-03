@@ -301,6 +301,18 @@ app.use((req, res) => {
   res.status(404).render('error', { message: 'Page not found', error: {} });
 });
 
+// ── Global error guards ─────────────────────────────────────────────────────
+// Without these, Node.js 15+ exits the process on any unhandled promise
+// rejection, causing Fly.io to restart the machine repeatedly.
+process.on('unhandledRejection', (reason) => {
+  console.error('[crash] Unhandled promise rejection:', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[crash] Uncaught exception:', err);
+  process.exit(1);
+});
+
 // ── Start ──────────────────────────────────────────────────────────────────
 async function start() {
   try {
