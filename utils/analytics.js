@@ -172,7 +172,9 @@ async function shouldRunAnalytics(collectionId) {
   );
   if (!row?.cnt) return false;
 
-  if (await hasSignificantChange(collectionId)) return true;
+  const threshStr = await db.settingsAsync.get('analytics_change_threshold');
+  const threshFraction = threshStr ? parseFloat(threshStr) / 100 : 0.10;
+  if (await hasSignificantChange(collectionId, threshFraction)) return true;
 
   const latest = await db.collectionAnalyticsAsync.getLatest(collectionId);
   if (!latest) return true;

@@ -218,7 +218,11 @@ router.post('/analytics-settings', express.urlencoded({ extended: false }), asyn
 });
 
 router.post('/analytics-settings/run/:collectionId', async (req, res) => {
-  const collectionId = parseInt(req.params.collectionId);
+  const collectionId = parseInt(req.params.collectionId, 10);
+  if (isNaN(collectionId)) {
+    req.session.flashMessage = { type: 'error', text: 'Invalid collection ID.' };
+    return res.redirect('/admin/analytics-settings');
+  }
   try {
     await runAnalyticsForCollection(collectionId);
     req.session.flashMessage = { type: 'success', text: `Analytics run complete for collection ${collectionId}.` };
