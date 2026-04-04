@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpixman-1-dev \
     pkg-config \
     python3 \
+    python3-pip \
+    python3-dev \
     poppler-utils \
   && rm -rf /var/lib/apt/lists/*
 
@@ -22,6 +24,9 @@ RUN npm ci --omit=dev
 
 # Copy application code
 COPY . .
+
+# Install Python ML dependencies for BERTopic analysis
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Create data and temp directories
 RUN mkdir -p /app/data /app/temp /app/public/uploads

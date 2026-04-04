@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { canEncryptSecrets } = require('../utils/secrets');
-const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync } = require('../database/db');
+const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync, saveDatabase, collectionAnalyticsAsync } = require('../database/db');
+const { runAnalyticsForCollection, runScheduledAnalytics } = require('../utils/analytics');
 const { listProviders } = require('../utils/llm');
 const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
 const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
@@ -191,5 +192,50 @@ router.get('/import', async (req, res) => {
 
 // Mount shared import API routes
 router.use('/api', importApiRouter);
+
+router.get('/analytics-settings', async (req, res) => {
+  const settings = await settingsAsync.getAll();
+  const latestStats = await collectionAnalyticsAsync.getAllLatest();
+
+  res.render('admin/analytics-settings', {
+    pageTitle: 'Analytics Settings',
+    settings,
+    latestStats,
+    csrfToken: req.csrfToken(),
+    flashMessage: req.session.flashMessage || null
+  });
+  delete req.session.flashMessage;
+});
+
+router.post('/analytics-settings', express.urlencoded({ extended: false }), async (req, res) => {
+  const { analytics_enabled, analytics_schedule_interval, analytics_change_threshold } = req.body;
+  await settingsAsync.set('analytics_enabled', analytics_enabled === 'on' ? '1' : '0');
+  await settingsAsync.set('analytics_schedule_interval', analytics_schedule_interval || '168');
+  await settingsAsync.set('analytics_change_threshold', analytics_change_threshold || '10');
+  await saveDatabase();
+  req.session.flashMessage = { type: 'success', text: 'Analytics settings saved.' };
+  res.redirect('/admin/analytics-settings');
+});
+
+router.post('/analytics-settings/run/:collectionId', async (req, res) => {
+  const collectionId = parseInt(req.params.collectionId, 10);
+  if (isNaN(collectionId)) {
+    req.session.flashMessage = { type: 'error', text: 'Invalid collection ID.' };
+    return res.redirect('/admin/analytics-settings');
+  }
+  try {
+    await runAnalyticsForCollection(collectionId);
+    req.session.flashMessage = { type: 'success', text: `Analytics run complete for collection ${collectionId}.` };
+  } catch (err) {
+    req.session.flashMessage = { type: 'error', text: `Analytics failed: ${err.message}` };
+  }
+  res.redirect('/admin/analytics-settings');
+});
+
+router.post('/analytics-settings/run-all', async (req, res) => {
+  runScheduledAnalytics().catch(err => console.error('[admin] run-all analytics error:', err));
+  req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections.' };
+  res.redirect('/admin/analytics-settings');
+});
 
 module.exports = router;

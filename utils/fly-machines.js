@@ -90,6 +90,64 @@ async function runEphemeralWorker(importJobId) {
   return machine.id;
 }
 
+/**
+ * Spin up an ephemeral Fly machine to run BERTopic analysis for a collection.
+ * The machine runs bertopic-worker.js in standalone mode, fetches documents from DB,
+ * runs the Python BERTopic script, writes results back to DB, and exits.
+ * auto_destroy ensures Fly cleans up the machine after exit.
+ */
+async function runEphemeralBertopicWorker(collectionId) {
+  const { imageRef, region, analyticsWorkerMemoryMb } = config.flyMachines;
+
+  if (!imageRef) {
+    throw new Error('FLY_IMAGE_REF is not available — are you running on Fly.io?');
+  }
+
+  const env = {
+    BERTOPIC_WORKER_MODE: '1',
+    ANALYTICS_COLLECTION_ID: String(collectionId),
+    NODE_ENV: 'production',
+    // Database
+    DATABASE_DRIVER: process.env.DATABASE_DRIVER || '',
+    TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL || '',
+    TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN || '',
+    // S3 storage
+    STORAGE_DRIVER: 's3',
+    S3_BUCKET: process.env.S3_BUCKET || '',
+    S3_REGION: process.env.S3_REGION || '',
+    S3_ENDPOINT: process.env.S3_ENDPOINT || '',
+    S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID || '',
+    S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY || '',
+    S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE || '',
+    // Encryption
+    DATA_ENCRYPTION_KEY: process.env.DATA_ENCRYPTION_KEY || ''
+  };
+
+  const payload = {
+    name: `bertopic-worker-${collectionId}-${Date.now()}`,
+    region,
+    config: {
+      image: imageRef,
+      guest: {
+        cpu_kind: 'performance',
+        cpus: 2,
+        memory_mb: analyticsWorkerMemoryMb
+      },
+      auto_destroy: true,
+      restart: { policy: 'no' },
+      env,
+      processes: [
+        { cmd: ['node', 'utils/bertopic-worker.js'] }
+      ]
+    }
+  };
+
+  console.log(`[fly-machines] Launching BERTopic worker for collection ${collectionId} (2 CPUs, ${analyticsWorkerMemoryMb}MB RAM, region: ${region})`);
+  const machine = await flyApi('POST', '/machines', payload);
+  console.log(`[fly-machines] Machine ${machine.id} created for collection ${collectionId}`);
+  return machine.id;
+}
+
 async function destroyMachine(machineId) {
   try {
     await flyApi('DELETE', `/machines/${machineId}?force=true`);
@@ -100,4 +158,4 @@ async function destroyMachine(machineId) {
   }
 }
 
-module.exports = { runEphemeralWorker, destroyMachine };
+module.exports = { runEphemeralWorker, runEphemeralBertopicWorker, destroyMachine };

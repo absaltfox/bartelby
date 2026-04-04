@@ -24,6 +24,12 @@
   </div>
   <h1><%= pageTitle %></h1>
   <p class="subtitle"><%= totalCount %> document<%= totalCount !== 1 ? 's' : '' %><% if (!isAll && !isUncollected && collection && collection.description) { %> &mdash; <%= collection.description %><% } %></p>
+  <% if (!isAll && !isUncollected) { %>
+  <div class="collection-tabs">
+    <a href="/collections/<%= collectionId %>" class="collection-tab">Documents</a>
+    <a href="/collections/<%= collectionId %>/analytics" class="collection-tab">Analytics</a>
+  </div>
+  <% } %>
 </div>
 
 <div class="collection-layout">

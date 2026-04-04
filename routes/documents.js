@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase } = require('../database/db');
+const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 const { buildProviderAccessOptionsAsync, resolveProviderSelectionAsync } = require('../utils/provider-access');
@@ -432,6 +432,45 @@ router.get('/collections/:id', async (req, res) => {
     hasActiveFilters,
     currentListUrl: req.originalUrl,
     allowExport: collection && collection.allow_export ? true : false
+  });
+});
+
+// ── Collection analytics view ─────────────────────────────────────────────────
+router.get('/collections/:id/analytics', async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', error: {} });
+
+  const collection = await collectionsAsync.getById(collectionId);
+  if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
+
+  const user = req.user;
+  const userId = user ? user.id : null;
+  const isAdmin = user ? user.role === 'admin' : false;
+  const accessAll = user ? !!user.access_all : false;
+
+  if (!(await collectionsAsync.canAccess(collection.id, userId, isAdmin, accessAll))) {
+    if (!user) {
+      req.session.returnTo = req.originalUrl;
+      return res.redirect('/login');
+    }
+    return res.status(403).render('error', { message: 'Access denied', error: {} });
+  }
+
+  const analytics = await collectionAnalyticsAsync.getLatest(collectionId);
+  const topics = analytics ? (await collectionTopicsAsync.getByCollection(collectionId)).filter(t => t.topic_id !== -1) : [];
+  const assignments = analytics ? await documentTopicAssignmentsAsync.getByCollection(collectionId) : [];
+  const evolution = analytics ? await topicEvolutionAsync.getByCollection(collectionId) : [];
+
+  res.render('collection-analytics', {
+    pageTitle: `${collection.name} — Analytics`,
+    collection,
+    collectionId,
+    analytics,
+    topics,
+    assignments,
+    evolution,
+    currentUser: req.user || null,
+    csrfToken: req.csrfToken ? req.csrfToken() : ''
   });
 });
 
