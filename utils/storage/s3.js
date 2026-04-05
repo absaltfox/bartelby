@@ -26,21 +26,24 @@ const BLOCKED_S3_HOSTS = [
   'metadata.goog',
 ];
 
-if (s3Config.endpoint) {
-  let parsedEndpoint;
+function validateS3Endpoint(endpoint) {
+  if (!endpoint) return;
+  let parsed;
   try {
-    parsedEndpoint = new URL(s3Config.endpoint);
+    parsed = new URL(endpoint);
   } catch {
-    throw new Error(`S3_ENDPOINT is not a valid URL: "${s3Config.endpoint}"`);
+    throw new Error(`S3_ENDPOINT is not a valid URL: "${endpoint}"`);
   }
-  if (parsedEndpoint.protocol !== 'http:' && parsedEndpoint.protocol !== 'https:') {
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('S3_ENDPOINT must use http or https.');
   }
-  const h = parsedEndpoint.hostname.toLowerCase();
+  const h = parsed.hostname.toLowerCase();
   if (BLOCKED_S3_HOSTS.includes(h) || /^169\.254\.\d+\.\d+$/.test(h)) {
     throw new Error('S3_ENDPOINT points to a blocked host.');
   }
 }
+
+validateS3Endpoint(s3Config.endpoint);
 
 const s3 = new S3Client({
   region: s3Config.region || 'us-east-1',
@@ -376,6 +379,7 @@ async function readUploadByUrl(url) {
 module.exports = {
   init,
   sanitizeTempName,
+  validateS3Endpoint,  // exported for testing
   getTempFilePath,
   tempFileExists,
   readTempFile,

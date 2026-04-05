@@ -121,6 +121,7 @@ loadEnv();
 module.exports = {
   ENV_PATH,
   loadEnv,
+  getEncryptionKey,  // exported for testing
   canEncryptSecrets,
   isEncryptedSecret,
   encryptSecret,

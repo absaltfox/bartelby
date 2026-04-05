@@ -8,7 +8,27 @@
     "seed": "node database/seed.js",
     "import": "node utils/import.js",
     "migrate:turso": "node scripts/migrate-to-turso.js",
-    "migrate:s3": "node scripts/migrate-uploads-to-s3.js"
+    "migrate:s3": "node scripts/migrate-uploads-to-s3.js",
+    "test": "jest",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration --runInBand"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 30000,
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "utils/**/*.js",
+      "routes/**/*.js",
+      "middleware/**/*.js",
+      "database/**/*.js"
+    ],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/"
+    ]
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
@@ -36,5 +56,9 @@
     "sharp": "^0.34.5",
     "sql.js": "^1.10.3",
     "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0",
+    "supertest": "^7.2.2"
   }
 }

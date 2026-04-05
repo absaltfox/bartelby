@@ -425,5 +425,6 @@ module.exports = {
   listConfiguredProviders,
   providerNeedsApiKey,
   generateDocumentTitle,
-  generateDocumentSummary
+  generateDocumentSummary,
+  validateLlmBaseUrl   // exported for testing
 };

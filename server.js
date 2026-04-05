@@ -315,13 +315,20 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// ── Initialization (shared by start() and tests) ───────────────────────────
+// Prepares the DB schema and session middleware without binding a port.
+// Tests call this directly; start() calls it then listens.
+async function initApp() {
+  await initializeSchema();
+  sessionMiddleware = await createSessionMiddleware();
+  return app;
+}
+
 // ── Start ──────────────────────────────────────────────────────────────────
 async function start() {
   try {
-    await initializeSchema();
+    await initApp();
     console.log('Database initialized');
-
-    sessionMiddleware = await createSessionMiddleware();
 
     if (config.runtime.startWorker) {
       const { startWorker } = require('./utils/worker');
@@ -364,5 +371,9 @@ async function start() {
   }
 }
 
-start();
-module.exports = app;
+// Only bind a port when run directly (not when required by tests)
+if (require.main === module) {
+  start();
+}
+
+module.exports = { app, initApp };
