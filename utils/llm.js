@@ -5,6 +5,7 @@ require('./secrets').loadEnv();
 const { generateText } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
+const { createGoogleGenerativeAI } = require('@ai-sdk/google');
 const { createOllama } = require('ollama-ai-provider');
 
 // ── SSRF guard ─────────────────────────────────────────────────────────────
@@ -166,6 +167,18 @@ const PROVIDERS = {
     }
   },
 
+  gemini: {
+    name: 'gemini',
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = await mergeConfig(runtimeConfig);
+      const apiKey = runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const model = opts.model || runtimeConfig.model || cfg.google_model || 'gemini-1.5-pro-latest';
+      const temperature = opts.temperature != null ? opts.temperature : null;
+      const client = createGoogleGenerativeAI({ apiKey });
+      return runTranscription(client(model), 'gemini', model, temperature, imageBuffer, mimeType, cfg);
+    }
+  },
+
   ollama: {
     name: 'ollama',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
@@ -199,6 +212,7 @@ const PROVIDERS = {
 const CHEAP_VISION_MODELS = {
   openai: 'gpt-4o-mini',
   claude: 'claude-haiku-4-5-20251001',
+  gemini: 'gemini-1.5-flash-latest',
   ollama: null,   // use configured model (local, no cost)
   lmstudio: null  // use configured model (local, no cost)
 };
@@ -208,6 +222,7 @@ const CHEAP_VISION_MODELS = {
 const CHEAP_UTILITY_MODELS = {
   openai: 'gpt-4o-mini',
   claude: 'claude-haiku-4-5-20251001',
+  gemini: 'gemini-1.5-flash-latest',
   ollama: null,
   lmstudio: null
 };
@@ -229,6 +244,11 @@ async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
       const model = userVisionModel || cfg.anthropic_vision_model || CHEAP_VISION_MODELS.claude;
       return createAnthropic({ apiKey })(model);
     }
+    case 'gemini': {
+      const apiKey = runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const model = userVisionModel || cfg.google_vision_model || CHEAP_VISION_MODELS.gemini;
+      return createGoogleGenerativeAI({ apiKey })(model);
+    }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
       validateLlmBaseUrl(baseURL, 'Ollama');
@@ -247,7 +267,7 @@ async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
 }
 
 function providerNeedsApiKey(name) {
-  return name === 'openai' || name === 'claude';
+  return name === 'openai' || name === 'claude' || name === 'gemini';
 }
 
 async function createProvider(name, runtimeConfig = {}) {
@@ -257,10 +277,13 @@ async function createProvider(name, runtimeConfig = {}) {
   }
   const cfg = await mergeConfig(runtimeConfig);
   if (name === 'openai' && !runtimeConfig.apiKey && !cfg.openai_api_key && !process.env.OPENAI_API_KEY) {
-    throw new Error('OpenAI API key is not configured. Set it in Admin → Settings.');
+    throw new Error('OpenAI API key is not configured. Set it in Admin → LLM Settings.');
   }
   if (name === 'claude' && !runtimeConfig.apiKey && !cfg.anthropic_api_key && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error('Anthropic API key is not configured. Set it in Admin → Settings.');
+    throw new Error('Anthropic API key is not configured. Set it in Admin → LLM Settings.');
+  }
+  if (name === 'gemini' && !runtimeConfig.apiKey && !cfg.google_api_key && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    throw new Error('Google AI API key is not configured. Set it in Admin → LLM Settings.');
   }
   return {
     ...provider,
@@ -284,6 +307,7 @@ async function listConfiguredProviders() {
   return Object.keys(PROVIDERS).filter(name => {
     if (name === 'openai')   return !!(cfg.openai_api_key    || process.env.OPENAI_API_KEY);
     if (name === 'claude')   return !!(cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY);
+    if (name === 'gemini')   return !!(cfg.google_api_key    || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
     // ollama and lmstudio are local — always available
     return true;
   });
@@ -305,6 +329,11 @@ async function getUtilityModelInstance(providerName, runtimeConfig = {}) {
       const apiKey = runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
       const model = userUtilityModel || cfg.anthropic_utility_model || CHEAP_UTILITY_MODELS.claude;
       return createAnthropic({ apiKey })(model);
+    }
+    case 'gemini': {
+      const apiKey = runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const model = userUtilityModel || cfg.google_utility_model || CHEAP_UTILITY_MODELS.gemini;
+      return createGoogleGenerativeAI({ apiKey })(model);
     }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';

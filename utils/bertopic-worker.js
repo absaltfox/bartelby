@@ -14,6 +14,7 @@ if (!collectionId) {
   console.error('[bertopic-worker] ANALYTICS_COLLECTION_ID not set — exiting');
   process.exit(1);
 }
+const analyticsRowId = process.env.ANALYTICS_ROW_ID ? parseInt(process.env.ANALYTICS_ROW_ID, 10) : null;
 
 const path = require('path');
 const fs = require('fs');
@@ -116,14 +117,21 @@ async function main() {
   }
 
   // Mark latest analytics row as topics_computed = 1
-  await rawDb.run(`
-    UPDATE collection_analytics SET topics_computed = 1
-    WHERE id = (
-      SELECT id FROM collection_analytics
-      WHERE collection_id = ?
-      ORDER BY computed_at DESC LIMIT 1
-    )
-  `, [collectionId]);
+  if (analyticsRowId) {
+    await rawDb.run(`
+      UPDATE collection_analytics SET topics_computed = 1
+      WHERE id = ?
+    `, [analyticsRowId]);
+  } else {
+    await rawDb.run(`
+      UPDATE collection_analytics SET topics_computed = 1
+      WHERE id = (
+        SELECT id FROM collection_analytics
+        WHERE collection_id = ?
+        ORDER BY computed_at DESC LIMIT 1
+      )
+    `, [collectionId]);
+  }
 
   await db.saveDatabase();
   console.log(`[bertopic-worker] done for collection ${collectionId}`);

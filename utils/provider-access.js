@@ -6,6 +6,7 @@ const { settings, settingsAsync, userApiKeys, userApiKeysAsync } = require('../d
 function prettifyProviderName(provider) {
   if (provider === 'openai') return 'OpenAI';
   if (provider === 'claude') return 'Claude';
+  if (provider === 'gemini') return 'Gemini';
   if (provider === 'lmstudio') return 'LM Studio';
   if (provider === 'ollama') return 'Ollama';
   return provider.charAt(0).toUpperCase() + provider.slice(1);

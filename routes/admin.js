@@ -82,8 +82,12 @@ router.get('/', async (req, res) => {
   });
 });
 
-// Settings page
-router.get('/settings', async (req, res) => {
+router.get('/settings', (req, res) => {
+  res.redirect('/admin/llm-settings');
+});
+
+// LLM settings page
+router.get('/llm-settings', async (req, res) => {
   res.render('admin/settings', {
     pageTitle: 'LLM Settings',
     cfg: await settingsAsync.getAll(),
@@ -105,8 +109,7 @@ router.get('/application-settings', async (req, res) => {
   });
 });
 
-// Save settings
-router.post('/settings', express.urlencoded({ extended: false }), async (req, res) => {
+async function saveLlmSettings(req, res) {
   try {
     // Non-secret fields: always save (even if empty)
     const plainFields = [
@@ -118,6 +121,9 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
       'anthropic_model', 'anthropic_vision_model', 'anthropic_utility_model',
       'anthropic_input_cost_per_mtok', 'anthropic_output_cost_per_mtok',
       'anthropic_utility_input_cost_per_mtok', 'anthropic_utility_output_cost_per_mtok',
+      'google_model', 'google_vision_model', 'google_utility_model',
+      'google_input_cost_per_mtok', 'google_output_cost_per_mtok',
+      'google_utility_input_cost_per_mtok', 'google_utility_output_cost_per_mtok',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];
@@ -125,7 +131,7 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
       if (req.body[field] !== undefined) await settingsAsync.set(field, req.body[field]);
     }
     // Secret fields: only overwrite if a new non-empty value was submitted
-    const secretFields = ['openai_api_key', 'anthropic_api_key'];
+    const secretFields = ['openai_api_key', 'anthropic_api_key', 'google_api_key'];
     const hasSecretUpdates = secretFields.some(field => req.body[field] && req.body[field].trim() !== '');
     if (hasSecretUpdates && !canEncryptSecrets()) {
       throw new Error('DATA_ENCRYPTION_KEY is not configured. Add it to .env before saving API keys.');
@@ -135,11 +141,15 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
         await settingsAsync.set(field, req.body[field].trim());
       }
     }
-    res.redirect('/admin/settings?saved=1');
+    res.redirect('/admin/llm-settings?saved=1');
   } catch (err) {
-    res.redirect('/admin/settings?error=' + encodeURIComponent(err.message));
+    res.redirect('/admin/llm-settings?error=' + encodeURIComponent(err.message));
   }
-});
+}
+
+// Save LLM settings
+router.post('/settings', express.urlencoded({ extended: false }), saveLlmSettings);
+router.post('/llm-settings', express.urlencoded({ extended: false }), saveLlmSettings);
 
 router.post('/application-settings', svgUpload.fields([
   { name: 'app_logo_svg_file', maxCount: 1 },
@@ -218,7 +228,7 @@ router.get('/import', async (req, res) => {
       jobsUrl: '/admin/jobs',
       documentsUrl: '/admin/documents',
       importUrl: '/admin/import',
-      settingsUrl: '/admin/settings',
+      settingsUrl: '/admin/llm-settings',
       collectionsUrl: '/admin/collections',
       autoGroupPages: false
     }
@@ -283,7 +293,7 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
     await runAnalyticsForCollection(collectionId);
     const collection = await collectionsAsync.getById(collectionId);
     const label = collection ? collection.name : `collection ${collectionId}`;
-    req.session.flashMessage = { type: 'success', text: `Analytics run complete for ${label}.` };
+    req.session.flashMessage = { type: 'success', text: `Analytics run started for ${label}. Topic analysis will continue in the background.` };
   } catch (err) {
     req.session.flashMessage = { type: 'error', text: `Analytics failed: ${err.message}` };
   }
@@ -292,7 +302,7 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
 
 router.post('/analytics-settings/run-all', async (req, res) => {
   runScheduledAnalytics().catch(err => console.error('[admin] run-all analytics error:', err));
-  req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections.' };
+  req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections. Topic analysis will continue in the background.' };
   res.redirect('/admin/analytics-settings');
 });
 

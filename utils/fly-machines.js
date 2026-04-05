@@ -96,7 +96,7 @@ async function runEphemeralWorker(importJobId) {
  * runs the Python BERTopic script, writes results back to DB, and exits.
  * auto_destroy ensures Fly cleans up the machine after exit.
  */
-async function runEphemeralBertopicWorker(collectionId) {
+async function runEphemeralBertopicWorker(collectionId, analyticsRowId = null) {
   const { imageRef, region, analyticsWorkerMemoryMb } = config.flyMachines;
 
   if (!imageRef) {
@@ -106,6 +106,7 @@ async function runEphemeralBertopicWorker(collectionId) {
   const env = {
     BERTOPIC_WORKER_MODE: '1',
     ANALYTICS_COLLECTION_ID: String(collectionId),
+    ANALYTICS_ROW_ID: analyticsRowId != null ? String(analyticsRowId) : '',
     NODE_ENV: 'production',
     // Database
     DATABASE_DRIVER: process.env.DATABASE_DRIVER || '',

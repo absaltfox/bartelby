@@ -19,7 +19,7 @@
     <div class="alert alert-error"><code>DATA_ENCRYPTION_KEY</code> is not configured, so API keys cannot be saved securely until it is added to <code>.env</code>.</div>
   <% } %>
 
-  <form method="POST" action="/admin/settings">
+  <form method="POST" action="/admin/llm-settings">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 
     <section class="settings-section">
@@ -185,6 +185,70 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
           <input type="number" id="anthropic_utility_output_cost_per_mtok" name="anthropic_utility_output_cost_per_mtok"
                  value="<%= cfg.anthropic_utility_output_cost_per_mtok || '' %>"
                  placeholder="e.g. 4.00" step="any" min="0">
+        </div>
+      </div>
+      <p class="field-hint" style="margin-top:-8px;">Transcription model rates apply to document transcription; utility model rates apply to title and summary generation. If utility rates are blank, transcription rates are used as a fallback.</p>
+    </section>
+
+    <section class="settings-section">
+      <h2>Gemini (Google)</h2>
+      <div class="form-group">
+        <label for="google_api_key">API Key</label>
+        <% if (cfg.google_api_key) { %>
+          <p class="key-set-indicator">&#10003; Key saved &mdash; enter a new value to replace it</p>
+        <% } %>
+        <input type="password" id="google_api_key" name="google_api_key"
+               value=""
+               placeholder="<%= cfg.google_api_key ? '••••••••••••••••' : 'AIza…' %>" autocomplete="off">
+        <p class="field-hint">Leave blank to keep the existing key, or to use the <code>GOOGLE_GENERATIVE_AI_API_KEY</code> environment variable.</p>
+      </div>
+      <div class="form-group">
+        <label for="google_model">Model</label>
+        <input type="text" id="google_model" name="google_model"
+               value="<%= cfg.google_model || 'gemini-1.5-pro-latest' %>"
+               placeholder="gemini-1.5-pro-latest">
+        <p class="field-hint">Must support vision. Recommended: <code>gemini-1.5-pro-latest</code></p>
+      </div>
+      <div class="form-group">
+        <label for="google_vision_model">Vision model <span class="field-hint-inline">(for page grouping)</span></label>
+        <input type="text" id="google_vision_model" name="google_vision_model"
+               value="<%= cfg.google_vision_model || '' %>"
+               placeholder="gemini-1.5-flash-latest">
+        <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code>gemini-1.5-flash-latest</code></p>
+      </div>
+      <div class="form-group">
+        <label for="google_utility_model">Utility model <span class="field-hint-inline">(for title &amp; summary)</span></label>
+        <input type="text" id="google_utility_model" name="google_utility_model"
+               value="<%= cfg.google_utility_model || '' %>"
+               placeholder="gemini-1.5-flash-latest">
+        <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code>gemini-1.5-flash-latest</code></p>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="google_input_cost_per_mtok">Transcription model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="google_input_cost_per_mtok" name="google_input_cost_per_mtok"
+                 value="<%= cfg.google_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 1.25" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="google_output_cost_per_mtok">Transcription model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="google_output_cost_per_mtok" name="google_output_cost_per_mtok"
+                 value="<%= cfg.google_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 5.00" step="any" min="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="google_utility_input_cost_per_mtok">Utility model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="google_utility_input_cost_per_mtok" name="google_utility_input_cost_per_mtok"
+                 value="<%= cfg.google_utility_input_cost_per_mtok || '' %>"
+                 placeholder="e.g. 0.08" step="any" min="0">
+        </div>
+        <div class="form-group">
+          <label for="google_utility_output_cost_per_mtok">Utility model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+          <input type="number" id="google_utility_output_cost_per_mtok" name="google_utility_output_cost_per_mtok"
+                 value="<%= cfg.google_utility_output_cost_per_mtok || '' %>"
+                 placeholder="e.g. 0.30" step="any" min="0">
         </div>
       </div>
       <p class="field-hint" style="margin-top:-8px;">Transcription model rates apply to document transcription; utility model rates apply to title and summary generation. If utility rates are blank, transcription rates are used as a fallback.</p>

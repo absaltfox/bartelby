@@ -16,7 +16,7 @@ const { resolveApplicationSettings } = require('../utils/application-settings');
 router.use(requireAuth);
 
 function normalizeProvider(provider) {
-  return ['openai', 'claude'].includes(provider) ? provider : null;
+  return ['openai', 'claude', 'gemini'].includes(provider) ? provider : null;
 }
 
 router.get('/', async (req, res) => {

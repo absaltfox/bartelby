@@ -334,7 +334,13 @@ async function tick() {
       if (txInputRate == null && txOutputRate == null) {
         const { settingsAsync: sa } = require('../database/db');
         const cfg = await sa.getAll();
-        const prefix = providerName === 'openai' ? 'openai' : providerName === 'claude' ? 'anthropic' : null;
+        const prefix = providerName === 'openai'
+          ? 'openai'
+          : providerName === 'claude'
+            ? 'anthropic'
+            : providerName === 'gemini'
+              ? 'google'
+              : null;
         if (prefix) {
           txInputRate = cfg[`${prefix}_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_input_cost_per_mtok`]) : null;
           txOutputRate = cfg[`${prefix}_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_output_cost_per_mtok`]) : null;

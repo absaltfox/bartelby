@@ -188,6 +188,22 @@ async function shouldRunAnalytics(collectionId) {
 const { spawn } = require('child_process');
 const os = require('os');
 
+function queueLocalBertopicWorker(collectionId, analyticsRowId) {
+  const workerPath = path.join(__dirname, 'bertopic-worker.js');
+  const child = spawn(process.execPath, [workerPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      BERTOPIC_WORKER_MODE: '1',
+      ANALYTICS_COLLECTION_ID: String(collectionId),
+      ANALYTICS_ROW_ID: analyticsRowId != null ? String(analyticsRowId) : '',
+      PYTHONUNBUFFERED: '1'
+    }
+  });
+  child.unref();
+}
+
 async function runBertopicAnalysis(collectionId) {
   const cfg = require('../config');
 
@@ -288,27 +304,37 @@ async function runBertopicAnalysis(collectionId) {
   return true;
 }
 
+async function dispatchBertopicAnalysis(collectionId, analyticsRowId) {
+  if (config.flyMachines.enabled) {
+    const { runEphemeralBertopicWorker } = require('./fly-machines');
+    await runEphemeralBertopicWorker(collectionId, analyticsRowId);
+    return 'dispatched';
+  }
+
+  queueLocalBertopicWorker(collectionId, analyticsRowId);
+  console.log(`[analytics] local BERTopic worker queued for collection ${collectionId}`);
+  return 'queued';
+}
+
 async function runAnalyticsForCollection(collectionId) {
   console.log(`[analytics] starting for collection ${collectionId}`);
   const db = require('../database/db');
 
   const stats = await computeCollectionStats(collectionId);
+  stats.topics_computed = false;
+  const analyticsRowId = await db.collectionAnalyticsAsync.upsert(stats);
+  await db.saveDatabase();
 
-  let topicsOk = false;
   if (stats.transcribed_count >= 5) {
-    const result = await runBertopicAnalysis(collectionId).catch(err => {
+    await dispatchBertopicAnalysis(collectionId, analyticsRowId).catch(err => {
       console.error(`[analytics] BERTopic failed for collection ${collectionId}:`, err.message);
-      return false;
     });
-    // 'dispatched' = Fly machine will update topics_computed async
-    topicsOk = result === 'dispatched' ? false : result;
+  } else {
+    console.log(`[analytics] collection ${collectionId}: fewer than 5 transcribed docs, skipping BERTopic dispatch`);
   }
 
-  stats.topics_computed = topicsOk;
-  await db.collectionAnalyticsAsync.upsert(stats);
-
-  console.log(`[analytics] done for collection ${collectionId}. topics_computed=${topicsOk}`);
-  return stats;
+  console.log(`[analytics] snapshot stored for collection ${collectionId}. topics queued=${stats.transcribed_count >= 5}`);
+  return { ...stats, id: analyticsRowId, topics_computed: false };
 }
 
 async function runScheduledAnalytics() {
