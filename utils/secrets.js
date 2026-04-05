@@ -30,6 +30,10 @@ function loadEnv() {
   if (envLoaded) return;
   envLoaded = true;
 
+  if (process.env.NODE_ENV === 'test' && !/^(1|true|yes|on)$/i.test(String(process.env.LOAD_DOTENV_IN_TEST || ''))) {
+    return;
+  }
+
   if (!fs.existsSync(ENV_PATH)) return;
 
   const content = fs.readFileSync(ENV_PATH, 'utf8');

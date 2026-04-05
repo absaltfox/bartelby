@@ -6,9 +6,11 @@ const initSqlJs = require('sql.js');
 const config = require('../../config');
 
 const dbPath = config.database.sqljs.filePath;
-const dataDir = path.dirname(dbPath);
+const isInMemory = dbPath === ':memory:';
+const dataDir = isInMemory ? null : path.dirname(dbPath);
 
 function ensureDataDir() {
+  if (isInMemory) return;
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
@@ -20,7 +22,7 @@ async function createDriver() {
   const SQL = await initSqlJs();
   let db;
 
-  if (fs.existsSync(dbPath)) {
+  if (!isInMemory && fs.existsSync(dbPath)) {
     const fileBuffer = fs.readFileSync(dbPath);
     db = new SQL.Database(fileBuffer);
   } else {
@@ -65,6 +67,7 @@ async function createDriver() {
       db.run(`PRAGMA user_version = ${Number.parseInt(version, 10) || 0}`);
     },
     persist() {
+      if (isInMemory) return;
       ensureDataDir();
       const data = db.export();
       fs.writeFileSync(dbPath, Buffer.from(data));

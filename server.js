@@ -16,6 +16,31 @@ loadEnv();
 const app = express();
 const PORT = config.runtime.port;
 const isProduction = config.runtime.nodeEnv === 'production';
+const bootStartedAt = Date.now();
+const startupDebugEnabled = /^(1|true|yes|on)$/i.test(String(process.env.STARTUP_DEBUG || ''));
+
+function formatBootElapsed(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function logBoot(message) {
+  console.log(`[boot +${formatBootElapsed(Date.now() - bootStartedAt)}] ${message}`);
+}
+
+function logBootDebug(message) {
+  if (!startupDebugEnabled) return;
+  logBoot(message);
+}
+
+function loadRoute(routePath, label) {
+  logBootDebug(`Loading ${label}`);
+  const route = require(routePath);
+  logBootDebug(`Loaded ${label}`);
+  return route;
+}
+
+logBoot(`Starting Bartelby (pid ${process.pid}, env ${config.runtime.nodeEnv}, port ${PORT})`);
 
 // ── Security headers ────────────────────────────────────────────────────
 app.use(helmet({
@@ -69,6 +94,7 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // Auth is deferred until after Passport is initialized (see below).
 
 app.use(express.static(path.join(__dirname, 'public')));
+logBoot('Core middleware configured');
 
 // ── Sessions ───────────────────────────────────────────────────────────────
 if (!process.env.SESSION_SECRET) {
@@ -219,6 +245,7 @@ app.set('views', path.join(__dirname, 'views'));
 
 // ── Authenticated upload proxy ──────────────────────────────────────────────
 const { requireAuth, requireAdmin, requireAuthApi } = require('./middleware/auth');
+logBootDebug('Authentication middleware loaded');
 
 if (config.storage.driver === 's3') {
   const storage = require('./utils/storage');
@@ -270,19 +297,20 @@ if (config.storage.driver === 's3') {
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // Auth routes get CSRF protection on POST
-app.use('/', require('./routes/auth'));
-app.use('/account', require('./routes/account'));
-app.use('/', require('./routes/documents'));
-app.use('/transcripts', require('./routes/transcripts'));
-app.use('/api/annotations', requireAuthApi, require('./routes/annotations'));
-app.use('/export', require('./routes/export'));
-app.use('/search', require('./routes/search'));
-app.use('/admin', requireAdmin, require('./routes/admin'));
-app.use('/admin/documents', require('./routes/admin-documents')); // has its own requireAdmin
-app.use('/admin/users', require('./routes/admin-users')); // has its own requireAdmin
-app.use('/admin/collections', require('./routes/admin-collections')); // has its own requireAdmin
-app.use('/admin/jobs', require('./routes/admin-jobs')); // has its own requireAdmin
-app.use('/manage', require('./routes/manage')); // has its own requireAdminOrManager
+app.use('/', loadRoute('./routes/auth', 'auth routes'));
+app.use('/account', loadRoute('./routes/account', 'account routes'));
+app.use('/', loadRoute('./routes/documents', 'document routes'));
+app.use('/transcripts', loadRoute('./routes/transcripts', 'transcript routes'));
+app.use('/api/annotations', requireAuthApi, loadRoute('./routes/annotations', 'annotation routes'));
+app.use('/export', loadRoute('./routes/export', 'export routes'));
+app.use('/search', loadRoute('./routes/search', 'search routes'));
+app.use('/admin', requireAdmin, loadRoute('./routes/admin', 'admin routes'));
+app.use('/admin/documents', loadRoute('./routes/admin-documents', 'admin document routes')); // has its own requireAdmin
+app.use('/admin/users', loadRoute('./routes/admin-users', 'admin user routes')); // has its own requireAdmin
+app.use('/admin/collections', loadRoute('./routes/admin-collections', 'admin collection routes')); // has its own requireAdmin
+app.use('/admin/jobs', loadRoute('./routes/admin-jobs', 'admin job routes')); // has its own requireAdmin
+app.use('/manage', loadRoute('./routes/manage', 'manage routes')); // has its own requireAdminOrManager
+logBoot('Routes mounted');
 
 // Export CSRF validator for routes that need it
 app.locals.validateCsrf = validateCsrf;
@@ -319,25 +347,38 @@ process.on('uncaughtException', (err) => {
 // Prepares the DB schema and session middleware without binding a port.
 // Tests call this directly; start() calls it then listens.
 async function initApp() {
+  logBoot('Schema initialization start');
   await initializeSchema();
+  logBoot('Schema initialization complete');
+
+  logBoot('Session middleware initialization start');
   sessionMiddleware = await createSessionMiddleware();
+  logBoot('Session middleware initialization complete');
   return app;
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────
 async function start() {
+  let startupPhase = 'schema initialization';
   try {
     await initApp();
     console.log('Database initialized');
-
+    startupPhase = 'session middleware initialization';
     if (config.runtime.startWorker) {
+      startupPhase = 'background worker startup';
+      logBoot('Background worker startup requested');
       const { startWorker } = require('./utils/worker');
       startWorker();
+      logBoot('Background worker startup complete');
     } else {
+      logBoot('Background worker startup disabled by configuration');
       console.log('Background worker startup disabled by configuration');
     }
 
+    startupPhase = 'http listen';
+    logBoot(`Binding HTTP listener on 0.0.0.0:${PORT}`);
     const server = app.listen(PORT, '0.0.0.0', () => {
+      logBoot(`HTTP listener ready on port ${PORT}`);
       console.log(`Bartelby running on port ${PORT}`);
     });
 
@@ -366,6 +407,7 @@ async function start() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
+    console.error(`[boot] Failed during ${startupPhase}`);
     console.error('Failed to start server:', err);
     process.exit(1);
   }

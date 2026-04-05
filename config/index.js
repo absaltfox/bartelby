@@ -53,7 +53,9 @@ const config = {
     driver: process.env.DATABASE_DRIVER || 'sqljs',
     dataDir: path.join(rootDir, 'data'),
     sqljs: {
-      filePath: path.join(rootDir, 'data', 'transcriber.db')
+      filePath: process.env.SQLJS_FILE_PATH || (process.env.NODE_ENV === 'test'
+        ? ':memory:'
+        : path.join(rootDir, 'data', 'transcriber.db'))
     },
     turso: {
       url: process.env.TURSO_DATABASE_URL || '',

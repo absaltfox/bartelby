@@ -14,6 +14,7 @@ function countUnknownWords(text) {
 const path = require('path');
 const fs = require('fs');
 const config = require('../config');
+const { resolvePythonBin } = require('./python-runtime');
 
 function getRawDb() {
   return require('../database/db').getDb();
@@ -236,7 +237,7 @@ async function runBertopicAnalysis(collectionId) {
 
   const scriptPath = path.join(__dirname, '..', 'scripts', 'bertopic_analysis.py');
   await new Promise((resolve, reject) => {
-    const proc = spawn('python3', [scriptPath, '--input', inputPath, '--output', outputPath], {
+    const proc = spawn(resolvePythonBin(), [scriptPath, '--input', inputPath, '--output', outputPath], {
       env: { ...process.env, PYTHONUNBUFFERED: '1' }
     });
     const stderr = [];
@@ -258,6 +259,18 @@ async function runBertopicAnalysis(collectionId) {
     return false;
   }
 
+  if (result.topics?.length) {
+    const providerName = await db.settingsAsync.get('default_provider');
+    const { applyHumanReadableTopicLabels } = require('./topic-labels');
+    result.topics = await applyHumanReadableTopicLabels({
+      collectionId,
+      providerName,
+      topics: result.topics,
+      assignments: result.assignments || [],
+      documents: docs
+    });
+  }
+
   if (result.new_embeddings && Object.keys(result.new_embeddings).length > 0) {
     const entries = Object.entries(result.new_embeddings).map(([docId, emb]) => ({
       document_id: parseInt(docId),
@@ -269,6 +282,7 @@ async function runBertopicAnalysis(collectionId) {
 
   if (result.topics?.length) await db.collectionTopicsAsync.replaceForCollection(collectionId, result.topics);
   if (result.assignments?.length) await db.documentTopicAssignmentsAsync.replaceForCollection(collectionId, result.assignments);
+  await db.topicHierarchyAsync.replaceForCollection(collectionId, result.hierarchy || [], result.hierarchy_plot || null);
   if (result.evolution?.length) await db.topicEvolutionAsync.replaceForCollection(collectionId, result.evolution);
 
   return true;

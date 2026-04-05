@@ -9,19 +9,11 @@ function formatBytes(bytes) {
 }
 %>
 
-<div class="page-header">
-  <div class="breadcrumb">
-    <a href="/">Collections</a> <span class="breadcrumb-sep">/</span>
-    <a href="/collections/<%= collectionId %>"><%= collection.name %></a> <span class="breadcrumb-sep">/</span>
-  </div>
-  <h1><%= collection.name %></h1>
-  <p class="subtitle">Document Analytics</p>
-</div>
-
-<div class="collection-tabs">
-  <a href="/collections/<%= collectionId %>" class="collection-tab">Documents</a>
-  <a href="/collections/<%= collectionId %>/analytics" class="collection-tab collection-tab-active">Analytics</a>
-</div>
+<%- include('partials/collection-hero', {
+  collection: collection,
+  latestAnalytics: latestAnalytics,
+  activeTab: 'analytics'
+}) %>
 
 <% if (!analytics) { %>
   <div class="analytics-empty">
@@ -31,18 +23,21 @@ function formatBytes(bytes) {
   </div>
 <% } else { %>
 
-  <!-- Analytics tabs -->
-  <div class="analytics-subtabs">
-    <button class="analytics-subtab analytics-subtab-active" data-tab="dashboard">Dashboard</button>
-    <button class="analytics-subtab" data-tab="topics">Topics</button>
+  <div class="analytics-toolbar">
+    <div class="analytics-toolbar-nav">
+      <div class="analytics-toolbar-label">Analytics View</div>
+      <div class="analytics-subtabs" role="tablist" aria-label="Analytics views">
+        <button type="button" class="analytics-subtab analytics-subtab-active" data-tab="dashboard" aria-selected="true">Dashboard</button>
+        <button type="button" class="analytics-subtab" data-tab="topics" aria-selected="false">Topics</button>
+      </div>
+    </div>
+    <div class="analytics-updated">
+      Last computed: <%= new Date(analytics.computed_at).toLocaleString() %>
+    </div>
   </div>
 
   <!-- Dashboard tab -->
   <div class="analytics-tab-panel" id="tab-dashboard">
-    <div class="analytics-updated">
-      Last computed: <%= new Date(analytics.computed_at).toLocaleString() %>
-    </div>
-
     <div class="analytics-stat-grid">
       <div class="analytics-stat-card">
         <div class="analytics-stat-value"><%= analytics.document_count.toLocaleString() %></div>
@@ -106,21 +101,26 @@ function formatBytes(bytes) {
       <!-- Topic Hierarchy -->
       <section class="analytics-section">
         <h2>Topic Hierarchy</h2>
-        <div id="topic-hierarchy" class="topic-hierarchy-container">
-          <% topics.forEach(function(topic) { %>
-            <div class="topic-card">
-              <div class="topic-card-header">
-                <span class="topic-card-label"><%= topic.topic_label %></span>
-                <span class="topic-card-count"><%= topic.document_count %> docs</span>
+        <p class="analytics-section-subtitle">Hierarchical clustering of collection topics based on topical similarity.</p>
+        <% if (hierarchyPlot && hierarchyPlot.leaf_topic_ids && hierarchyPlot.leaf_topic_ids.length > 1) { %>
+          <div id="topic-hierarchy-chart" class="topic-hierarchy-chart"></div>
+        <% } else { %>
+          <div class="topic-hierarchy-container">
+            <% topics.forEach(function(topic) { %>
+              <div class="topic-card">
+                <div class="topic-card-header">
+                  <span class="topic-card-label"><%= topic.topic_label %></span>
+                  <span class="topic-card-count"><%= topic.document_count %> docs</span>
+                </div>
+                <div class="topic-card-words">
+                  <% topic.topic_words.slice(0, 6).forEach(function(w) { %>
+                    <span class="topic-word" style="opacity: <%= topic.topic_words[0].weight ? (0.5 + 0.5 * (w.weight / topic.topic_words[0].weight)).toFixed(3) : 1 %>"><%= w.word %></span>
+                  <% }); %>
+                </div>
               </div>
-              <div class="topic-card-words">
-                <% topic.topic_words.slice(0, 6).forEach(function(w) { %>
-                  <span class="topic-word" style="opacity: <%= topic.topic_words[0].weight ? (0.5 + 0.5 * (w.weight / topic.topic_words[0].weight)).toFixed(3) : 1 %>"><%= w.word %></span>
-                <% }); %>
-              </div>
-            </div>
-          <% }); %>
-        </div>
+            <% }); %>
+          </div>
+        <% } %>
       </section>
 
       <!-- Topic Evolution -->
@@ -143,10 +143,11 @@ function formatBytes(bytes) {
 window.__analyticsData = {
   assignments: <%- JSON.stringify(assignments) %>,
   topics: <%- JSON.stringify(topics) %>,
+  hierarchyPlot: <%- JSON.stringify(hierarchyPlot || null) %>,
   evolution: <%- JSON.stringify(evolution) %>
 };
 </script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/chart.umd.min.js"></script>
 <script>
 // Helper: generate N distinct colours
 function topicColours(n) {
@@ -255,6 +256,101 @@ function topicColours(n) {
     }
   });
 })();
+
+// ── Topic hierarchy chart (SVG dendrogram) ────────────────────────────────
+(function() {
+  const { hierarchyPlot, topics } = window.__analyticsData;
+  const container = document.getElementById('topic-hierarchy-chart');
+  if (!container || !hierarchyPlot || !Array.isArray(hierarchyPlot.leaf_topic_ids) || hierarchyPlot.leaf_topic_ids.length < 2) {
+    return;
+  }
+
+  const topicMap = new Map(topics.map(topic => [topic.topic_id, topic]));
+  const leaves = hierarchyPlot.leaf_topic_ids;
+  const icoord = hierarchyPlot.icoord || [];
+  const dcoord = hierarchyPlot.dcoord || [];
+  const colours = hierarchyPlot.color_list || [];
+  const maxDistance = Math.max(Number(hierarchyPlot.max_distance) || 0, 1);
+
+  const labelWidth = 280;
+  const chartWidth = 720;
+  const headerHeight = 28;
+  const footerHeight = 24;
+  const leafSpacing = 28;
+  const height = Math.max(260, headerHeight + footerHeight + leaves.length * leafSpacing + 10);
+  const totalWidth = labelWidth + chartWidth;
+  const plotHeight = height - headerHeight - footerHeight;
+
+  const yMax = Math.max(...icoord.flat(), leaves.length * 10 + 5, 10);
+  const xScale = (value) => labelWidth + (Number(value) / maxDistance) * (chartWidth - 18);
+  const yScale = (value) => headerHeight + ((Number(value) - 5) / Math.max(yMax - 5, 1)) * plotHeight;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${totalWidth} ${height}`);
+  svg.setAttribute('class', 'topic-hierarchy-svg');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Hierarchical clustering of topics');
+
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('x', labelWidth - 8);
+  bg.setAttribute('y', headerHeight - 8);
+  bg.setAttribute('width', chartWidth + 8);
+  bg.setAttribute('height', plotHeight + 16);
+  bg.setAttribute('rx', '10');
+  bg.setAttribute('fill', '#e8edf1');
+  svg.appendChild(bg);
+
+  const tickCount = 5;
+  for (let i = 0; i < tickCount; i += 1) {
+    const ratio = tickCount === 1 ? 0 : i / (tickCount - 1);
+    const x = labelWidth + ratio * (chartWidth - 18);
+    const grid = document.createElementNS(ns, 'line');
+    grid.setAttribute('x1', x);
+    grid.setAttribute('x2', x);
+    grid.setAttribute('y1', headerHeight - 10);
+    grid.setAttribute('y2', headerHeight - 2);
+    grid.setAttribute('stroke', '#313131');
+    grid.setAttribute('stroke-width', '1');
+    svg.appendChild(grid);
+  }
+
+  leaves.forEach((topicId, index) => {
+    const y = yScale(5 + index * 10);
+    const topic = topicMap.get(topicId);
+    const label = topic ? topic.topic_label : `Topic ${topicId}`;
+    const text = document.createElementNS(ns, 'text');
+    text.setAttribute('x', labelWidth - 14);
+    text.setAttribute('y', y + 5);
+    text.setAttribute('text-anchor', 'end');
+    text.setAttribute('class', 'topic-hierarchy-leaf-label');
+    text.textContent = label.length > 34 ? `${label.slice(0, 31)}...` : label;
+    svg.appendChild(text);
+  });
+
+  icoord.forEach((coords, index) => {
+    const distances = dcoord[index] || [0, 0, 0, 0];
+    const points = coords.map((coord, coordIndex) => `${xScale(distances[coordIndex])},${yScale(coord)}`).join(' ');
+    const line = document.createElementNS(ns, 'polyline');
+    line.setAttribute('points', points);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', colours[index] || '#1f6fd6');
+    line.setAttribute('stroke-width', '2');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(line);
+
+    const dot = document.createElementNS(ns, 'circle');
+    dot.setAttribute('cx', xScale(distances[1]));
+    dot.setAttribute('cy', yScale((coords[1] + coords[2]) / 2));
+    dot.setAttribute('r', '3.8');
+    dot.setAttribute('fill', '#111');
+    svg.appendChild(dot);
+  });
+
+  container.innerHTML = '';
+  container.appendChild(svg);
+})();
 </script>
 <% } %>
 
@@ -262,9 +358,13 @@ function topicColours(n) {
 <script>
 document.querySelectorAll('.analytics-subtab').forEach(function(btn) {
   btn.addEventListener('click', function() {
-    document.querySelectorAll('.analytics-subtab').forEach(b => b.classList.remove('analytics-subtab-active'));
+    document.querySelectorAll('.analytics-subtab').forEach(function(b) {
+      b.classList.remove('analytics-subtab-active');
+      b.setAttribute('aria-selected', 'false');
+    });
     document.querySelectorAll('.analytics-tab-panel').forEach(p => p.hidden = true);
     btn.classList.add('analytics-subtab-active');
+    btn.setAttribute('aria-selected', 'true');
     document.getElementById('tab-' + btn.dataset.tab).hidden = false;
   });
 });

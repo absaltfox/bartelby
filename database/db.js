@@ -495,6 +495,16 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     document_count INTEGER NOT NULL DEFAULT 0,
     computed_at DATETIME NOT NULL DEFAULT (datetime('now'))
   )
+  `,
+
+  // v41 — per-collection topic hierarchy payload for dendrogram rendering
+  `
+  CREATE TABLE IF NOT EXISTS topic_hierarchy (
+    collection_id INTEGER PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
+    hierarchy_json TEXT NOT NULL DEFAULT '[]',
+    plot_json TEXT,
+    computed_at DATETIME NOT NULL DEFAULT (datetime('now'))
+  )
   `
 ];
 
@@ -2866,6 +2876,33 @@ const topicEvolutionAsync = {
   }
 };
 
+const topicHierarchyAsync = {
+  async getByCollection(collectionId) {
+    const row = await getAsync(
+      `SELECT * FROM topic_hierarchy WHERE collection_id = ?`,
+      [collectionId]
+    );
+    if (!row) return null;
+    return {
+      ...row,
+      hierarchy: row.hierarchy_json ? JSON.parse(row.hierarchy_json) : [],
+      plot: row.plot_json ? JSON.parse(row.plot_json) : null
+    };
+  },
+
+  async replaceForCollection(collectionId, hierarchyData, plotData) {
+    await runAsync(`DELETE FROM topic_hierarchy WHERE collection_id = ?`, [collectionId]);
+    await runAsync(`
+      INSERT INTO topic_hierarchy (collection_id, hierarchy_json, plot_json, computed_at)
+      VALUES (?, ?, ?, datetime('now'))
+    `, [
+      collectionId,
+      JSON.stringify(hierarchyData || []),
+      plotData ? JSON.stringify(plotData) : null
+    ]);
+  }
+};
+
 const settingsAsync = {
   async get(key) {
     const row = await getAsync('SELECT value FROM settings WHERE key = ?', [key]);
@@ -3570,5 +3607,6 @@ module.exports = {
   documentEmbeddingsAsync,
   collectionTopicsAsync,
   documentTopicAssignmentsAsync,
-  topicEvolutionAsync
+  topicEvolutionAsync,
+  topicHierarchyAsync
 };

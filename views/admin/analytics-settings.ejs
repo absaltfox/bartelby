@@ -12,93 +12,115 @@ function formatBytes(bytes) {
 <div class="admin-page">
   <%- include('../partials/admin-nav') %>
 
-  <div class="admin-header">
+  <div class="admin-header analytics-settings-header">
     <h1>Document Analytics</h1>
     <p class="subtitle">Configure when analytics are computed and monitor per-collection status.</p>
   </div>
 
   <% if (flashMessage) { %>
-    <div class="flash flash-<%= flashMessage.type %>"><%= flashMessage.text %></div>
+    <div class="alert alert-<%= flashMessage.type === 'error' ? 'error' : 'success' %>"><%= flashMessage.text %></div>
   <% } %>
 
   <form method="POST" action="/admin/analytics-settings">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <div class="settings-section">
+    <section class="settings-section analytics-settings-section">
       <h2>Schedule</h2>
-      <div class="setting-row">
-        <label class="setting-label">
+      <div class="analytics-settings-grid">
+        <label class="analytics-toggle-row">
           <input type="checkbox" name="analytics_enabled"
             <%= settings.analytics_enabled !== '0' ? 'checked' : '' %>>
-          Enable scheduled analytics
+          <span>
+            <strong>Enable scheduled analytics</strong>
+            <small>Run collection analytics automatically on the schedule below.</small>
+          </span>
         </label>
+
+        <div class="form-group">
+          <label for="analytics_schedule_interval">Run interval</label>
+          <select id="analytics_schedule_interval" name="analytics_schedule_interval">
+            <option value="24"  <%= settings.analytics_schedule_interval === '24'  ? 'selected' : '' %>>Daily</option>
+            <option value="168" <%= (!settings.analytics_schedule_interval || settings.analytics_schedule_interval === '168') ? 'selected' : '' %>>Weekly</option>
+            <option value="720" <%= settings.analytics_schedule_interval === '720' ? 'selected' : '' %>>Monthly</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="analytics_change_threshold">Change threshold (%)</label>
+          <input type="number" id="analytics_change_threshold" name="analytics_change_threshold"
+            value="<%= settings.analytics_change_threshold || '10' %>"
+            min="1" max="100">
+          <p class="field-hint">Also run when a collection grows by this percentage since its last analytics run.</p>
+        </div>
       </div>
-      <div class="setting-row">
-        <label class="setting-label" for="analytics_schedule_interval">Run interval</label>
-        <select id="analytics_schedule_interval" name="analytics_schedule_interval" class="setting-input">
-          <option value="24"  <%= settings.analytics_schedule_interval === '24'  ? 'selected' : '' %>>Daily</option>
-          <option value="168" <%= (!settings.analytics_schedule_interval || settings.analytics_schedule_interval === '168') ? 'selected' : '' %>>Weekly</option>
-          <option value="720" <%= settings.analytics_schedule_interval === '720' ? 'selected' : '' %>>Monthly</option>
-        </select>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Save Settings</button>
       </div>
-      <div class="setting-row">
-        <label class="setting-label" for="analytics_change_threshold">
-          Change threshold (%)
-          <span class="setting-hint">Also run when a collection grows by this % since last run</span>
-        </label>
-        <input type="number" id="analytics_change_threshold" name="analytics_change_threshold"
-          value="<%= settings.analytics_change_threshold || '10' %>"
-          min="1" max="100" class="setting-input setting-input-sm">
-      </div>
-      <div class="setting-actions">
-        <button type="submit" class="btn btn-primary">Save Settings</button>
-      </div>
-    </div>
+    </section>
   </form>
 
-  <div class="settings-section">
-    <div class="settings-section-header">
+  <section class="settings-section analytics-settings-section">
+    <div class="analytics-section-header">
       <h2>Collection Status</h2>
-      <form method="POST" action="/admin/analytics-settings/run-all">
+      <form method="POST" action="/admin/analytics-settings/run-all" class="inline-form">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button type="submit" class="btn btn-secondary btn-sm">Run All Now</button>
+        <button type="submit" class="btn-secondary btn-sm">Run All Now</button>
       </form>
     </div>
-    <% if (latestStats.length === 0) { %>
+    <% if (statusRows.length === 0) { %>
       <p class="muted">No analytics have been run yet.</p>
     <% } else { %>
-      <table class="admin-table">
-        <thead>
-          <tr>
-            <th>Collection</th>
-            <th>Last Run</th>
-            <th>Documents</th>
-            <th>Transcribed</th>
-            <th>Storage</th>
-            <th>Topics</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% latestStats.forEach(function(row) { %>
-          <tr>
-            <td><a href="/collections/<%= row.collection_id %>"><%= row.collection_name %></a></td>
-            <td><%= new Date(row.computed_at).toLocaleString() %></td>
-            <td><%= row.document_count %></td>
-            <td><%= row.transcribed_count %></td>
-            <td><%= formatBytes(row.storage_bytes) %></td>
-            <td><%= row.topics_computed ? '✓' : '–' %></td>
-            <td>
-              <form method="POST" action="/admin/analytics-settings/run/<%= row.collection_id %>">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button type="submit" class="btn btn-sm">Run Now</button>
-              </form>
-            </td>
-          </tr>
-          <% }); %>
-        </tbody>
-      </table>
+      <div class="users-table-wrap">
+        <table class="users-table users-table--auto analytics-status-table">
+          <thead>
+            <tr>
+              <th>Collection</th>
+              <th>Last Run</th>
+              <th>Documents</th>
+              <th>Transcribed</th>
+              <th>Storage</th>
+              <th>Topics</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% statusRows.forEach(function(row) { %>
+            <tr>
+              <td>
+                <div class="analytics-collection-cell">
+                  <a href="/collections/<%= row.collection_id %>"><%= row.collection_name %></a>
+                  <% if (!row.computed_at) { %>
+                    <span class="access-badge access-restricted">Not yet run</span>
+                  <% } %>
+                </div>
+              </td>
+              <td>
+                <% if (row.computed_at) { %>
+                  <%= new Date(row.computed_at).toLocaleString() %>
+                <% } else { %>
+                  <span class="muted">Never</span>
+                <% } %>
+              </td>
+              <td><%= row.document_count || 0 %></td>
+              <td><%= row.transcribed_count || 0 %></td>
+              <td><%= formatBytes(row.storage_bytes || 0) %></td>
+              <td>
+                <span class="access-badge <%= row.topicsStatus.badgeClass %>">
+                  <%= row.topicsStatus.label %>
+                </span>
+              </td>
+              <td class="col-actions">
+                <form method="POST" action="/admin/analytics-settings/run/<%= row.collection_id %>" class="inline-form">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="btn-action btn-promote btn-sm">Run Now</button>
+                </form>
+              </td>
+            </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
     <% } %>
-  </div>
+  </section>
 </div>
 
 <%- include('../partials/footer') %>

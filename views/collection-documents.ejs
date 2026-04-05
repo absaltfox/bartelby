@@ -18,19 +18,22 @@
   }
 %>
 
-<div class="page-header">
-  <div class="breadcrumb">
-    <a href="/">Collections</a> <span class="breadcrumb-sep">/</span>
+<% if (!isAll && !isUncollected) { %>
+  <%- include('partials/collection-hero', {
+    collection: collection,
+    totalCount: totalCount,
+    latestAnalytics: latestAnalytics,
+    activeTab: 'documents'
+  }) %>
+<% } else { %>
+  <div class="page-header">
+    <div class="breadcrumb">
+      <a href="/">Collections</a> <span class="breadcrumb-sep">/</span>
+    </div>
+    <h1><%= pageTitle %></h1>
+    <p class="subtitle"><%= totalCount %> document<%= totalCount !== 1 ? 's' : '' %><% if (!isAll && !isUncollected && collection && collection.description) { %> &mdash; <%= collection.description %><% } %></p>
   </div>
-  <h1><%= pageTitle %></h1>
-  <p class="subtitle"><%= totalCount %> document<%= totalCount !== 1 ? 's' : '' %><% if (!isAll && !isUncollected && collection && collection.description) { %> &mdash; <%= collection.description %><% } %></p>
-  <% if (!isAll && !isUncollected) { %>
-  <div class="collection-tabs">
-    <a href="/collections/<%= collectionId %>" class="collection-tab">Documents</a>
-    <a href="/collections/<%= collectionId %>/analytics" class="collection-tab">Analytics</a>
-  </div>
-  <% } %>
-</div>
+<% } %>
 
 <div class="collection-layout">
   <!-- Sidebar filters -->

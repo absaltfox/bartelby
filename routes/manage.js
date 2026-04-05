@@ -13,7 +13,6 @@ const {
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
-const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
 const importApiRouter = require('./import-api');
 
 router.use(requireAdminOrManager);
@@ -301,6 +300,7 @@ router.post('/collections/:collectionId/users/:userId/revoke', requireCollection
 
 // ── Import document into a managed collection ────────────────────────────────
 router.get('/collections/:collectionId/import', requireCollectionRole('manager'), async (req, res) => {
+  const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });

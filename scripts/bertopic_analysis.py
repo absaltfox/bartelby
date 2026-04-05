@@ -19,8 +19,11 @@ warnings.filterwarnings('ignore')
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from bertopic import BERTopic
+from bertopic._utils import get_unique_distances, select_topic_representation, validate_distance_matrix
 from umap import UMAP
 from hdbscan import HDBSCAN
+from scipy.cluster import hierarchy as sch
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def load_input(path):
@@ -121,10 +124,17 @@ def run_bertopic(all_doc_ids, all_embeddings_list, all_texts, dates=None):
                 'parent_id': int(row['Parent_ID']),
                 'parent_name': str(row['Parent_Name']),
                 'topics': [int(t) for t in row['Topics']],
+                'child_left_id': int(row['Child_Left_ID']),
+                'child_left_name': str(row['Child_Left_Name']),
+                'child_right_id': int(row['Child_Right_ID']),
+                'child_right_name': str(row['Child_Right_Name']),
                 'distance': float(row['Distance'])
             })
-    except Exception:
+        hierarchy_plot = build_hierarchy_plot(topic_model, [topic['topic_id'] for topic in topics_out if topic['topic_id'] != -1])
+    except Exception as e:
+        print(f'[bertopic] hierarchy error: {e}', file=sys.stderr)
         hierarchy_out = []
+        hierarchy_plot = None
 
     evolution_out = []
     if dates and len(dates) == len(all_texts):
@@ -146,7 +156,39 @@ def run_bertopic(all_doc_ids, all_embeddings_list, all_texts, dates=None):
         'topics': topics_out,
         'assignments': assignments_out,
         'hierarchy': hierarchy_out,
+        'hierarchy_plot': hierarchy_plot,
         'evolution': evolution_out
+    }
+
+
+def build_hierarchy_plot(topic_model, topic_ids):
+    if len(topic_ids) < 2:
+        return None
+
+    topic_ids = sorted(topic_ids)
+    all_topics = sorted(list(topic_model.get_topics().keys()))
+    indices = np.array([all_topics.index(topic_id) for topic_id in topic_ids])
+    embeddings = select_topic_representation(
+        topic_model.c_tf_idf_,
+        topic_model.topic_embeddings_,
+        use_ctfidf=True
+    )[0][indices]
+
+    X = 1 - cosine_similarity(embeddings)
+    X = validate_distance_matrix(X, embeddings.shape[0])
+    Z = sch.linkage(X, 'ward', optimal_ordering=True)
+
+    if len(Z[:, 2]) != len(np.unique(Z[:, 2])):
+        Z[:, 2] = get_unique_distances(Z[:, 2])
+
+    dendrogram = sch.dendrogram(Z, orientation='left', no_plot=True)
+    return {
+        'orientation': 'left',
+        'leaf_topic_ids': [int(topic_ids[index]) for index in dendrogram['leaves']],
+        'icoord': [[float(value) for value in row] for row in dendrogram['icoord']],
+        'dcoord': [[float(value) for value in row] for row in dendrogram['dcoord']],
+        'color_list': [str(color) for color in dendrogram['color_list']],
+        'max_distance': float(max(max(row) for row in dendrogram['dcoord'])) if dendrogram['dcoord'] else 0.0
     }
 
 
@@ -199,6 +241,7 @@ def main():
             'topics': [],
             'assignments': [],
             'hierarchy': [],
+            'hierarchy_plot': None,
             'evolution': [],
             'skipped': True,
             'reason': 'too few documents'
@@ -210,6 +253,7 @@ def main():
         'topics': result['topics'],
         'assignments': result['assignments'],
         'hierarchy': result['hierarchy'],
+        'hierarchy_plot': result['hierarchy_plot'],
         'evolution': result['evolution']
     })
     print(f'[bertopic] done. {len(result["topics"])} topics found.', file=sys.stderr)

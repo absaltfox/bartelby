@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync } = require('../database/db');
+const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
-const { buildProviderAccessOptionsAsync, resolveProviderSelectionAsync } = require('../utils/provider-access');
 
 // Allow unauthenticated visitors for world-public collections
 router.use(optionalAuth);
@@ -414,6 +413,10 @@ router.get('/collections/:id', async (req, res) => {
     (filters.locations && filters.locations.length) ||
     filters.dateFrom || filters.dateTo;
 
+  const latestAnalytics = (!isAll && !isUncollected)
+    ? await collectionAnalyticsAsync.getLatest(parseInt(collectionId, 10))
+    : null;
+
   res.render('collection-documents', {
     documents: docs,
     collection,
@@ -430,6 +433,7 @@ router.get('/collections/:id', async (req, res) => {
     dateRange,
     filters,
     hasActiveFilters,
+    latestAnalytics,
     currentListUrl: req.originalUrl,
     allowExport: collection && collection.allow_export ? true : false
   });
@@ -460,14 +464,18 @@ router.get('/collections/:id/analytics', async (req, res) => {
   const topics = analytics ? (await collectionTopicsAsync.getByCollection(collectionId)).filter(t => t.topic_id !== -1) : [];
   const assignments = analytics ? await documentTopicAssignmentsAsync.getByCollection(collectionId) : [];
   const evolution = analytics ? await topicEvolutionAsync.getByCollection(collectionId) : [];
+  const hierarchy = analytics ? await topicHierarchyAsync.getByCollection(collectionId) : null;
 
   res.render('collection-analytics', {
     pageTitle: `${collection.name} — Analytics`,
     collection,
     collectionId,
     analytics,
+    latestAnalytics: analytics,
     topics,
     assignments,
+    hierarchyData: hierarchy?.hierarchy || [],
+    hierarchyPlot: hierarchy?.plot || null,
     evolution,
     currentUser: req.user || null,
     csrfToken: req.csrfToken ? req.csrfToken() : ''
@@ -764,6 +772,7 @@ router.post('/documents/:id/transcripts/:transcriptId/delete', requireDocumentRo
 
 // ── AI transcription for existing document ───────────────────────────────────
 router.get('/documents/:id/transcription-options', requireDocumentRole('editor'), async (req, res) => {
+  const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
   const defaultProvider = await settingsAsync.get('default_provider');
   res.json({ providerOptions, defaultProvider: defaultProvider || 'openai' });
@@ -781,6 +790,7 @@ router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), asyn
   const defaultProvider = await settingsAsync.get('default_provider');
 
   try {
+    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
     const selection = await resolveProviderSelectionAsync(
       req.user,
       provider || defaultProvider || 'openai',

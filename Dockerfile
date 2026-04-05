@@ -18,15 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install dependencies first (layer caching)
+# Install JavaScript and Python dependencies first (layer caching)
 COPY package.json package-lock.json ./
+COPY requirements.txt ./
 RUN npm ci --omit=dev
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+  && python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
-
-# Install Python ML dependencies for BERTopic analysis
-RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Create data and temp directories
 RUN mkdir -p /app/data /app/temp /app/public/uploads

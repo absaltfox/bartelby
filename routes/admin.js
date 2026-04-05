@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const config = require('../config');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync, saveDatabase, collectionAnalyticsAsync } = require('../database/db');
 const { runAnalyticsForCollection, runScheduledAnalytics } = require('../utils/analytics');
-const { listProviders } = require('../utils/llm');
-const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
 const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
 const importApiRouter = require('./import-api');
 
@@ -30,6 +29,41 @@ function normalizeSvgUpload(file) {
   return sanitizeSvgMarkup(content, '');
 }
 
+function getTopicsStatus(row) {
+  if (!row.computed_at) {
+    return {
+      label: 'Not run',
+      badgeClass: 'access-restricted'
+    };
+  }
+
+  if (row.topics_computed) {
+    return {
+      label: 'Ready',
+      badgeClass: 'access-all'
+    };
+  }
+
+  if ((row.transcribed_count || 0) < 5) {
+    return {
+      label: 'Not enough data',
+      badgeClass: 'access-restricted'
+    };
+  }
+
+  if (config.flyMachines.enabled) {
+    return {
+      label: 'Queued',
+      badgeClass: 'access-public'
+    };
+  }
+
+  return {
+    label: 'Not completed',
+    badgeClass: 'access-restricted'
+  };
+}
+
 // Admin dashboard
 router.get('/', async (req, res) => {
   const docCount        = await documentsAsync.getCount({ isAdmin: true });
@@ -44,7 +78,7 @@ router.get('/', async (req, res) => {
     pendingCount,
     collectionCount,
     userCount,
-    providers: listProviders()
+    providers: require('../utils/llm').listProviders()
   });
 });
 
@@ -53,7 +87,7 @@ router.get('/settings', async (req, res) => {
   res.render('admin/settings', {
     pageTitle: 'LLM Settings',
     cfg: await settingsAsync.getAll(),
-    providers: listProviders(),
+    providers: require('../utils/llm').listProviders(),
     saved: req.query.saved === '1',
     error: req.query.error || null,
     hasEncryptionKey: canEncryptSecrets()
@@ -152,6 +186,7 @@ router.post('/application-settings', svgUpload.fields([
 
 // Import page
 router.get('/import', async (req, res) => {
+  const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
 
   // If resuming from a completed import job, pass the job data
@@ -195,13 +230,34 @@ router.use('/api', importApiRouter);
 
 router.get('/analytics-settings', async (req, res) => {
   const settings = await settingsAsync.getAll();
-  const latestStats = await collectionAnalyticsAsync.getAllLatest();
+  const [collections, latestStats] = await Promise.all([
+    collectionsAsync.getAll(),
+    collectionAnalyticsAsync.getAllLatest()
+  ]);
+  const latestByCollectionId = new Map(latestStats.map((row) => [row.collection_id, row]));
+  const statusRows = collections
+    .map((collection) => {
+      const latest = latestByCollectionId.get(collection.id);
+      const row = latest || {
+        collection_id: collection.id,
+        collection_name: collection.name,
+        computed_at: null,
+        document_count: 0,
+        transcribed_count: 0,
+        storage_bytes: 0,
+        topics_computed: 0
+      };
+      return {
+        ...row,
+        topicsStatus: getTopicsStatus(row)
+      };
+    })
+    .sort((a, b) => String(a.collection_name || '').localeCompare(String(b.collection_name || '')));
 
   res.render('admin/analytics-settings', {
     pageTitle: 'Analytics Settings',
     settings,
-    latestStats,
-    csrfToken: req.csrfToken(),
+    statusRows,
     flashMessage: req.session.flashMessage || null
   });
   delete req.session.flashMessage;
@@ -225,7 +281,9 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
   }
   try {
     await runAnalyticsForCollection(collectionId);
-    req.session.flashMessage = { type: 'success', text: `Analytics run complete for collection ${collectionId}.` };
+    const collection = await collectionsAsync.getById(collectionId);
+    const label = collection ? collection.name : `collection ${collectionId}`;
+    req.session.flashMessage = { type: 'success', text: `Analytics run complete for ${label}.` };
   } catch (err) {
     req.session.flashMessage = { type: 'error', text: `Analytics failed: ${err.message}` };
   }

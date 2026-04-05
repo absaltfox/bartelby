@@ -11,8 +11,6 @@ const {
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
   saveDatabase, userApiKeysAsync, userCollectionAccessAsync
 } = require('../database/db');
-const { createProvider } = require('../utils/llm');
-const { resolveProviderSelectionAsync } = require('../utils/provider-access');
 
 // Initialize storage (temp dirs, etc.)
 storage.init();
@@ -341,6 +339,8 @@ router.post('/transcribe', express.json(), async (req, res) => {
   if (!storage.tempFileExists(safeTempFile)) return res.status(400).json({ error: 'Temp file not found' });
 
   try {
+    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
+    const { createProvider } = require('../utils/llm');
     const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
     const provider = await createProvider(providerName, selection.runtimeConfig);
     const imageBuffer = storage.readTempFile(safeTempFile);
@@ -377,6 +377,8 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
   }
 
   try {
+    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
+    const { createProvider } = require('../utils/llm');
     const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
     const provider = await createProvider(providerName, selection.runtimeConfig);
     const opts = {
@@ -494,6 +496,7 @@ router.post('/save-document', express.json(), async (req, res) => {
     let jobId = null;
 
     if (isAiMode) {
+      const { resolveProviderSelectionAsync } = require('../utils/provider-access');
       const defaultProvider = await settingsAsync.get('default_provider');
       const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
       const additionalImagePaths = additionalPages.length > 0 ? additionalPages : null;
@@ -562,6 +565,7 @@ router.post('/submit-pages', express.json(), async (req, res) => {
   try {
     const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
     // Resolve provider selection up front (requires req.user, fast)
+    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
     const defaultProvider = await settingsAsync.get('default_provider');
     const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
     const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
@@ -731,6 +735,8 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
+    const { createProvider } = require('../utils/llm');
     const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
     const provider = await createProvider(providerName, selection.runtimeConfig);
 

@@ -6,6 +6,9 @@ documents/
 *.db
 .env
 .env.local
+.venv/
+__pycache__/
+*.pyc
 .DS_Store
 *.swp
 *.swo

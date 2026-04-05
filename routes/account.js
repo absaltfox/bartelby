@@ -2,7 +2,6 @@
 
 const express = require('express');
 const router = express.Router();
-const QRCode = require('qrcode');
 const { requireAuth } = require('../middleware/auth');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { isSmtpConfigured } = require('../utils/email');
@@ -32,7 +31,7 @@ router.get('/', async (req, res) => {
       })
     : null;
   const pendingTotpQrCode = pendingTotpUri
-    ? await QRCode.toDataURL(pendingTotpUri, {
+    ? await require('qrcode').toDataURL(pendingTotpUri, {
         errorCorrectionLevel: 'M',
         margin: 1,
         width: 220

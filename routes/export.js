@@ -9,7 +9,6 @@ const {
   documentCollectionsAsync
 } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
-const { generatePDF, generateTEI } = require('../utils/export-document');
 const { normalizeDocumentAssets } = require('../utils/document-assets');
 
 router.use(requireAuth);
@@ -51,6 +50,7 @@ router.get('/documents/:id/pdf', async (req, res) => {
   const data = await getExportData(docId);
   if (!data) return res.status(404).render('error', { message: 'Document not found', error: {} });
 
+  const { generatePDF } = require('../utils/export-document');
   const pdfBytes = await generatePDF(data.doc, data.transcript);
   const filename = sanitizeFilename(data.doc.title) + '.pdf';
 
@@ -72,6 +72,7 @@ router.get('/documents/:id/tei', async (req, res) => {
   const data = await getExportData(docId);
   if (!data) return res.status(404).render('error', { message: 'Document not found', error: {} });
 
+  const { generateTEI } = require('../utils/export-document');
   const xml = generateTEI(data.doc, data.transcript);
   const filename = sanitizeFilename(data.doc.title) + '.xml';
 
@@ -110,10 +111,12 @@ router.post('/documents/bulk', express.json(), async (req, res) => {
     const basename = sanitizeFilename(data.doc.title) + '_' + docId;
 
     if (format === 'pdf' || format === 'both') {
+      const { generatePDF } = require('../utils/export-document');
       const pdfBytes = await generatePDF(data.doc, data.transcript);
       zipfile.addBuffer(Buffer.from(pdfBytes), basename + '.pdf');
     }
     if (format === 'tei' || format === 'both') {
+      const { generateTEI } = require('../utils/export-document');
       const xml = generateTEI(data.doc, data.transcript);
       zipfile.addBuffer(Buffer.from(xml, 'utf8'), basename + '.xml');
     }

@@ -1,0 +1,51 @@
+<div class="collection-hero">
+  <div class="collection-hero-inner">
+    <%
+      var heroMetaItems = [];
+      var heroDocumentCount = null;
+      if (typeof totalCount !== 'undefined' && totalCount != null) {
+        heroDocumentCount = totalCount;
+      } else if (typeof latestAnalytics !== 'undefined' && latestAnalytics && latestAnalytics.document_count != null) {
+        heroDocumentCount = latestAnalytics.document_count;
+      }
+
+      if (collection.is_world_public) {
+        heroMetaItems.push('Public');
+      } else if (collection.is_public) {
+        heroMetaItems.push('All users');
+      } else {
+        heroMetaItems.push('Private');
+      }
+
+      if (collection.allow_export) {
+        heroMetaItems.push('Export enabled');
+      }
+
+      if (heroDocumentCount != null) {
+        heroMetaItems.push(heroDocumentCount.toLocaleString() + ' document' + (heroDocumentCount === 1 ? '' : 's'));
+      }
+    %>
+
+    <div class="breadcrumb">
+      <a href="/">Collections</a> <span class="breadcrumb-sep">/</span>
+    </div>
+
+    <div class="collection-hero-main">
+      <div class="collection-hero-copy">
+        <h1><%= collection.name %></h1>
+        <p class="collection-hero-description">
+          <%= (collection && collection.description) ? collection.description : 'No description yet.' %>
+        </p>
+
+        <% if (heroMetaItems.length > 0) { %>
+          <p class="collection-hero-meta-line"><%= heroMetaItems.join(' • ') %></p>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="collection-tabs collection-tabs-hero">
+      <a href="/collections/<%= collection.id %>" class="collection-tab <%= activeTab === 'documents' ? 'collection-tab-active' : '' %>">Documents</a>
+      <a href="/collections/<%= collection.id %>/analytics" class="collection-tab <%= activeTab === 'analytics' ? 'collection-tab-active' : '' %>">Analytics</a>
+    </div>
+  </div>
+</div>

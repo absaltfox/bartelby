@@ -419,6 +419,120 @@ async function generateDocumentSummary(providerName, transcription, runtimeConfi
   return { summary, usage };
 }
 
+const TOPIC_LABEL_PROMPT = `You name topics discovered in collections of historical documents.
+Use the topic keywords and short representative document excerpts to infer the shared subject.
+
+Rules:
+- Return concise, human-readable labels in Title Case
+- Prefer subject matter over generic document types
+- Use 2-6 words when possible
+- Do not include quotation marks, colons, underscores, or the word "Topic"
+- Avoid vague labels like "Miscellaneous Correspondence" unless the evidence truly supports that
+- If the topic is about a place, person, institution, event, or administrative matter, name that clearly
+
+Respond ONLY with a valid JSON array in this format:
+[
+  { "topic_id": 0, "label": "School Funding Requests" },
+  { "topic_id": 1, "label": "Teacher Appointment Records" }
+]`;
+
+function compactTopicText(value, maxLength = 180) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1).trim()}…` : text;
+}
+
+function sanitizeTopicLabel(value) {
+  let label = String(value || '')
+    .replace(/^["'\s]+|["'\s]+$/g, '')
+    .replace(/[_:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[.!?;,:-]+$/g, '')
+    .trim();
+
+  if (!label || /^topic\b/i.test(label)) return null;
+  if (label.length > 80) {
+    label = label.slice(0, 80).trim();
+  }
+  return label || null;
+}
+
+async function generateTopicLabels(providerName, topics, assignments, documents, runtimeConfig = {}) {
+  const candidateTopics = (topics || []).filter((topic) => topic && topic.topic_id !== -1);
+  if (candidateTopics.length === 0) {
+    return { labels: {}, usage: null, error: null };
+  }
+
+  let modelInstance;
+  try {
+    modelInstance = await getUtilityModelInstance(providerName, runtimeConfig);
+  } catch (err) {
+    return { labels: {}, usage: null, error: err };
+  }
+  if (!modelInstance) {
+    return { labels: {}, usage: null, error: null };
+  }
+
+  const docById = new Map((documents || []).map((doc) => [Number(doc.id), doc]));
+  const assignmentsByTopic = new Map();
+  for (const assignment of assignments || []) {
+    const topicId = Number(assignment.topic_id);
+    if (!assignmentsByTopic.has(topicId)) {
+      assignmentsByTopic.set(topicId, []);
+    }
+    assignmentsByTopic.get(topicId).push(assignment);
+  }
+
+  const payload = candidateTopics.map((topic) => {
+    const representativeDocs = (assignmentsByTopic.get(Number(topic.topic_id)) || [])
+      .slice()
+      .sort((a, b) => (Number(b.probability) || 0) - (Number(a.probability) || 0))
+      .map((assignment) => docById.get(Number(assignment.document_id)))
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((doc) => ({
+        title: compactTopicText(doc.title || 'Untitled Document', 90),
+        excerpt: compactTopicText(doc.content || doc.text || '', 180)
+      }));
+
+    return {
+      topic_id: topic.topic_id,
+      keywords: (topic.topic_words || []).slice(0, 8).map((word) => word.word),
+      document_count: topic.document_count || 0,
+      representative_documents: representativeDocs
+    };
+  });
+
+  try {
+    const { text, usage } = await generateText({
+      model: modelInstance,
+      system: TOPIC_LABEL_PROMPT,
+      prompt: `Generate better labels for these discovered topics:\n\n${JSON.stringify(payload, null, 2)}`,
+      temperature: 0.2
+    });
+
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+    const match = cleaned.match(/\[[\s\S]*\]/);
+    if (!match) {
+      return { labels: {}, usage, error: new Error('Could not parse topic label response.') };
+    }
+
+    const parsed = JSON.parse(match[0]);
+    const labels = {};
+    for (const item of parsed) {
+      const topicId = Number(item?.topic_id);
+      const label = sanitizeTopicLabel(item?.label);
+      if (Number.isInteger(topicId) && label) {
+        labels[topicId] = label;
+      }
+    }
+
+    return { labels, usage, error: null };
+  } catch (err) {
+    return { labels: {}, usage: null, error: err };
+  }
+}
+
 module.exports = {
   createProvider,
   listProviders,
@@ -426,5 +540,6 @@ module.exports = {
   providerNeedsApiKey,
   generateDocumentTitle,
   generateDocumentSummary,
-  validateLlmBaseUrl   // exported for testing
+  generateTopicLabels,
+  validateLlmBaseUrl
 };
