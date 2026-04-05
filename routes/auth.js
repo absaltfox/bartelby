@@ -204,18 +204,19 @@ router.post('/login/mfa', async (req, res, next) => {
     return res.redirect('/login/mfa');
   }
 
-  // Set "remember this computer" cookie if requested
+  // Set "remember this computer" cookie if requested (7-day lifetime)
   if (req.body.remember_device) {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const MFA_REMEMBER_MS = 7 * 24 * 60 * 60 * 1000;
+    const expiresAt = new Date(Date.now() + MFA_REMEMBER_MS).toISOString();
     await mfaRememberTokensAsync.create(user.id, tokenHash, expiresAt);
     res.cookie('mfa_remember', rawToken, {
       signed: true,
       httpOnly: true,
       sameSite: 'lax',
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 30 * 24 * 60 * 60 * 1000
+      maxAge: MFA_REMEMBER_MS
     });
   }
 

@@ -16,6 +16,32 @@ const {
 
 const s3Config = config.storage.s3;
 
+// ── S3 endpoint SSRF guard ────────────────────────────────────────────────
+// Validate the custom endpoint URL if one is configured, to prevent an
+// attacker-controlled value from targeting internal services.
+const BLOCKED_S3_HOSTS = [
+  '169.254.169.254',
+  '100.100.100.200',
+  'metadata.google.internal',
+  'metadata.goog',
+];
+
+if (s3Config.endpoint) {
+  let parsedEndpoint;
+  try {
+    parsedEndpoint = new URL(s3Config.endpoint);
+  } catch {
+    throw new Error(`S3_ENDPOINT is not a valid URL: "${s3Config.endpoint}"`);
+  }
+  if (parsedEndpoint.protocol !== 'http:' && parsedEndpoint.protocol !== 'https:') {
+    throw new Error('S3_ENDPOINT must use http or https.');
+  }
+  const h = parsedEndpoint.hostname.toLowerCase();
+  if (BLOCKED_S3_HOSTS.includes(h) || /^169\.254\.\d+\.\d+$/.test(h)) {
+    throw new Error('S3_ENDPOINT points to a blocked host.');
+  }
+}
+
 const s3 = new S3Client({
   region: s3Config.region || 'us-east-1',
   endpoint: s3Config.endpoint || undefined,

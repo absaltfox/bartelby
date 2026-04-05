@@ -44,8 +44,7 @@ const authLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many login attempts. Please try again later.',
-  skip: () => process.env.NODE_ENV !== 'production'
+  message: 'Too many login attempts. Please try again later.'
 });
 
 const mfaLimiter = rateLimit({
@@ -53,8 +52,7 @@ const mfaLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: 'Too many verification attempts. Please try again later.',
-  skip: () => process.env.NODE_ENV !== 'production'
+  message: 'Too many verification attempts. Please try again later.'
 });
 
 app.use('/login', authLimiter);
@@ -74,6 +72,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Sessions ───────────────────────────────────────────────────────────────
 if (!process.env.SESSION_SECRET) {
+  if (isProduction) {
+    console.error('[security] SESSION_SECRET must be set in production. Exiting.');
+    process.exit(1);
+  }
   console.warn('[security] SESSION_SECRET is not set — using a random secret. Sessions will not persist across restarts. Set SESSION_SECRET in .env for production.');
 }
 const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');

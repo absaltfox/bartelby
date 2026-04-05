@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const {
   usersAsync,
   collectionsAsync,
@@ -13,8 +14,20 @@ const {
 const { requireAdmin } = require('../middleware/auth');
 const { isSmtpConfigured, sendInviteEmail, sendPasswordResetEmail } = require('../utils/email');
 const { absoluteAppUrl } = require('../utils/app-url');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
+
+// Rate limit sensitive token-generation endpoints per acting admin (3 per hour).
+// Prevents an admin account (if compromised) from flooding users with emails.
+const tokenGenLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => `admin-token-gen:${req.user?.id ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many token generation requests. Please wait before sending more.'
+});
 
 function consumeFlash(req) {
   const flash = req.session.adminUsersFlash || null;
@@ -57,7 +70,7 @@ router.get('/invite', async (req, res) => {
   delete req.session.authError;
 });
 
-router.post('/invite', async (req, res) => {
+router.post('/invite', tokenGenLimiter, async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const accessAll = req.body.access_all === '1';
@@ -109,6 +122,7 @@ router.post('/invite', async (req, res) => {
     }
   }
 
+  audit.log('user.invite_created', { ...audit.reqContext(req), inviteeEmail: email, role });
   req.session.adminUsersFlash = {
     type: 'invite',
     inviteId,
@@ -151,6 +165,7 @@ router.post('/:id/approve', async (req, res) => {
     }
     await userCollectionAccessAsync.setForUserWithRoles(id, collectionRoles);
   }
+  audit.log('user.approved', { ...audit.reqContext(req), targetUserId: id, role, accessAll });
   res.redirect('/admin/users');
 });
 
@@ -158,6 +173,7 @@ router.post('/:id/approve', async (req, res) => {
 router.post('/:id/reject', async (req, res) => {
   const id = parseInt(req.params.id);
   await usersAsync.reject(id);
+  audit.log('user.rejected', { ...audit.reqContext(req), targetUserId: id });
   res.redirect('/admin/users');
 });
 
@@ -167,6 +183,7 @@ router.post('/:id/role', async (req, res) => {
   if (id === req.user.id) return res.redirect('/admin/users');
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   await usersAsync.setRole(id, role);
+  audit.log('user.role_changed', { ...audit.reqContext(req), targetUserId: id, role });
   res.redirect('/admin/users');
 });
 
@@ -211,6 +228,7 @@ router.post('/:id/access', async (req, res) => {
     }
     await userCollectionAccessAsync.setForUserWithRoles(id, collectionRoles);
   }
+  audit.log('user.access_updated', { ...audit.reqContext(req), targetUserId: id, role, accessAll });
   res.redirect('/admin/users');
 });
 
@@ -219,7 +237,7 @@ router.post('/invites/:id/revoke', async (req, res) => {
   res.redirect('/admin/users');
 });
 
-router.post('/:id/password-reset', async (req, res) => {
+router.post('/:id/password-reset', tokenGenLimiter, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.redirect('/admin/users');
 
@@ -259,6 +277,7 @@ router.post('/:id/password-reset', async (req, res) => {
     }
   }
 
+  audit.log('user.password_reset_initiated', { ...audit.reqContext(req), targetUserId: user.id, targetEmail: user.email });
   req.session.adminUsersFlash = {
     type: 'password-reset',
     message,
@@ -273,6 +292,7 @@ router.post('/:id/delete', async (req, res) => {
   if (id === req.user.id) return res.redirect('/admin/users');
   try {
     await usersAsync.delete(id);
+    audit.log('user.deleted', { ...audit.reqContext(req), targetUserId: id });
   } catch (err) {
     console.error(`Failed to delete user ${id}:`, err.message);
     req.session.adminUsersFlash = { error: 'Failed to delete user. They may have associated records.' };

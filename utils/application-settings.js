@@ -54,12 +54,23 @@ function withFallback(value, fallback) {
 function sanitizeSvgMarkup(markup, fallback) {
   const candidate = withFallback(markup, fallback);
   return String(candidate || '')
+    // Remove script blocks
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    // Remove foreignObject (allows HTML injection)
     .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    // Remove style blocks (CSS injection vector)
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    // Remove use elements (can reference external resources)
+    .replace(/<use[\s\S]*?\/>/gi, '')
+    .replace(/<use[\s\S]*?<\/use>/gi, '')
+    // Strip inline event handlers (both quoted and unquoted)
     .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
     .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    // Strip javascript: hrefs
     .replace(/\s(?:href|xlink:href)\s*=\s*(['"])\s*javascript:[\s\S]*?\1/gi, '')
     .replace(/\s(?:href|xlink:href)\s*=\s*javascript:[^\s>]+/gi, '')
+    // Strip inline style attributes (CSS injection)
+    .replace(/\sstyle\s*=\s*(['"])[\s\S]*?\1/gi, '')
     .trim();
 }
 

@@ -7,6 +7,36 @@ const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
 const { createOllama } = require('ollama-ai-provider');
 
+// ── SSRF guard ─────────────────────────────────────────────────────────────
+// Blocked IP ranges and hostnames that must never be used as LLM provider URLs.
+const BLOCKED_HOSTS = [
+  '169.254.169.254',  // AWS / Azure / GCP instance metadata
+  '100.100.100.200',  // Alibaba Cloud metadata
+  'metadata.google.internal',
+  'metadata.goog',
+];
+
+function validateLlmBaseUrl(raw, providerLabel) {
+  if (!raw || typeof raw !== 'string') return;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid base URL for ${providerLabel}: "${raw}"`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${providerLabel} base URL must use http or https.`);
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOSTS.includes(hostname)) {
+    throw new Error(`${providerLabel} base URL points to a blocked host.`);
+  }
+  // Block link-local (169.254.x.x) and loopback-adjacent ranges used by cloud metadata
+  if (/^169\.254\.\d+\.\d+$/.test(hostname)) {
+    throw new Error(`${providerLabel} base URL points to a blocked address range.`);
+  }
+}
+
 const DEFAULT_SYSTEM_PROMPT = `You are an expert in historical document transcription and paleography. \
 Transcribe all handwritten and printed text from the document image with high accuracy.
 
@@ -141,6 +171,7 @@ const PROVIDERS = {
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
       const cfg = await mergeConfig(runtimeConfig);
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      validateLlmBaseUrl(baseURL, 'Ollama');
       const model = opts.model || runtimeConfig.model || cfg.ollama_model || 'llava';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOllama({ baseURL });
@@ -153,6 +184,7 @@ const PROVIDERS = {
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
       const cfg = await mergeConfig(runtimeConfig);
       const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      validateLlmBaseUrl(baseURL, 'LM Studio');
       const model = opts.model || runtimeConfig.model || cfg.lmstudio_model || 'local-model';
       const temperature = opts.temperature != null ? opts.temperature : null;
       // LM Studio is OpenAI-compatible; no API key required for local use
@@ -199,11 +231,13 @@ async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
     }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      validateLlmBaseUrl(baseURL, 'Ollama');
       const model = userVisionModel || cfg.ollama_model || 'llava';
       return createOllama({ baseURL })(model);
     }
     case 'lmstudio': {
       const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      validateLlmBaseUrl(baseURL, 'LM Studio');
       const model = userVisionModel || cfg.lmstudio_model || 'local-model';
       return createOpenAI({ baseURL, apiKey: 'lmstudio' })(model);
     }
@@ -274,11 +308,13 @@ async function getUtilityModelInstance(providerName, runtimeConfig = {}) {
     }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      validateLlmBaseUrl(baseURL, 'Ollama');
       const model = userUtilityModel || cfg.ollama_model || 'llava';
       return createOllama({ baseURL })(model);
     }
     case 'lmstudio': {
       const baseURL = runtimeConfig.baseURL || cfg.lmstudio_base_url || process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      validateLlmBaseUrl(baseURL, 'LM Studio');
       const model = userUtilityModel || cfg.lmstudio_model || 'local-model';
       return createOpenAI({ baseURL, apiKey: 'lmstudio' })(model);
     }

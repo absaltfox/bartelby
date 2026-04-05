@@ -11,10 +11,20 @@ async function createDriver() {
     throw new Error('TURSO_DATABASE_URL is required when DATABASE_DRIVER=turso');
   }
 
-  const client = createClient({
-    url,
-    authToken: authToken || undefined
-  });
+  // Wrap client creation so auth token is never exposed in error messages
+  // (libsql can include the full URL with embedded token in stack traces).
+  let client;
+  try {
+    client = createClient({
+      url,
+      authToken: authToken || undefined
+    });
+  } catch (err) {
+    const safeMsg = err.message
+      ? err.message.replace(authToken || '__no_token__', '[REDACTED]')
+      : 'Failed to create Turso client';
+    throw new Error(`Turso client initialization failed: ${safeMsg}`);
+  }
 
   // Enable foreign keys
   await client.execute('PRAGMA foreign_keys = ON');

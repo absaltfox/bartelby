@@ -52,6 +52,14 @@ function getEncryptionKey() {
   loadEnv();
   const raw = process.env.DATA_ENCRYPTION_KEY;
   if (!raw) return null;
+  // Require a minimum of 32 characters to reduce the risk of weak keys.
+  // Ideally this should be generated with: openssl rand -hex 32
+  if (raw.length < 32) {
+    throw new Error(
+      'DATA_ENCRYPTION_KEY is too short (minimum 32 characters). ' +
+      'Generate a strong key with: openssl rand -hex 32'
+    );
+  }
   return crypto.createHash('sha256').update(raw).digest();
 }
 

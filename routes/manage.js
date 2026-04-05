@@ -119,14 +119,23 @@ router.post('/collections/:collectionId/documents/move', express.json(), require
     }
   }
 
-  for (const docId of docIds) {
+  // Verify every submitted doc ID actually belongs to the source collection,
+  // preventing a manager from moving documents they don't own via forged IDs.
+  const sourceEntries = await documentCollectionsAsync.getByCollectionId(fromCollectionId);
+  const sourceDocIds = new Set(sourceEntries.map(dc => dc.document_id));
+  const validDocIds = docIds.filter(id => sourceDocIds.has(id));
+  if (validDocIds.length === 0) {
+    return res.status(400).json({ error: 'None of the specified documents belong to this collection' });
+  }
+
+  for (const docId of validDocIds) {
     // Add to target
     await documentCollectionsAsync.add(docId, targetCollectionId);
     // Remove from source
     await documentCollectionsAsync.remove(docId, fromCollectionId);
   }
 
-  res.json({ success: true, moved: docIds.length });
+  res.json({ success: true, moved: validDocIds.length });
 });
 
 // ── Delete document from collection (manager) ────────────────────────────────
