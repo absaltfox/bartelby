@@ -224,6 +224,15 @@ router.get('/collections/:collectionId/jobs/api/:id', requireCollectionRole('man
   res.json(job);
 });
 
+router.post('/collections/:collectionId/jobs/api/import/:id/retry', requireCollectionRole('manager'), async (req, res) => {
+  const job = await importJobsAsync.getById(parseInt(req.params.id));
+  if (!job || (req.user.role !== 'admin' && job.user_id !== req.user.id)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  await importJobsAsync.retry(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
 // ── Jobs API: collection-scoped job list (for AJAX polling) ────────────────────
 router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager'), async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);

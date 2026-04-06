@@ -505,6 +505,34 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     plot_json TEXT,
     computed_at DATETIME NOT NULL DEFAULT (datetime('now'))
   )
+  `,
+
+  // v42 — provider batch transcription jobs + explicit document membership
+  `
+  ALTER TABLE transcription_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'single';
+  ALTER TABLE transcription_jobs ADD COLUMN batch_display_name TEXT;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_document_count INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_page_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_completed_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_failed_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_remote_id TEXT;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_remote_status TEXT;
+  ALTER TABLE transcription_jobs ADD COLUMN batch_manifest TEXT;
+  CREATE TABLE IF NOT EXISTS transcription_job_documents (
+    job_id INTEGER NOT NULL REFERENCES transcription_jobs(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    PRIMARY KEY (job_id, document_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_transcription_job_documents_document_id
+    ON transcription_job_documents(document_id);
+  CREATE INDEX IF NOT EXISTS idx_transcription_job_documents_job_id
+    ON transcription_job_documents(job_id)
+  `,
+
+  // v43 — durable import submission jobs
+  `
+  ALTER TABLE import_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'render';
+  ALTER TABLE import_jobs ADD COLUMN submit_payload TEXT
   `
 ];
 
@@ -591,21 +619,67 @@ async function initializeSchema() {
   // can never complete (the process that was handling them is gone).
   // Skip jobs with a machine_id — they run on ephemeral Fly machines
   // and may still be processing on a separate VM.
-  const staleImports = await get("SELECT COUNT(*) as count FROM import_jobs WHERE status = 'processing' AND machine_id IS NULL");
-  const staleImportCount = staleImports?.count || 0;
-  if (staleImportCount > 0) {
-    await db.run("UPDATE import_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'processing' AND machine_id IS NULL");
-    console.log(`[db] Marked ${staleImportCount} stale import job(s) as failed`);
+  const staleRenderImports = await get(`
+    SELECT COUNT(*) as count
+    FROM import_jobs
+    WHERE status = 'processing'
+      AND machine_id IS NULL
+      AND COALESCE(job_kind, 'render') = 'render'
+  `);
+  const staleRenderImportCount = staleRenderImports?.count || 0;
+  if (staleRenderImportCount > 0) {
+    await db.run(`
+      UPDATE import_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'processing'
+        AND machine_id IS NULL
+        AND COALESCE(job_kind, 'render') = 'render'
+    `);
+    console.log(`[db] Marked ${staleRenderImportCount} stale render import job(s) as failed`);
   }
 
-  const staleTranscriptions = await get("SELECT COUNT(*) as count FROM transcription_jobs WHERE status = 'running'");
+  const staleSubmitImports = await get(`
+    SELECT COUNT(*) as count
+    FROM import_jobs
+    WHERE status = 'running'
+      AND COALESCE(job_kind, 'render') = 'submit'
+  `);
+  const staleSubmitImportCount = staleSubmitImports?.count || 0;
+  if (staleSubmitImportCount > 0) {
+    await db.run(`
+      UPDATE import_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE status = 'running'
+        AND COALESCE(job_kind, 'render') = 'submit'
+    `);
+    console.log(`[db] Requeued ${staleSubmitImportCount} stale import submission job(s)`);
+  }
+
+  const staleTranscriptions = await get(`
+    SELECT COUNT(*) as count
+    FROM transcription_jobs
+    WHERE status = 'running'
+      AND (job_kind IS NULL OR job_kind != 'batch' OR batch_remote_id IS NULL)
+  `);
   const staleTranscriptionCount = staleTranscriptions?.count || 0;
   if (staleTranscriptionCount > 0) {
-    await db.run("UPDATE transcription_jobs SET status = 'failed', error = 'Server restarted during processing', completed_at = CURRENT_TIMESTAMP WHERE status = 'running'");
+    await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+        AND (job_kind IS NULL OR job_kind != 'batch' OR batch_remote_id IS NULL)
+    `);
     console.log(`[db] Marked ${staleTranscriptionCount} stale transcription job(s) as failed`);
   }
 
-  if (staleImportCount > 0 || staleTranscriptionCount > 0) {
+  if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0) {
     await saveDatabase();
   }
 
@@ -665,12 +739,24 @@ const transcriptionJobs = {
     additional_image_paths,
     provider_key_scope,
     user_api_key_id,
-    requested_by_user_id
+    requested_by_user_id,
+    job_kind = 'single',
+    batch_display_name = null,
+    batch_document_count = 1,
+    batch_page_count = 0,
+    batch_manifest = null,
+    linked_document_ids = null
   }) {
     const result = run(`
       INSERT INTO transcription_jobs
-        (document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths, provider_key_scope, user_api_key_id, requested_by_user_id, status, log)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
+        (
+          document_id, provider, model, temperature, initiated_by,
+          image_path, additional_image_paths, provider_key_scope,
+          user_api_key_id, requested_by_user_id, job_kind,
+          batch_display_name, batch_document_count, batch_page_count,
+          batch_manifest, status, log
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
     `, [
       document_id,
       provider || null,
@@ -681,9 +767,27 @@ const transcriptionJobs = {
       additional_image_paths ? JSON.stringify(additional_image_paths) : null,
       provider_key_scope || null,
       user_api_key_id || null,
-      requested_by_user_id || null
+      requested_by_user_id || null,
+      job_kind || 'single',
+      batch_display_name || null,
+      Number.isInteger(batch_document_count) ? batch_document_count : 1,
+      Number.isInteger(batch_page_count) ? batch_page_count : 0,
+      batch_manifest ? JSON.stringify(batch_manifest) : null
     ]);
-    return result.lastInsertRowid;
+    const jobId = result.lastInsertRowid;
+    this.linkDocuments(jobId, linked_document_ids || [document_id]);
+    return jobId;
+  },
+
+  linkDocuments(jobId, documentIds) {
+    if (!Number.isInteger(jobId) || !Array.isArray(documentIds)) return;
+    const uniqueIds = [...new Set(documentIds.map(Number).filter(Number.isInteger))];
+    uniqueIds.forEach((documentId) => {
+      run(`
+        INSERT OR IGNORE INTO transcription_job_documents (job_id, document_id)
+        VALUES (?, ?)
+      `, [jobId, documentId]);
+    });
   },
 
   getNextQueued() {
@@ -711,7 +815,18 @@ const transcriptionJobs = {
   },
 
   requeueForRetry(id) {
-    db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ?", [id]);
+    db.run(`
+      UPDATE transcription_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ?
+    `, [id]);
     saveDatabase();
   },
 
@@ -744,7 +859,18 @@ const transcriptionJobs = {
   },
 
   retry(id) {
-    db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ? AND status = 'failed'", [id]);
+    db.run(`
+      UPDATE transcription_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ? AND status = 'failed'
+    `, [id]);
     saveDatabase();
   },
 
@@ -753,7 +879,56 @@ const transcriptionJobs = {
   },
 
   getPendingForDocument(docId) {
-    return get("SELECT * FROM transcription_jobs WHERE document_id = ? AND status IN ('queued', 'running') LIMIT 1", [docId]);
+    return get(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.status IN ('queued', 'running')
+        AND (
+          j.document_id = ?
+          OR EXISTS (
+            SELECT 1
+            FROM transcription_job_documents tjd
+            WHERE tjd.job_id = j.id AND tjd.document_id = ?
+          )
+        )
+      ORDER BY j.created_at DESC
+      LIMIT 1
+    `, [docId, docId]);
+  },
+
+  getRunningBatches() {
+    return all(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.job_kind = 'batch' AND j.status = 'running'
+      ORDER BY j.created_at ASC
+    `);
+  },
+
+  updateBatchRemote(id, { remoteId, remoteStatus }) {
+    run(`
+      UPDATE transcription_jobs
+      SET batch_remote_id = COALESCE(?, batch_remote_id),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [remoteId || null, remoteStatus || null, id]);
+  },
+
+  updateBatchProgress(id, { completedCount, failedCount, remoteStatus }) {
+    run(`
+      UPDATE transcription_jobs
+      SET batch_completed_count = COALESCE(?, batch_completed_count),
+          batch_failed_count = COALESCE(?, batch_failed_count),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [
+      Number.isInteger(completedCount) ? completedCount : null,
+      Number.isInteger(failedCount) ? failedCount : null,
+      remoteStatus || null,
+      id
+    ]);
   }
 };
 
@@ -1920,12 +2095,24 @@ const transcriptionJobsAsync = {
     additional_image_paths,
     provider_key_scope,
     user_api_key_id,
-    requested_by_user_id
+    requested_by_user_id,
+    job_kind = 'single',
+    batch_display_name = null,
+    batch_document_count = 1,
+    batch_page_count = 0,
+    batch_manifest = null,
+    linked_document_ids = null
   }) {
     const result = await runAsync(`
       INSERT INTO transcription_jobs
-        (document_id, provider, model, temperature, initiated_by, image_path, additional_image_paths, provider_key_scope, user_api_key_id, requested_by_user_id, status, log)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
+        (
+          document_id, provider, model, temperature, initiated_by,
+          image_path, additional_image_paths, provider_key_scope,
+          user_api_key_id, requested_by_user_id, job_kind,
+          batch_display_name, batch_document_count, batch_page_count,
+          batch_manifest, status, log
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
     `, [
       document_id,
       provider || null,
@@ -1936,13 +2123,51 @@ const transcriptionJobsAsync = {
       additional_image_paths ? JSON.stringify(additional_image_paths) : null,
       provider_key_scope || null,
       user_api_key_id || null,
-      requested_by_user_id || null
+      requested_by_user_id || null,
+      job_kind || 'single',
+      batch_display_name || null,
+      Number.isInteger(batch_document_count) ? batch_document_count : 1,
+      Number.isInteger(batch_page_count) ? batch_page_count : 0,
+      batch_manifest ? JSON.stringify(batch_manifest) : null
     ]);
-    return result.lastInsertRowid;
+    const jobId = result.lastInsertRowid;
+    await this.linkDocuments(jobId, linked_document_ids || [document_id]);
+    return jobId;
+  },
+
+  async linkDocuments(jobId, documentIds) {
+    if (!Number.isInteger(jobId) || !Array.isArray(documentIds)) return;
+    const uniqueIds = [...new Set(documentIds.map(Number).filter(Number.isInteger))];
+    for (const documentId of uniqueIds) {
+      await runAsync(`
+        INSERT OR IGNORE INTO transcription_job_documents (job_id, document_id)
+        VALUES (?, ?)
+      `, [jobId, documentId]);
+    }
   },
 
   async getNextQueued() {
     return await getAsync("SELECT * FROM transcription_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1");
+  },
+
+  async claimNextQueued() {
+    const job = await this.getNextQueued();
+    if (!job) return null;
+
+    const result = await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'running',
+          started_at = CURRENT_TIMESTAMP,
+          attempts = attempts + 1
+      WHERE id = ? AND status = 'queued'
+    `, [job.id]);
+    await saveDatabase();
+
+    if (!result || !result.changes) {
+      return null;
+    }
+
+    return await this.getById(job.id);
   },
 
   async markRunning(id) {
@@ -1966,7 +2191,18 @@ const transcriptionJobsAsync = {
   },
 
   async requeueForRetry(id) {
-    await db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ?", [id]);
+    await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ?
+    `, [id]);
     await saveDatabase();
   },
 
@@ -1980,7 +2216,22 @@ const transcriptionJobsAsync = {
   },
 
   async getPendingForDocument(docId) {
-    return await getAsync("SELECT * FROM transcription_jobs WHERE document_id = ? AND status IN ('queued', 'running') LIMIT 1", [docId]);
+    return await getAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.status IN ('queued', 'running')
+        AND (
+          j.document_id = ?
+          OR EXISTS (
+            SELECT 1
+            FROM transcription_job_documents tjd
+            WHERE tjd.job_id = j.id AND tjd.document_id = ?
+          )
+        )
+      ORDER BY j.created_at DESC
+      LIMIT 1
+    `, [docId, docId]);
   },
 
   async getAll() {
@@ -1996,24 +2247,64 @@ const transcriptionJobsAsync = {
     if (!docIds || docIds.length === 0) return [];
     const placeholders = docIds.map(() => '?').join(',');
     return await allAsync(`
-      SELECT j.*, d.title as document_title
+      SELECT DISTINCT j.*, d.title as document_title
       FROM transcription_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
       WHERE j.document_id IN (${placeholders})
+         OR tjd.document_id IN (${placeholders})
       ORDER BY j.created_at DESC
-    `, docIds);
+    `, [...docIds, ...docIds]);
   },
 
   async getActiveByDocumentIds(docIds) {
     if (!docIds || docIds.length === 0) return [];
     const placeholders = docIds.map(() => '?').join(',');
     return await allAsync(`
+      SELECT DISTINCT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
+      WHERE (j.document_id IN (${placeholders}) OR tjd.document_id IN (${placeholders}))
+        AND j.status IN ('queued','running')
+      ORDER BY j.created_at DESC
+    `, [...docIds, ...docIds]);
+  },
+
+  async getRunningBatches() {
+    return await allAsync(`
       SELECT j.*, d.title as document_title
       FROM transcription_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
-      WHERE j.document_id IN (${placeholders}) AND j.status IN ('queued','running')
-      ORDER BY j.created_at DESC
-    `, docIds);
+      WHERE j.job_kind = 'batch' AND j.status = 'running'
+      ORDER BY j.created_at ASC
+    `);
+  },
+
+  async updateBatchRemote(id, { remoteId, remoteStatus }) {
+    await db.run(`
+      UPDATE transcription_jobs
+      SET batch_remote_id = COALESCE(?, batch_remote_id),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [remoteId || null, remoteStatus || null, id]);
+    await saveDatabase();
+  },
+
+  async updateBatchProgress(id, { completedCount, failedCount, remoteStatus }) {
+    await db.run(`
+      UPDATE transcription_jobs
+      SET batch_completed_count = COALESCE(?, batch_completed_count),
+          batch_failed_count = COALESCE(?, batch_failed_count),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [
+      Number.isInteger(completedCount) ? completedCount : null,
+      Number.isInteger(failedCount) ? failedCount : null,
+      remoteStatus || null,
+      id
+    ]);
+    await saveDatabase();
   },
 
   async savePartialResults(id, results) {
@@ -2031,7 +2322,18 @@ const transcriptionJobsAsync = {
   },
 
   async retry(id) {
-    await db.run("UPDATE transcription_jobs SET status = 'queued', error = NULL, started_at = NULL, completed_at = NULL WHERE id = ? AND status = 'failed'", [id]);
+    await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ? AND status = 'failed'
+    `, [id]);
     await saveDatabase();
   },
 
@@ -2043,9 +2345,25 @@ const transcriptionJobsAsync = {
 const importJobsAsync = {
   async create({ original_name, file_path, user_id }) {
     const result = await runAsync(`
-      INSERT INTO import_jobs (original_name, file_path, status, user_id)
-      VALUES (?, ?, 'processing', ?)
+      INSERT INTO import_jobs (original_name, file_path, status, user_id, job_kind)
+      VALUES (?, ?, 'processing', ?, 'render')
     `, [original_name || null, file_path || null, user_id || null]);
+    return result.lastInsertRowid;
+  },
+
+  async createSubmissionJob({ original_name, user_id, total_count, payload }) {
+    const result = await runAsync(`
+      INSERT INTO import_jobs (
+        original_name, status, user_id, submitted, job_kind,
+        page_count, pages_rendered, submit_payload
+      )
+      VALUES (?, 'queued', ?, 1, 'submit', ?, 0, ?)
+    `, [
+      original_name || null,
+      user_id || null,
+      Number.isInteger(total_count) ? total_count : 0,
+      payload ? JSON.stringify(payload) : null
+    ]);
     return result.lastInsertRowid;
   },
 
@@ -2060,7 +2378,7 @@ const importJobsAsync = {
 
   async markDone(id, pages) {
     await db.run("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
-      [JSON.stringify(pages), id]);
+      [pages == null ? null : JSON.stringify(pages), id]);
     await saveDatabase();
   },
 
@@ -2082,12 +2400,63 @@ const importJobsAsync = {
     return await allAsync('SELECT * FROM import_jobs WHERE user_id = ? ORDER BY created_at DESC', [userId]);
   },
 
+  async claimNextQueuedSubmission() {
+    const job = await getAsync(`
+      SELECT * FROM import_jobs
+      WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'submit'
+      ORDER BY created_at ASC
+      LIMIT 1
+    `);
+    if (!job) return null;
+
+    const result = await db.run(`
+      UPDATE import_jobs
+      SET status = 'running',
+          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+          completed_at = NULL,
+          error = NULL
+      WHERE id = ? AND status = 'queued'
+    `, [job.id]);
+    await saveDatabase();
+
+    if (!result || !result.changes) return null;
+    return await this.getById(job.id);
+  },
+
   async updateMachineId(id, machineId) {
     await db.run("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },
 
+  async updateSubmissionState(id, payload, { processedCount } = {}) {
+    await db.run(`
+      UPDATE import_jobs
+      SET submit_payload = ?,
+          pages_rendered = COALESCE(?, pages_rendered)
+      WHERE id = ?
+    `, [
+      payload ? JSON.stringify(payload) : null,
+      Number.isInteger(processedCount) ? processedCount : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
   async markSubmitted(id) {
     await db.run("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
+    await saveDatabase();
+  },
+
+  async retry(id) {
+    await db.run(`
+      UPDATE import_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE id = ?
+        AND status = 'failed'
+        AND COALESCE(job_kind, 'render') = 'submit'
+    `, [id]);
     await saveDatabase();
   },
 
@@ -2167,6 +2536,9 @@ const adminJobsAsync = {
         SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
                j.document_id, j.started_at, j.completed_at, j.error, j.log,
                j.provider, j.model, d.title AS document_title,
+               j.job_kind, j.batch_display_name, j.batch_document_count,
+               j.batch_page_count, j.batch_completed_count, j.batch_failed_count,
+               j.batch_remote_status,
                NULL AS original_name, NULL AS page_count, NULL AS pages_rendered, NULL AS submitted
         FROM transcription_jobs j
         LEFT JOIN documents d ON j.document_id = d.id
@@ -2174,6 +2546,9 @@ const adminJobsAsync = {
         SELECT id, created_at, status, 'import' AS job_type,
                NULL AS document_id, started_at, completed_at, error, NULL AS log,
                NULL AS provider, NULL AS model, NULL AS document_title,
+               COALESCE(job_kind, 'render') AS job_kind, NULL AS batch_display_name, 1 AS batch_document_count,
+               0 AS batch_page_count, 0 AS batch_completed_count, 0 AS batch_failed_count,
+               NULL AS batch_remote_status,
                original_name, page_count, pages_rendered, submitted
         FROM import_jobs
       ) combined
@@ -2189,6 +2564,9 @@ const adminJobsAsync = {
       SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
              j.document_id, j.started_at, j.completed_at, j.error,
              j.provider, d.title AS document_title,
+             j.job_kind, j.batch_display_name, j.batch_document_count,
+             j.batch_page_count, j.batch_completed_count, j.batch_failed_count,
+             j.batch_remote_status,
              NULL AS original_name, NULL AS page_count, NULL AS pages_rendered
       FROM transcription_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
@@ -2197,6 +2575,9 @@ const adminJobsAsync = {
       SELECT id, created_at, status, 'import' AS job_type,
              NULL AS document_id, started_at, completed_at, error,
              NULL AS provider, NULL AS document_title,
+             COALESCE(job_kind, 'render') AS job_kind, NULL AS batch_display_name, 1 AS batch_document_count,
+             0 AS batch_page_count, 0 AS batch_completed_count, 0 AS batch_failed_count,
+             NULL AS batch_remote_status,
              original_name, page_count, pages_rendered
       FROM import_jobs
       WHERE status IN ('processing','queued')

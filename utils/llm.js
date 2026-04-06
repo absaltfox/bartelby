@@ -117,6 +117,50 @@ async function mergeConfig(overrides = {}) {
   return { ...(await loadConfig()), ...overrides };
 }
 
+async function getTranscriptionSystemPrompt(runtimeConfig = {}) {
+  const cfg = await mergeConfig(runtimeConfig);
+  return getSystemPrompt(cfg);
+}
+
+async function resolveTranscriptionRuntime(providerName, runtimeConfig = {}, opts = {}) {
+  const cfg = await mergeConfig(runtimeConfig);
+  const temperature = opts.temperature != null ? opts.temperature : null;
+
+  if (providerName === 'openai') {
+    return {
+      apiKey: runtimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY,
+      model: opts.model || runtimeConfig.model || cfg.openai_model || 'gpt-4o',
+      temperature,
+      cfg
+    };
+  }
+
+  if (providerName === 'claude') {
+    return {
+      apiKey: runtimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY,
+      model: opts.model || runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022',
+      temperature,
+      cfg
+    };
+  }
+
+  if (providerName === 'gemini') {
+    return {
+      apiKey: runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      model: opts.model || runtimeConfig.model || cfg.google_model || 'gemini-1.5-pro-latest',
+      temperature,
+      cfg
+    };
+  }
+
+  return {
+    apiKey: null,
+    model: opts.model || runtimeConfig.model || null,
+    temperature,
+    cfg
+  };
+}
+
 async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType, cfg = {}) {
   const startMs = Date.now();
   const systemPrompt = getSystemPrompt(cfg);
@@ -567,6 +611,9 @@ module.exports = {
   listProviders,
   listConfiguredProviders,
   providerNeedsApiKey,
+  parseTranscriptionResponse: parseResponse,
+  getTranscriptionSystemPrompt,
+  resolveTranscriptionRuntime,
   generateDocumentTitle,
   generateDocumentSummary,
   generateTopicLabels,

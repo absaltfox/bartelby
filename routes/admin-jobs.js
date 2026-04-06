@@ -35,13 +35,25 @@ router.get('/', async (req, res) => {
   });
 });
 
-// API: bulk retry failed transcription jobs
+// API: bulk retry failed jobs
 router.post('/api/bulk/retry', express.json(), async (req, res) => {
-  const { ids } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'No IDs provided' });
+  const { ids, jobs: jobList } = req.body;
+  const normalizedJobs = Array.isArray(jobList) && jobList.length > 0
+    ? jobList
+    : Array.isArray(ids)
+      ? ids.map((id) => ({ id, type: 'transcription' }))
+      : [];
+  if (normalizedJobs.length === 0) return res.status(400).json({ error: 'No jobs provided' });
   let count = 0;
-  for (const id of ids) {
-    try { await transcriptionJobsAsync.retry(parseInt(id)); count++; } catch (e) {}
+  for (const { id, type } of normalizedJobs) {
+    try {
+      if (type === 'import') {
+        await importJobsAsync.retry(parseInt(id));
+      } else {
+        await transcriptionJobsAsync.retry(parseInt(id));
+      }
+      count++;
+    } catch (e) {}
   }
   res.json({ success: true, count });
 });
@@ -88,6 +100,12 @@ router.get('/api/:id', async (req, res) => {
 // API: retry failed transcription job
 router.post('/api/:id/retry', async (req, res) => {
   await transcriptionJobsAsync.retry(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+// API: retry failed durable import submission job
+router.post('/api/import/:id/retry', async (req, res) => {
+  await importJobsAsync.retry(parseInt(req.params.id));
   res.json({ success: true });
 });
 

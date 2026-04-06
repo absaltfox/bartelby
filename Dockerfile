@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-dev \
+    python3-venv \
     poppler-utils \
   && rm -rf /var/lib/apt/lists/*
 
@@ -22,18 +23,26 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY requirements.txt ./
 RUN npm ci --omit=dev
+RUN python3 -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+  && python3 -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
   && python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
 # Create data and temp directories
-RUN mkdir -p /app/data /app/temp /app/public/uploads
+RUN mkdir -p /app/data /app/temp /app/public/uploads /app/.cache/numba /app/.cache/huggingface
 
 # Default environment
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOME=/app
+ENV XDG_CACHE_HOME=/app/.cache
+ENV NUMBA_CACHE_DIR=/app/.cache/numba
+ENV HF_HOME=/app/.cache/huggingface
 
 EXPOSE 3000
 

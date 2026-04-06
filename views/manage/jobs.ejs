@@ -79,6 +79,8 @@
                 durationStr = 'processing…';
               }
               const isImport = job.job_type === 'import';
+              const isImportSubmit = isImport && job.job_kind === 'submit';
+              const isBatch = !isImport && job.job_kind === 'batch';
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>">
               <td>
@@ -90,16 +92,30 @@
               <td>
                 <% if (isImport) { %>
                   <span><%= job.original_name || 'PDF Import' %></span>
-                  <% if (job.status === 'processing' && job.page_count) { %>
+                  <% if (isImportSubmit && (job.status === 'running' || job.status === 'queued') && job.page_count) { %>
+                    <div class="import-progress">
+                      <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
+                    </div>
+                    <small class="muted">Creating document <%= Math.min((job.pages_rendered || 0) + 1, job.page_count) %> of <%= job.page_count %></small>
+                  <% } else if (job.status === 'processing' && job.page_count) { %>
                     <div class="import-progress">
                       <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
                     </div>
                     <small class="muted">Rendering page <%= job.pages_rendered || 0 %> of <%= job.page_count %></small>
                   <% } else if (job.status === 'processing') { %>
                     <small class="muted">Starting...</small>
+                  <% } else if (isImportSubmit && job.page_count) { %>
+                    <small class="muted"> (<%= job.page_count %> documents)</small>
                   <% } else if (job.page_count) { %>
                     <small class="muted"> (<%= job.page_count %> pages)</small>
                   <% } %>
+                <% } else if (isBatch) { %>
+                  <span><%= job.batch_display_name || 'Batch transcription job' %></span>
+                  <small class="muted">
+                    <%= job.batch_document_count || 0 %> documents
+                    <% if (job.batch_page_count) { %> • <%= job.batch_page_count %> pages<% } %>
+                    <% if (job.batch_remote_status) { %> • <%= job.batch_remote_status %><% } %>
+                  </small>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
                 <% } else { %>
@@ -118,6 +134,9 @@
                   <% } %>
                   <% if (isImport && job.status === 'done' && !job.submitted) { %>
                     <a href="/manage/collections/<%= collection.id %>/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-promote">Continue</a>
+                  <% } %>
+                  <% if (isImportSubmit && job.status === 'failed') { %>
+                    <button type="button" class="btn-action btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
                   <% } %>
                 </div>
               </td>
@@ -153,6 +172,21 @@
     });
   });
 
+  document.querySelectorAll('.retry-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      btn.disabled = true;
+      try {
+        await fetch(apiBase + '/import/' + btn.dataset.id + '/retry', {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content }
+        });
+        window.location.reload();
+      } catch (e) {
+        btn.disabled = false;
+      }
+    });
+  });
+
   // AJAX polling: update job rows in-place every 5s when active jobs exist
   var currentFilter = '<%= filter %>';
   var currentTypeFilter = '<%= typeFilter %>';
@@ -173,6 +207,12 @@
 
   function buildProgressHtml(job) {
     if (job.job_type !== 'import') return '';
+    if (job.job_kind === 'submit' && job.page_count) {
+      var submitPct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
+      var nextDoc = Math.min((job.pages_rendered || 0) + 1, job.page_count);
+      return '<div class="import-progress"><div class="import-progress-bar" style="width:' + submitPct + '%"></div></div>' +
+             '<small class="muted">Creating document ' + nextDoc + ' of ' + job.page_count + '</small>';
+    }
     if (job.status === 'processing' && job.page_count) {
       var pct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
       return '<div class="import-progress"><div class="import-progress-bar" style="width:' + pct + '%"></div></div>' +
@@ -181,6 +221,23 @@
     if (job.status === 'processing') return '<small class="muted">Starting...</small>';
     if (job.page_count) return '<small class="muted"> (' + job.page_count + ' pages)</small>';
     return '';
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function buildBatchHtml(job) {
+    if (job.job_type !== 'transcription' || job.job_kind !== 'batch') return '';
+    var name = escapeHtml(job.batch_display_name || 'Batch transcription job');
+    var parts = [String(job.batch_document_count || 0) + ' documents'];
+    if (job.batch_page_count) parts.push(String(job.batch_page_count) + ' pages');
+    if (job.batch_remote_status) parts.push(String(job.batch_remote_status));
+    return '<span>' + name + '</span><small class="muted">' + escapeHtml(parts.join(' • ')) + '</small>';
   }
 
   function pollJobs() {
@@ -248,6 +305,9 @@
               var nameEl = docCell.querySelector('span');
               if (nameEl) nameEl.insertAdjacentHTML('afterend', newProgress);
             }
+          } else if (job.job_kind === 'batch') {
+            var batchCell = cells[2];
+            batchCell.innerHTML = buildBatchHtml(job);
           }
         });
 

@@ -30,6 +30,14 @@ async function flyApi(method, path, body) {
   return res.status === 204 ? null : res.json();
 }
 
+function canLaunchEphemeralPdfWorker() {
+  return config.flyMachines.enabled && config.storage.driver === 's3';
+}
+
+function canLaunchEphemeralBertopicWorker() {
+  return config.flyMachines.enabled && config.storage.driver === 's3';
+}
+
 /**
  * Spin up an ephemeral Fly machine to process a PDF import job.
  * The machine runs pdf-worker.js in standalone mode, reads the PDF from S3,
@@ -41,6 +49,9 @@ async function runEphemeralWorker(importJobId) {
 
   if (!imageRef) {
     throw new Error('FLY_IMAGE_REF is not available — are you running on Fly.io?');
+  }
+  if (config.storage.driver !== 's3') {
+    throw new Error('Ephemeral PDF workers require STORAGE_DRIVER=s3.');
   }
 
   // Pass all env vars the worker needs. Ephemeral machines don't inherit
@@ -102,6 +113,9 @@ async function runEphemeralBertopicWorker(collectionId, analyticsRowId = null) {
   if (!imageRef) {
     throw new Error('FLY_IMAGE_REF is not available — are you running on Fly.io?');
   }
+  if (config.storage.driver !== 's3') {
+    throw new Error('Ephemeral BERTopic workers require STORAGE_DRIVER=s3.');
+  }
 
   const env = {
     BERTOPIC_WORKER_MODE: '1',
@@ -159,4 +173,10 @@ async function destroyMachine(machineId) {
   }
 }
 
-module.exports = { runEphemeralWorker, runEphemeralBertopicWorker, destroyMachine };
+module.exports = {
+  canLaunchEphemeralPdfWorker,
+  canLaunchEphemeralBertopicWorker,
+  runEphemeralWorker,
+  runEphemeralBertopicWorker,
+  destroyMachine
+};

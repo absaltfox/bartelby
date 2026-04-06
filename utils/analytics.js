@@ -206,13 +206,20 @@ function queueLocalBertopicWorker(collectionId, analyticsRowId) {
 
 async function runBertopicAnalysis(collectionId) {
   const cfg = require('../config');
+  const { canLaunchEphemeralBertopicWorker } = require('./fly-machines');
 
   // On Fly: dispatch to ephemeral machine with enough RAM for ML workloads.
   // Machine writes results to DB and sets topics_computed = 1 when done.
-  if (cfg.flyMachines.enabled) {
+  if (canLaunchEphemeralBertopicWorker()) {
     const { runEphemeralBertopicWorker } = require('./fly-machines');
     await runEphemeralBertopicWorker(collectionId);
     return 'dispatched';
+  }
+
+  if (cfg.flyMachines.enabled && cfg.storage.driver !== 's3') {
+    console.warn(
+      '[analytics] Fly Machines are enabled, but STORAGE_DRIVER is not s3; using the local BERTopic worker instead.'
+    );
   }
 
   // Local path: spawn Python directly
@@ -305,10 +312,18 @@ async function runBertopicAnalysis(collectionId) {
 }
 
 async function dispatchBertopicAnalysis(collectionId, analyticsRowId) {
-  if (config.flyMachines.enabled) {
+  const { canLaunchEphemeralBertopicWorker } = require('./fly-machines');
+
+  if (canLaunchEphemeralBertopicWorker()) {
     const { runEphemeralBertopicWorker } = require('./fly-machines');
     await runEphemeralBertopicWorker(collectionId, analyticsRowId);
     return 'dispatched';
+  }
+
+  if (config.flyMachines.enabled && config.storage.driver !== 's3') {
+    console.warn(
+      '[analytics] Fly Machines are enabled, but STORAGE_DRIVER is not s3; queuing the local BERTopic worker instead.'
+    );
   }
 
   queueLocalBertopicWorker(collectionId, analyticsRowId);

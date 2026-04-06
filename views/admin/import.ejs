@@ -107,6 +107,16 @@
         <!-- Groups appear here -->
       </div>
 
+      <div class="ai-queue-note" id="batch-transcription-option" style="display:none; margin-bottom:16px;">
+        <label class="mode-option" style="margin-bottom:8px;">
+          <input type="checkbox" id="use-batch-transcription">
+          <span class="mode-label">Submit as one provider batch job</span>
+        </label>
+        <p class="field-hint" id="batch-transcription-hint" style="margin:0;">
+          Large AI imports can be sent as a single async batch job. It will appear once in Jobs and may take longer to finish.
+        </p>
+      </div>
+
       <div class="page-actions page-actions-sticky">
         <button type="button" class="btn-secondary" id="select-all-pages">Select All</button>
         <button type="button" class="btn-secondary" id="deselect-all-pages">Deselect All</button>

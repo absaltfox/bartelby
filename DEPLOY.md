@@ -160,6 +160,7 @@ DATA_ENCRYPTION_KEY=$(openssl rand -base64 32)
 fly secrets set \
   SESSION_SECRET="$SESSION_SECRET" \
   DATA_ENCRYPTION_KEY="$DATA_ENCRYPTION_KEY" \
+  FLY_API_TOKEN="$(fly tokens create deploy -x 999999h)" \
   TURSO_DATABASE_URL="libsql://bartelby-<your-org>.turso.io" \
   TURSO_AUTH_TOKEN="<your-turso-token>" \
   S3_BUCKET="bartelby" \
@@ -169,6 +170,8 @@ fly secrets set \
 ```
 
 > **Important:** If you already have LLM provider keys configured in Bartelby's admin settings (stored encrypted in the database), those will carry over from the Turso migration. You don't need to set `OPENAI_API_KEY` etc. as Fly secrets unless you want fallback env-level keys.
+>
+> **Important:** `FLY_API_TOKEN` is required for the app to launch ephemeral Fly Machines for large PDF imports and BERTopic jobs. `FLY_APP_NAME` and `FLY_IMAGE_REF` are provided by Fly at runtime.
 
 ### Deploy
 

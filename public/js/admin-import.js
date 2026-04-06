@@ -54,10 +54,14 @@ document.addEventListener('DOMContentLoaded', function() {
   const fileInput       = document.getElementById('file-input');
   const providerSelect  = document.getElementById('provider');
   const credentialSelect = document.getElementById('credential-source');
+  const batchOption = document.getElementById('batch-transcription-option');
+  const batchCheckbox = document.getElementById('use-batch-transcription');
+  const batchHint = document.getElementById('batch-transcription-hint');
   const modeAI          = document.getElementById('mode-ai');
   const modeManual      = document.getElementById('mode-manual');
   const aiOptions       = document.getElementById('ai-options');
   const providerOptions = getProviderOptions();
+  const batchProviders = new Set(['openai', 'claude', 'gemini']);
 
   function refreshCredentialOptions() {
     if (!providerSelect || !credentialSelect) return;
@@ -71,6 +75,8 @@ document.addEventListener('DOMContentLoaded', function() {
       option.textContent = source.label;
       credentialSelect.appendChild(option);
     });
+
+    updateBatchOption();
   }
 
   if (providerSelect && credentialSelect) {
@@ -81,6 +87,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Show/hide AI options panel based on mode
   function updateModeUI() {
     if (aiOptions) aiOptions.style.display = modeManual && modeManual.checked ? 'none' : '';
+    updateBatchOption();
   }
   if (modeAI)     modeAI.addEventListener('change', updateModeUI);
   if (modeManual) modeManual.addEventListener('change', updateModeUI);
@@ -120,10 +127,13 @@ document.addEventListener('DOMContentLoaded', function() {
   const groupingResetConfirm = document.getElementById('grouping-reset-confirm');
 
   let allTempFiles = [];
-  let tempPreviewUrls = {};
+  let tempPreviewAssets = {};
   let originalName = '';
   let imageDataUrl = null;
   let importJobId  = null;
+  let pageGroups = [];
+  let groupIdCounter = 0;
+  const GROUP_COLORS = 8; // number of color slots in CSS
 
   // Multi-document queue (PDF groups)
   let documentQueue    = [];
@@ -177,6 +187,36 @@ document.addEventListener('DOMContentLoaded', function() {
     suggestBtn.style.display = canShowButton ? '' : 'none';
     suggestBtn.disabled = !canShowButton || autoGroupingCompleted;
     suggestBtn.textContent = autoGroupingCompleted ? 'Auto-grouped' : 'Auto-group';
+  }
+
+  function getCurrentPageManagerDocumentCount() {
+    const groupedFiles = new Set(pageGroups.flatMap((group) => group.pages));
+    const ungrouped = allTempFiles.filter((filename) => !groupedFiles.has(filename));
+    return pageGroups.length + ungrouped.length;
+  }
+
+  function updateBatchOption() {
+    if (!batchOption || !batchCheckbox) return;
+
+    const totalDocs = getCurrentPageManagerDocumentCount();
+    const provider = providerSelect ? providerSelect.value : null;
+    const eligible = !!(
+      !isManualMode()
+      && provider
+      && batchProviders.has(provider)
+      && totalDocs > 10
+    );
+
+    batchOption.style.display = eligible ? '' : 'none';
+    if (!eligible) {
+      batchCheckbox.checked = false;
+    }
+
+    if (batchHint) {
+      batchHint.textContent = eligible
+        ? `${totalDocs} documents are ready. Submit them as one async ${provider.charAt(0).toUpperCase() + provider.slice(1)} batch job that will appear once in Jobs.`
+        : 'Large AI imports can be sent as a single async batch job. It will appear once in Jobs and may take longer to finish.';
+    }
   }
 
   function hasAiGeneratedGroups() {
@@ -330,21 +370,49 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  function setTempPreview(filename, previewUrl) {
+  function setTempPreview(filename, preview) {
     if (!filename) return;
-    tempPreviewUrls[filename] = previewUrl || `${apiBase}/temp-image/${filename}`;
+    if (typeof preview === 'string') {
+      tempPreviewAssets[filename] = {
+        previewUrl: preview,
+        previewFilename: null
+      };
+      return;
+    }
+
+    const previewFilename = preview && typeof preview === 'object'
+      ? (preview.previewFilename || preview.previewFileName || preview.preview_file || null)
+      : null;
+    const previewUrl = preview && typeof preview === 'object'
+      ? (preview.previewUrl || null)
+      : null;
+
+    tempPreviewAssets[filename] = {
+      previewUrl,
+      previewFilename
+    };
   }
 
   function setTempPreviews(pages) {
     (pages || []).forEach((page) => {
       if (page && page.filename) {
-        setTempPreview(page.filename, page.previewUrl);
+        setTempPreview(page.filename, page);
       }
     });
   }
 
   function getTempPreviewUrl(filename) {
-    return tempPreviewUrls[filename] || `${apiBase}/temp-image/${filename}`;
+    const preview = tempPreviewAssets[filename];
+    if (preview) {
+      if (preview.previewFilename) {
+        return `${apiBase}/temp-image/${preview.previewFilename}`;
+      }
+      if (preview.previewUrl) {
+        return preview.previewUrl;
+      }
+    }
+
+    return `${apiBase}/temp-image/${filename}`;
   }
 
   // ── Drag & Drop ──────────────────────────────────────────────────
@@ -419,7 +487,7 @@ document.addEventListener('DOMContentLoaded', function() {
         await pollImportJob(data.importJobId);
       } else {
         allTempFiles = [data.tempFile];
-        setTempPreview(data.tempFile, data.previewUrl);
+        setTempPreview(data.tempFile, data);
         populateConfigureForm([data.tempFile], data.originalName);
         showStep('review');
       }
@@ -480,10 +548,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // ── PDF Page Manager ──────────────────────────────────────────────
 
-  let pageGroups    = [];
-  let groupIdCounter = 0;
-  const GROUP_COLORS = 8; // number of color slots in CSS
-
   function showPageManager(pages) {
     const grid = document.getElementById('page-grid');
     grid.innerHTML = '';
@@ -517,6 +581,7 @@ document.addEventListener('DOMContentLoaded', function() {
     renderGroups();
     updateSubmitButton();
     updateSuggestGroupsAvailability();
+    updateBatchOption();
   }
 
   document.getElementById('select-all-pages').addEventListener('click', () => {
@@ -623,6 +688,8 @@ document.addEventListener('DOMContentLoaded', function() {
     } else {
       btn.textContent = `Submit All ${ungrouped.length} Pages Individually`;
     }
+
+    updateBatchOption();
   }
 
   // ── Zoom Overlay ────────────────────────────────────────────────
@@ -768,7 +835,8 @@ document.addEventListener('DOMContentLoaded', function() {
           initiatedBy: document.getElementById('initiated-by')
             ? document.getElementById('initiated-by').value : null,
           collectionIds,
-          importJobId: importJobId || null
+          importJobId: importJobId || null,
+          useBatchTranscription: !!(batchCheckbox && batchCheckbox.checked)
         })
       });
 
@@ -783,7 +851,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
       heading.textContent = `${data.count} Document${data.count !== 1 ? 's' : ''} Submitted!`;
       if (data.background) {
-        message.textContent = `${data.count} document${data.count !== 1 ? 's are' : ' is'} being created and queued for transcription. This may take a few minutes for large imports.`;
+        if (data.mode === 'batch') {
+          message.textContent = `${data.count} document${data.count !== 1 ? 's are' : ' is'} being created and submitted as one batch transcription job. This may take a while to finish.`;
+        } else {
+          message.textContent = `${data.count} document${data.count !== 1 ? 's are' : ' is'} being created and queued for transcription. This may take a few minutes for large imports.`;
+        }
       } else {
         message.textContent = `${data.count} document${data.count !== 1 ? 's have' : ' has'} been created and queued for transcription.`;
       }
@@ -913,7 +985,8 @@ document.addEventListener('DOMContentLoaded', function() {
           location:      document.getElementById('doc-location').value
         },
         transcriptionMode: manual ? 'manual' : 'ai',
-        collectionIds
+        collectionIds,
+        importJobId: importJobId || null
       };
 
       if (manual) {
@@ -980,11 +1053,11 @@ document.addEventListener('DOMContentLoaded', function() {
         await fetch(`${apiBase}/cancel-import`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
-          body: JSON.stringify({ tempFiles: allTempFiles })
+          body: JSON.stringify({ tempFiles: allTempFiles, importJobId: importJobId || null })
         });
       } catch (e) {}
       allTempFiles = [];
-      tempPreviewUrls = {};
+      tempPreviewAssets = {};
       autoGroupingRequested = false;
       autoGroupingCompleted = false;
       importJobId = null;

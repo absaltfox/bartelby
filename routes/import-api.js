@@ -3,9 +3,12 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const fs = require('fs');
 const path = require('path');
 const config = require('../config');
 const storage = require('../utils/storage');
+const { extensionFromMimeType, mimeTypeFromFilename } = require('../utils/mime-types');
+const { supportsBatchProvider } = require('../utils/transcription-batches');
 const {
   documentsAsync, transcriptsAsync, settingsAsync, collectionsAsync,
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
@@ -16,9 +19,77 @@ const {
 storage.init();
 
 function sanitizeTempFiles(files) {
-  return (files || [])
-    .map(file => storage.sanitizeTempName(file))
+  return normalizeTempAssets(files).map((asset) => asset.filename);
+}
+
+function sanitizeTempPreviewFiles(files) {
+  return normalizeTempAssets(files)
+    .map((asset) => asset.previewFilename)
     .filter(Boolean);
+}
+
+function normalizeTempAssets(files) {
+  return (files || [])
+    .map((file) => {
+      if (typeof file === 'string') {
+        const filename = storage.sanitizeTempName(file);
+        return filename ? { filename, previewFilename: null } : null;
+      }
+
+      if (!file || typeof file !== 'object') return null;
+
+      const filename = storage.sanitizeTempName(file.filename || file.tempFile || file.name || file.file);
+      if (!filename) return null;
+
+      const previewFilename = storage.sanitizeTempName(
+        file.previewFilename || file.previewFileName || file.preview_file || ''
+      );
+
+      return {
+        filename,
+        previewFilename: previewFilename || null
+      };
+    })
+    .filter(Boolean);
+}
+
+function getTempImageContentType(filename) {
+  return mimeTypeFromFilename(filename, 'image/png');
+}
+
+async function getImportJobPreviewMap(importJobId) {
+  if (!Number.isInteger(importJobId)) return new Map();
+
+  const job = await importJobsAsync.getById(importJobId);
+  if (!job || !job.pages) return new Map();
+
+  try {
+    const pages = JSON.parse(job.pages);
+    const previewMap = new Map();
+    for (const page of pages || []) {
+      const filename = storage.sanitizeTempName(page && page.filename);
+      const previewFilename = storage.sanitizeTempName(
+        page && (page.previewFilename || page.previewFileName || page.preview_file)
+      );
+      if (filename && previewFilename) {
+        previewMap.set(filename, previewFilename);
+      }
+    }
+    return previewMap;
+  } catch (err) {
+    return new Map();
+  }
+}
+
+function collectTempCleanupFiles(tempFiles, previewMap = new Map()) {
+  const files = new Set();
+  for (const asset of normalizeTempAssets(tempFiles)) {
+    if (asset.filename) files.add(asset.filename);
+    if (asset.previewFilename) files.add(asset.previewFilename);
+    const mappedPreview = previewMap.get(asset.filename);
+    if (mappedPreview) files.add(mappedPreview);
+  }
+  return [...files];
 }
 
 function attachTempPreview(page) {
@@ -163,6 +234,21 @@ router.post('/upload', (req, res, next) => {
 }, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
+  const tempName = storage.sanitizeTempName(req.file.filename);
+  const tempPath = storage.getTempFilePath(tempName);
+  const extFromName = path.extname(req.file.originalname || '').toLowerCase();
+  const extFromMime = extensionFromMimeType(req.file.mimetype, '');
+  const uploadExt = extFromName || extFromMime || (req.file.mimetype === 'application/pdf' ? '.pdf' : '');
+
+  if (tempPath && uploadExt && !tempName.toLowerCase().endsWith(uploadExt)) {
+    // Keep the temp filename extension aligned with the source MIME so later
+    // transcribe/save paths can infer the real type without extra schema state.
+    const renamed = `${tempName}${uploadExt}`;
+    fs.renameSync(tempPath, storage.getTempFilePath(renamed));
+    req.file.filename = renamed;
+    if (req.file.path) req.file.path = storage.getTempFilePath(renamed);
+  }
+
   if (req.file.mimetype === 'application/pdf') {
     const pdfTempFile = storage.sanitizeTempName(req.file.filename);
     const fileSize = req.file.size || 0;
@@ -171,7 +257,7 @@ router.post('/upload', (req, res, next) => {
     const isLargePdf = fileSize >= FILE_SIZE_THRESHOLD;
 
     if (isLargePdf) {
-      const useEphemeralMachine = config.flyMachines.enabled;
+      const useEphemeralMachine = config.flyMachines.enabled && config.storage.driver === 's3';
       const s3TempKey = useEphemeralMachine ? `import_${Date.now()}.pdf` : null;
 
       const dbJobId = await importJobsAsync.create({
@@ -311,17 +397,18 @@ router.get('/import-job/:id', async (req, res) => {
 // ── API: Serve temp page image ─────────────────────────────────────────────
 router.get('/temp-image/:filename', async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
+  const contentType = getTempImageContentType(filename);
 
   const filePath = storage.getTempFilePath(filename);
   if (filePath && storage.tempFileExists(filename)) {
-    return res.type('image/png').sendFile(filePath);
+    return res.type(contentType).sendFile(filePath);
   }
 
   if (config.storage.driver === 's3' && storage.tempObjectExists) {
     try {
       const buffer = await storage.getTempObject(filename);
       res.set('Cache-Control', 'private, max-age=3600');
-      return res.type('image/png').send(buffer);
+      return res.type(contentType).send(buffer);
     } catch (err) {
       // Not in S3 either
     }
@@ -344,7 +431,7 @@ router.post('/transcribe', express.json(), async (req, res) => {
     const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
     const provider = await createProvider(providerName, selection.runtimeConfig);
     const imageBuffer = storage.readTempFile(safeTempFile);
-    const mimeType = 'image/png';
+    const mimeType = mimeTypeFromFilename(safeTempFile, req.body.mimeType || 'image/png');
     const opts = {
       temperature: temperature !== '' && temperature != null
         ? parseFloat(temperature)
@@ -371,7 +458,7 @@ router.post('/transcribe', express.json(), async (req, res) => {
 
 // ── API: Transcribe a group of pages ───────────────────────────────────────
 router.post('/transcribe-group', express.json(), async (req, res) => {
-  const { tempFiles, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
+  const { tempFiles, provider: providerName = 'openai', credentialSource = 'system', temperature, mimeTypes } = req.body;
   if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
     return res.status(400).json({ error: 'No files specified' });
   }
@@ -388,11 +475,17 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
     };
 
     const results = [];
-    for (const tf of tempFiles) {
+    for (let index = 0; index < tempFiles.length; index++) {
+      const tf = tempFiles[index];
       const safeTempFile = storage.sanitizeTempName(tf);
       if (!storage.tempFileExists(safeTempFile)) continue;
       const imageBuffer = storage.readTempFile(safeTempFile);
-      const result = await provider.transcribeDocument(imageBuffer, 'image/png', opts);
+      const mimeType = Array.isArray(mimeTypes) ? mimeTypes[index] : null;
+      const result = await provider.transcribeDocument(
+        imageBuffer,
+        mimeTypeFromFilename(safeTempFile, mimeType || 'image/png'),
+        opts
+      );
       results.push(result);
     }
 
@@ -436,7 +529,8 @@ router.post('/save-document', express.json(), async (req, res) => {
     transcriptionMode,
     provider,
     credentialSource,
-    temperature
+    temperature,
+    importJobId
   } = req.body;
 
   const isAiMode = transcriptionMode === 'ai';
@@ -451,13 +545,18 @@ router.post('/save-document', express.json(), async (req, res) => {
 
   try {
     const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
+    const importJobPreviewMap = Number.isInteger(parseInt(importJobId, 10))
+      ? await getImportJobPreviewMap(parseInt(importJobId, 10))
+      : new Map();
     const firstFile = files[0];
     if (!storage.tempFileExists(firstFile)) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
     }
 
     const baseName = originalName || 'document';
-    const ext = path.extname(baseName) === '.pdf' ? '.png' : (path.extname(baseName) || '.jpg');
+    const ext = path.extname(baseName) === '.pdf'
+      ? '.png'
+      : (path.extname(baseName) || path.extname(firstFile) || '.jpg');
     const primaryUpload = await storage.copyTempFileToUpload(firstFile, baseName, ext);
 
     const additionalPages = [];
@@ -473,7 +572,7 @@ router.post('/save-document', express.json(), async (req, res) => {
       }
     }
 
-    storage.deleteTempFiles(files);
+    storage.deleteTempFiles(collectTempCleanupFiles(files, importJobPreviewMap));
 
     const docMetadata = { ...(metadata || {}) };
     if (additionalPages.length > 0) {
@@ -550,13 +649,21 @@ router.post('/save-document', express.json(), async (req, res) => {
 });
 
 // ── API: Bulk submit pages ─────────────────────────────────────────────────
-// For large PDFs (hundreds of pages), each group requires multiple S3 round-trips
-// (existence check, copy temp→permanent, delete temp). Processing sequentially
-// in a single request can take minutes for 600+ pages, causing the user to think
-// the page is hung. Instead, we validate + resolve provider up front, respond
-// immediately, and process groups in the background.
+// Submit grouped pages as a durable background import job. The HTTP request
+// returns immediately, but the actual document creation/transcription queueing
+// is handled by the worker so it survives restarts and deploys.
 router.post('/submit-pages', express.json(), async (req, res) => {
-  const { groups, originalName, provider, credentialSource, temperature, initiatedBy, collectionIds, importJobId } = req.body;
+  const {
+    groups,
+    originalName,
+    provider,
+    credentialSource,
+    temperature,
+    initiatedBy,
+    collectionIds,
+    importJobId,
+    useBatchTranscription
+  } = req.body;
 
   if (!Array.isArray(groups) || groups.length === 0) {
     return res.status(400).json({ error: 'No documents to submit' });
@@ -564,126 +671,51 @@ router.post('/submit-pages', express.json(), async (req, res) => {
 
   try {
     const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
-    // Resolve provider selection up front (requires req.user, fast)
     const { resolveProviderSelectionAsync } = require('../utils/provider-access');
     const defaultProvider = await settingsAsync.get('default_provider');
     const selection = await resolveProviderSelectionAsync(req.user, provider || defaultProvider || 'openai', credentialSource || 'system');
     const tempVal = temperature !== '' && temperature != null ? parseFloat(temperature) : null;
     const userId = req.user.id;
+    const requestedBatchMode = !!useBatchTranscription
+      && groups.length > 10
+      && supportsBatchProvider(selection.provider || provider || defaultProvider || 'openai');
+    const submissionJobId = await importJobsAsync.createSubmissionJob({
+      original_name: originalName || `${groups.length} grouped documents`,
+      user_id: userId,
+      total_count: groups.length,
+      payload: {
+        sourceImportJobId: Number.isInteger(parseInt(importJobId, 10)) ? parseInt(importJobId, 10) : null,
+        originalName: originalName || null,
+        authorizedCollectionIds,
+        provider: selection.provider || provider || null,
+        providerKeyScope: selection.providerKeyScope,
+        userApiKeyId: selection.userApiKeyId,
+        requestedByUserId: userId,
+        initiatedBy: initiatedBy || null,
+        temperature: !isNaN(tempVal) ? tempVal : null,
+        requestedBatchMode,
+        remainingGroups: groups.map((group) => ({
+          label: group.label || 'Untitled Document',
+          tempFiles: Array.isArray(group.tempFiles) ? group.tempFiles : []
+        })),
+        createdDocs: [],
+        batchManifest: [],
+        batchJobCreated: false,
+        processedCount: 0
+      }
+    });
 
-    // Respond immediately — background processing follows
+    if (Number.isInteger(parseInt(importJobId, 10))) {
+      await importJobsAsync.markSubmitted(parseInt(importJobId, 10));
+    }
+
     res.json({
       success: true,
       documents: [],
       count: groups.length,
-      background: true
-    });
-
-    // ── Background processing ──────────────────────────────────────
-    // Use server-side S3 copy when available (avoids download+re-upload).
-    // Collect all temp file names for a single batch delete at the end.
-    const copyFn = storage.copyTempObjectToUpload || storage.copyTempFileToUpload;
-    const allTempFiles = []; // accumulate for batch delete
-
-    setImmediate(async () => {
-      let processed = 0;
-      try {
-        for (const group of groups) {
-          const rawGroupFiles = group.tempFiles;
-          if (!rawGroupFiles || rawGroupFiles.length === 0) continue;
-          const files = sanitizeTempFiles(rawGroupFiles);
-          if (files.length === 0) continue;
-
-          // Copy all pages to permanent storage in parallel (no existence check —
-          // the worker already created these; if a copy fails we skip it)
-          const baseName = originalName || 'document';
-          const ext = '.png';
-
-          const uploadPromises = files.map(async (file, i) => {
-            const name = i === 0
-              ? baseName
-              : `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`;
-            try {
-              return await copyFn(file, name, ext);
-            } catch (err) {
-              console.error(`[import] Failed to copy page ${file}:`, err.message);
-              return null;
-            }
-          });
-          const uploads = await Promise.all(uploadPromises);
-
-          const primaryUpload = uploads[0];
-          if (!primaryUpload) continue;
-          const additionalPages = uploads.slice(1).filter(Boolean).map(u => u.url);
-
-          // Queue temp files for batch cleanup at the end
-          storage.deleteTempFiles(files); // local cleanup (free)
-          allTempFiles.push(...files);
-
-          const docMetadata = {};
-          if (additionalPages.length > 0) {
-            docMetadata.additional_pages = additionalPages;
-          }
-
-          const docId = await documentsAsync.create({
-            title: group.label || 'Untitled Document',
-            date_created: null,
-            description: null,
-            image_path: primaryUpload.url,
-            metadata: docMetadata
-          });
-
-          if (authorizedCollectionIds.length > 0) {
-            await documentCollectionsAsync.setForDocument(docId, authorizedCollectionIds);
-          }
-
-          await transcriptionJobsAsync.create({
-            document_id: docId,
-            provider: selection.provider || provider || null,
-            model: null,
-            temperature: !isNaN(tempVal) ? tempVal : null,
-            initiated_by: initiatedBy || null,
-            image_path: primaryUpload.url,
-            additional_image_paths: additionalPages.length > 0 ? additionalPages : null,
-            provider_key_scope: selection.providerKeyScope,
-            user_api_key_id: selection.userApiKeyId,
-            requested_by_user_id: userId
-          });
-
-          processed++;
-
-          // Periodic DB save every 25 documents to avoid losing progress
-          if (processed % 25 === 0) {
-            await saveDatabase();
-          }
-        }
-
-        await saveDatabase();
-
-        // Batch-delete all temp objects from S3 in one request (instead of N individual deletes)
-        if (storage.deleteTempObjectsBatch && allTempFiles.length > 0) {
-          try {
-            await storage.deleteTempObjectsBatch(allTempFiles);
-          } catch (err) {
-            console.error('[import] Batch temp cleanup error:', err.message);
-          }
-        } else if (storage.deleteTempObject) {
-          // Fallback: parallel individual deletes
-          await Promise.all(allTempFiles.map(f =>
-            storage.deleteTempObject(f).catch(() => {})
-          ));
-        }
-
-        if (importJobId) {
-          try { await importJobsAsync.markSubmitted(parseInt(importJobId)); } catch (e) {}
-        }
-
-        console.log(`[import] Background submit complete: ${processed} documents created`);
-      } catch (err) {
-        console.error(`[import] Background submit error after ${processed} documents:`, err);
-        // Save whatever progress we made
-        try { await saveDatabase(); } catch (e) {}
-      }
+      background: true,
+      mode: requestedBatchMode ? 'batch' : 'queue',
+      importJobId: submissionJobId
     });
   } catch (err) {
     console.error('Bulk submit error:', err);
@@ -781,7 +813,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
 
         imageContents.push(
           { type: 'text', text: `Image ${i + j + 1}:` },
-          { type: 'image', image: buffer, mimeType: 'image/png' }
+          { type: 'image', image: buffer, mimeType: mimeTypeFromFilename(safeName, 'image/png') }
         );
       }
 
@@ -892,11 +924,21 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
 }
 
 // ── API: Cancel/cleanup temp files ─────────────────────────────────────────
-router.post('/cancel-import', express.json(), (req, res) => {
-  const { tempFile, tempFiles } = req.body;
+router.post('/cancel-import', express.json(), async (req, res) => {
+  const { tempFile, tempFiles, importJobId } = req.body;
+  const parsedImportJobId = parseInt(importJobId, 10);
   const files = tempFiles || (tempFile ? [tempFile] : []);
-  storage.deleteTempFiles(files);
-  res.json({ success: true });
+
+  try {
+    const previewMap = Number.isInteger(parsedImportJobId)
+      ? await getImportJobPreviewMap(parsedImportJobId)
+      : new Map();
+    storage.deleteTempFiles(collectTempCleanupFiles(files, previewMap));
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to clean up temp files:', err);
+    res.status(500).json({ error: 'Failed to clean up temporary files' });
+  }
 });
 
 // Export router and the attachTempPreview helper (used by import page routes)

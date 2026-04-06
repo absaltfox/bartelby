@@ -2,12 +2,18 @@
 // and processes one job at a time, with retry for transient errors.
 
 const storage = require('./storage');
-const { countUnknownWords } = require('./analytics');
+const { mimeTypeFromFilename } = require('./mime-types');
+const { processImportSubmissionJob } = require('./import-submission');
+const { parseBatchManifest, pollTranscriptionBatch, submitTranscriptionBatch } = require('./transcription-batches');
+const { persistDocumentTranscription } = require('./transcription-pipeline');
 
 let busy = false;
+let batchPollBusy = false;
+let importBusy = false;
 
 const MAX_RETRIES = 3;
 const COOLDOWN_MS = 2000; // pause between jobs to avoid API rate limits
+const BATCH_POLL_MS = 30000;
 
 // Errors worth retrying (network issues, rate limits, overload)
 function isTransientError(err) {
@@ -25,18 +31,13 @@ function isTransientError(err) {
 }
 
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function buildTranscriptPageSegments(results) {
-  return results.map((result, index) => ({
-    pageNumber: index + 1,
-    charLength: String(result.transcription || '').trim().length
-  }));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function startWorker() {
   setInterval(tick, 5000);
+  setInterval(tickImportJobs, 5000);
+  setInterval(pollRunningBatches, BATCH_POLL_MS);
   // Check for stale import jobs every 60 seconds
   setInterval(checkStaleImportJobs, 60000);
   // Clean up expired MFA remember tokens once per hour
@@ -92,15 +93,149 @@ async function checkStaleImportJobs() {
   }
 }
 
+function makeJobLogger(job, transcriptionJobsAsync) {
+  const ts = () => new Date().toISOString();
+  return async (msg) => {
+    const line = `[${ts()}] ${msg}\n`;
+    await transcriptionJobsAsync.appendLog(job.id, line);
+    console.log(`[worker] job ${job.id}: ${msg}`);
+  };
+}
+
+async function resolveRuntimeConfig(job, logLine) {
+  const { settingsAsync, userApiKeysAsync } = require('../database/db');
+  const cfg = await settingsAsync.getAll();
+  const providerName = job.provider || cfg.default_provider || 'openai';
+  const temperature = job.temperature != null ? job.temperature : null;
+  const runtimeConfig = {};
+
+  if (job.provider_key_scope === 'user') {
+    const key = await userApiKeysAsync.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
+    if (!key) {
+      throw new Error('The personal API key for this transcription job is no longer available.');
+    }
+    runtimeConfig.apiKey = key.api_key;
+    if (key.model) runtimeConfig.model = key.model;
+    if (key.vision_model) runtimeConfig.visionModel = key.vision_model;
+    if (key.utility_model) runtimeConfig.utilityModel = key.utility_model;
+    await logLine(`Using personal API key: ${key.label}`);
+  } else if (job.provider_key_scope === 'system') {
+    await logLine('Using system AI credentials');
+  }
+
+  await logLine(`Provider: ${providerName}, Model: ${job.model || runtimeConfig.model || 'default'}`);
+  return { providerName, temperature, runtimeConfig };
+}
+
+async function processSingleJob(job, logLine) {
+  const {
+    transcriptionJobsAsync,
+    userApiKeysAsync
+  } = require('../database/db');
+  const { createProvider } = require('./llm');
+
+  const { providerName, temperature, runtimeConfig } = await resolveRuntimeConfig(job, logLine);
+  const provider = await createProvider(providerName, runtimeConfig);
+  const opts = { temperature };
+
+  const imagePaths = [job.image_path];
+  if (job.additional_image_paths) {
+    try {
+      const extra = JSON.parse(job.additional_image_paths);
+      if (Array.isArray(extra)) imagePaths.push(...extra);
+    } catch (err) {
+      // Ignore malformed extra image metadata
+    }
+  }
+
+  const savedPartials = await transcriptionJobsAsync.getPartialResults(job.id);
+  const savedByIndex = {};
+  for (const partial of savedPartials) savedByIndex[partial.pageIndex] = partial;
+
+  const results = [];
+  for (let i = 0; i < imagePaths.length; i++) {
+    if (savedByIndex[i]) {
+      await logLine(`Page ${i + 1} of ${imagePaths.length}: resuming from checkpoint`);
+      results.push(savedByIndex[i].result);
+      continue;
+    }
+
+    const relPath = imagePaths[i];
+    await logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
+    const imageBuffer = await storage.readUploadByUrl(relPath);
+    const mimeType = mimeTypeFromFilename(relPath, 'image/png');
+
+    let result;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        result = await provider.transcribeDocument(imageBuffer, mimeType, opts);
+        break;
+      } catch (pageErr) {
+        if (isTransientError(pageErr) && attempt < 2) {
+          const delay = Math.pow(2, attempt + 1) * 1000;
+          await logLine(`Transient error on page ${i + 1} (attempt ${attempt + 1}/3): ${pageErr.message}. Retrying in ${delay / 1000}s...`);
+          await sleep(delay);
+        } else {
+          throw pageErr;
+        }
+      }
+    }
+
+    results.push(result);
+    const durationMs = result.paradata?.run_duration_ms;
+    await logLine(`Page ${i + 1} transcribed${durationMs ? ` (${(durationMs / 1000).toFixed(1)}s)` : ''}`);
+
+    const checkpoint = savedPartials.filter((partial) => partial.pageIndex < i);
+    checkpoint.push({ pageIndex: i, result });
+    await transcriptionJobsAsync.savePartialResults(job.id, checkpoint);
+  }
+
+  const persisted = await persistDocumentTranscription({
+    job,
+    documentId: job.document_id,
+    providerName,
+    runtimeConfig,
+    temperature,
+    results,
+    logLine
+  });
+
+  const totalDur = persisted.combined.paradata?.run_duration_ms;
+  await logLine(`Done. Total duration: ${totalDur ? `${(totalDur / 1000).toFixed(1)}s` : 'unknown'}`);
+
+  if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
+    await userApiKeysAsync.markUsed(job.user_api_key_id, job.requested_by_user_id);
+  }
+
+  await transcriptionJobsAsync.clearPartialResults(job.id);
+  await transcriptionJobsAsync.markDone(job.id);
+}
+
+async function processBatchSubmission(job, logLine) {
+  const { transcriptionJobsAsync, userApiKeysAsync } = require('../database/db');
+  const { runtimeConfig } = await resolveRuntimeConfig(job, logLine);
+
+  await logLine(`Submitting provider batch for ${job.batch_document_count || 0} document(s) / ${job.batch_page_count || 0} page request(s)`);
+  const submission = await submitTranscriptionBatch(job, runtimeConfig);
+  await transcriptionJobsAsync.updateBatchRemote(job.id, {
+    remoteId: submission.remoteId,
+    remoteStatus: submission.remoteStatus
+  });
+  await logLine(`Batch submitted to ${job.provider} as ${submission.remoteId}`);
+
+  if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
+    await userApiKeysAsync.markUsed(job.user_api_key_id, job.requested_by_user_id);
+  }
+}
+
 async function tick() {
   if (busy) return;
 
-  const { transcriptionJobsAsync, transcriptsAsync } = require('../database/db');
+  const { transcriptionJobsAsync } = require('../database/db');
 
-  // getNextQueued outside try/catch would cause an unhandled rejection on DB error
   let job;
   try {
-    job = await transcriptionJobsAsync.getNextQueued();
+    job = await transcriptionJobsAsync.claimNextQueued();
   } catch (err) {
     console.error('[worker] Failed to query job queue:', err.message);
     return;
@@ -108,316 +243,208 @@ async function tick() {
   if (!job) return;
 
   busy = true;
-
-  const ts = () => new Date().toISOString();
-  const logLine = async (msg) => {
-    const line = `[${ts()}] ${msg}\n`;
-    await transcriptionJobsAsync.appendLog(job.id, line);
-    console.log(`[worker] job ${job.id}: ${msg}`);
-  };
+  const logLine = makeJobLogger(job, transcriptionJobsAsync);
 
   try {
-    await transcriptionJobsAsync.markRunning(job.id);
-    await logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
-
-    const { createProvider } = require('./llm');
-    const { settingsAsync, userApiKeysAsync } = require('../database/db');
-    const cfg = await settingsAsync.getAll();
-
-    const providerName = job.provider || cfg.default_provider || 'openai';
-    const temperature = job.temperature != null ? job.temperature : null;
-    const runtimeConfig = {};
-
-    if (job.provider_key_scope === 'user') {
-      const key = await userApiKeysAsync.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
-      if (!key) {
-        throw new Error('The personal API key for this transcription job is no longer available.');
-      }
-      runtimeConfig.apiKey = key.api_key;
-      await logLine(`Using personal API key: ${key.label}`);
-    } else if (job.provider_key_scope === 'system') {
-      await logLine('Using system AI credentials');
+    if (job.job_kind === 'batch') {
+      await logLine(`Starting batch transcription job (attempt ${job.attempts + 1})`);
+      await processBatchSubmission(job, logLine);
+    } else {
+      await logLine(`Starting transcription for document ${job.document_id} (attempt ${job.attempts + 1})`);
+      await processSingleJob(job, logLine);
     }
-
-    await logLine(`Provider: ${providerName}, Model: ${job.model || 'default'}`);
-
-    const provider = await createProvider(providerName, runtimeConfig);
-    const opts = { temperature };
-
-    // Collect all image paths for this job
-    const imagePaths = [job.image_path];
-    if (job.additional_image_paths) {
-      try {
-        const extra = JSON.parse(job.additional_image_paths);
-        if (Array.isArray(extra)) imagePaths.push(...extra);
-      } catch (e) {}
-    }
-
-    // Load any partial results saved from a previous attempt (checkpoint resume)
-    const savedPartials = await transcriptionJobsAsync.getPartialResults(job.id);
-    const savedByIndex = {};
-    for (const p of savedPartials) savedByIndex[p.pageIndex] = p;
-
-    const results = [];
-    for (let i = 0; i < imagePaths.length; i++) {
-      // Resume from checkpoint if this page was already transcribed in a prior attempt
-      if (savedByIndex[i]) {
-        await logLine(`Page ${i + 1} of ${imagePaths.length}: resuming from checkpoint`);
-        results.push(savedByIndex[i].result);
-        continue;
-      }
-
-      const relPath = imagePaths[i];
-      await logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
-
-      const imageBuffer = await storage.readUploadByUrl(relPath);
-
-      // Retry individual page transcription with exponential backoff
-      let result;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          result = await provider.transcribeDocument(imageBuffer, 'image/png', opts);
-          break;
-        } catch (pageErr) {
-          if (isTransientError(pageErr) && attempt < 2) {
-            const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s
-            await logLine(`Transient error on page ${i + 1} (attempt ${attempt + 1}/3): ${pageErr.message}. Retrying in ${delay / 1000}s...`);
-            await sleep(delay);
-          } else {
-            throw pageErr;
-          }
-        }
-      }
-
-      results.push(result);
-      const dur = result.paradata?.run_duration_ms;
-      await logLine(`Page ${i + 1} transcribed${dur ? ` (${(dur / 1000).toFixed(1)}s)` : ''}`);
-
-      // Checkpoint: persist this page's result so a job-level retry can resume here
-      const checkpoint = savedPartials.filter(p => p.pageIndex < i);
-      checkpoint.push({ pageIndex: i, result });
-      await transcriptionJobsAsync.savePartialResults(job.id, checkpoint);
-    }
-
-    // Combine multi-page results
-    const pageConfidences = results.map(r => r.confidence).filter(c => c != null && Number.isFinite(c));
-    const combined = {
-      transcription: results.map(r => String(r.transcription || '').trim()).join('\n\n'),
-      page_segments: results.length > 1 ? buildTranscriptPageSegments(results) : null,
-      metadata: results[0].metadata,
-      notes: results.map(r => r.notes).filter(Boolean).join(' | ') || null,
-      paradata: results[0].paradata,
-      // For multi-page docs use the minimum — the weakest page drives overall confidence
-      confidence: pageConfidences.length > 0 ? Math.min(...pageConfidences) : null
-    };
-
-    if (combined.paradata && results.length > 1) {
-      combined.paradata.run_duration_ms = results.reduce(
-        (sum, r) => sum + (r.paradata?.run_duration_ms || 0), 0
-      );
-    }
-
-    // Merge LLM-extracted metadata into the document record
-    const { documentsAsync } = require('../database/db');
-    const llmMeta = combined.metadata || {};
-    if (Object.keys(llmMeta).length > 0) {
-      const doc = await documentsAsync.getById(job.document_id);
-      if (doc) {
-        let existing = doc.metadata;
-        if (typeof existing === 'string') {
-          try { existing = JSON.parse(existing); } catch (e) { existing = {}; }
-        }
-        existing = existing || {};
-        const merged = { ...existing };
-        for (const [key, value] of Object.entries(llmMeta)) {
-          if (value != null && !merged[key]) {
-            merged[key] = value;
-          }
-        }
-        if (merged.date_created) {
-          const cleaned = merged.date_created.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-          const d = new Date(cleaned);
-          if (!isNaN(d.getTime()) && d.getFullYear() > 0) {
-            merged.date_created = d.toISOString().split('T')[0];
-          }
-        }
-
-        const updates = { metadata: merged };
-        if (!doc.date_created && merged.date_created) {
-          updates.date_created = merged.date_created;
-        }
-        if (!doc.description && llmMeta.condition) {
-          updates.description = `Condition: ${llmMeta.condition}`;
-        }
-
-        // Generate a meaningful title and summary from the transcription
-        if (combined.transcription) {
-          const { generateDocumentTitle, generateDocumentSummary } = require('./llm');
-
-          const currentTitle = (doc.title || '').trim();
-          const looksGeneric = !currentTitle
-            || /^(untitled|document|page\s*\d*|pdf)/i.test(currentTitle)
-            || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle);
-          if (looksGeneric) {
-            // Prefer the title already extracted by the transcription model — avoids a second API call
-            const extractedTitle = (llmMeta.title || '').trim() || null;
-            if (extractedTitle) {
-              updates.title = extractedTitle;
-              await logLine(`Using extracted title: "${extractedTitle}"`);
-            } else {
-              try {
-                const { title: generated, usage: titleUsage } = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
-                if (titleUsage) {
-                  combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (titleUsage.inputTokens || 0);
-                  combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (titleUsage.outputTokens || 0);
-                }
-                if (generated) {
-                  updates.title = generated;
-                  await logLine(`Generated title: "${generated}"`);
-                }
-              } catch (titleErr) {
-                await logLine(`Title generation failed (non-fatal): ${titleErr.message}`);
-              }
-            }
-          }
-
-          if (!doc.description) {
-            try {
-              const { summary: generated, usage: sumUsage } = await generateDocumentSummary(providerName, combined.transcription, runtimeConfig);
-              if (sumUsage) {
-                combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (sumUsage.inputTokens || 0);
-                combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (sumUsage.outputTokens || 0);
-              }
-              if (generated) {
-                updates.description = generated;
-                await logLine(`Generated summary: "${generated}"`);
-              }
-            } catch (sumErr) {
-              await logLine(`Summary generation failed (non-fatal): ${sumErr.message}`);
-            }
-          }
-        }
-
-        await documentsAsync.update(doc.id, updates);
-        await logLine(`Extracted metadata: ${Object.keys(llmMeta).filter(k => llmMeta[k] != null).join(', ')}`);
-      }
-    }
-
-    const pd = combined.paradata || {};
-
-    // Token counts split by tier for per-tier rate application
-    const transcriptionInputTokens = results.reduce((sum, r) => sum + (r.paradata?.input_tokens || 0), 0);
-    const transcriptionOutputTokens = results.reduce((sum, r) => sum + (r.paradata?.output_tokens || 0), 0);
-    const utilityInputTokens = combined.utilityInputTokens || 0;
-    const utilityOutputTokens = combined.utilityOutputTokens || 0;
-    const totalInputTokens = transcriptionInputTokens + utilityInputTokens;
-    const totalOutputTokens = transcriptionOutputTokens + utilityOutputTokens;
-
-    // Resolve cost rates: user API key first, then system settings per provider.
-    // Utility rates fall back to transcription rates if not separately configured.
-    let costUsd = null;
-    if (totalInputTokens > 0 || totalOutputTokens > 0) {
-      let txInputRate = null, txOutputRate = null;
-      let utInputRate = null, utOutputRate = null;
-
-      if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
-        const { userApiKeysAsync: uak } = require('../database/db');
-        const key = await uak.getResolvedForUser(job.user_api_key_id, job.requested_by_user_id);
-        if (key) {
-          txInputRate = key.input_cost_per_mtok ?? null;
-          txOutputRate = key.output_cost_per_mtok ?? null;
-          utInputRate = key.utility_input_cost_per_mtok ?? null;
-          utOutputRate = key.utility_output_cost_per_mtok ?? null;
-        }
-      }
-
-      if (txInputRate == null && txOutputRate == null) {
-        const { settingsAsync: sa } = require('../database/db');
-        const cfg = await sa.getAll();
-        const prefix = providerName === 'openai'
-          ? 'openai'
-          : providerName === 'claude'
-            ? 'anthropic'
-            : providerName === 'gemini'
-              ? 'google'
-              : null;
-        if (prefix) {
-          txInputRate = cfg[`${prefix}_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_input_cost_per_mtok`]) : null;
-          txOutputRate = cfg[`${prefix}_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_output_cost_per_mtok`]) : null;
-          utInputRate = cfg[`${prefix}_utility_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_utility_input_cost_per_mtok`]) : null;
-          utOutputRate = cfg[`${prefix}_utility_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_utility_output_cost_per_mtok`]) : null;
-        }
-      }
-
-      // Fall back to transcription rates for utility tier if not separately configured
-      const effUtInputRate = utInputRate ?? txInputRate;
-      const effUtOutputRate = utOutputRate ?? txOutputRate;
-
-      if (txInputRate != null || txOutputRate != null || effUtInputRate != null || effUtOutputRate != null) {
-        costUsd = (transcriptionInputTokens / 1_000_000) * (txInputRate || 0)
-                + (transcriptionOutputTokens / 1_000_000) * (txOutputRate || 0)
-                + (utilityInputTokens / 1_000_000) * (effUtInputRate || 0)
-                + (utilityOutputTokens / 1_000_000) * (effUtOutputRate || 0);
-      }
-    }
-
-    if (combined.confidence != null) {
-      await logLine(`Confidence: ${combined.confidence}/100`);
-    }
-    if (totalInputTokens > 0 || totalOutputTokens > 0) {
-      await logLine(`Token usage: ${totalInputTokens.toLocaleString()} in / ${totalOutputTokens.toLocaleString()} out${costUsd != null ? ` — est. $${costUsd.toFixed(4)}` : ''}`);
-    }
-
-    // Only set as best if no existing best transcript (protects human-curated transcripts)
-    const existingBest = await transcriptsAsync.getBestByDocumentId(job.document_id);
-    const shouldBeBest = !existingBest;
-    await transcriptsAsync.create({
-      document_id: job.document_id,
-      content: combined.transcription,
-      page_segments: combined.page_segments,
-      transcriber: 'AI Transcription',
-      version: 1,
-      notes: combined.notes || null,
-      provider: pd.provider || providerName,
-      model: pd.model || job.model || null,
-      prompt: pd.prompt || null,
-      temperature: pd.temperature != null ? pd.temperature : temperature,
-      initiated_by: job.initiated_by || null,
-      run_duration_ms: pd.run_duration_ms || null,
-      provider_key_scope: job.provider_key_scope || null,
-      is_best: shouldBeBest,
-      input_tokens: totalInputTokens > 0 ? totalInputTokens : null,
-      output_tokens: totalOutputTokens > 0 ? totalOutputTokens : null,
-      cost_usd: costUsd,
-      confidence: combined.confidence,
-      unknown_word_count: countUnknownWords(combined.transcription)
-    });
-
-    const totalDur = pd.run_duration_ms;
-    await logLine(`Done. Total duration: ${totalDur ? `${(totalDur / 1000).toFixed(1)}s` : 'unknown'}`);
-    if (job.provider_key_scope === 'user' && job.user_api_key_id && job.requested_by_user_id) {
-      await userApiKeysAsync.markUsed(job.user_api_key_id, job.requested_by_user_id);
-    }
-    await transcriptionJobsAsync.clearPartialResults(job.id);
-    await transcriptionJobsAsync.markDone(job.id);
   } catch (err) {
     const msg = err.message || String(err);
     await logLine(`ERROR: ${msg}`);
 
-    // Auto-retry transient errors up to MAX_RETRIES
     if (isTransientError(err) && (job.attempts + 1) < MAX_RETRIES) {
-      const backoff = Math.pow(2, job.attempts + 1) * 5000; // 10s, 20s, 40s
+      const backoff = Math.pow(2, job.attempts + 1) * 5000;
       await logLine(`Transient error — will retry in ${backoff / 1000}s (attempt ${job.attempts + 1}/${MAX_RETRIES})`);
       await transcriptionJobsAsync.requeueForRetry(job.id);
-      // Wait before releasing busy flag so next tick picks up after a delay
       await sleep(backoff);
     } else {
       await transcriptionJobsAsync.markFailed(job.id, msg);
     }
   } finally {
-    // Small cooldown between jobs to avoid hammering the API
     await sleep(COOLDOWN_MS);
     busy = false;
+  }
+}
+
+function groupManifestByDocument(manifest) {
+  const docs = new Map();
+  for (const entry of manifest) {
+    if (!docs.has(entry.documentId)) {
+      docs.set(entry.documentId, []);
+    }
+    docs.get(entry.documentId).push(entry);
+  }
+  for (const requests of docs.values()) {
+    requests.sort((a, b) => (a.pageIndex || 0) - (b.pageIndex || 0));
+  }
+  return docs;
+}
+
+async function finalizeBatchJob(job, pollResult, logLine) {
+  const { transcriptionJobsAsync } = require('../database/db');
+  const { providerName, temperature, runtimeConfig } = await resolveRuntimeConfig(job, logLine);
+  const manifest = parseBatchManifest(job);
+  const manifestByCustomId = new Map(manifest.map((entry) => [entry.customId, entry]));
+  const groupedByDocument = groupManifestByDocument(manifest);
+
+  const pageResultsByDocument = new Map();
+  const pageErrorsByDocument = new Map();
+
+  for (const pageResult of pollResult.pageResults || []) {
+    const manifestEntry = manifestByCustomId.get(pageResult.customId);
+    if (!manifestEntry) continue;
+
+    if (pageResult.ok) {
+      if (!pageResultsByDocument.has(manifestEntry.documentId)) {
+        pageResultsByDocument.set(manifestEntry.documentId, new Map());
+      }
+      pageResultsByDocument.get(manifestEntry.documentId).set(manifestEntry.pageIndex || 0, pageResult.result);
+    } else {
+      if (!pageErrorsByDocument.has(manifestEntry.documentId)) {
+        pageErrorsByDocument.set(manifestEntry.documentId, []);
+      }
+      pageErrorsByDocument.get(manifestEntry.documentId).push(pageResult.error || 'Unknown page error');
+    }
+  }
+
+  let completedDocs = 0;
+  let failedDocs = 0;
+
+  for (const [documentId, docManifest] of groupedByDocument.entries()) {
+    const expectedPages = docManifest.length;
+    const pageMap = pageResultsByDocument.get(documentId) || new Map();
+    const pageErrors = pageErrorsByDocument.get(documentId) || [];
+
+    if (pageErrors.length > 0 || pageMap.size !== expectedPages) {
+      failedDocs += 1;
+      const missingPages = docManifest
+        .filter((entry) => !pageMap.has(entry.pageIndex || 0))
+        .map((entry) => (entry.pageIndex || 0) + 1);
+      const detail = [
+        pageErrors.length > 0 ? pageErrors.join('; ') : null,
+        missingPages.length > 0 ? `missing pages ${missingPages.join(', ')}` : null
+      ].filter(Boolean).join(' | ');
+      await logLine(`Document ${documentId} did not complete successfully${detail ? `: ${detail}` : ''}`);
+      continue;
+    }
+
+    const orderedResults = docManifest
+      .slice()
+      .sort((a, b) => (a.pageIndex || 0) - (b.pageIndex || 0))
+      .map((entry) => pageMap.get(entry.pageIndex || 0));
+
+    await persistDocumentTranscription({
+      job,
+      documentId,
+      providerName,
+      runtimeConfig,
+      temperature,
+      results: orderedResults,
+      logLine
+    });
+    completedDocs += 1;
+    await logLine(`Document ${documentId} materialized from batch (${orderedResults.length} page${orderedResults.length !== 1 ? 's' : ''})`);
+  }
+
+  await transcriptionJobsAsync.updateBatchProgress(job.id, {
+    completedCount: completedDocs,
+    failedCount: failedDocs,
+    remoteStatus: pollResult.remoteStatus
+  });
+
+  if (failedDocs > 0) {
+    const errorMessage = `Batch completed with ${failedDocs} failed document${failedDocs !== 1 ? 's' : ''}.`;
+    await logLine(errorMessage);
+    await transcriptionJobsAsync.markFailed(job.id, errorMessage);
+    return;
+  }
+
+  await logLine(`Batch complete. ${completedDocs} document${completedDocs !== 1 ? 's' : ''} imported from provider batch.`);
+  await transcriptionJobsAsync.markDone(job.id);
+}
+
+async function pollRunningBatches() {
+  if (batchPollBusy) return;
+  batchPollBusy = true;
+
+  const { transcriptionJobsAsync } = require('../database/db');
+
+  try {
+    const jobs = await transcriptionJobsAsync.getRunningBatches();
+    for (const job of jobs) {
+      if (!job.batch_remote_id) continue;
+      const logLine = makeJobLogger(job, transcriptionJobsAsync);
+
+      try {
+        const { runtimeConfig } = await resolveRuntimeConfig(job, async () => {});
+        const pollResult = await pollTranscriptionBatch(job, runtimeConfig);
+
+        if (pollResult.remoteStatus && pollResult.remoteStatus !== job.batch_remote_status) {
+          await logLine(`Remote batch status: ${pollResult.remoteStatus}`);
+        }
+
+        await transcriptionJobsAsync.updateBatchProgress(job.id, {
+          completedCount: Number.isInteger(pollResult.completedCount) ? pollResult.completedCount : null,
+          failedCount: Number.isInteger(pollResult.failedCount) ? pollResult.failedCount : null,
+          remoteStatus: pollResult.remoteStatus
+        });
+
+        if (pollResult.state === 'running') {
+          continue;
+        }
+
+        if (pollResult.state === 'failed') {
+          const errorMessage = pollResult.error || `Remote batch ended with status ${pollResult.remoteStatus}`;
+          await logLine(`ERROR: ${errorMessage}`);
+          await transcriptionJobsAsync.markFailed(job.id, errorMessage);
+          continue;
+        }
+
+        await finalizeBatchJob(job, pollResult, logLine);
+      } catch (err) {
+        if (isTransientError(err)) {
+          console.warn(`[worker] batch poll transient error for job ${job.id}: ${err.message}`);
+          continue;
+        }
+        console.error(`[worker] batch poll failed for job ${job.id}:`, err.message);
+        const logLine = makeJobLogger(job, transcriptionJobsAsync);
+        await logLine(`ERROR: ${err.message}`);
+        await transcriptionJobsAsync.markFailed(job.id, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[worker] Failed to poll running batch jobs:', err.message);
+  } finally {
+    batchPollBusy = false;
+  }
+}
+
+async function tickImportJobs() {
+  if (importBusy) return;
+  importBusy = true;
+
+  const { importJobsAsync } = require('../database/db');
+  let job = null;
+
+  try {
+    job = await importJobsAsync.claimNextQueuedSubmission();
+    if (!job) return;
+
+    console.log(`[worker] import job ${job.id}: starting durable submission processing`);
+    await processImportSubmissionJob(job);
+    console.log(`[worker] import job ${job.id}: submission processing complete`);
+  } catch (err) {
+    console.error('[worker] import submission job failed:', err.message);
+    if (job) {
+      await importJobsAsync.markFailed(job.id, err.message);
+    }
+  } finally {
+    importBusy = false;
   }
 }
 
