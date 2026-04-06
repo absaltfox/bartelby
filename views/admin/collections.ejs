@@ -18,7 +18,7 @@
   <!-- Create new collection -->
   <div class="settings-section">
     <h2>New Collection</h2>
-    <form method="POST" action="/admin/collections" class="auth-form" style="max-width: 560px;">
+    <form method="POST" action="/admin/collections" class="auth-form admin-form-wide">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="form-group">
         <label for="col-name">Name *</label>
@@ -89,8 +89,8 @@
               <% if (!c.is_public && !c.is_world_public) { %>
                 <button type="button" class="btn-action btn-sm js-collection-toggle" data-target="access-<%= c.id %>" data-collection-id="<%= c.id %>">Access</button>
               <% } %>
-              <form method="POST" action="/admin/collections/<%= c.id %>/delete" style="display:inline"
-                    onsubmit="return confirm('Delete collection \u0022' + this.dataset.name + '\u0022? Documents will not be deleted.')" data-name="<%= c.name %>">
+              <form method="POST" action="/admin/collections/<%= c.id %>/delete" class="inline-form"
+                    data-confirm-message="Delete collection &quot;<%= c.name %>&quot;? Documents will not be deleted.">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
               </form>
@@ -98,7 +98,7 @@
           </div>
 
           <!-- Edit form -->
-          <div id="edit-<%= c.id %>" class="collection-edit-form" style="display:none;">
+          <div id="edit-<%= c.id %>" class="collection-edit-form is-hidden">
             <form method="POST" action="/admin/collections/<%= c.id %>/edit">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <div class="form-group">
@@ -145,9 +145,9 @@
           </div>
 
           <!-- Preview image selector -->
-          <div id="preview-<%= c.id %>" class="collection-access-panel" style="display:none;">
+          <div id="preview-<%= c.id %>" class="collection-access-panel is-hidden">
             <h4>Collection Preview Image</h4>
-            <p class="muted" style="font-size:0.9rem; margin-bottom:12px;">
+            <p class="muted collection-preview-note">
               Select a document whose image will appear as the collection thumbnail. If none is selected, the most recent document's image is used.
             </p>
             <% if (c.documents && c.documents.length > 0) { %>
@@ -174,19 +174,19 @@
                     </label>
                   <% }) %>
                 </div>
-                <div class="form-actions" style="margin-top:12px;">
+                <div class="form-actions collection-preview-actions">
                   <button type="submit" class="btn-primary btn-sm">Save Preview</button>
                   <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Cancel</button>
                 </div>
               </form>
             <% } else { %>
-              <p class="muted" style="font-size:0.9rem;">No documents in this collection yet. Add documents to set a preview image.</p>
+              <p class="muted collection-preview-note">No documents in this collection yet. Add documents to set a preview image.</p>
             <% } %>
           </div>
 
           <!-- Access management panel (private collections only) -->
           <% if (!c.is_public && !c.is_world_public) { %>
-            <div id="access-<%= c.id %>" class="collection-access-panel" style="display:none;">
+            <div id="access-<%= c.id %>" class="collection-access-panel is-hidden">
               <h4>User Access</h4>
 
               <% if (c.grantedUsers && c.grantedUsers.length > 0) { %>
@@ -196,19 +196,19 @@
                       <span>
                         <strong><%= u.username %></strong>
                         <% if (u.email) { %> <small class="muted">&lt;<%= u.email %>&gt;</small><% } %>
-                        <span class="role-badge role-<%= u.collection_role || 'viewer' %>" style="margin-left:6px; font-size:0.75rem;"><%= u.collection_role || 'viewer' %></span>
+                        <span class="role-badge role-<%= u.collection_role || 'viewer' %> admin-role-badge--tiny"><%= u.collection_role || 'viewer' %></span>
                       </span>
-                      <div style="display:flex; gap:4px; align-items:center;">
-                        <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" style="display:inline">
+                      <div class="collection-access-actions">
+                        <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" class="inline-form">
                           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                           <input type="hidden" name="user_id" value="<%= u.id %>">
-                          <select name="role" onchange="this.form.submit()" style="font-size:0.8rem; padding:2px 4px;">
+                          <select name="role" class="admin-select--tiny" data-submit-on-change="1">
                             <option value="viewer" <%= u.collection_role === 'viewer' ? 'selected' : '' %>>Viewer</option>
                             <option value="editor" <%= u.collection_role === 'editor' ? 'selected' : '' %>>Editor</option>
                             <option value="manager" <%= u.collection_role === 'manager' ? 'selected' : '' %>>Manager</option>
                           </select>
                         </form>
-                        <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" style="display:inline">
+                        <form method="POST" action="/admin/collections/<%= c.id %>/access/revoke/<%= u.id %>" class="inline-form" data-confirm-message="Revoke access for <%= u.username %>?">
                           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                           <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
                         </form>
@@ -217,7 +217,7 @@
                   <% }) %>
                 </ul>
               <% } else { %>
-                <p class="muted" style="font-size:0.9rem;">No users have been granted access to this collection.</p>
+                <p class="muted collection-preview-note">No users have been granted access to this collection.</p>
               <% } %>
 
               <% if (activeUsers.length > 0) { %>
@@ -226,15 +226,15 @@
                   var eligible = activeUsers.filter(u => !grantedIds.includes(u.id));
                 %>
                 <% if (eligible.length > 0) { %>
-                  <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" class="access-grant-form">
+                  <form method="POST" action="/admin/collections/<%= c.id %>/access/grant" class="access-grant-form collection-grant-form">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <select name="user_id" required>
+                    <select name="user_id" required class="collection-grant-select">
                       <option value="">— Grant access to a user —</option>
                       <% eligible.forEach(function(u) { %>
                         <option value="<%= u.id %>"><%= u.username %><% if (u.email) { %> (<%= u.email %>)<% } %></option>
                       <% }) %>
                     </select>
-                    <select name="role">
+                    <select name="role" class="collection-grant-select collection-grant-select--role">
                       <option value="viewer">Viewer</option>
                       <option value="editor">Editor</option>
                       <option value="manager">Manager</option>
@@ -242,13 +242,13 @@
                     <button type="submit" class="btn-primary btn-sm">Grant Access</button>
                   </form>
                 <% } else { %>
-                  <p class="muted" style="font-size:0.9rem; margin-top:0.5rem;">All eligible users already have access.</p>
+                  <p class="muted collection-access-empty">All eligible users already have access.</p>
                 <% } %>
               <% } else { %>
-                <p class="muted" style="font-size:0.9rem; margin-top:0.5rem;">No non-admin users to grant access to.</p>
+                <p class="muted collection-access-empty">No non-admin users to grant access to.</p>
               <% } %>
 
-              <p class="field-hint" style="margin-top:0.75rem;">
+              <p class="field-hint collection-access-hint">
                 Users with <em>Access All</em> or the <em>admin</em> role always have access to all collections regardless of these grants.
               </p>
             </div>
@@ -258,43 +258,11 @@
       </div>
     </div>
   <% } else { %>
-    <div class="empty-state" style="padding: 40px 20px;">
+    <div class="empty-state empty-state--padded-lg">
       <div class="empty-icon">&#128193;</div>
       <h2>No collections yet</h2>
       <p>Create your first collection above to start organizing documents.</p>
     </div>
   <% } %>
 </div>
-
-<script>
-  function toggleCollectionPanel(id, targetId) {
-    var panels = ['edit-' + id, 'preview-' + id, 'access-' + id];
-    panels.forEach(function(panelId) {
-      var panel = document.getElementById(panelId);
-      if (!panel) return;
-      var shouldShow = panelId === targetId && panel.style.display === 'none';
-      panel.style.display = shouldShow ? 'block' : 'none';
-    });
-  }
-
-  (function() {
-    document.querySelectorAll('.js-collection-toggle').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        toggleCollectionPanel(btn.dataset.collectionId, btn.dataset.target);
-      });
-    });
-
-    // Auto-open the access panel if the URL has a hash like #collection-123
-    var hash = window.location.hash;
-    var m = hash.match(/^#collection-(\d+)$/);
-    if (m) {
-      var id = m[1];
-      var el = document.getElementById('access-' + id);
-      if (el) el.style.display = 'block';
-      var row = document.getElementById('collection-' + id);
-      if (row) row.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  })();
-</script>
-
 <%- include('../partials/footer') %>

@@ -1,0 +1,323 @@
+<%
+  var collections = Array.isArray(collections) ? collections : [];
+  var selectedCollectionId = typeof selectedCollectionId !== 'undefined' ? selectedCollectionId : null;
+  var noProvidersHint = typeof noProvidersHint !== 'undefined' ? noProvidersHint : '';
+  var collectionsEmptyHint = typeof collectionsEmptyHint !== 'undefined' ? collectionsEmptyHint : '';
+%>
+
+<!-- Step 1: Upload -->
+<div id="step-upload" class="import-step active">
+  <div class="step-header">
+    <span class="step-number">1</span>
+    <span class="step-title">Upload File</span>
+  </div>
+
+  <div class="upload-area" id="upload-area">
+    <div class="upload-content">
+      <div class="upload-icon">&#128206;</div>
+      <p class="upload-text">Drag and drop a file here, or click to select</p>
+      <p class="upload-hint">Supports: JPG, PNG, GIF, WebP, TIFF, PDF (max 100MB)</p>
+      <input type="file" id="file-input" accept="image/*,.pdf,application/pdf" hidden>
+    </div>
+  </div>
+
+  <div class="transcription-mode">
+    <% if (!hasNoProviders) { %>
+      <label class="mode-option">
+        <input type="radio" name="transcription-mode" value="ai" id="mode-ai" checked>
+        <span class="mode-label">Transcribe with AI</span>
+      </label>
+    <% } %>
+    <label class="mode-option">
+      <input type="radio" name="transcription-mode" value="manual" id="mode-manual" <%= hasNoProviders ? 'checked' : '' %>>
+      <span class="mode-label">Enter transcription manually</span>
+    </label>
+  </div>
+
+  <% if (hasNoProviders) { %>
+    <p class="field-hint"><%- noProvidersHint %></p>
+  <% } %>
+
+  <div id="ai-options" class="<%= hasNoProviders ? 'is-hidden' : '' %>">
+    <div class="provider-select">
+      <label for="provider">AI Provider:</label>
+      <select id="provider">
+        <% providerOptions.forEach(option => { %>
+          <option value="<%= option.provider %>"><%= option.label %></option>
+        <% }) %>
+      </select>
+    </div>
+
+    <div class="provider-select">
+      <label for="credential-source">Credentials:</label>
+      <select id="credential-source"></select>
+      <p class="field-hint">Choose between a system credential and one of your own private API keys for this provider.</p>
+    </div>
+
+    <div class="paradata-fields">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="initiated-by">Initiated by</label>
+          <input type="text" id="initiated-by" value="<%= currentUser ? currentUser.username : '' %>" placeholder="Your name or username">
+        </div>
+        <div class="form-group">
+          <label for="temperature">Temperature <span class="field-hint-inline">(blank = model default)</span></label>
+          <input type="number" id="temperature" placeholder="e.g. 0.2" min="0" max="2" step="0.1">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Step 1b: PDF Page Management -->
+<div id="step-pages" class="import-step">
+  <div class="step-header">
+    <span class="step-number">1b</span>
+    <span class="step-title">Organize Pages</span>
+  </div>
+
+  <div class="step-intro">
+    <p class="step-subtitle">Your PDF has been split into individual pages.</p>
+    <p class="step-subtitle-detail">Select pages and group them when they belong to the same document. Any ungrouped pages will be imported individually, and you can click any thumbnail to zoom in.</p>
+
+    <% if (collections.length > 0) { %>
+      <div class="step-pages-collections">
+        <h3>Add Imported Documents To</h3>
+        <div class="collection-checkboxes" id="step-pages-collection-checkboxes">
+          <% collections.forEach(function(c) { %>
+            <label class="collection-access-item">
+              <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" <%= selectedCollectionId === c.id ? 'checked' : '' %>>
+              <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
+            </label>
+          <% }) %>
+        </div>
+      </div>
+    <% } else if (collectionsEmptyHint) { %>
+      <p class="field-hint"><%- collectionsEmptyHint %></p>
+    <% } %>
+  </div>
+
+  <div class="page-manager">
+    <div class="page-grid" id="page-grid">
+      <!-- Populated dynamically -->
+    </div>
+
+    <div id="page-groups">
+      <!-- Groups appear here -->
+    </div>
+
+    <div class="ai-queue-note import-batch-note is-hidden" id="batch-transcription-option">
+      <label class="mode-option import-batch-option">
+        <input type="checkbox" id="use-batch-transcription">
+        <span class="mode-label">Submit as one provider batch job</span>
+      </label>
+      <p class="field-hint import-batch-hint" id="batch-transcription-hint">
+        Large AI imports can be sent as a single async batch job. It will appear once in Jobs and may take longer to finish.
+      </p>
+    </div>
+
+    <div class="page-actions page-actions-sticky">
+      <button type="button" class="btn-secondary" id="select-all-pages">Select All</button>
+      <button type="button" class="btn-secondary" id="deselect-all-pages">Deselect All</button>
+      <button type="button" class="btn-primary" id="group-selected">Group Selected Pages</button>
+      <button type="button" class="btn-secondary is-hidden" id="suggest-groups-btn" title="Use AI-assisted document grouping for this collection">Auto-group</button>
+      <span class="flex-spacer"></span>
+      <button type="button" class="btn-primary" id="submit-all-btn">
+        Submit All for Transcription
+      </button>
+    </div>
+  </div>
+
+  <div id="zoom-overlay" class="zoom-overlay is-hidden">
+    <img id="zoom-image" src="" alt="Zoomed page">
+    <button type="button" class="zoom-close" id="zoom-close">&times;</button>
+    <div class="zoom-nav">
+      <button type="button" class="zoom-prev" id="zoom-prev">&lsaquo;</button>
+      <span id="zoom-label" class="zoom-label"></span>
+      <button type="button" class="zoom-next" id="zoom-next">&rsaquo;</button>
+    </div>
+  </div>
+</div>
+
+<!-- Step 2: Processing -->
+<div id="step-processing" class="import-step">
+  <div class="step-header">
+    <span class="step-number">2</span>
+    <span class="step-title">Processing</span>
+  </div>
+
+  <div class="processing-content">
+    <div class="processing-preview">
+      <img id="preview-image" src="" alt="Document preview">
+    </div>
+    <div class="processing-status">
+      <div class="spinner"></div>
+      <p id="processing-text">Uploading file...</p>
+      <div class="progress-bar-wrap is-hidden" id="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <p id="processing-nav-hint" class="field-hint processing-nav-hint is-hidden">
+        It's safe to navigate away &mdash; your PDF will continue processing in the background.
+        You can resume from <a href="<%= importConfig.jobsUrl %>" id="processing-jobs-link">Jobs</a> when it's ready.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Step 3: Configure & Save -->
+<div id="step-review" class="import-step">
+  <div class="step-header">
+    <span class="step-number">3</span>
+    <span class="step-title">Configure &amp; Save</span>
+  </div>
+
+  <div id="review-progress" class="review-progress is-hidden">
+    <span id="review-progress-text"></span>
+  </div>
+
+  <div class="review-content">
+    <div class="review-image">
+      <img id="review-preview" src="" alt="Document preview">
+      <div id="review-extra-pages" class="review-extra-pages"></div>
+    </div>
+
+    <div class="review-form">
+      <form id="review-form">
+        <input type="hidden" id="temp-file" name="tempFile">
+        <input type="hidden" id="temp-files" name="tempFiles">
+        <input type="hidden" id="original-name" name="originalName">
+        <input type="hidden" id="mime-type" name="mimeType">
+
+        <h3>Document Metadata</h3>
+
+        <div class="form-group">
+          <label for="doc-title">Title *</label>
+          <input type="text" id="doc-title" name="title" required>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-date">Date</label>
+            <input type="text" id="doc-date" name="dateCreated" placeholder="YYYY-MM-DD or as written">
+          </div>
+          <div class="form-group">
+            <label for="doc-author">Author</label>
+            <input type="text" id="doc-author" name="author">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="doc-type">Document Type</label>
+            <input type="text" id="doc-type" name="documentType" placeholder="letter, ledger, legal document...">
+          </div>
+          <div class="form-group">
+            <label for="doc-location">Location</label>
+            <input type="text" id="doc-location" name="location">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="doc-description">Description</label>
+          <textarea id="doc-description" name="description" rows="2"></textarea>
+        </div>
+
+        <div id="ai-transcription-note" class="ai-queue-note ai-queue-note--compact is-hidden">
+          <span class="ai-queue-icon">&#9203;</span>
+          <strong>Transcription will run automatically in the background</strong> after saving.
+          You can monitor progress in <a href="<%= importConfig.jobsUrl %>" target="_blank">Jobs</a>.
+        </div>
+
+        <div id="transcription-section">
+          <h3>Transcription</h3>
+
+          <div class="form-group">
+            <label for="doc-transcription">Transcribed Text *</label>
+            <textarea id="doc-transcription" name="transcription" rows="12"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="doc-notes">Transcription Notes</label>
+            <textarea id="doc-notes" name="notes" rows="3" placeholder="Any observations about the document or transcription difficulties..."></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="doc-transcriber">Transcriber</label>
+            <input type="text" id="doc-transcriber" name="transcriber" value="">
+          </div>
+        </div>
+
+        <h3>Collections</h3>
+        <div class="collection-checkboxes" id="collection-checkboxes">
+          <% if (collections.length > 0) { %>
+            <% collections.forEach(function(c) { %>
+              <label class="collection-access-item">
+                <input type="checkbox" class="review-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" <%= selectedCollectionId === c.id ? 'checked' : '' %>>
+                <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
+              </label>
+            <% }) %>
+          <% } else if (collectionsEmptyHint) { %>
+            <p class="field-hint"><%- collectionsEmptyHint %></p>
+          <% } %>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" id="cancel-btn">Cancel</button>
+          <button type="button" class="btn-secondary is-hidden" id="skip-btn">Skip (Don't Save)</button>
+          <button type="submit" class="btn-primary" id="save-btn">Save Document</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Step 4: Complete -->
+<div id="step-complete" class="import-step">
+  <div class="step-header">
+    <span class="step-number">&#10003;</span>
+    <span class="step-title">Import Complete</span>
+  </div>
+
+  <div class="complete-content">
+    <div class="success-icon">&#10003;</div>
+    <h2 id="complete-heading">Document Saved!</h2>
+    <p id="complete-message"></p>
+    <p id="complete-ai-note" class="field-hint is-hidden">
+      Transcription has been queued and will run in the background.
+      <a href="<%= importConfig.jobsUrl %>">Monitor in Jobs &rarr;</a>
+    </p>
+    <div class="complete-actions">
+      <a href="<%= importConfig.importUrl %>" class="btn-secondary">Import Another</a>
+      <a href="#" id="view-document-btn" class="btn-primary">View Document</a>
+    </div>
+  </div>
+</div>
+
+<div id="error-message" class="error-banner is-hidden">
+  <span id="error-text"></span>
+  <button type="button" class="error-close" id="error-close-btn">&times;</button>
+</div>
+
+<div class="modal-overlay is-hidden" id="grouping-reset-modal">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Reset AI Groups?</h3>
+      <button type="button" class="modal-close" id="grouping-reset-close">&times;</button>
+    </div>
+    <div class="modal-body modal-body--warning">
+      <p class="modal-lead">Your current collection selection does not support AI-assisted document grouping.</p>
+      <p class="modal-detail">If you continue, AI-generated groups will be removed. Any groups you created manually will stay in place.</p>
+      <div class="form-actions form-actions--spaced">
+        <button type="button" class="btn-secondary" id="grouping-reset-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="grouping-reset-confirm">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<% if (resumeJob) { %>
+<script id="resume-import-job" type="application/json"><%- JSON.stringify(resumeJob).replace(/</g, '\\u003c') %></script>
+<% } %>
+<script id="import-config" type="application/json"><%- JSON.stringify(importConfig).replace(/</g, '\\u003c') %></script>
+<script id="provider-options-data" type="application/json"><%- JSON.stringify(providerOptions).replace(/</g, '\\u003c') %></script>
+<script src="/js/admin-import.js"></script>

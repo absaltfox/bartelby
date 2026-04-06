@@ -38,9 +38,9 @@
         </label>
       </div>
 
-      <h2 style="margin-top: 28px;">Collection Access</h2>
+      <h2 class="admin-heading-spacer">Collection Access</h2>
 
-      <label class="role-option access-all-option" style="margin-bottom: 14px;">
+      <label class="role-option access-all-option role-option--panel role-option--panel-spaced">
         <input type="checkbox" name="can_use_system_api_keys" value="1"
           <%= (editMode ? (approveUser.can_use_system_api_keys || approveUser.role === 'admin') : approveUser.role === 'admin') ? 'checked' : '' %>>
         <span class="role-option-label">
@@ -50,13 +50,13 @@
       </label>
 
       <% if (allCollections.length === 0) { %>
-        <p class="field-hint" style="margin-bottom:18px;">
+        <p class="field-hint field-hint--mb-md">
           No collections exist yet. <a href="/admin/collections">Create collections first</a>, then return to set access.
           Granting "All collections" will give access to everything including future collections.
         </p>
       <% } %>
 
-      <label class="role-option access-all-option">
+      <label class="role-option access-all-option role-option--panel role-option--panel-spaced">
         <input type="checkbox" name="access_all" value="1" id="access-all-cb"
           <%= (editMode && approveUser.access_all) ? 'checked' : '' %>>
         <span class="role-option-label">
@@ -67,20 +67,20 @@
 
       <% if (allCollections.length > 0) { %>
         <div id="collection-list" class="collection-access-list">
-          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections and set their role:</p>
+          <p class="field-hint field-hint--mt-md field-hint--mb-sm">Or select specific collections and set their role:</p>
           <% allCollections.forEach(function(c) { %>
             <%
               const isGranted = editMode && grantedIds && grantedIds.includes(c.id);
               const grantedRole = (typeof grantedRoles !== 'undefined' && grantedRoles && grantedRoles[c.id]) ? grantedRoles[c.id] : 'viewer';
             %>
-            <label class="collection-access-item" style="display:flex; align-items:center; gap:8px;">
+            <label class="collection-access-item collection-access-item--panel">
               <input type="checkbox" name="collections" value="<%= c.id %>" <%= isGranted ? 'checked' : '' %>>
-              <span style="flex:1;">
+              <span class="collection-access-item__label">
                 <strong><%= c.name %></strong>
                 <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
                 <small class="muted"> (<%= c.document_count %> doc<%= c.document_count !== 1 ? 's' : '' %>)</small>
               </span>
-              <select name="collection_role_<%= c.id %>" style="font-size:0.8125rem; padding:2px 6px;">
+              <select name="collection_role_<%= c.id %>" class="collection-access-role-select">
                 <option value="viewer" <%= grantedRole === 'viewer' ? 'selected' : '' %>>Viewer</option>
                 <option value="editor" <%= grantedRole === 'editor' ? 'selected' : '' %>>Editor</option>
                 <option value="manager" <%= grantedRole === 'manager' ? 'selected' : '' %>>Manager</option>
@@ -90,13 +90,13 @@
         </div>
       <% } %>
 
-      <div class="form-actions" style="margin-top: 28px;">
+      <div class="form-actions form-actions--mt-lg">
         <a href="/admin/users" class="btn-secondary">Cancel</a>
         <button type="submit" class="btn-primary">
           <%= editMode ? 'Save Changes' : 'Approve Account' %>
         </button>
         <% if (!editMode) { %>
-          <button type="submit" form="reject-form" class="btn-action btn-delete" style="margin-left: auto;">
+          <button type="submit" form="reject-form" class="btn-action btn-delete ml-auto">
             Reject Request
           </button>
         <% } %>
@@ -104,21 +104,12 @@
     </form>
 
     <% if (!editMode) { %>
-      <form id="reject-form" method="POST" action="/admin/users/<%= approveUser.id %>/reject"
-            onsubmit="return confirm('Reject ' + this.dataset.name + '\'s account request?')" data-name="<%= approveUser.username %>"><input type="hidden" name="_csrf" value="<%= csrfToken %>"></form>
+      <form id="reject-form" class="is-hidden" method="POST" action="/admin/users/<%= approveUser.id %>/reject"
+            data-confirm-message="Reject <%= approveUser.username %>&apos;s account request?">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      </form>
     <% } %>
   </div>
 </div>
-
-<script>
-  // Toggle collection checkboxes when "All collections" is checked
-  const allCb = document.getElementById('access-all-cb');
-  const collList = document.getElementById('collection-list');
-  function toggleCollList() {
-    if (collList) collList.style.opacity = allCb.checked ? '0.4' : '1';
-    if (collList) collList.querySelectorAll('input').forEach(cb => cb.disabled = allCb.checked);
-  }
-  if (allCb) { allCb.addEventListener('change', toggleCollList); toggleCollList(); }
-</script>
 
 <%- include('../partials/footer') %>

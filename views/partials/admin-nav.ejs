@@ -5,18 +5,10 @@
   <a href="/admin/collections" class="admin-subnav-link" data-page="collections">Collections</a>
   <a href="/admin/users" class="admin-subnav-link" data-page="users">Users</a>
   <a href="/admin/jobs" class="admin-subnav-link" data-page="jobs">Jobs</a>
+  <a href="/admin/extraction-jobs" class="admin-subnav-link" data-page="extraction-jobs">Extraction</a>
+  <a href="/admin/entities" class="admin-subnav-link" data-page="entities">Entities</a>
+  <a href="/admin/review-extractions" class="admin-subnav-link" data-page="review-extractions">Review</a>
   <a href="/admin/application-settings" class="admin-subnav-link" data-page="application-settings">Application Settings</a>
   <a href="/admin/llm-settings" class="admin-subnav-link" data-page="llm-settings">LLM Settings</a>
   <a href="/admin/analytics-settings" class="admin-subnav-link" data-page="analytics-settings">Analytics</a>
 </nav>
-<script>
-(function() {
-  var p = window.location.pathname;
-  document.querySelectorAll('.admin-subnav-link').forEach(function(a) {
-    var page = a.dataset.page;
-    if (page === 'dashboard' && p === '/admin') a.classList.add('active');
-    else if (page === 'dashboard') return;
-    else if (p.startsWith('/admin/' + page)) a.classList.add('active');
-  });
-})();
-</script>

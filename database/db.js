@@ -533,6 +533,162 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   `
   ALTER TABLE import_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'render';
   ALTER TABLE import_jobs ADD COLUMN submit_payload TEXT
+  `,
+
+  // v44 — knowledge graph entities, citations, and extraction jobs
+  `
+  CREATE TABLE IF NOT EXISTS entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    description TEXT,
+    properties TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
+  CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(canonical_name);
+
+  CREATE TABLE IF NOT EXISTS entity_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'extracted',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_entity_aliases_alias ON entity_aliases(alias);
+  CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity ON entity_aliases(entity_id);
+
+  CREATE TABLE IF NOT EXISTS date_expressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    earliest TEXT,
+    latest TEXT,
+    precision TEXT NOT NULL DEFAULT 'unknown',
+    qualifier TEXT,
+    calendar TEXT NOT NULL DEFAULT 'gregorian',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_date_expressions_entity ON date_expressions(entity_id);
+  CREATE INDEX IF NOT EXISTS idx_date_expressions_range ON date_expressions(earliest, latest);
+
+  CREATE TABLE IF NOT EXISTS relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    target_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    relationship_type TEXT NOT NULL,
+    label TEXT,
+    properties TEXT NOT NULL DEFAULT '{}',
+    confidence REAL,
+    start_date TEXT,
+    end_date TEXT,
+    date_precision TEXT,
+    date_qualifier TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_relationships_type ON relationships(relationship_type);
+
+  CREATE TABLE IF NOT EXISTS citations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    relationship_id INTEGER REFERENCES relationships(id) ON DELETE CASCADE,
+    transcript_id INTEGER NOT NULL REFERENCES transcripts(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    passage_start INTEGER,
+    passage_end INTEGER,
+    passage_text TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    extraction_model TEXT,
+    confidence REAL,
+    reviewed_at DATETIME,
+    reviewed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_citations_entity ON citations(entity_id);
+  CREATE INDEX IF NOT EXISTS idx_citations_relationship ON citations(relationship_id);
+  CREATE INDEX IF NOT EXISTS idx_citations_transcript ON citations(transcript_id);
+  CREATE INDEX IF NOT EXISTS idx_citations_document ON citations(document_id);
+  CREATE INDEX IF NOT EXISTS idx_citations_reviewed ON citations(reviewed_at);
+
+  CREATE TABLE IF NOT EXISTS extraction_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transcript_id INTEGER NOT NULL REFERENCES transcripts(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'queued',
+    provider TEXT,
+    model TEXT,
+    temperature REAL,
+    initiated_by TEXT,
+    provider_key_scope TEXT,
+    user_api_key_id INTEGER REFERENCES user_api_keys(id) ON DELETE SET NULL,
+    requested_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    log TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    entity_count INTEGER NOT NULL DEFAULT 0,
+    relationship_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_extraction_jobs_status ON extraction_jobs(status);
+  CREATE INDEX IF NOT EXISTS idx_extraction_jobs_transcript ON extraction_jobs(transcript_id);
+  CREATE INDEX IF NOT EXISTS idx_extraction_jobs_document ON extraction_jobs(document_id)
+  `,
+
+  // v45 — controlled relationship vocabulary for the knowledge graph
+  `
+  CREATE TABLE IF NOT EXISTS relationship_types (
+    name TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    inverse_name TEXT,
+    source_type TEXT,
+    target_type TEXT,
+    category TEXT NOT NULL DEFAULT 'general',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  INSERT OR IGNORE INTO relationship_types (name, label, inverse_name, source_type, target_type, category) VALUES
+    ('authored', 'Authored', NULL, 'document', 'person', 'document'),
+    ('received', 'Received', NULL, 'document', 'person', 'document'),
+    ('mentioned_in', 'Mentioned In', NULL, NULL, 'document', 'document'),
+    ('sent_from', 'Sent From', NULL, 'document', 'place', 'document'),
+    ('sent_to', 'Sent To', NULL, 'document', 'place', 'document'),
+    ('references', 'References', NULL, NULL, NULL, 'document'),
+    ('responds_to', 'Responds To', NULL, 'document', 'document', 'document'),
+    ('co_filed_with', 'Co-filed With', NULL, 'document', 'document', 'document'),
+    ('concerns', 'Concerns', NULL, 'document', 'topic', 'document'),
+    ('resided_at', 'Resided At', NULL, 'person', 'place', 'spatial'),
+    ('traveled_to', 'Traveled To', NULL, NULL, 'place', 'spatial'),
+    ('born_in', 'Born In', NULL, 'person', 'place', 'spatial'),
+    ('died_in', 'Died In', NULL, 'person', 'place', 'spatial'),
+    ('located_in', 'Located In', NULL, NULL, 'place', 'spatial'),
+    ('employed_by', 'Employed By', NULL, 'person', 'organization', 'organizational'),
+    ('member_of', 'Member Of', NULL, 'person', 'organization', 'organizational'),
+    ('holds_role_in', 'Holds Role In', NULL, 'person', 'organization', 'organizational'),
+    ('founded', 'Founded', NULL, 'person', 'organization', 'organizational'),
+    ('affiliated_with', 'Affiliated With', NULL, NULL, 'organization', 'organizational'),
+    ('parent_of', 'Parent Of', 'child_of', 'person', 'person', 'familial'),
+    ('child_of', 'Child Of', 'parent_of', 'person', 'person', 'familial'),
+    ('spouse_of', 'Spouse Of', 'spouse_of', 'person', 'person', 'familial'),
+    ('sibling_of', 'Sibling Of', 'sibling_of', 'person', 'person', 'familial'),
+    ('related_to', 'Related To', 'related_to', NULL, NULL, 'general'),
+    ('participated_in', 'Participated In', NULL, NULL, 'event', 'event'),
+    ('occurred_at', 'Occurred At', NULL, 'event', 'place', 'event'),
+    ('occurred_on', 'Occurred On', NULL, 'event', 'date', 'event'),
+    ('caused_by', 'Caused By', NULL, 'event', NULL, 'event'),
+    ('dated', 'Dated', NULL, NULL, 'date', 'temporal'),
+    ('active_during', 'Active During', NULL, NULL, 'date', 'temporal'),
+    ('owns', 'Owns', NULL, NULL, 'artifact', 'artifact'),
+    ('created', 'Created', NULL, NULL, 'artifact', 'artifact'),
+    ('associated_with', 'Associated With', NULL, NULL, 'artifact', 'artifact'),
+    ('makes_claim', 'Makes Claim', NULL, 'document', 'claim', 'interpretive'),
+    ('supports_claim', 'Supports Claim', NULL, NULL, 'claim', 'interpretive'),
+    ('opposes_claim', 'Opposes Claim', NULL, NULL, 'claim', 'interpretive'),
+    ('claim_concerns', 'Claim Concerns', NULL, 'claim', 'topic', 'interpretive'),
+    ('related_to_topic', 'Related To Topic', NULL, NULL, 'topic', 'interpretive')
   `
 ];
 
@@ -679,7 +835,24 @@ async function initializeSchema() {
     console.log(`[db] Marked ${staleTranscriptionCount} stale transcription job(s) as failed`);
   }
 
-  if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0) {
+  const staleExtractions = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM extraction_jobs
+    WHERE status = 'running'
+  `);
+  const staleExtractionCount = staleExtractions?.count || 0;
+  if (staleExtractionCount > 0) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleExtractionCount} stale extraction job(s) as failed`);
+  }
+
+  if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0 || staleExtractionCount > 0) {
     await saveDatabase();
   }
 
@@ -3285,6 +3458,684 @@ const topicHierarchyAsync = {
   }
 };
 
+function parseJsonValue(value, fallback) {
+  if (value == null || value === '') return fallback;
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function hydrateEntity(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    properties: parseJsonValue(row.properties, {})
+  };
+}
+
+function hydrateRelationship(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    properties: parseJsonValue(row.properties, {})
+  };
+}
+
+function buildAccessibleDocumentFilter(opts = {}, column = 'c.document_id') {
+  const { userId, isAdmin, accessAll } = opts;
+  if (isAdmin || accessAll) {
+    return { clause: '1=1', params: [] };
+  }
+  if (!userId) {
+    return {
+      clause: `${column} IN (
+        SELECT dc.document_id
+        FROM document_collections dc
+        INNER JOIN collections col ON dc.collection_id = col.id
+        WHERE col.is_world_public = 1
+      )`,
+      params: []
+    };
+  }
+  return {
+    clause: `${column} IN (
+      SELECT dc.document_id
+      FROM document_collections dc
+      INNER JOIN collections col ON dc.collection_id = col.id
+      LEFT JOIN user_collection_access uca
+        ON dc.collection_id = uca.collection_id AND uca.user_id = ?
+      WHERE col.is_public = 1 OR uca.user_id IS NOT NULL
+    )`,
+    params: [userId]
+  };
+}
+
+const entities = {
+  async create({ entity_type, canonical_name, description, properties }) {
+    const result = await runAsync(`
+      INSERT INTO entities (entity_type, canonical_name, description, properties)
+      VALUES (?, ?, ?, ?)
+    `, [
+      entity_type,
+      canonical_name,
+      description || null,
+      JSON.stringify(properties || {})
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return hydrateEntity(await getAsync('SELECT * FROM entities WHERE id = ?', [id]));
+  },
+
+  async getAll(limit = 50, offset = 0) {
+    return (await allAsync(`
+      SELECT * FROM entities
+      ORDER BY canonical_name
+      LIMIT ? OFFSET ?
+    `, [limit, offset])).map(hydrateEntity);
+  },
+
+  async getByType(entityType, limit = 50, offset = 0) {
+    return (await allAsync(`
+      SELECT * FROM entities
+      WHERE entity_type = ?
+      ORDER BY canonical_name
+      LIMIT ? OFFSET ?
+    `, [entityType, limit, offset])).map(hydrateEntity);
+  },
+
+  async getCount(entityType = null) {
+    const row = entityType
+      ? await getAsync('SELECT COUNT(*) as count FROM entities WHERE entity_type = ?', [entityType])
+      : await getAsync('SELECT COUNT(*) as count FROM entities');
+    return row?.count || 0;
+  },
+
+  async getCountsByType() {
+    return await allAsync(`
+      SELECT entity_type, COUNT(*) as count
+      FROM entities
+      GROUP BY entity_type
+      ORDER BY count DESC, entity_type ASC
+    `);
+  },
+
+  async search(query, limit = 50) {
+    const like = `%${String(query || '').trim()}%`;
+    return (await allAsync(`
+      SELECT DISTINCT e.*
+      FROM entities e
+      LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+      WHERE e.canonical_name LIKE ? OR ea.alias LIKE ?
+      ORDER BY e.canonical_name
+      LIMIT ?
+    `, [like, like, limit])).map(hydrateEntity);
+  },
+
+  async getByDocumentId(documentId) {
+    return (await allAsync(`
+      SELECT DISTINCT e.*
+      FROM entities e
+      INNER JOIN citations c ON c.entity_id = e.id
+      WHERE c.document_id = ?
+      ORDER BY e.entity_type, e.canonical_name
+    `, [documentId])).map(hydrateEntity);
+  },
+
+  async update(id, fields = {}) {
+    const existing = await this.getById(id);
+    if (!existing) return null;
+    await runAsync(`
+      UPDATE entities
+      SET canonical_name = ?, description = ?, properties = ?
+      WHERE id = ?
+    `, [
+      fields.canonical_name !== undefined ? fields.canonical_name : existing.canonical_name,
+      fields.description !== undefined ? fields.description : existing.description,
+      fields.properties !== undefined ? JSON.stringify(fields.properties || {}) : JSON.stringify(existing.properties || {}),
+      id
+    ]);
+    return await this.getById(id);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM entities WHERE id = ?', [id]);
+  },
+
+  async getNeighbors(entityId, depth = 1) {
+    const direct = await allAsync(`
+      SELECT
+        e.*,
+        r.id AS relationship_id,
+        r.relationship_type,
+        r.confidence,
+        r.start_date,
+        r.end_date,
+        r.date_precision,
+        r.date_qualifier,
+        CASE WHEN r.source_entity_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type
+      FROM relationships r
+      JOIN entities e
+        ON e.id = CASE WHEN r.source_entity_id = ? THEN r.target_entity_id ELSE r.source_entity_id END
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE r.source_entity_id = ? OR r.target_entity_id = ?
+      ORDER BY e.canonical_name
+    `, [entityId, entityId, entityId, entityId]);
+
+    if (depth <= 1) return direct.map(hydrateEntity);
+
+    const seen = new Set([entityId, ...direct.map((row) => row.id)]);
+    const secondLevel = [];
+    for (const first of direct) {
+      const rows = await allAsync(`
+        SELECT
+          e.*,
+          r.id AS relationship_id,
+          r.relationship_type,
+          r.confidence,
+          r.start_date,
+          r.end_date,
+          r.date_precision,
+          r.date_qualifier,
+          CASE WHEN r.source_entity_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
+          se.canonical_name AS source_name,
+          se.entity_type AS source_type,
+          te.canonical_name AS target_name,
+          te.entity_type AS target_type
+        FROM relationships r
+        JOIN entities e
+          ON e.id = CASE WHEN r.source_entity_id = ? THEN r.target_entity_id ELSE r.source_entity_id END
+        JOIN entities se ON se.id = r.source_entity_id
+        JOIN entities te ON te.id = r.target_entity_id
+        WHERE r.source_entity_id = ? OR r.target_entity_id = ?
+      `, [first.id, first.id, first.id, first.id]);
+      rows.forEach((row) => {
+        if (!seen.has(row.id)) {
+          seen.add(row.id);
+          secondLevel.push({ ...row, via_entity_id: first.id });
+        }
+      });
+    }
+    return [...direct, ...secondLevel].map(hydrateEntity);
+  }
+};
+
+const entityAliases = {
+  async create({ entity_id, alias, source }) {
+    const result = await runAsync(`
+      INSERT INTO entity_aliases (entity_id, alias, source)
+      VALUES (?, ?, ?)
+    `, [entity_id, alias, source || 'extracted']);
+    return result.lastInsertRowid;
+  },
+
+  async getByEntityId(entityId) {
+    return await allAsync(`
+      SELECT * FROM entity_aliases
+      WHERE entity_id = ?
+      ORDER BY alias
+    `, [entityId]);
+  },
+
+  async search(query, limit = 50) {
+    const like = `%${String(query || '').trim()}%`;
+    return await allAsync(`
+      SELECT ea.*, e.canonical_name, e.entity_type
+      FROM entity_aliases ea
+      JOIN entities e ON e.id = ea.entity_id
+      WHERE ea.alias LIKE ?
+      ORDER BY ea.alias
+      LIMIT ?
+    `, [like, limit]);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM entity_aliases WHERE id = ?', [id]);
+  }
+};
+
+const dateExpressions = {
+  async create({ entity_id, label, earliest, latest, precision, qualifier, calendar }) {
+    const result = await runAsync(`
+      INSERT INTO date_expressions (entity_id, label, earliest, latest, precision, qualifier, calendar)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      entity_id,
+      label,
+      earliest || null,
+      latest || null,
+      precision || 'unknown',
+      qualifier || null,
+      calendar || 'gregorian'
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getByEntityId(entityId) {
+    return await allAsync(`
+      SELECT * FROM date_expressions
+      WHERE entity_id = ?
+      ORDER BY earliest, latest, label
+    `, [entityId]);
+  },
+
+  async findInRange(from, to) {
+    return await allAsync(`
+      SELECT de.*, e.canonical_name, e.entity_type
+      FROM date_expressions de
+      JOIN entities e ON e.id = de.entity_id
+      WHERE COALESCE(de.latest, de.earliest) >= ?
+        AND COALESCE(de.earliest, de.latest) <= ?
+      ORDER BY de.earliest, de.latest, e.canonical_name
+    `, [from, to]);
+  }
+};
+
+const relationships = {
+  async create({ source_entity_id, target_entity_id, relationship_type, label, properties, confidence, start_date, end_date, date_precision, date_qualifier }) {
+    const result = await runAsync(`
+      INSERT INTO relationships (
+        source_entity_id, target_entity_id, relationship_type, label, properties,
+        confidence, start_date, end_date, date_precision, date_qualifier
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      source_entity_id,
+      target_entity_id,
+      relationship_type,
+      label || null,
+      JSON.stringify(properties || {}),
+      confidence != null ? confidence : null,
+      start_date || null,
+      end_date || null,
+      date_precision || null,
+      date_qualifier || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return hydrateRelationship(await getAsync(`
+      SELECT
+        r.*,
+        se.canonical_name AS source_name, se.entity_type AS source_type,
+        te.canonical_name AS target_name, te.entity_type AS target_type
+      FROM relationships r
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE r.id = ?
+    `, [id]));
+  },
+
+  async getByEntityId(entityId) {
+    return (await allAsync(`
+      SELECT
+        r.*,
+        se.canonical_name AS source_name, se.entity_type AS source_type,
+        te.canonical_name AS target_name, te.entity_type AS target_type
+      FROM relationships r
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE r.source_entity_id = ? OR r.target_entity_id = ?
+      ORDER BY r.created_at DESC
+    `, [entityId, entityId])).map(hydrateRelationship);
+  },
+
+  async getBetween(entityA, entityB) {
+    return (await allAsync(`
+      SELECT
+        r.*,
+        se.canonical_name AS source_name, se.entity_type AS source_type,
+        te.canonical_name AS target_name, te.entity_type AS target_type
+      FROM relationships r
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE (r.source_entity_id = ? AND r.target_entity_id = ?)
+         OR (r.source_entity_id = ? AND r.target_entity_id = ?)
+      ORDER BY r.created_at DESC
+    `, [entityA, entityB, entityB, entityA])).map(hydrateRelationship);
+  },
+
+  async getByDocumentId(documentId) {
+    return (await allAsync(`
+      SELECT DISTINCT
+        r.*,
+        se.canonical_name AS source_name, se.entity_type AS source_type,
+        te.canonical_name AS target_name, te.entity_type AS target_type
+      FROM relationships r
+      JOIN citations c ON c.relationship_id = r.id
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE c.document_id = ?
+      ORDER BY r.created_at DESC
+    `, [documentId])).map(hydrateRelationship);
+  },
+
+  async findExisting(source_entity_id, target_entity_id, relationship_type) {
+    return await getAsync(`
+      SELECT * FROM relationships
+      WHERE source_entity_id = ? AND target_entity_id = ? AND relationship_type = ?
+    `, [source_entity_id, target_entity_id, relationship_type]);
+  }
+};
+
+const citations = {
+  async create({ entity_id, relationship_id, transcript_id, document_id, passage_start, passage_end, passage_text, extraction_method, extraction_model, confidence }) {
+    const result = await runAsync(`
+      INSERT INTO citations (
+        entity_id, relationship_id, transcript_id, document_id,
+        passage_start, passage_end, passage_text,
+        extraction_method, extraction_model, confidence
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      entity_id || null,
+      relationship_id || null,
+      transcript_id,
+      document_id,
+      passage_start != null ? passage_start : null,
+      passage_end != null ? passage_end : null,
+      passage_text,
+      extraction_method,
+      extraction_model || null,
+      confidence != null ? confidence : null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return await getAsync(`
+      SELECT c.*, e.canonical_name AS entity_name, e.entity_type,
+             r.relationship_type, d.title AS document_title
+      FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.id = ?
+    `, [id]);
+  },
+
+  async getByEntityId(entityId) {
+    return await allAsync(`
+      SELECT c.*, d.title AS document_title
+      FROM citations c
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.entity_id = ?
+      ORDER BY c.created_at DESC
+    `, [entityId]);
+  },
+
+  async getByRelationshipId(relationshipId) {
+    return await allAsync(`
+      SELECT c.*, d.title AS document_title
+      FROM citations c
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.relationship_id = ?
+      ORDER BY c.created_at DESC
+    `, [relationshipId]);
+  },
+
+  async getByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT c.*, e.canonical_name AS entity_name, e.entity_type
+      FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      WHERE c.document_id = ?
+      ORDER BY c.created_at DESC
+    `, [documentId]);
+  },
+
+  async getUnreviewed(limit = 50) {
+    return await allAsync(`
+      SELECT c.*, e.canonical_name AS entity_name, e.entity_type,
+             r.relationship_type, d.title AS document_title
+      FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.reviewed_at IS NULL
+      ORDER BY c.created_at DESC
+      LIMIT ?
+    `, [limit]);
+  },
+
+  async review(id, reviewedByUserId) {
+    await runAsync(`
+      UPDATE citations
+      SET reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?
+      WHERE id = ?
+    `, [reviewedByUserId || null, id]);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM citations WHERE id = ?', [id]);
+  }
+};
+
+const extractionJobs = {
+  async create({ transcript_id, document_id, provider, model, temperature, initiated_by, provider_key_scope, user_api_key_id, requested_by_user_id }) {
+    const result = await runAsync(`
+      INSERT INTO extraction_jobs (
+        transcript_id, document_id, provider, model, temperature, initiated_by,
+        provider_key_scope, user_api_key_id, requested_by_user_id,
+        status, log
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
+    `, [
+      transcript_id,
+      document_id,
+      provider || null,
+      model || null,
+      temperature != null ? temperature : null,
+      initiated_by || null,
+      provider_key_scope || null,
+      user_api_key_id || null,
+      requested_by_user_id || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async claimNextQueued() {
+    const job = await getAsync(`
+      SELECT * FROM extraction_jobs
+      WHERE status = 'queued'
+      ORDER BY created_at ASC
+      LIMIT 1
+    `);
+    if (!job) return null;
+
+    const result = await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'running',
+          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+          completed_at = NULL,
+          error = NULL,
+          attempts = attempts + 1
+      WHERE id = ? AND status = 'queued'
+    `, [job.id]);
+    await saveDatabase();
+    if (!result || !result.changes) return null;
+    return await this.getById(job.id);
+  },
+
+  async getById(id) {
+    return await getAsync(`
+      SELECT j.*, d.title AS document_title
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON d.id = j.document_id
+      WHERE j.id = ?
+    `, [id]);
+  },
+
+  async appendLog(id, text) {
+    await db.run('UPDATE extraction_jobs SET log = log || ? WHERE id = ?', [text, id]);
+    await saveDatabase();
+  },
+
+  async markDone(id, { entity_count, relationship_count } = {}) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'done',
+          entity_count = COALESCE(?, entity_count),
+          relationship_count = COALESCE(?, relationship_count),
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      Number.isInteger(entity_count) ? entity_count : null,
+      Number.isInteger(relationship_count) ? relationship_count : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  async requeueForRetry(id) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE id = ?
+    `, [id]);
+    await saveDatabase();
+  },
+
+  async retry(id) {
+    await this.requeueForRetry(id);
+  },
+
+  async getAll() {
+    return await allAsync(`
+      SELECT j.*, d.title AS document_title
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON d.id = j.document_id
+      ORDER BY j.created_at DESC
+    `);
+  },
+
+  async getByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT j.*, d.title AS document_title
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON d.id = j.document_id
+      WHERE j.document_id = ?
+      ORDER BY j.created_at DESC
+    `, [documentId]);
+  },
+
+  async getPendingForDocument(documentId) {
+    return await getAsync(`
+      SELECT * FROM extraction_jobs
+      WHERE document_id = ?
+        AND status IN ('queued', 'running')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [documentId]);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM extraction_jobs WHERE id = ?', [id]);
+  }
+};
+
+const relationshipTypes = {
+  async getAll() {
+    return await allAsync(`
+      SELECT * FROM relationship_types
+      ORDER BY category, label
+    `);
+  },
+
+  async resolve(name) {
+    if (!name) return null;
+    const exact = await getAsync('SELECT name FROM relationship_types WHERE name = ?', [name]);
+    if (exact) return exact.name;
+    const normalized = String(name).trim().toLowerCase().replace(/\s+/g, '_');
+    const byNormalized = await getAsync('SELECT name FROM relationship_types WHERE name = ?', [normalized]);
+    return byNormalized ? byNormalized.name : null;
+  },
+
+  async create({ name, label, inverse_name, source_type, target_type, category }) {
+    await runAsync(`
+      INSERT OR IGNORE INTO relationship_types (name, label, inverse_name, source_type, target_type, category)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      name,
+      label || name,
+      inverse_name || null,
+      source_type || null,
+      target_type || null,
+      category || 'general'
+    ]);
+  }
+};
+
+const graphAccess = {
+  async searchEntities(query, userId, isAdmin, accessAll, limit = 50) {
+    const like = `%${String(query || '').trim()}%`;
+    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+    return (await allAsync(`
+      SELECT DISTINCT e.*
+      FROM entities e
+      LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+      INNER JOIN citations c ON c.entity_id = e.id
+      WHERE (${access.clause})
+        AND (e.canonical_name LIKE ? OR ea.alias LIKE ?)
+      ORDER BY e.canonical_name
+      LIMIT ?
+    `, [...access.params, like, like, limit])).map(hydrateEntity);
+  },
+
+  async getEntitiesByType(entityType, userId, isAdmin, accessAll, limit = 50, offset = 0) {
+    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+    const params = [...access.params];
+    let typeClause = '';
+    if (entityType) {
+      typeClause = 'AND e.entity_type = ?';
+      params.push(entityType);
+    }
+    params.push(limit, offset);
+    return (await allAsync(`
+      SELECT DISTINCT e.*
+      FROM entities e
+      INNER JOIN citations c ON c.entity_id = e.id
+      WHERE (${access.clause}) ${typeClause}
+      ORDER BY e.canonical_name
+      LIMIT ? OFFSET ?
+    `, params)).map(hydrateEntity);
+  },
+
+  async canAccessEntity(entityId, userId, isAdmin, accessAll) {
+    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+    const row = await getAsync(`
+      SELECT 1
+      FROM citations c
+      WHERE c.entity_id = ?
+        AND (${access.clause})
+      LIMIT 1
+    `, [entityId, ...access.params]);
+    return !!row;
+  }
+};
+
 const settingsAsync = {
   async get(key) {
     const row = await getAsync('SELECT value FROM settings WHERE key = ?', [key]);
@@ -3991,5 +4842,21 @@ module.exports = {
   collectionTopicsAsync,
   documentTopicAssignmentsAsync,
   topicEvolutionAsync,
-  topicHierarchyAsync
+  topicHierarchyAsync,
+  entities,
+  entitiesAsync: entities,
+  entityAliases,
+  entityAliasesAsync: entityAliases,
+  dateExpressions,
+  dateExpressionsAsync: dateExpressions,
+  relationships,
+  relationshipsAsync: relationships,
+  citations,
+  citationsAsync: citations,
+  extractionJobs,
+  extractionJobsAsync: extractionJobs,
+  relationshipTypes,
+  relationshipTypesAsync: relationshipTypes,
+  graphAccess,
+  graphAccessAsync: graphAccess
 };

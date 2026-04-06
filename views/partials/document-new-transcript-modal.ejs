@@ -1,0 +1,71 @@
+<% if (typeof canEdit !== 'undefined' && canEdit) { %>
+<div class="modal-overlay is-hidden" id="new-transcript-modal">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3>Create New Transcript</h3>
+      <button type="button" class="modal-close" id="close-new-transcript-modal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="new-transcript-modes">
+        <button type="button" class="new-transcript-mode-btn active" data-nt-mode="manual">Manual</button>
+        <button type="button" class="new-transcript-mode-btn" data-nt-mode="ai">AI Transcription</button>
+      </div>
+
+      <div class="nt-mode-content active" id="nt-mode-manual">
+        <p class="nt-mode-desc">Create a new transcript version to edit by hand.</p>
+        <form method="POST" action="/documents/<%= document.id %>/transcripts" id="manual-transcript-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="edit-field">
+            <label>
+              <input type="radio" name="mode" value="empty" checked> Blank transcript
+            </label>
+          </div>
+          <% if (selectedTranscript) { %>
+            <div class="edit-field">
+              <label>
+                <input type="radio" name="mode" value="copy"> Copy from current (v<%= selectedTranscript.version %>)
+              </label>
+              <input type="hidden" name="source_transcript_id" value="<%= selectedTranscript.id %>">
+            </div>
+          <% } %>
+          <div class="edit-field">
+            <label for="manual-transcript-notes">Notes <span class="field-hint-inline">(optional)</span></label>
+            <textarea id="manual-transcript-notes" name="notes" rows="2" placeholder="E.g. corrected spelling, added missing paragraph..."></textarea>
+          </div>
+          <div class="edit-actions edit-actions--spaced">
+            <button type="submit" class="btn-primary btn-sm">Create Transcript</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="nt-mode-content is-hidden" id="nt-mode-ai">
+        <p class="nt-mode-desc">Queue a new AI transcription using the document image.</p>
+        <% if (!document.image_path) { %>
+          <p class="nt-mode-warn">This document has no image. AI transcription requires an image.</p>
+        <% } else { %>
+          <form id="ai-transcript-form">
+            <div class="edit-field">
+              <label for="ai-provider">Provider</label>
+              <select id="ai-provider" name="provider">
+                <option value="">Loading providers...</option>
+              </select>
+            </div>
+            <div class="edit-field is-hidden" id="ai-credential-field">
+              <label for="ai-credential">Credential</label>
+              <select id="ai-credential" name="credentialSource"></select>
+            </div>
+            <div class="edit-field">
+              <label for="ai-temperature">Temperature <span class="field-hint-inline">(optional)</span></label>
+              <input type="number" id="ai-temperature" name="temperature" step="0.1" min="0" max="2" placeholder="Default">
+            </div>
+            <div class="edit-actions edit-actions--spaced">
+              <button type="submit" class="btn-primary btn-sm" id="ai-submit-btn">Queue Transcription</button>
+              <span class="save-status" id="ai-status"></span>
+            </div>
+          </form>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</div>
+<% } %>

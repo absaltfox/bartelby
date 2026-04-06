@@ -25,9 +25,9 @@
   <% collections.forEach(function(c) { %>
     <a href="/collections/<%= c.id %>" class="collection-card">
       <div class="collection-card-thumb">
-        <% if (c.thumbnail) { %>
-          <img src="<%= c.thumbnail %>" alt="<%= c.name %>" onerror="this.style.display='none'">
-        <% } %>
+          <% if (c.thumbnail) { %>
+            <img src="<%= c.thumbnail %>" alt="<%= c.name %>" data-hide-on-image-error>
+          <% } %>
         <div class="collection-card-placeholder">&#128220;</div>
       </div>
       <div class="collection-card-body">

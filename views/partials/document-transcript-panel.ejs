@@ -1,0 +1,243 @@
+<div class="transcript-header">
+  <h2>Transcript</h2>
+  <% if (transcripts.length > 1) { %>
+    <div class="transcript-selector">
+      <label for="transcript-select">Version:</label>
+      <select id="transcript-select" data-back-href="<%= backHref %>">
+        <% transcripts.forEach(t => { %>
+          <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
+            v<%= t.version %> by <%= t.transcriber || 'Unknown' %><%= t.is_best ? ' ★' : '' %>
+          </option>
+        <% }) %>
+      </select>
+    </div>
+  <% } %>
+</div>
+
+<% if (selectedTranscript) { %>
+  <div class="transcript-info">
+    <span class="transcript-info-transcriber">
+      <strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %>
+    </span>
+    <% if (selectedTranscript.is_best) { %>
+      <span class="badge-best">★ Best</span>
+    <% } %>
+    <span class="transcript-info-version">
+      <strong>Version</strong> <%= selectedTranscript.version %>
+    </span>
+    <span class="transcript-info-notes transcript-notes-view" title="<%= selectedTranscript.notes || '' %>">
+      <% if (selectedTranscript.notes) { %>
+        <strong>Notes:</strong> <%= selectedTranscript.notes %>
+      <% } %>
+    </span>
+    <% if (typeof canEdit !== 'undefined' && canEdit && !selectedTranscript.provider) { %>
+      <span class="transcript-notes-edit is-hidden">
+        <strong>Notes:</strong>
+        <input type="text" id="transcript-notes-input" value="<%= selectedTranscript.notes || '' %>" placeholder="Add notes..." class="transcript-notes-field">
+        <button type="button" class="btn-action btn-sm" id="save-transcript-notes">Save</button>
+        <span class="save-status" id="notes-save-status"></span>
+      </span>
+    <% } %>
+  </div>
+
+  <% if (selectedTranscript.provider || selectedTranscript.model || selectedTranscript.initiated_by) { %>
+    <details class="paradata-panel">
+      <summary>Transcription Run Details</summary>
+      <dl class="metadata-list paradata-list">
+        <% if (selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
+        <% if (selectedTranscript.provider) { %><dt>Provider</dt><dd><%= selectedTranscript.provider %></dd><% } %>
+        <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
+        <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
+        <% if (selectedTranscript.run_duration_ms) { %><dt>Duration</dt><dd><%= (selectedTranscript.run_duration_ms / 1000).toFixed(1) %>s</dd><% } %>
+        <% if (selectedTranscript.input_tokens != null || selectedTranscript.output_tokens != null) { %>
+          <dt>Tokens</dt>
+          <dd><%= (selectedTranscript.input_tokens || 0).toLocaleString() %> in / <%= (selectedTranscript.output_tokens || 0).toLocaleString() %> out</dd>
+        <% } %>
+        <% if (selectedTranscript.cost_usd != null) { %>
+          <dt>Est. cost</dt>
+          <dd>$<%= selectedTranscript.cost_usd < 0.01 ? selectedTranscript.cost_usd.toFixed(4) : selectedTranscript.cost_usd.toFixed(2) %> <span class="field-hint-inline">(estimated)</span></dd>
+        <% } %>
+        <% if (selectedTranscript.confidence != null) { %>
+          <dt>Confidence</dt>
+          <dd><%= selectedTranscript.confidence %>/100 <span class="field-hint-inline">(model self-assessment)</span></dd>
+        <% } %>
+        <%
+          const _markerCount = ((selectedTranscript.content || '').match(/\[[^\]]+\]/g) || []).length;
+          const _usesDefaultTaxonomy = selectedTranscript.prompt && selectedTranscript.prompt.includes('[illegible]');
+        %>
+        <% if (_markerCount > 0 || _usesDefaultTaxonomy) { %>
+          <dt>Uncertainty markers</dt>
+          <dd><%= _markerCount %> <span class="field-hint-inline">(<code>[…]</code> patterns in transcript<% if (selectedTranscript.prompt && !_usesDefaultTaxonomy) { %> — custom prompt, taxonomy may differ<% } else if (!selectedTranscript.prompt) { %> — prompt not recorded<% } %>)</span></dd>
+        <% } %>
+        <% if (selectedTranscript.provider_key_scope) { %><dt>Credentials</dt><dd><%= selectedTranscript.provider_key_scope === 'user' ? 'Personal API key' : 'System API key' %></dd><% } %>
+        <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
+      </dl>
+      <% if (selectedTranscript.prompt) { %>
+        <details class="prompt-detail">
+          <summary>System prompt used</summary>
+          <pre class="prompt-text"><%= selectedTranscript.prompt %></pre>
+        </details>
+      <% } %>
+    </details>
+  <% } %>
+
+  <div class="transcript-content" id="transcript-content" data-transcript-id="<%= selectedTranscript.id %>">
+    <div id="transcript-view-mode">
+      <div class="comparison-page-stack transcript-page-stack" id="transcript-page-stack">
+        <% if (comparisonPages && comparisonPages.length > 0) { %>
+          <% comparisonPages.forEach(function(page, index) { %>
+            <section class="comparison-page-block transcript-page-block <%= index === 0 ? 'active' : 'is-hidden' %>" data-page-number="<%= page.pageNumber %>">
+              <% if (comparisonPages.length > 1) { %>
+                <div class="comparison-page-label">Page <%= page.pageNumber %></div>
+              <% } %>
+              <pre class="transcript-page-pre" data-page-start="<%= page.startOffset %>" data-page-end="<%= page.endOffset %>"><%= page.transcriptText || (comparisonPages.length > 1 ? '[No transcript text detected for this page]' : selectedTranscript.content) %></pre>
+            </section>
+          <% }) %>
+        <% } else { %>
+          <pre class="transcript-page-pre" data-page-start="0" data-page-end="<%= (selectedTranscript.content || '').length %>"><%= selectedTranscript.content || '' %></pre>
+        <% } %>
+      </div>
+    </div>
+    <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+      <div id="transcript-edit-mode" class="is-hidden">
+        <textarea id="transcript-editor" rows="20"><%= typeof editableTranscriptContent !== 'undefined' ? editableTranscriptContent : (selectedTranscript.content || '') %></textarea>
+      </div>
+    <% } %>
+  </div>
+  <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+    <div class="transcript-edit-toolbar is-hidden" id="transcript-edit-toolbar">
+      <div class="transcript-edit-toolbar-header">
+        <div>
+          <p class="transcript-edit-toolbar-eyebrow">Editing transcript</p>
+          <h3>Version <%= selectedTranscript.version %><% if (selectedTranscript.is_best) { %> <span class="badge-best">★ Best</span><% } %></h3>
+        </div>
+        <span class="save-status transcript-toolbar-status" id="transcript-save-status"></span>
+      </div>
+
+      <div class="transcript-edit-toolbar-grid">
+        <div class="transcript-action-group">
+          <p class="transcript-action-group-label">Current draft</p>
+          <div class="transcript-edit-actions" id="transcript-edit-actions">
+            <button type="button" class="btn-primary btn-sm" id="save-transcript-btn">Save Transcript</button>
+            <button type="button" class="btn-secondary btn-sm" id="cancel-transcript-edit">Cancel</button>
+          </div>
+        </div>
+
+        <div class="transcript-action-group">
+          <p class="transcript-action-group-label">Versions</p>
+          <div class="transcript-edit-actions">
+            <button type="button" class="btn-action btn-sm" id="open-new-transcript-modal">New Transcript</button>
+            <% if (typeof canManage !== 'undefined' && canManage && !selectedTranscript.is_best) { %>
+              <form method="POST" action="/documents/<%= document.id %>/transcripts/<%= selectedTranscript.id %>/best">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button type="submit" class="btn-action btn-promote btn-sm">Set as Best</button>
+              </form>
+            <% } %>
+          </div>
+        </div>
+
+        <% if (typeof canManage !== 'undefined' && canManage && transcripts.length > 1) { %>
+          <div class="transcript-action-group transcript-action-group-danger">
+            <p class="transcript-action-group-label">Danger zone</p>
+            <div class="transcript-manage-actions" id="transcript-manage-actions">
+              <form method="POST" action="/documents/<%= document.id %>/transcripts/<%= selectedTranscript.id %>/delete"
+                    data-confirm="Delete this transcript version? This cannot be undone.">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button type="submit" class="btn-action btn-delete btn-sm">Delete Transcript</button>
+              </form>
+            </div>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+
+  <div class="annotation-section">
+    <h3>Annotations (<span id="annotation-count"><%= annotations.length %></span>)</h3>
+    <div id="annotation-list" class="annotation-list">
+      <% if (annotations.length === 0) { %>
+        <p class="no-annotations">No annotations yet.<% if (currentUser) { %> Select text in the transcript to add one.<% } %></p>
+      <% } else { %>
+        <% annotations.forEach(ann => { %>
+          <div class="annotation-item" data-id="<%= ann.id %>" data-start="<%= ann.position_start %>" data-end="<%= ann.position_end %>">
+            <div class="annotation-header">
+              <strong><%= ann.user_name %></strong>
+              <span class="annotation-date"><%= new Date(ann.created_at).toLocaleDateString() %></span>
+              <% if (currentUser) { %>
+                <button class="delete-annotation" data-id="<%= ann.id %>" title="Delete annotation">&times;</button>
+              <% } %>
+            </div>
+            <p class="annotation-content"><%= ann.content %></p>
+            <% if (ann.position_start !== null && ann.position_end !== null) { %>
+              <p class="annotation-position">Characters <%= ann.position_start %>-<%= ann.position_end %></p>
+            <% } %>
+          </div>
+        <% }) %>
+      <% } %>
+    </div>
+
+    <% if (currentUser) { %>
+      <div id="annotation-form-container" class="annotation-form-container is-hidden">
+        <form id="annotation-form" class="annotation-form">
+          <input type="hidden" name="transcript_id" value="<%= selectedTranscript.id %>">
+          <input type="hidden" name="position_start" id="position-start">
+          <input type="hidden" name="position_end" id="position-end">
+          <input type="hidden" name="user_name" value="<%= currentUser.username %>">
+
+          <div class="form-group">
+            <label for="annotation-content">Annotation <span class="field-hint-inline">as <%= currentUser.username %></span></label>
+            <textarea id="annotation-content" name="content" required rows="3"></textarea>
+          </div>
+
+          <p class="selected-text-preview">Selected text: "<span id="selected-text"></span>"</p>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Add Annotation</button>
+            <button type="button" class="btn-secondary" id="annotation-cancel-btn">Cancel</button>
+          </div>
+        </form>
+      </div>
+    <% } else { %>
+      <div class="auth-gate">
+        <a href="/login">Sign in</a> to add annotations to this transcript.
+      </div>
+    <% } %>
+  </div>
+
+  <section
+    class="knowledge-graph-panel"
+    id="document-knowledge-graph"
+    data-graph-document
+    data-document-id="<%= document.id %>"
+    hidden>
+    <div class="kg-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Knowledge Graph</p>
+        <h3>Entities, relationships, and cited passages</h3>
+      </div>
+      <p class="kg-panel-meta">Extracted from the selected transcript</p>
+    </div>
+    <div class="kg-panel-empty" data-kg-empty>
+      Loading knowledge graph...
+    </div>
+    <div class="kg-panel-body" data-kg-body hidden>
+      <div class="kg-grid">
+        <section class="kg-section">
+          <h4>Entities</h4>
+          <div class="kg-entity-groups" data-kg-entities></div>
+        </section>
+        <section class="kg-section">
+          <h4>Relationships</h4>
+          <div class="kg-relationship-list" data-kg-relationships></div>
+        </section>
+      </div>
+    </div>
+  </section>
+<% } else { %>
+  <p class="no-transcript">No transcripts available for this document.</p>
+  <% if (typeof canEdit !== 'undefined' && canEdit) { %>
+    <div class="new-transcript-trigger">
+      <button type="button" class="btn-action btn-sm" id="open-new-transcript-modal">+ New Transcript</button>
+    </div>
+  <% } %>
+<% } %>

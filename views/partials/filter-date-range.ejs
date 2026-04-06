@@ -1,0 +1,33 @@
+<%
+  var fromControlId = typeof fromId !== 'undefined' && fromId ? fromId : (typeof nameFrom !== 'undefined' && nameFrom ? nameFrom : 'dateFrom');
+  var toControlId = typeof toId !== 'undefined' && toId ? toId : (typeof nameTo !== 'undefined' && nameTo ? nameTo : 'dateTo');
+  var fromName = typeof nameFrom !== 'undefined' && nameFrom ? nameFrom : 'dateFrom';
+  var toName = typeof nameTo !== 'undefined' && nameTo ? nameTo : 'dateTo';
+  var minDateAttr = typeof minDate !== 'undefined' && minDate ? 'min="' + minDate + '"' : '';
+  var maxDateAttr = typeof maxDate !== 'undefined' && maxDate ? 'max="' + maxDate + '"' : '';
+  var labelText = typeof label !== 'undefined' && label ? label : 'Date Range';
+%>
+<div class="filter-group">
+  <label class="filter-label"><%= labelText %></label>
+  <div class="filter-date-row">
+    <input
+      type="date"
+      id="<%= fromControlId %>"
+      name="<%= fromName %>"
+      class="filter-date"
+      value="<%= fromValue || '' %>"
+      <%= minDateAttr %>
+      <%= maxDateAttr %>
+      aria-label="<%= labelText %> from">
+    <span class="filter-date-sep">&ndash;</span>
+    <input
+      type="date"
+      id="<%= toControlId %>"
+      name="<%= toName %>"
+      class="filter-date"
+      value="<%= toValue || '' %>"
+      <%= minDateAttr %>
+      <%= maxDateAttr %>
+      aria-label="<%= labelText %> to">
+  </div>
+</div>

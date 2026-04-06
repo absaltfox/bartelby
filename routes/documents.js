@@ -531,6 +531,7 @@ router.get('/documents/:id', async (req, res) => {
   let canEdit = isAdmin;
   let canManage = isAdmin;
   let jobsHref = null;
+  let jobStatusUrl = null;
   if (!user) {
     canEdit = false;
     canManage = false;
@@ -545,9 +546,13 @@ router.get('/documents/:id', async (req, res) => {
   if (pendingJob) {
     if (isAdmin) {
       jobsHref = '/admin/jobs';
+      jobStatusUrl = `/admin/jobs/api/${pendingJob.id}`;
     } else if (canManage && user) {
       const managerCollectionId = await userCollectionAccessAsync.getManagerCollectionIdForDocument(user.id, doc.id);
-      if (managerCollectionId) jobsHref = `/manage/collections/${managerCollectionId}/jobs`;
+      if (managerCollectionId) {
+        jobsHref = `/manage/collections/${managerCollectionId}/jobs`;
+        jobStatusUrl = `/manage/collections/${managerCollectionId}/jobs/api/${pendingJob.id}`;
+      }
     }
   }
 
@@ -565,6 +570,7 @@ router.get('/documents/:id', async (req, res) => {
     docCollections,
     pendingJob: pendingJob || null,
     jobsHref,
+    jobStatusUrl,
     backHref,
     canEdit: canEdit || canManage,
     canManage,

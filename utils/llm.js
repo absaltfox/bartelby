@@ -611,6 +611,7 @@ module.exports = {
   listProviders,
   listConfiguredProviders,
   providerNeedsApiKey,
+  getUtilityModelInstance,
   parseTranscriptionResponse: parseResponse,
   getTranscriptionSystemPrompt,
   resolveTranscriptionRuntime,

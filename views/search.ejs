@@ -10,6 +10,20 @@
     <p class="search-summary">Enter a search term to find documents by transcript content.</p>
   <% } %>
 
+  <section class="entity-results-panel" data-graph-search data-search-query="<%= query %>" hidden>
+    <div class="kg-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Knowledge Graph</p>
+        <h2>Matching entities</h2>
+      </div>
+      <p class="kg-panel-meta" data-entity-results-count>Loading...</p>
+    </div>
+    <div class="kg-panel-empty" data-entity-results-empty>
+      No entity matches yet.
+    </div>
+    <div class="entity-results-list" data-entity-results-list hidden></div>
+  </section>
+
   <% if (results.length > 0) { %>
     <div class="search-results">
       <% results.forEach(result => { %>
@@ -27,5 +41,7 @@
     </div>
   <% } %>
 </div>
+
+<script src="/js/graph-explorer.js"></script>
 
 <%- include('partials/footer') %>

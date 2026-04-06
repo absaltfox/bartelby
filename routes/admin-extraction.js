@@ -1,0 +1,127 @@
+'use strict';
+
+const express = require('express');
+const router = express.Router();
+const { requireAdmin } = require('../middleware/auth');
+const db = require('../database/db');
+
+router.use(requireAdmin);
+
+const PAGE_SIZE = 50;
+
+function extractionStore() {
+  return db.extractionJobsAsync || db.extractionJobs || null;
+}
+
+function parseJsonMaybe(value) {
+  if (!value || typeof value !== 'string') return value || {};
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
+}
+
+async function loadExtractionJobs({ statusFilter, page }) {
+  const store = extractionStore();
+  if (!store) {
+    return {
+      jobs: [],
+      totalCount: 0,
+      counts: {},
+      ready: false,
+      notice: 'Knowledge graph extraction helpers are not wired yet.'
+    };
+  }
+
+  let jobs = [];
+  if (typeof store.getAll === 'function') {
+    jobs = await store.getAll();
+  } else if (typeof store.getQueued === 'function') {
+    jobs = await store.getQueued();
+  }
+
+  jobs = Array.isArray(jobs) ? jobs : [];
+  if (statusFilter && statusFilter !== 'all') {
+    jobs = jobs.filter((job) => job.status === statusFilter);
+  }
+
+  const counts = jobs.reduce((acc, job) => {
+    acc.total += 1;
+    acc[job.status || 'unknown'] = (acc[job.status || 'unknown'] || 0) + 1;
+    return acc;
+  }, { total: 0 });
+
+  const offset = (page - 1) * PAGE_SIZE;
+  const paged = jobs.slice(offset, offset + PAGE_SIZE).map((job) => ({
+    ...job,
+    metadata: parseJsonMaybe(job.metadata),
+    log: job.log || ''
+  }));
+
+  return {
+    jobs: paged,
+    totalCount: jobs.length,
+    counts,
+    ready: true,
+    notice: null
+  };
+}
+
+router.get('/', async (req, res) => {
+  const statusFilter = req.query.status || 'all';
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const state = await loadExtractionJobs({ statusFilter, page });
+
+  res.render('admin/extraction-jobs', {
+    pageTitle: 'Extraction Jobs',
+    jobs: state.jobs,
+    statusFilter,
+    counts: state.counts,
+    currentPage: page,
+    totalPages: Math.max(1, Math.ceil(state.totalCount / PAGE_SIZE)),
+    totalCount: state.totalCount,
+    graphReady: state.ready,
+    graphNotice: state.notice
+  });
+});
+
+router.post('/:id/retry', express.urlencoded({ extended: false }), async (req, res) => {
+  const store = extractionStore();
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.'));
+  }
+
+  if (!store || typeof store.retry !== 'function') {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction retry is not wired yet.'));
+  }
+
+  try {
+    await store.retry(id);
+    return res.redirect('/admin/extraction-jobs?retried=1');
+  } catch (err) {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent(err.message));
+  }
+});
+
+router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
+  const store = extractionStore();
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.'));
+  }
+
+  if (!store || typeof store.delete !== 'function') {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction delete is not wired yet.'));
+  }
+
+  try {
+    await store.delete(id);
+    return res.redirect('/admin/extraction-jobs?deleted=1');
+  } catch (err) {
+    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent(err.message));
+  }
+});
+
+module.exports = router;

@@ -1,0 +1,41 @@
+<%
+  var controlId = id || name;
+  var optionList = typeof options !== 'undefined' && options ? options : [];
+  var selected = (typeof selectedValues !== 'undefined' && selectedValues ? selectedValues : []).map(function(value) { return String(value); });
+  var selectedOptions = optionList.filter(function(option) {
+    return selected.indexOf(String(option.value)) !== -1;
+  });
+  var allLabelText = typeof allLabel !== 'undefined' && allLabel ? allLabel : 'All';
+  var labelText = typeof label !== 'undefined' && label ? label : '';
+  var selectedText = selectedOptions.length === 0
+    ? allLabelText
+    : selectedOptions.length === 1
+      ? selectedOptions[0].label
+      : selectedOptions.length + ' selected';
+  var fieldName = typeof name !== 'undefined' ? name : controlId;
+%>
+<div class="filter-group">
+  <label class="filter-label"><%= labelText %></label>
+  <div
+    class="filter-multiselect"
+    id="<%= controlId %>-multiselect"
+    data-field-name="<%= fieldName %>"
+    data-all-label="<%= allLabelText %>">
+    <button type="button" class="filter-multiselect-toggle" id="<%= controlId %>-toggle" data-filter-toggle="1">
+      <span id="<%= controlId %>-toggle-text" data-filter-toggle-text="1"><%= selectedText %></span>
+      <span class="filter-multiselect-arrow">&#9662;</span>
+    </button>
+    <div class="filter-multiselect-dropdown" id="<%= controlId %>-dropdown" data-filter-dropdown="1">
+      <% optionList.forEach(function(option) { %>
+        <label class="filter-multiselect-option">
+          <input
+            type="checkbox"
+            name="<%= fieldName %>"
+            value="<%= option.value %>"
+            <%= selected.indexOf(String(option.value)) !== -1 ? 'checked' : '' %>>
+          <span><%= option.label %></span>
+        </label>
+      <% }) %>
+    </div>
+  </div>
+</div>

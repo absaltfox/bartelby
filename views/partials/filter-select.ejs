@@ -1,0 +1,28 @@
+<%
+  var controlId = id || name;
+  var optionList = typeof options !== 'undefined' && options ? options : [];
+  var selected = typeof selectedValue === 'undefined' || selectedValue == null ? '' : String(selectedValue);
+  var selectedOption = optionList.find(function(option) {
+    return String(option.value) === selected;
+  });
+  var autoSubmitAttr = typeof autoSubmit !== 'undefined' && autoSubmit ? 'data-filter-autosubmit="1"' : '';
+  var hasHint = typeof hint !== 'undefined' && hint;
+  var blankLabelText = typeof blankLabel !== 'undefined' && blankLabel ? blankLabel : 'All';
+  var labelText = typeof label !== 'undefined' && label ? label : '';
+%>
+<div class="filter-group">
+  <label class="filter-label" for="<%= controlId %>"><%= labelText %></label>
+  <select
+    name="<%= name %>"
+    id="<%= controlId %>"
+    class="filter-select"
+    <%= autoSubmitAttr %>>
+    <option value=""><%= blankLabelText %></option>
+    <% optionList.forEach(function(option) { %>
+      <option value="<%= option.value %>" <%= String(option.value) === selected ? 'selected' : '' %>><%= option.label %></option>
+    <% }) %>
+  </select>
+  <% if (selectedOption && hasHint) { %>
+    <p class="field-hint"><%= hint %></p>
+  <% } %>
+</div>

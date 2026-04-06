@@ -1,5 +1,10 @@
 # Local Development
 
+For UI- and template-layer changes, follow
+[`docs/ui-template-standards.md`](./ui-template-standards.md). That document is
+the project baseline for EJS, shared partials, CSS organization, and
+presentation-layer accessibility/usability conventions.
+
 ## Python dependencies for analytics
 
 Collection topic analysis uses the Python BERTopic stack. Install it into a

@@ -16,6 +16,18 @@
     return '/search/advanced' + (qs ? '?' + qs : '');
   }
   var hasActiveFilters = query || filters.collectionId || (filters.docTypes && filters.docTypes.length) || (filters.locations && filters.locations.length) || (filters.authors && filters.authors.length) || filters.dateFrom || filters.dateTo;
+  var collectionOptions = availableCollections.map(function(collection) {
+    return { value: collection.id, label: collection.name };
+  });
+  var docTypeOptions = docTypes.map(function(type) {
+    return { value: type, label: type };
+  });
+  var locationOptions = locations.map(function(location) {
+    return { value: location, label: location };
+  });
+  var authorOptions = authors.map(function(author) {
+    return { value: author, label: author };
+  });
 %>
 
 <div class="page-header">
@@ -25,7 +37,7 @@
 
 <div class="advanced-search-layout">
   <aside class="filter-sidebar advanced-search-sidebar">
-    <form method="GET" action="/search/advanced" class="advanced-search-form">
+    <form method="GET" action="/search/advanced" class="advanced-search-form" data-filter-sidebar="1">
       <div class="filter-sidebar-header">
         <h3>Search Filters</h3>
         <% if (hasActiveFilters) { %>
@@ -39,103 +51,58 @@
       </div>
 
       <% if (availableCollections.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label" for="advanced-collection">Collection</label>
-          <select name="collection" id="advanced-collection" class="filter-select">
-            <option value="">All accessible collections</option>
-            <% availableCollections.forEach(function(collection) { %>
-              <option value="<%= collection.id %>" <%= filters.collectionId === collection.id ? 'selected' : '' %>><%= collection.name %></option>
-            <% }) %>
-          </select>
-        </div>
+        <%- include('partials/filter-select', {
+          id: 'advanced-collection',
+          name: 'collection',
+          label: 'Collection',
+          blankLabel: 'All accessible collections',
+          selectedValue: filters.collectionId,
+          options: collectionOptions
+        }) %>
       <% } %>
 
       <% if (docTypes.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label">Document Types</label>
-          <div class="filter-multiselect" id="type-multiselect">
-            <button type="button" class="filter-multiselect-toggle" id="type-toggle">
-              <span id="type-toggle-text">
-                <% if (filters.docTypes && filters.docTypes.length) { %>
-                  <%= filters.docTypes.length === 1 ? filters.docTypes[0] : filters.docTypes.length + ' selected' %>
-                <% } else { %>
-                  All types
-                <% } %>
-              </span>
-              <span class="filter-multiselect-arrow">&#9662;</span>
-            </button>
-            <div class="filter-multiselect-dropdown" id="type-dropdown">
-              <% docTypes.forEach(function(type) { %>
-                <label class="filter-multiselect-option">
-                  <input type="checkbox" name="type" value="<%= type %>" <%= filters.docTypes.indexOf(type) !== -1 ? 'checked' : '' %>>
-                  <span><%= type %></span>
-                </label>
-              <% }) %>
-            </div>
-          </div>
-        </div>
+        <%- include('partials/filter-multiselect', {
+          id: 'type',
+          name: 'type',
+          label: 'Document Types',
+          allLabel: 'All types',
+          selectedValues: filters.docTypes || [],
+          options: docTypeOptions
+        }) %>
       <% } %>
 
       <% if (locations.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label">Locations</label>
-          <div class="filter-multiselect" id="location-multiselect">
-            <button type="button" class="filter-multiselect-toggle" id="location-toggle">
-              <span id="location-toggle-text">
-                <% if (filters.locations && filters.locations.length) { %>
-                  <%= filters.locations.length === 1 ? filters.locations[0] : filters.locations.length + ' selected' %>
-                <% } else { %>
-                  All locations
-                <% } %>
-              </span>
-              <span class="filter-multiselect-arrow">&#9662;</span>
-            </button>
-            <div class="filter-multiselect-dropdown" id="location-dropdown">
-              <% locations.forEach(function(location) { %>
-                <label class="filter-multiselect-option">
-                  <input type="checkbox" name="location" value="<%= location %>" <%= filters.locations.indexOf(location) !== -1 ? 'checked' : '' %>>
-                  <span><%= location %></span>
-                </label>
-              <% }) %>
-            </div>
-          </div>
-        </div>
+        <%- include('partials/filter-multiselect', {
+          id: 'location',
+          name: 'location',
+          label: 'Locations',
+          allLabel: 'All locations',
+          selectedValues: filters.locations || [],
+          options: locationOptions
+        }) %>
       <% } %>
 
       <% if (authors.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label">Authors</label>
-          <div class="filter-multiselect" id="author-multiselect">
-            <button type="button" class="filter-multiselect-toggle" id="author-toggle">
-              <span id="author-toggle-text">
-                <% if (filters.authors && filters.authors.length) { %>
-                  <%= filters.authors.length === 1 ? filters.authors[0] : filters.authors.length + ' selected' %>
-                <% } else { %>
-                  All authors
-                <% } %>
-              </span>
-              <span class="filter-multiselect-arrow">&#9662;</span>
-            </button>
-            <div class="filter-multiselect-dropdown" id="author-dropdown">
-              <% authors.forEach(function(author) { %>
-                <label class="filter-multiselect-option">
-                  <input type="checkbox" name="author" value="<%= author %>" <%= filters.authors.indexOf(author) !== -1 ? 'checked' : '' %>>
-                  <span><%= author %></span>
-                </label>
-              <% }) %>
-            </div>
-          </div>
-        </div>
+        <%- include('partials/filter-multiselect', {
+          id: 'author',
+          name: 'author',
+          label: 'Authors',
+          allLabel: 'All authors',
+          selectedValues: filters.authors || [],
+          options: authorOptions
+        }) %>
       <% } %>
 
-      <div class="filter-group">
-        <label class="filter-label">Date Range</label>
-        <div class="filter-date-row">
-          <input type="date" name="dateFrom" class="filter-date" value="<%= filters.dateFrom || '' %>" min="<%= dateRange.min_date || '' %>" max="<%= dateRange.max_date || '' %>">
-          <span class="filter-date-sep">&ndash;</span>
-          <input type="date" name="dateTo" class="filter-date" value="<%= filters.dateTo || '' %>" min="<%= dateRange.min_date || '' %>" max="<%= dateRange.max_date || '' %>">
-        </div>
-      </div>
+      <%- include('partials/filter-date-range', {
+        label: 'Date Range',
+        nameFrom: 'dateFrom',
+        nameTo: 'dateTo',
+        fromValue: filters.dateFrom,
+        toValue: filters.dateTo,
+        minDate: dateRange.min_date || '',
+        maxDate: dateRange.max_date || ''
+      }) %>
 
       <button type="submit" class="btn-primary btn-sm filter-apply-btn">Search</button>
     </form>
@@ -184,7 +151,7 @@
           <article class="document-card search-document-card">
             <div class="document-thumbnail">
               <% if (doc.image_path) { %>
-                <img src="<%= doc.image_path %>" alt="<%= doc.title %>" onerror="this.style.display='none'">
+                <img src="<%= doc.image_path %>" alt="<%= doc.title %>" data-hide-on-image-error>
               <% } %>
               <div class="placeholder-image">&#128220;</div>
             </div>
@@ -240,72 +207,6 @@
   </section>
 </div>
 
-<script>
-(function() {
-  function initMultiSelect(id, allLabel) {
-    var wrap = document.getElementById(id + '-multiselect');
-    var toggle = document.getElementById(id + '-toggle');
-    var dropdown = document.getElementById(id + '-dropdown');
-    var toggleText = document.getElementById(id + '-toggle-text');
-    if (!wrap || !toggle || !dropdown || !toggleText) return;
-
-    toggle.addEventListener('click', function(e) {
-      e.preventDefault();
-      document.querySelectorAll('.filter-multiselect.open').forEach(function(el) {
-        if (el !== wrap) el.classList.remove('open');
-      });
-      wrap.classList.toggle('open');
-    });
-
-    document.addEventListener('click', function(e) {
-      if (!wrap.contains(e.target)) wrap.classList.remove('open');
-    });
-
-    dropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
-      cb.addEventListener('change', function() {
-        var checked = dropdown.querySelectorAll('input:checked');
-        if (checked.length === 0) {
-          toggleText.textContent = allLabel;
-        } else if (checked.length === 1) {
-          toggleText.textContent = checked[0].parentElement.querySelector('span').textContent;
-        } else {
-          toggleText.textContent = checked.length + ' selected';
-        }
-      });
-    });
-  }
-
-  initMultiSelect('type', 'All types');
-  initMultiSelect('location', 'All locations');
-  initMultiSelect('author', 'All authors');
-
-  var form = document.querySelector('.advanced-search-form');
-  if (form) {
-    form.addEventListener('submit', function(e) {
-      ['type', 'location', 'author'].forEach(function(fieldName) {
-        var dropdown = document.getElementById(fieldName + '-dropdown');
-        if (!dropdown) return;
-
-        form.querySelectorAll('input[type="hidden"][data-generated-filter="' + fieldName + '"]').forEach(function(existing) {
-          existing.remove();
-        });
-
-        var allCbs = dropdown.querySelectorAll('input[type="checkbox"]');
-        var checked = dropdown.querySelectorAll('input[type="checkbox"]:checked');
-        allCbs.forEach(function(cb) { cb.removeAttribute('name'); });
-
-        if (checked.length > 0) {
-          var hidden = document.createElement('input');
-          hidden.type = 'hidden';
-          hidden.name = fieldName;
-          hidden.value = Array.from(checked).map(function(cb) { return cb.value; }).join(',');
-          hidden.setAttribute('data-generated-filter', fieldName);
-          form.appendChild(hidden);
-        }
-      });
-    });
-  }
-})();
-</script>
+<script src="/js/filter-sidebar.js"></script>
 
 <%- include('partials/footer') %>

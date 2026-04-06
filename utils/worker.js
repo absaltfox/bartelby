@@ -10,6 +10,7 @@ const { persistDocumentTranscription } = require('./transcription-pipeline');
 let busy = false;
 let batchPollBusy = false;
 let importBusy = false;
+let extractionBusy = false;
 
 const MAX_RETRIES = 3;
 const COOLDOWN_MS = 2000; // pause between jobs to avoid API rate limits
@@ -37,6 +38,7 @@ function sleep(ms) {
 function startWorker() {
   setInterval(tick, 5000);
   setInterval(tickImportJobs, 5000);
+  setInterval(tickExtractionJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   // Check for stale import jobs every 60 seconds
   setInterval(checkStaleImportJobs, 60000);
@@ -421,6 +423,255 @@ async function pollRunningBatches() {
     console.error('[worker] Failed to poll running batch jobs:', err.message);
   } finally {
     batchPollBusy = false;
+  }
+}
+
+async function tickExtractionJobs() {
+  if (extractionBusy) return;
+  extractionBusy = true;
+
+  const {
+    extractionJobs,
+    transcriptsAsync,
+    documentsAsync,
+    entities,
+    entityAliases,
+    dateExpressions,
+    relationships,
+    citations,
+    relationshipTypes
+  } = require('../database/db');
+
+  let job = null;
+  const ts = () => new Date().toISOString();
+  const logLine = async (jobId, message) => {
+    const line = `[${ts()}] ${message}\n`;
+    await extractionJobs.appendLog(jobId, line);
+    console.log(`[extraction-worker] job ${jobId}: ${message}`);
+  };
+
+  try {
+    job = await extractionJobs.claimNextQueued();
+    if (!job) return;
+
+    await logLine(job.id, `Starting extraction for document ${job.document_id}, transcript ${job.transcript_id} (attempt ${job.attempts})`);
+
+    const transcript = await transcriptsAsync.getById(job.transcript_id);
+    if (!transcript) throw new Error(`Transcript ${job.transcript_id} not found`);
+
+    const doc = await documentsAsync.getById(job.document_id);
+    if (!doc) throw new Error(`Document ${job.document_id} not found`);
+
+    let docMetadata = doc.metadata;
+    if (typeof docMetadata === 'string') {
+      try { docMetadata = JSON.parse(docMetadata); } catch { docMetadata = {}; }
+    }
+    docMetadata = docMetadata || {};
+
+    const { providerName, runtimeConfig } = await resolveRuntimeConfig(job, async (msg) => logLine(job.id, msg));
+    const { runExtraction } = require('./extraction-llm');
+    const extractionResult = await runExtraction(
+      providerName,
+      transcript.content,
+      docMetadata,
+      runtimeConfig,
+      {
+        model: job.model || runtimeConfig.utilityModel || runtimeConfig.model || null,
+        temperature: job.temperature != null ? job.temperature : 0.2
+      }
+    );
+
+    await logLine(
+      job.id,
+      `LLM extraction complete: ${extractionResult.entities.length} entities, ${extractionResult.relationships.length} relationships, ${extractionResult.dates.length} dates`
+    );
+
+    const { resolveEntity } = require('./entity-resolution');
+    const mentionToEntityId = new Map();
+    let entityCount = 0;
+    let relationshipCount = 0;
+
+    for (const ext of extractionResult.entities) {
+      try {
+        const normalized = String(ext.normalized || ext.mention || '').trim();
+        const mention = String(ext.mention || normalized).trim();
+        const entityType = String(ext.type || 'topic').trim() || 'topic';
+        if (!normalized) continue;
+
+        const resolved = await resolveEntity(mention, normalized, entityType);
+        let entityId = resolved?.entityId || null;
+        if (!entityId) {
+          entityId = await entities.create({
+            entity_type: entityType,
+            canonical_name: normalized,
+            description: null,
+            properties: ext.properties || {}
+          });
+          await entityAliases.create({ entity_id: entityId, alias: normalized, source: 'extracted' });
+          if (mention && mention.toLowerCase() !== normalized.toLowerCase()) {
+            await entityAliases.create({ entity_id: entityId, alias: mention, source: 'extracted' });
+          }
+          await logLine(job.id, `Created entity #${entityId}: "${normalized}" (${entityType})`);
+        }
+
+        mentionToEntityId.set(mention.toLowerCase(), entityId);
+        mentionToEntityId.set(normalized.toLowerCase(), entityId);
+
+        const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
+        const spanEnd = Number.isInteger(ext.span_end)
+          ? ext.span_end
+          : Math.min(spanStart + mention.length, transcript.content.length);
+
+        await citations.create({
+          entity_id: entityId,
+          relationship_id: null,
+          transcript_id: job.transcript_id,
+          document_id: job.document_id,
+          passage_start: spanStart,
+          passage_end: spanEnd,
+          passage_text: transcript.content.slice(spanStart, spanEnd) || mention,
+          extraction_method: 'llm_auto',
+          extraction_model: extractionResult.paradata?.model || providerName,
+          confidence: ext.confidence != null ? ext.confidence : 0.8
+        });
+
+        entityCount += 1;
+      } catch (err) {
+        await logLine(job.id, `WARN: Failed to process entity "${ext.mention}": ${err.message}`);
+      }
+    }
+
+    for (const dateExt of extractionResult.dates) {
+      try {
+        const label = String(dateExt.label || dateExt.mention || '').trim();
+        const mention = String(dateExt.mention || label).trim();
+        if (!label) continue;
+
+        const resolved = await resolveEntity(mention, label, 'date');
+        let entityId = resolved?.entityId || null;
+        if (!entityId) {
+          entityId = await entities.create({
+            entity_type: 'date',
+            canonical_name: label,
+            description: null,
+            properties: {}
+          });
+          await entityAliases.create({ entity_id: entityId, alias: label, source: 'extracted' });
+          if (mention && mention.toLowerCase() !== label.toLowerCase()) {
+            await entityAliases.create({ entity_id: entityId, alias: mention, source: 'extracted' });
+          }
+        }
+
+        await dateExpressions.create({
+          entity_id: entityId,
+          label,
+          earliest: dateExt.earliest || null,
+          latest: dateExt.latest || null,
+          precision: dateExt.precision || 'unknown',
+          qualifier: dateExt.qualifier || null,
+          calendar: 'gregorian'
+        });
+
+        mentionToEntityId.set(mention.toLowerCase(), entityId);
+        mentionToEntityId.set(label.toLowerCase(), entityId);
+
+        const spanStart = Number.isInteger(dateExt.span_start) ? dateExt.span_start : 0;
+        const spanEnd = Number.isInteger(dateExt.span_end)
+          ? dateExt.span_end
+          : Math.min(spanStart + mention.length, transcript.content.length);
+
+        await citations.create({
+          entity_id: entityId,
+          relationship_id: null,
+          transcript_id: job.transcript_id,
+          document_id: job.document_id,
+          passage_start: spanStart,
+          passage_end: spanEnd,
+          passage_text: transcript.content.slice(spanStart, spanEnd) || mention,
+          extraction_method: 'llm_auto',
+          extraction_model: extractionResult.paradata?.model || providerName,
+          confidence: dateExt.confidence != null ? dateExt.confidence : 0.8
+        });
+
+        entityCount += 1;
+      } catch (err) {
+        await logLine(job.id, `WARN: Failed to process date "${dateExt.mention}": ${err.message}`);
+      }
+    }
+
+    for (const rel of extractionResult.relationships) {
+      try {
+        const sourceId = mentionToEntityId.get(String(rel.source_mention || '').toLowerCase());
+        const targetId = mentionToEntityId.get(String(rel.target_mention || '').toLowerCase());
+        if (!sourceId || !targetId) {
+          await logLine(job.id, `WARN: Could not resolve relationship "${rel.source_mention}" -> "${rel.target_mention}"`);
+          continue;
+        }
+
+        let relType = await relationshipTypes.resolve(rel.type);
+        if (!relType) {
+          relType = String(rel.type || 'related_to').trim().toLowerCase().replace(/\s+/g, '_') || 'related_to';
+          await relationshipTypes.create({ name: relType, label: relType.replace(/_/g, ' ') });
+        }
+
+        const existing = await relationships.findExisting(sourceId, targetId, relType);
+        const relationshipId = existing
+          ? existing.id
+          : await relationships.create({
+            source_entity_id: sourceId,
+            target_entity_id: targetId,
+            relationship_type: relType,
+            label: null,
+            properties: {},
+            confidence: rel.confidence != null ? rel.confidence : 0.8,
+            start_date: rel.start_date || null,
+            end_date: rel.end_date || null,
+            date_precision: rel.date_precision || null,
+            date_qualifier: rel.date_qualifier || null
+          });
+
+        await citations.create({
+          entity_id: null,
+          relationship_id: relationshipId,
+          transcript_id: job.transcript_id,
+          document_id: job.document_id,
+          passage_start: Number.isInteger(rel.evidence_span_start) ? rel.evidence_span_start : 0,
+          passage_end: Number.isInteger(rel.evidence_span_end) ? rel.evidence_span_end : 0,
+          passage_text: rel.evidence_text || `${rel.source_mention} ${relType} ${rel.target_mention}`,
+          extraction_method: 'llm_auto',
+          extraction_model: extractionResult.paradata?.model || providerName,
+          confidence: rel.confidence != null ? rel.confidence : 0.8
+        });
+
+        relationshipCount += 1;
+      } catch (err) {
+        await logLine(job.id, `WARN: Failed to process relationship: ${err.message}`);
+      }
+    }
+
+    await extractionJobs.markDone(job.id, {
+      entity_count: entityCount,
+      relationship_count: relationshipCount
+    });
+    await logLine(job.id, `Done. Created/resolved ${entityCount} entities and ${relationshipCount} relationships`);
+  } catch (err) {
+    const message = err.message || String(err);
+    if (job) {
+      await logLine(job.id, `ERROR: ${message}`);
+      if (isTransientError(err) && (job.attempts || 0) < MAX_RETRIES) {
+        const backoff = Math.pow(2, job.attempts || 1) * 5000;
+        await logLine(job.id, `Transient error — will retry in ${backoff / 1000}s`);
+        await extractionJobs.requeueForRetry(job.id);
+        await sleep(backoff);
+      } else {
+        await extractionJobs.markFailed(job.id, message);
+      }
+    } else {
+      console.error('[worker] extraction job failed before claim:', message);
+    }
+  } finally {
+    await sleep(COOLDOWN_MS);
+    extractionBusy = false;
   }
 }
 

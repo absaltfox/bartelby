@@ -42,7 +42,7 @@
         </label>
       </div>
 
-      <h2 style="margin-top: 28px;">Permissions</h2>
+      <h2 class="mt-6">Permissions</h2>
 
       <label class="role-option access-all-option">
         <input type="checkbox" name="can_use_system_api_keys" value="1">
@@ -62,16 +62,16 @@
 
       <% if (allCollections.length > 0) { %>
         <div id="collection-list" class="collection-access-list">
-          <p class="field-hint" style="margin: 12px 0 10px;">Or select specific collections and set their role:</p>
+          <p class="field-hint field-hint--mt-md field-hint--mb-sm">Or select specific collections and set their role:</p>
           <% allCollections.forEach(function(c) { %>
-            <label class="collection-access-item" style="display:flex; align-items:center; gap:8px;">
+            <label class="collection-access-item collection-access-item--panel">
               <input type="checkbox" name="collections" value="<%= c.id %>">
-              <span style="flex:1;">
+              <span class="collection-access-item__label">
                 <strong><%= c.name %></strong>
                 <% if (c.description) { %><small class="muted"> — <%= c.description %></small><% } %>
                 <small class="muted"> (<%= c.document_count %> doc<%= c.document_count !== 1 ? 's' : '' %>)</small>
               </span>
-              <select name="collection_role_<%= c.id %>" style="font-size:0.8125rem; padding:2px 6px;">
+              <select name="collection_role_<%= c.id %>" class="collection-access-role-select">
                 <option value="viewer">Viewer</option>
                 <option value="editor">Editor</option>
                 <option value="manager">Manager</option>
@@ -83,22 +83,12 @@
         <p class="field-hint">No collections exist yet. You can still invite the user now and adjust access later.</p>
       <% } %>
 
-      <div class="form-actions" style="margin-top: 28px;">
+      <div class="form-actions form-actions--mt-lg">
         <a href="/admin/users" class="btn-secondary">Cancel</a>
         <button type="submit" class="btn-primary">Create Invitation</button>
       </div>
     </form>
   </div>
 </div>
-
-<script>
-  const allCb = document.getElementById('access-all-cb');
-  const collList = document.getElementById('collection-list');
-  function toggleCollList() {
-    if (collList) collList.style.opacity = allCb.checked ? '0.4' : '1';
-    if (collList) collList.querySelectorAll('input').forEach(cb => cb.disabled = allCb.checked);
-  }
-  if (allCb) { allCb.addEventListener('change', toggleCollList); toggleCollList(); }
-</script>
 
 <%- include('../partials/footer') %>

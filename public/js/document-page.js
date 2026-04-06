@@ -17,6 +17,7 @@
   var comparisonToggleBtn = document.getElementById('comparison-toggle-view');
   var comparisonPage = 1;
   var comparisonShowAll = false;
+  var pendingBanner = document.getElementById('transcription-pending-banner');
 
   function isHistoryTabActive() {
     var activeTab = document.querySelector('.doc-tab.active');
@@ -33,6 +34,16 @@
     if (isHistoryTabActive()) {
       loadHistory();
     }
+  }
+
+  function loadComparisonImagesForVisiblePages(pageBlocks) {
+    pageBlocks.forEach(function(block) {
+      if (block.classList.contains('is-hidden')) return;
+      block.querySelectorAll('img[data-src]').forEach(function(img) {
+        img.src = img.dataset.src;
+        img.removeAttribute('data-src');
+      });
+    });
   }
 
   function updateComparisonView() {
@@ -53,6 +64,34 @@
     if (comparisonToggleBtn) {
       comparisonToggleBtn.textContent = comparisonShowAll ? 'Show One Page' : 'Show All Pages';
     }
+
+    loadComparisonImagesForVisiblePages(pageBlocks);
+  }
+
+  function initPendingJobPolling() {
+    if (!pendingBanner) return;
+
+    var jobStatusUrl = pendingBanner.dataset.jobStatusUrl;
+    var jobsHref = pendingBanner.dataset.jobsHref;
+    if (!jobStatusUrl) return;
+
+    var interval = window.setInterval(async function() {
+      try {
+        var res = await fetch(jobStatusUrl, {
+          headers: { Accept: 'application/json' }
+        });
+        if (!res.ok) return;
+        var job = await res.json();
+        if (job.status === 'done') {
+          window.clearInterval(interval);
+          window.location.reload();
+        } else if (job.status === 'failed') {
+          window.clearInterval(interval);
+          pendingBanner.innerHTML = '<span class="transcription-pending-banner-error">&#9888; Transcription failed.</span>' +
+            (jobsHref ? ' <a href="' + escapeHtml(jobsHref) + '">View details</a>' : '');
+        }
+      } catch (err) {}
+    }, 4000);
   }
 
   // ── Tab switching ──────────────────────────────────────────────────────────
@@ -64,11 +103,11 @@
       tab.classList.add('active');
       document.querySelectorAll('.doc-tab-content').forEach(function(c) {
         c.classList.remove('active');
-        c.style.display = 'none';
+        c.classList.add('is-hidden');
       });
       var panel = document.getElementById('tab-' + target);
       if (panel) {
-        panel.style.display = 'block';
+        panel.classList.remove('is-hidden');
         panel.classList.add('active');
       }
       if (target === 'history' && !historyLoaded) {
@@ -115,29 +154,27 @@
     var notesEdit = document.querySelector('.transcript-notes-edit');
 
     if (mode === 'edit') {
-      if (comparisonToolbar) comparisonToolbar.style.display = 'none';
-      if (infoView) infoView.style.display = 'none';
-      if (infoEdit) infoEdit.style.display = 'block';
-      if (transcriptView) transcriptView.style.display = 'none';
-      if (transcriptEdit) transcriptEdit.style.display = 'block';
-      if (transcriptEditToolbar) transcriptEditToolbar.style.display = 'block';
-      if (transcriptEditActions) transcriptEditActions.style.display = 'flex';
+      if (comparisonToolbar) comparisonToolbar.classList.add('is-hidden');
+      if (infoView) infoView.classList.add('is-hidden');
+      if (infoEdit) infoEdit.classList.remove('is-hidden');
+      if (transcriptView) transcriptView.classList.add('is-hidden');
+      if (transcriptEdit) transcriptEdit.classList.remove('is-hidden');
+      if (transcriptEditToolbar) transcriptEditToolbar.classList.remove('is-hidden');
       if (transcriptContent) transcriptContent.classList.add('editing');
-      if (manageActions) manageActions.style.display = 'flex';
-      if (notesView) notesView.style.display = 'none';
-      if (notesEdit) notesEdit.style.display = 'inline-flex';
+      if (manageActions) manageActions.classList.remove('is-hidden');
+      if (notesView) notesView.classList.add('is-hidden');
+      if (notesEdit) notesEdit.classList.remove('is-hidden');
     } else {
-      if (comparisonToolbar) comparisonToolbar.style.display = '';
-      if (infoView) infoView.style.display = 'block';
-      if (infoEdit) infoEdit.style.display = 'none';
-      if (transcriptView) transcriptView.style.display = 'block';
-      if (transcriptEdit) transcriptEdit.style.display = 'none';
-      if (transcriptEditToolbar) transcriptEditToolbar.style.display = 'none';
-      if (transcriptEditActions) transcriptEditActions.style.display = 'none';
+      if (comparisonToolbar) comparisonToolbar.classList.remove('is-hidden');
+      if (infoView) infoView.classList.remove('is-hidden');
+      if (infoEdit) infoEdit.classList.add('is-hidden');
+      if (transcriptView) transcriptView.classList.remove('is-hidden');
+      if (transcriptEdit) transcriptEdit.classList.add('is-hidden');
+      if (transcriptEditToolbar) transcriptEditToolbar.classList.add('is-hidden');
       if (transcriptContent) transcriptContent.classList.remove('editing');
-      if (manageActions) manageActions.style.display = 'none';
-      if (notesView) notesView.style.display = '';
-      if (notesEdit) notesEdit.style.display = 'none';
+      if (manageActions) manageActions.classList.add('is-hidden');
+      if (notesView) notesView.classList.remove('is-hidden');
+      if (notesEdit) notesEdit.classList.add('is-hidden');
       unsavedMetadata = false;
       unsavedTranscript = false;
       detail.classList.remove('has-unsaved-changes');
@@ -162,6 +199,8 @@
 
     updateComparisonView();
   }
+
+  initPendingJobPolling();
 
   // ── Unsaved changes tracking ───────────────────────────────────────────────
   var metadataForm = document.getElementById('metadata-edit-form');
@@ -341,9 +380,9 @@
         });
 
         if (data.page < data.totalPages) {
-          loadMoreWrap.style.display = 'block';
+          loadMoreWrap.classList.remove('is-hidden');
         } else {
-          loadMoreWrap.style.display = 'none';
+          loadMoreWrap.classList.add('is-hidden');
         }
       })
       .catch(function() {
@@ -506,10 +545,10 @@
   var closeModalBtn = document.getElementById('close-new-transcript-modal');
   var providerOptionsLoaded = false;
 
-  openModalBtns.forEach(function(btn) {
+    openModalBtns.forEach(function(btn) {
     btn.addEventListener('click', function() {
       if (modal) {
-        modal.style.display = 'flex';
+        modal.classList.remove('is-hidden');
         if (!providerOptionsLoaded) {
           loadProviderOptions();
         }
@@ -519,13 +558,13 @@
 
   if (closeModalBtn) {
     closeModalBtn.addEventListener('click', function() {
-      modal.style.display = 'none';
+      modal.classList.add('is-hidden');
     });
   }
 
   if (modal) {
     modal.addEventListener('click', function(e) {
-      if (e.target === modal) modal.style.display = 'none';
+      if (e.target === modal) modal.classList.add('is-hidden');
     });
   }
 
@@ -537,11 +576,11 @@
       btn.classList.add('active');
       document.querySelectorAll('.nt-mode-content').forEach(function(c) {
         c.classList.remove('active');
-        c.style.display = 'none';
+        c.classList.add('is-hidden');
       });
       var panel = document.getElementById('nt-mode-' + mode);
       if (panel) {
-        panel.style.display = 'block';
+        panel.classList.remove('is-hidden');
         panel.classList.add('active');
       }
     });
@@ -594,7 +633,7 @@
     var entry = options.find(function(o) { return o.provider === provider; });
 
     if (!entry || !entry.sources || entry.sources.length <= 1) {
-      credField.style.display = 'none';
+      credField.classList.add('is-hidden');
       credSelect.innerHTML = '';
       if (entry && entry.sources && entry.sources.length === 1) {
         credSelect.innerHTML = '<option value="' + entry.sources[0].value + '">' + entry.sources[0].label + '</option>';
@@ -602,7 +641,7 @@
       return;
     }
 
-    credField.style.display = 'block';
+    credField.classList.remove('is-hidden');
     credSelect.innerHTML = '';
     entry.sources.forEach(function(s) {
       var opt = document.createElement('option');

@@ -42,7 +42,7 @@
 
           <% if (currentUser) { %>
             <div class="user-menu" id="user-menu">
-              <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-panel">
+              <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-expanded="false" aria-controls="user-menu-panel">
                 <span class="user-menu-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" role="img" focusable="false">
                     <path d="M12 12.2a4.1 4.1 0 1 0-4.1-4.1 4.1 4.1 0 0 0 4.1 4.1Zm0 2c-4 0-7.2 2.1-7.2 4.7 0 .5.4.9.9.9h12.6a.9.9 0 0 0 .9-.9c0-2.6-3.2-4.7-7.2-4.7Z" fill="currentColor"/>
@@ -51,7 +51,7 @@
                 <span class="sr-only">Account</span>
                 <span class="user-menu-name"><%= currentUser.username %></span>
               </button>
-              <div class="user-menu-panel" id="user-menu-panel" role="menu" hidden>
+              <div class="user-menu-panel" id="user-menu-panel" hidden>
                 <a href="/account" class="user-menu-link">Profile</a>
                 <form method="POST" action="/logout" class="user-menu-form">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -67,38 +67,3 @@
     </div>
   </header>
   <main class="container">
-  <script>
-    (function() {
-      var path = window.location.pathname;
-      document.querySelectorAll('.nav-pill[data-section]').forEach(function(link) {
-        var section = link.dataset.section;
-        if (section === 'admin' && path.startsWith('/admin')) {
-          link.classList.add('active');
-        } else if (section === 'manage' && path.startsWith('/manage')) {
-          link.classList.add('active');
-        } else if (section === 'collection' && !path.startsWith('/admin') && !path.startsWith('/manage') && !path.startsWith('/search')) {
-          link.classList.add('active');
-        }
-      });
-
-      var userMenu = document.getElementById('user-menu');
-      var userMenuToggle = document.getElementById('user-menu-toggle');
-      var userMenuPanel = document.getElementById('user-menu-panel');
-      if (userMenu && userMenuToggle && userMenuPanel) {
-        userMenuToggle.addEventListener('click', function(event) {
-          event.preventDefault();
-          var isOpen = userMenu.classList.toggle('open');
-          userMenuToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-          userMenuPanel.hidden = !isOpen;
-        });
-
-        document.addEventListener('click', function(event) {
-          if (!userMenu.contains(event.target)) {
-            userMenu.classList.remove('open');
-            userMenuToggle.setAttribute('aria-expanded', 'false');
-            userMenuPanel.hidden = true;
-          }
-        });
-      }
-    })();
-  </script>

@@ -49,6 +49,7 @@ async function persistDocumentTranscription({
   const {
     documentsAsync,
     transcriptsAsync,
+    extractionJobs,
     settingsAsync,
     userApiKeysAsync
   } = require('../database/db');
@@ -208,7 +209,7 @@ async function persistDocumentTranscription({
   const existingBest = await transcriptsAsync.getBestByDocumentId(documentId);
   const shouldBeBest = !existingBest;
 
-  await transcriptsAsync.create({
+  const transcriptId = await transcriptsAsync.create({
     document_id: documentId,
     content: combined.transcription,
     page_segments: combined.page_segments,
@@ -230,7 +231,29 @@ async function persistDocumentTranscription({
     unknown_word_count: countUnknownWords(combined.transcription)
   });
 
+  try {
+    await extractionJobs.create({
+      transcript_id: transcriptId,
+      document_id: documentId,
+      provider: providerName,
+      model: runtimeConfig.utilityModel || job.model || null,
+      temperature: 0.2,
+      initiated_by: job.initiated_by || null,
+      provider_key_scope: job.provider_key_scope || null,
+      user_api_key_id: job.user_api_key_id || null,
+      requested_by_user_id: job.requested_by_user_id || null
+    });
+    if (logLine) {
+      await logLine(`Queued knowledge graph extraction for transcript ${transcriptId}`);
+    }
+  } catch (err) {
+    if (logLine) {
+      await logLine(`Knowledge graph extraction queueing failed (non-fatal): ${err.message}`);
+    }
+  }
+
   return {
+    transcriptId,
     combined,
     totalInputTokens,
     totalOutputTokens,

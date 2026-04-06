@@ -309,6 +309,10 @@ app.use('/admin/documents', loadRoute('./routes/admin-documents', 'admin documen
 app.use('/admin/users', loadRoute('./routes/admin-users', 'admin user routes')); // has its own requireAdmin
 app.use('/admin/collections', loadRoute('./routes/admin-collections', 'admin collection routes')); // has its own requireAdmin
 app.use('/admin/jobs', loadRoute('./routes/admin-jobs', 'admin job routes')); // has its own requireAdmin
+app.use('/admin/extraction-jobs', loadRoute('./routes/admin-extraction', 'admin extraction routes')); // has its own requireAdmin
+app.use('/admin/entities', loadRoute('./routes/admin-entities', 'admin entity routes')); // has its own requireAdmin
+app.use('/admin', loadRoute('./routes/admin-review', 'admin review routes')); // has its own requireAdmin
+app.use('/graph', loadRoute('./routes/graph', 'graph routes'));
 app.use('/manage', loadRoute('./routes/manage', 'manage routes')); // has its own requireAdminOrManager
 logBoot('Routes mounted');
 

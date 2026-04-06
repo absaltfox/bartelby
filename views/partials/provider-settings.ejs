@@ -1,0 +1,63 @@
+<section class="settings-section">
+  <h2><%= title %></h2>
+  <div class="form-group">
+    <label for="<%= apiKeyName %>">API Key</label>
+    <% if (apiKeyValue) { %>
+      <p class="key-set-indicator">&#10003; Key saved &mdash; enter a new value to replace it</p>
+    <% } %>
+    <input type="password" id="<%= apiKeyName %>" name="<%= apiKeyName %>"
+           value=""
+           placeholder="<%= apiKeyPlaceholder %>" autocomplete="off">
+    <p class="field-hint">Leave blank to keep the existing key, or to use the <code><%= apiKeyEnvVar %></code> environment variable.</p>
+  </div>
+  <div class="form-group">
+    <label for="<%= modelName %>">Model</label>
+    <input type="text" id="<%= modelName %>" name="<%= modelName %>"
+           value="<%= modelValue %>"
+           placeholder="<%= modelPlaceholder %>">
+    <p class="field-hint"><%= modelHelp %> Recommended: <code><%= modelPlaceholder %></code></p>
+  </div>
+  <div class="form-group">
+    <label for="<%= visionName %>">Vision model <span class="field-hint-inline">(for page grouping)</span></label>
+    <input type="text" id="<%= visionName %>" name="<%= visionName %>"
+           value="<%= visionValue %>"
+           placeholder="<%= visionPlaceholder %>">
+    <p class="field-hint">Cheap vision model used to detect archival page numbers during PDF import. Default: <code><%= visionDefault %></code></p>
+  </div>
+  <div class="form-group">
+    <label for="<%= utilityName %>">Utility model <span class="field-hint-inline">(for title &amp; summary)</span></label>
+    <input type="text" id="<%= utilityName %>" name="<%= utilityName %>"
+           value="<%= utilityValue %>"
+           placeholder="<%= utilityPlaceholder %>">
+    <p class="field-hint">Cheap text model used to generate document titles and summaries after transcription. No vision required. Default: <code><%= utilityDefault %></code></p>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="<%= inputCostName %>">Transcription model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+      <input type="number" id="<%= inputCostName %>" name="<%= inputCostName %>"
+             value="<%= inputCostValue %>"
+             placeholder="<%= inputCostPlaceholder %>" step="any" min="0">
+    </div>
+    <div class="form-group">
+      <label for="<%= outputCostName %>">Transcription model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+      <input type="number" id="<%= outputCostName %>" name="<%= outputCostName %>"
+             value="<%= outputCostValue %>"
+             placeholder="<%= outputCostPlaceholder %>" step="any" min="0">
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="<%= utilityInputCostName %>">Utility model input cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+      <input type="number" id="<%= utilityInputCostName %>" name="<%= utilityInputCostName %>"
+             value="<%= utilityInputCostValue %>"
+             placeholder="<%= utilityInputCostPlaceholder %>" step="any" min="0">
+    </div>
+    <div class="form-group">
+      <label for="<%= utilityOutputCostName %>">Utility model output cost <span class="field-hint-inline">(per 1M tokens, USD)</span></label>
+      <input type="number" id="<%= utilityOutputCostName %>" name="<%= utilityOutputCostName %>"
+             value="<%= utilityOutputCostValue %>"
+             placeholder="<%= utilityOutputCostPlaceholder %>" step="any" min="0">
+    </div>
+  </div>
+  <p class="field-hint provider-settings-note">Transcription model rates apply to document transcription; utility model rates apply to title and summary generation. If utility rates are blank, transcription rates are used as a fallback.</p>
+</section>

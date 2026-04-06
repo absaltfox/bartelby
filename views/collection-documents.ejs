@@ -3,6 +3,12 @@
 <%
   var basePath = '/collections/' + collectionId;
   var safeCurrentListUrl = typeof currentListUrl !== 'undefined' && currentListUrl ? currentListUrl : basePath;
+  var docTypeOptions = docTypes.map(function(type) {
+    return { value: type, label: type };
+  });
+  var locationOptions = locations.map(function(loc) {
+    return { value: loc, label: loc };
+  });
 
   // Build query string helper — preserves all current filters except the one being changed
   function filterQs(overrides) {
@@ -38,7 +44,7 @@
 <div class="collection-layout">
   <!-- Sidebar filters -->
   <aside class="filter-sidebar" id="filter-sidebar">
-    <form id="filter-form" method="GET" action="<%= basePath %>">
+    <form id="filter-form" method="GET" action="<%= basePath %>" data-filter-sidebar="1">
       <div class="filter-sidebar-header">
         <h3>Filters</h3>
         <% if (hasActiveFilters) { %>
@@ -48,69 +54,36 @@
 
       <!-- Document type filter (multi-select) -->
       <% if (docTypes.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label">Document Type</label>
-          <div class="filter-multiselect" id="type-multiselect">
-            <button type="button" class="filter-multiselect-toggle" id="type-toggle">
-              <span id="type-toggle-text">
-                <% if (filters.docTypes && filters.docTypes.length) { %>
-                  <%= filters.docTypes.length === 1 ? filters.docTypes[0] : filters.docTypes.length + ' selected' %>
-                <% } else { %>
-                  All types
-                <% } %>
-              </span>
-              <span class="filter-multiselect-arrow">&#9662;</span>
-            </button>
-            <div class="filter-multiselect-dropdown" id="type-dropdown">
-              <% docTypes.forEach(function(t) { %>
-                <label class="filter-multiselect-option">
-                  <input type="checkbox" name="type" value="<%= t %>"
-                    <%= (filters.docTypes && filters.docTypes.indexOf(t) !== -1) ? 'checked' : '' %>>
-                  <span><%= t %></span>
-                </label>
-              <% }) %>
-            </div>
-          </div>
-        </div>
+        <%- include('partials/filter-multiselect', {
+          id: 'type',
+          name: 'type',
+          label: 'Document Type',
+          allLabel: 'All types',
+          selectedValues: filters.docTypes || [],
+          options: docTypeOptions
+        }) %>
       <% } %>
 
       <!-- Location filter (multi-select) -->
       <% if (locations.length > 0) { %>
-        <div class="filter-group">
-          <label class="filter-label">Location</label>
-          <div class="filter-multiselect" id="location-multiselect">
-            <button type="button" class="filter-multiselect-toggle" id="location-toggle">
-              <span id="location-toggle-text">
-                <% if (filters.locations && filters.locations.length) { %>
-                  <%= filters.locations.length %> selected
-                <% } else { %>
-                  All locations
-                <% } %>
-              </span>
-              <span class="filter-multiselect-arrow">&#9662;</span>
-            </button>
-            <div class="filter-multiselect-dropdown" id="location-dropdown">
-              <% locations.forEach(function(loc) { %>
-                <label class="filter-multiselect-option">
-                  <input type="checkbox" name="location" value="<%= loc %>"
-                    <%= (filters.locations && filters.locations.indexOf(loc) !== -1) ? 'checked' : '' %>>
-                  <span><%= loc %></span>
-                </label>
-              <% }) %>
-            </div>
-          </div>
-        </div>
+        <%- include('partials/filter-multiselect', {
+          id: 'location',
+          name: 'location',
+          label: 'Location',
+          allLabel: 'All locations',
+          selectedValues: filters.locations || [],
+          options: locationOptions
+        }) %>
       <% } %>
 
       <!-- Date range filter -->
-      <div class="filter-group">
-        <label class="filter-label">Date Range</label>
-        <div class="filter-date-row">
-          <input type="date" name="dateFrom" class="filter-date" value="<%= filters.dateFrom || '' %>" placeholder="From">
-          <span class="filter-date-sep">&ndash;</span>
-          <input type="date" name="dateTo" class="filter-date" value="<%= filters.dateTo || '' %>" placeholder="To">
-        </div>
-      </div>
+      <%- include('partials/filter-date-range', {
+        label: 'Date Range',
+        nameFrom: 'dateFrom',
+        nameTo: 'dateTo',
+        fromValue: filters.dateFrom,
+        toValue: filters.dateTo
+      }) %>
 
       <button type="submit" class="btn-primary btn-sm filter-apply-btn">Apply Filters</button>
     </form>
@@ -144,7 +117,7 @@
       </div>
     <% } %>
     <% if (typeof allowExport !== 'undefined' && allowExport && documents.length > 0) { %>
-      <div id="export-bar" class="export-bar" style="display:none;">
+      <div id="export-bar" class="export-bar is-hidden">
         <span id="export-count" class="export-bar-count">0 selected</span>
         <select id="export-format" class="export-bar-format">
           <option value="pdf">PDF</option>
@@ -177,7 +150,7 @@
             <% } %>
             <div class="document-thumbnail">
               <% if (doc.image_path) { %>
-                <img src="<%= doc.image_path %>" alt="<%= doc.title %>" onerror="this.style.display='none'">
+                <img src="<%= doc.image_path %>" alt="<%= doc.title %>" data-hide-on-image-error>
               <% } %>
               <div class="placeholder-image">&#128220;</div>
             </div>
@@ -237,135 +210,8 @@
 </div>
 
 <% if (typeof allowExport !== 'undefined' && allowExport && documents.length > 0) { %>
-<script>
-(function() {
-  var exportBar = document.getElementById('export-bar');
-  var exportCount = document.getElementById('export-count');
-  var exportFormat = document.getElementById('export-format');
-  var exportBtn = document.getElementById('export-btn');
-  var deselectBtn = document.getElementById('export-deselect-btn');
-  var checkboxes = document.querySelectorAll('.export-cb');
-  var csrfToken = document.querySelector('meta[name="csrf-token"]').content;
-
-  function updateExportUI() {
-    var checked = document.querySelectorAll('.export-cb:checked');
-    var count = checked.length;
-    exportBar.style.display = count > 0 ? 'flex' : 'none';
-    exportCount.textContent = count + ' selected';
-  }
-
-  checkboxes.forEach(function(cb) { cb.addEventListener('change', updateExportUI); });
-
-  deselectBtn.addEventListener('click', function() {
-    checkboxes.forEach(function(cb) { cb.checked = false; });
-    updateExportUI();
-  });
-
-  exportBtn.addEventListener('click', async function() {
-    var ids = Array.from(document.querySelectorAll('.export-cb:checked')).map(function(cb) {
-      return parseInt(cb.dataset.id);
-    });
-    if (ids.length === 0) return;
-
-    // Single document — direct download
-    if (ids.length === 1 && exportFormat.value !== 'both') {
-      var ext = exportFormat.value === 'tei' ? 'tei' : 'pdf';
-      window.location.href = '/export/documents/' + ids[0] + '/' + ext;
-      return;
-    }
-
-    // Bulk — POST for ZIP
-    exportBtn.disabled = true;
-    exportBtn.textContent = 'Exporting...';
-    try {
-      var res = await fetch('/export/documents/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ ids: ids, format: exportFormat.value })
-      });
-      if (!res.ok) {
-        var err = await res.json();
-        throw new Error(err.error || 'Export failed');
-      }
-      var blob = await res.blob();
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'export.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      exportBtn.disabled = false;
-      exportBtn.textContent = 'Export';
-    }
-  });
-})();
-</script>
+<script src="/js/collection-documents.js"></script>
 <% } %>
-
-<script>
-(function() {
-  // Reusable multi-select dropdown setup
-  function initMultiSelect(id, fieldName, allLabel) {
-    var wrap = document.getElementById(id + '-multiselect');
-    var toggle = document.getElementById(id + '-toggle');
-    var dropdown = document.getElementById(id + '-dropdown');
-    if (!wrap || !toggle || !dropdown) return;
-
-    toggle.addEventListener('click', function(e) {
-      e.preventDefault();
-      document.querySelectorAll('.filter-multiselect.open').forEach(function(el) {
-        if (el !== wrap) el.classList.remove('open');
-      });
-      wrap.classList.toggle('open');
-    });
-
-    document.addEventListener('click', function(e) {
-      if (!wrap.contains(e.target)) wrap.classList.remove('open');
-    });
-
-    var checkboxes = dropdown.querySelectorAll('input[type="checkbox"]');
-    var toggleText = document.getElementById(id + '-toggle-text');
-
-    checkboxes.forEach(function(cb) {
-      cb.addEventListener('change', function() {
-        var checked = dropdown.querySelectorAll('input:checked');
-        if (checked.length === 0) {
-          toggleText.textContent = allLabel;
-        } else if (checked.length === 1) {
-          toggleText.textContent = checked[0].parentElement.querySelector('span').textContent;
-        } else {
-          toggleText.textContent = checked.length + ' selected';
-        }
-      });
-    });
-  }
-
-  initMultiSelect('type', 'type', 'All types');
-  initMultiSelect('location', 'location', 'All locations');
-
-  // On form submit, combine multi-select checkboxes into comma-separated hidden inputs
-  document.getElementById('filter-form').addEventListener('submit', function(e) {
-    ['type', 'location'].forEach(function(fieldName) {
-      var dropdown = document.getElementById(fieldName + '-dropdown');
-      if (!dropdown) return;
-      var allCbs = dropdown.querySelectorAll('input[type="checkbox"]');
-      var checked = dropdown.querySelectorAll('input[type="checkbox"]:checked');
-      allCbs.forEach(function(cb) { cb.removeAttribute('name'); });
-      if (checked.length > 0) {
-        var hidden = document.createElement('input');
-        hidden.type = 'hidden';
-        hidden.name = fieldName;
-        hidden.value = Array.from(checked).map(function(cb) { return cb.value; }).join(',');
-        e.target.appendChild(hidden);
-      }
-    });
-  });
-})();
-</script>
+<script src="/js/filter-sidebar.js"></script>
 
 <%- include('partials/footer') %>

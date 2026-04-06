@@ -21,8 +21,8 @@
         <label for="code">Verification Code</label>
         <input type="text" id="code" name="code" required autofocus inputmode="numeric" autocomplete="one-time-code">
       </div>
-      <div class="form-group" style="margin-top: 8px;">
-        <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+      <div class="form-group auth-mfa-card">
+        <label class="auth-mfa-label">
           <input type="checkbox" name="remember_device" value="1">
           Remember this computer for 30 days
         </label>
@@ -31,7 +31,7 @@
     </form>
 
     <% if (method === 'email') { %>
-      <form method="POST" action="/login/mfa/resend" style="margin-top:12px;">
+      <form method="POST" action="/login/mfa/resend" class="auth-mfa-resend">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button type="submit" class="btn-secondary btn-full">Resend Email Code</button>
       </form>

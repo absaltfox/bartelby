@@ -22,9 +22,9 @@
         <input type="checkbox" id="select-all-cb">
         <span id="select-all-label">Select all</span>
       </label>
-      <span id="bulk-count" class="bulk-count" style="display:none;">0 selected</span>
+      <span id="bulk-count" class="bulk-count is-hidden">0 selected</span>
     </div>
-    <div class="doc-toolbar-actions" id="bulk-actions" style="display:none;">
+    <div class="doc-toolbar-actions is-hidden" id="bulk-actions">
       <button type="button" class="btn-secondary btn-sm" id="bulk-tag-btn">Add to Collection</button>
       <button type="button" class="btn-action btn-delete btn-sm" id="bulk-delete-btn">Delete Selected</button>
     </div>
@@ -54,7 +54,8 @@
           </label>
           <a href="/documents/<%= doc.id %>" class="doc-card-image">
             <img src="<%= doc.image_path || '' %>" alt=""
-                 onerror="this.onerror=null;this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22150%22 viewBox=%220 0 120 150%22%3E%3Crect width=%22120%22 height=%22150%22 fill=%22%23e8e0d0%22/%3E%3Ctext x=%2260%22 y=%2282%22 text-anchor=%22middle%22 font-size=%2232%22 fill=%22%23bbb%22%3E%F0%9F%93%84%3C/text%3E%3C/svg%3E'">
+                 data-hide-on-image-error
+                 data-fallback-message="📄">
           </a>
           <div class="doc-card-body">
             <a href="/documents/<%= doc.id %>" class="doc-card-title"><%= doc.title %></a>
@@ -78,8 +79,9 @@
                     data-doc-id="<%= doc.id %>"
                     data-collection-ids="<%= (doc.collections || []).map(c => c.id).join(',') %>"
                     title="Edit collections">&#9998;</button>
-            <form method="POST" action="/admin/documents/<%= doc.id %>/delete" style="display:inline"
-                  onsubmit="return confirm('Delete \u0022' + this.dataset.name + '\u0022 and all its transcriptions?')" data-name="<%= doc.title %>">
+            <form method="POST" action="/admin/documents/<%= doc.id %>/delete"
+                  class="inline-form--inline"
+                  data-confirm="Delete &quot;<%= doc.title %>&quot; and all its transcriptions?">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <button type="submit" class="btn-card-delete" title="Delete">&times;</button>
             </form>
@@ -104,7 +106,7 @@
       </div>
     <% } %>
   <% } else { %>
-    <div class="empty-state" style="padding: 40px 20px;">
+    <div class="empty-state empty-state--padded-lg">
       <% if (collectionFilter) { %>
         <p>No documents in this collection.</p>
         <a href="/admin/documents" class="btn-secondary">Show all documents</a>
@@ -118,7 +120,7 @@
 </div>
 
 <!-- Collection tagger modal -->
-<div id="tag-modal-overlay" class="tag-modal-overlay" style="display:none;">
+<div id="tag-modal-overlay" class="tag-modal-overlay is-hidden">
   <div class="tag-modal">
     <div class="tag-modal-header">
       <h3 id="tag-modal-title">Edit Collections</h3>
@@ -147,251 +149,6 @@
   </div>
 </div>
 
-<script>
-(function() {
-  var checkboxes  = Array.from(document.querySelectorAll('.doc-cb'));
-  var selectAllCb = document.getElementById('select-all-cb');
-  var bulkCount   = document.getElementById('bulk-count');
-  var bulkActions = document.getElementById('bulk-actions');
-  var lastChecked = null;
-
-  function getSelected() {
-    return checkboxes.filter(function(cb) { return cb.checked; })
-      .map(function(cb) { return parseInt(cb.value); });
-  }
-
-  function updateUI() {
-    var sel = getSelected();
-    var count = sel.length;
-    if (count > 0) {
-      bulkCount.style.display = '';
-      bulkCount.textContent = count + ' selected';
-      bulkActions.style.display = '';
-    } else {
-      bulkCount.style.display = 'none';
-      bulkActions.style.display = 'none';
-    }
-    // Update select-all state
-    selectAllCb.checked = checkboxes.length > 0 && count === checkboxes.length;
-    selectAllCb.indeterminate = count > 0 && count < checkboxes.length;
-
-    // Visual highlight on selected cards
-    checkboxes.forEach(function(cb) {
-      var card = cb.closest('.doc-card');
-      if (card) card.classList.toggle('selected', cb.checked);
-    });
-  }
-
-  // Shift-click range selection
-  checkboxes.forEach(function(cb) {
-    cb.addEventListener('click', function(e) {
-      if (e.shiftKey && lastChecked !== null) {
-        var start = checkboxes.indexOf(lastChecked);
-        var end   = checkboxes.indexOf(cb);
-        var low   = Math.min(start, end);
-        var high  = Math.max(start, end);
-        var state = cb.checked;
-        for (var i = low; i <= high; i++) {
-          checkboxes[i].checked = state;
-        }
-      }
-      lastChecked = cb;
-      updateUI();
-    });
-    // Also handle label clicks triggering change
-    cb.addEventListener('change', updateUI);
-  });
-
-  // Select all / deselect all
-  selectAllCb.addEventListener('change', function() {
-    var state = selectAllCb.checked;
-    checkboxes.forEach(function(cb) { cb.checked = state; });
-    updateUI();
-  });
-
-  /* ── Drag selection ───────────────────────────────────────── */
-  var grid = document.getElementById('doc-grid');
-  var isDragging = false;
-  var dragState = false; // true = checking, false = unchecking
-
-  if (grid) {
-    grid.addEventListener('mousedown', function(e) {
-      // Only start drag from card area, not from links/buttons
-      if (e.target.closest('a') || e.target.closest('button') || e.target.tagName === 'INPUT') return;
-      var card = e.target.closest('.doc-card');
-      if (!card) return;
-
-      e.preventDefault();
-      isDragging = true;
-      var cb = card.querySelector('.doc-cb');
-      if (cb) {
-        dragState = !cb.checked;
-        cb.checked = dragState;
-        updateUI();
-      }
-    });
-
-    grid.addEventListener('mouseover', function(e) {
-      if (!isDragging) return;
-      var card = e.target.closest('.doc-card');
-      if (!card) return;
-      var cb = card.querySelector('.doc-cb');
-      if (cb) {
-        cb.checked = dragState;
-        updateUI();
-      }
-    });
-
-    document.addEventListener('mouseup', function() {
-      isDragging = false;
-    });
-  }
-
-  /* ── Build URL with current filter params ─────────────────── */
-  function buildUrl(overrides) {
-    var params = {};
-    var perPageSelect = document.getElementById('per-page-select');
-    var filterSelect  = document.getElementById('collection-filter');
-    var perPage = perPageSelect ? perPageSelect.value : '25';
-    var collection = filterSelect ? filterSelect.value : '';
-
-    if (collection) params.collection = collection;
-    if (perPage !== '25') params.perPage = perPage;
-
-    Object.assign(params, overrides || {});
-
-    var qs = Object.keys(params).filter(function(k) { return params[k]; })
-      .map(function(k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
-    return '/admin/documents' + (qs ? '?' + qs : '');
-  }
-
-  /* ── Collection filter ────────────────────────────────────── */
-  var filterSelect = document.getElementById('collection-filter');
-  if (filterSelect) {
-    filterSelect.addEventListener('change', function() {
-      window.location.href = buildUrl();
-    });
-  }
-
-  /* ── Per-page selector ─────────────────────────────────────── */
-  var perPageSelect = document.getElementById('per-page-select');
-  if (perPageSelect) {
-    perPageSelect.addEventListener('change', function() {
-      window.location.href = buildUrl();
-    });
-  }
-
-  /* ── Bulk delete ──────────────────────────────────────────── */
-  document.getElementById('bulk-delete-btn').addEventListener('click', async function() {
-    var ids = getSelected();
-    if (ids.length === 0) return;
-    if (!confirm('Delete ' + ids.length + ' document(s) and all their transcriptions? This cannot be undone.')) return;
-
-    try {
-      var res = await fetch('/admin/documents/bulk/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
-        body: JSON.stringify({ ids: ids })
-      });
-      var data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Delete failed');
-      window.location.reload();
-    } catch (err) {
-      alert('Error: ' + err.message);
-    }
-  });
-
-  /* ── Bulk tag ─────────────────────────────────────────────── */
-  var bulkMode = false;
-
-  document.getElementById('bulk-tag-btn').addEventListener('click', function() {
-    bulkMode = true;
-    document.getElementById('tag-modal-title').textContent =
-      'Add to Collections (' + getSelected().length + ' documents)';
-    document.querySelectorAll('.tag-cb').forEach(function(cb) { cb.checked = false; });
-    overlay.style.display = 'flex';
-  });
-
-  /* ── Single-doc Collection Edit Modal ─────────────────────── */
-  var currentDocId = null;
-  var overlay = document.getElementById('tag-modal-overlay');
-  var saveBtn = document.getElementById('tag-modal-save');
-
-  document.querySelectorAll('.tag-edit-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      bulkMode = false;
-      currentDocId = btn.dataset.docId;
-      document.getElementById('tag-modal-title').textContent = 'Edit Collections';
-      var checkedIds = (btn.dataset.collectionIds || '').split(',').filter(Boolean).map(Number);
-      document.querySelectorAll('.tag-cb').forEach(function(cb) {
-        cb.checked = checkedIds.includes(parseInt(cb.value));
-      });
-      overlay.style.display = 'flex';
-    });
-  });
-
-  function closeModal() {
-    overlay.style.display = 'none';
-    currentDocId = null;
-    bulkMode = false;
-  }
-
-  document.getElementById('tag-modal-close').addEventListener('click', closeModal);
-  document.getElementById('tag-modal-cancel').addEventListener('click', closeModal);
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeModal(); });
-
-  saveBtn.addEventListener('click', async function() {
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-
-    var collectionIds = Array.from(document.querySelectorAll('.tag-cb:checked'))
-      .map(function(cb) { return parseInt(cb.value); });
-
-    try {
-      if (bulkMode) {
-        var ids = getSelected();
-        var res = await fetch('/admin/documents/bulk/collections', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
-          body: JSON.stringify({ ids: ids, collectionIds: collectionIds, mode: 'add' })
-        });
-        var data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Save failed');
-        window.location.reload();
-      } else if (currentDocId) {
-        var res = await fetch('/admin/documents/' + currentDocId + '/collections', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
-          body: JSON.stringify({ collectionIds: collectionIds })
-        });
-        var data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Save failed');
-
-        var card = document.querySelector('.doc-card[data-id="' + currentDocId + '"]');
-        if (card) {
-          var tagContainer = card.querySelector('.doc-card-tags');
-          tagContainer.innerHTML = data.collections
-            .map(function(c) { return '<span class="collection-tag-sm">' + escHtml(c.name) + '</span>'; })
-            .join('');
-        }
-
-        var editBtn = document.querySelector('.tag-edit-btn[data-doc-id="' + currentDocId + '"]');
-        if (editBtn) editBtn.dataset.collectionIds = data.collections.map(function(c) { return c.id; }).join(',');
-
-        closeModal();
-      }
-    } catch (err) {
-      alert('Error: ' + err.message);
-    } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
-    }
-  });
-
-  function escHtml(str) {
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-})();
-</script>
+<script src="/js/admin-documents.js"></script>
 
 <%- include('../partials/footer') %>

@@ -41,6 +41,11 @@ function getImportConfig() {
   }
 }
 
+function setHidden(el, hidden) {
+  if (!el) return;
+  el.classList.toggle('is-hidden', !!hidden);
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   // ── Configurable paths (set by the server-rendered template) ─────
   const cfg = getImportConfig();
@@ -86,13 +91,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Show/hide AI options panel based on mode
   function updateModeUI() {
-    if (aiOptions) aiOptions.style.display = modeManual && modeManual.checked ? 'none' : '';
+    setHidden(aiOptions, modeManual && modeManual.checked);
     updateBatchOption();
   }
   if (modeAI)     modeAI.addEventListener('change', updateModeUI);
   if (modeManual) modeManual.addEventListener('change', updateModeUI);
   if (modeAI)     modeAI.addEventListener('change', updateSuggestGroupsAvailability);
   if (modeManual) modeManual.addEventListener('change', updateSuggestGroupsAvailability);
+  updateModeUI();
 
   document.querySelectorAll('.page-collection-cb').forEach((cb) => {
     cb.addEventListener('change', handlePageCollectionSelectionChange);
@@ -121,6 +127,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const reviewForm     = document.getElementById('review-form');
   const cancelBtn      = document.getElementById('cancel-btn');
   const skipBtn        = document.getElementById('skip-btn');
+  const errorCloseBtn  = document.getElementById('error-close-btn');
   const groupingResetModal = document.getElementById('grouping-reset-modal');
   const groupingResetClose = document.getElementById('grouping-reset-close');
   const groupingResetCancel = document.getElementById('grouping-reset-cancel');
@@ -145,6 +152,10 @@ document.addEventListener('DOMContentLoaded', function() {
   let groupingStateSaveTimer = null;
   let isSyncingCollectionSelection = false;
   let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
+
+  if (errorCloseBtn) {
+    errorCloseBtn.addEventListener('click', hideError);
+  }
 
   function getSelectedCollectionIds(selector) {
     return Array.from(document.querySelectorAll(selector + ':checked'))
@@ -184,7 +195,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const canSuggest = !!(!isManualMode() && providerSelect && allTempFiles.length >= 2);
     const canShowButton = !!(canSuggest && shouldAutoSuggestGroups());
-    suggestBtn.style.display = canShowButton ? '' : 'none';
+    setHidden(suggestBtn, !canShowButton);
     suggestBtn.disabled = !canShowButton || autoGroupingCompleted;
     suggestBtn.textContent = autoGroupingCompleted ? 'Auto-grouped' : 'Auto-group';
   }
@@ -207,7 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
       && totalDocs > 10
     );
 
-    batchOption.style.display = eligible ? '' : 'none';
+    setHidden(batchOption, !eligible);
     if (!eligible) {
       batchCheckbox.checked = false;
     }
@@ -238,11 +249,11 @@ document.addEventListener('DOMContentLoaded', function() {
       ));
     }
 
-    groupingResetModal.style.display = 'flex';
+    groupingResetModal.classList.remove('is-hidden');
 
     return new Promise((resolve) => {
       function cleanup(result) {
-        groupingResetModal.style.display = 'none';
+        groupingResetModal.classList.add('is-hidden');
         groupingResetConfirm.removeEventListener('click', onConfirm);
         groupingResetCancel.removeEventListener('click', onCancel);
         groupingResetClose.removeEventListener('click', onCancel);
@@ -455,7 +466,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Pre-load image data URL for preview (images only)
     imageDataUrl = null;
     if (isImage) {
-      previewImage.style.display = '';
+      previewImage.classList.remove('is-hidden');
       await new Promise(resolve => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -466,7 +477,7 @@ document.addEventListener('DOMContentLoaded', function() {
         reader.readAsDataURL(file);
       });
     } else {
-      previewImage.style.display = 'none';
+      previewImage.classList.add('is-hidden');
       previewImage.src = '';
     }
 
@@ -503,9 +514,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressWrap = document.getElementById('progress-bar-wrap');
     const progressBar  = document.getElementById('progress-bar');
     const navHint      = document.getElementById('processing-nav-hint');
-    progressWrap.style.display = '';
+    progressWrap.classList.remove('is-hidden');
     progressBar.style.width = '0%';
-    if (navHint) navHint.style.display = '';
+    setHidden(navHint, false);
 
     processingText.textContent = 'Rendering PDF pages...';
 
@@ -524,8 +535,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
           if (job.status === 'done') {
             clearInterval(interval);
-            progressWrap.style.display = 'none';
-            if (navHint) navHint.style.display = 'none';
+            progressWrap.classList.add('is-hidden');
+            setHidden(navHint, true);
             setTempPreviews(job.pages);
             allTempFiles = job.pages.map(p => p.filename);
             showPageManager(job.pages);
@@ -533,13 +544,13 @@ document.addEventListener('DOMContentLoaded', function() {
             resolve();
           } else if (job.status === 'failed') {
             clearInterval(interval);
-            progressWrap.style.display = 'none';
-            if (navHint) navHint.style.display = 'none';
+            progressWrap.classList.add('is-hidden');
+            setHidden(navHint, true);
             reject(new Error(job.error || 'PDF processing failed'));
           }
         } catch (err) {
           clearInterval(interval);
-          if (navHint) navHint.style.display = 'none';
+          setHidden(navHint, true);
           reject(err);
         }
       }, 2000);
@@ -700,7 +711,7 @@ document.addEventListener('DOMContentLoaded', function() {
     zoomIndex = allTempFiles.indexOf(filename);
     if (zoomIndex < 0) zoomIndex = 0;
     renderZoom();
-    document.getElementById('zoom-overlay').style.display = 'flex';
+    document.getElementById('zoom-overlay').classList.remove('is-hidden');
   }
 
   function renderZoom() {
@@ -712,12 +723,12 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   document.getElementById('zoom-close').addEventListener('click', () => {
-    document.getElementById('zoom-overlay').style.display = 'none';
+    document.getElementById('zoom-overlay').classList.add('is-hidden');
   });
 
   document.getElementById('zoom-overlay').addEventListener('click', (e) => {
     if (e.target === document.getElementById('zoom-overlay')) {
-      document.getElementById('zoom-overlay').style.display = 'none';
+      document.getElementById('zoom-overlay').classList.add('is-hidden');
     }
   });
 
@@ -733,8 +744,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Keyboard navigation in zoom
   document.addEventListener('keydown', (e) => {
-    if (document.getElementById('zoom-overlay').style.display === 'none') return;
-    if (e.key === 'Escape') document.getElementById('zoom-overlay').style.display = 'none';
+    if (document.getElementById('zoom-overlay').classList.contains('is-hidden')) return;
+    if (e.key === 'Escape') document.getElementById('zoom-overlay').classList.add('is-hidden');
     if (e.key === 'ArrowLeft' && zoomIndex > 0) { zoomIndex--; renderZoom(); }
     if (e.key === 'ArrowRight' && zoomIndex < allTempFiles.length - 1) { zoomIndex++; renderZoom(); }
   });
@@ -862,7 +873,7 @@ document.addEventListener('DOMContentLoaded', function() {
       viewBtn.href = jobsUrl;
       viewBtn.textContent = 'View Jobs';
       if (aiNote) {
-        aiNote.style.display = '';
+        aiNote.classList.remove('is-hidden');
         aiNote.innerHTML = 'Transcription will run in the background. <a href="' + documentsUrl + '">View Documents &rarr;</a>';
       }
       showStep('complete');
@@ -894,13 +905,13 @@ document.addEventListener('DOMContentLoaded', function() {
     showStep('review');
 
     if (documentQueue.length > 1) {
-      document.getElementById('review-progress').style.display = '';
+      document.getElementById('review-progress').classList.remove('is-hidden');
       document.getElementById('review-progress-text').textContent =
         `Document ${currentQueueIndex + 1} of ${documentQueue.length}`;
-      skipBtn.style.display = '';
+      skipBtn.classList.remove('is-hidden');
     } else {
-      document.getElementById('review-progress').style.display = 'none';
-      skipBtn.style.display = 'none';
+      document.getElementById('review-progress').classList.add('is-hidden');
+      skipBtn.classList.add('is-hidden');
     }
   }
 
@@ -947,12 +958,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const transcriptionTextarea = document.getElementById('doc-transcription');
 
     if (isManualMode()) {
-      if (transcriptionSection) transcriptionSection.style.display = '';
-      if (aiNote) aiNote.style.display = 'none';
+      if (transcriptionSection) transcriptionSection.classList.remove('is-hidden');
+      if (aiNote) aiNote.classList.add('is-hidden');
       if (transcriptionTextarea) transcriptionTextarea.required = true;
     } else {
-      if (transcriptionSection) transcriptionSection.style.display = 'none';
-      if (aiNote) aiNote.style.display = '';
+      if (transcriptionSection) transcriptionSection.classList.add('is-hidden');
+      if (aiNote) aiNote.classList.remove('is-hidden');
       if (transcriptionTextarea) transcriptionTextarea.required = false;
     }
   }
@@ -1089,7 +1100,7 @@ document.addEventListener('DOMContentLoaded', function() {
       viewBtn.textContent  = 'View Document';
     }
 
-    if (aiNote) aiNote.style.display = anyAiQueued ? '' : 'none';
+    if (aiNote) aiNote.classList.toggle('is-hidden', !anyAiQueued);
     showStep('complete');
   }
 
@@ -1109,11 +1120,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const errorBanner = document.getElementById('error-message');
     const errorText   = document.getElementById('error-text');
     errorText.textContent = message;
-    errorBanner.style.display = 'flex';
+    errorBanner.classList.remove('is-hidden');
   };
 
   window.hideError = function() {
-    document.getElementById('error-message').style.display = 'none';
+    document.getElementById('error-message').classList.add('is-hidden');
   };
 
   // ── Resume from Import Job ───────────────────────────────────────

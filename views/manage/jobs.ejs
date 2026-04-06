@@ -58,12 +58,12 @@
       <table class="workflows-table">
         <thead>
           <tr>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Document / File</th>
-            <th>Provider</th>
-            <th>Time</th>
-            <th class="col-actions">Actions</th>
+            <th scope="col">Type</th>
+            <th scope="col">Status</th>
+            <th scope="col">Document / File</th>
+            <th scope="col">Provider</th>
+            <th scope="col">Time</th>
+            <th scope="col" class="col-actions">Actions</th>
           </tr>
         </thead>
         <tbody id="jobs-tbody">
@@ -94,12 +94,12 @@
                   <span><%= job.original_name || 'PDF Import' %></span>
                   <% if (isImportSubmit && (job.status === 'running' || job.status === 'queued') && job.page_count) { %>
                     <div class="import-progress">
-                      <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
+                      <div class="import-progress-bar" data-progress="<%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>"></div>
                     </div>
                     <small class="muted">Creating document <%= Math.min((job.pages_rendered || 0) + 1, job.page_count) %> of <%= job.page_count %></small>
                   <% } else if (job.status === 'processing' && job.page_count) { %>
                     <div class="import-progress">
-                      <div class="import-progress-bar" style="width: <%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>%"></div>
+                      <div class="import-progress-bar" data-progress="<%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>"></div>
                     </div>
                     <small class="muted">Rendering page <%= job.pages_rendered || 0 %> of <%= job.page_count %></small>
                   <% } else if (job.status === 'processing') { %>
@@ -142,7 +142,7 @@
               </td>
             </tr>
             <% if (!isImport) { %>
-              <tr class="log-row" id="log-row-<%= job.id %>" style="display:none;">
+              <tr class="log-row is-hidden" id="log-row-<%= job.id %>">
                 <td colspan="6">
                   <% if (job.error) { %>
                     <div class="job-error">Error: <%= job.error %></div>
@@ -158,188 +158,14 @@
   <% } %>
 </div>
 
-<script>
-(function() {
-  var collectionId = '<%= collection.id %>';
-  var apiBase = '/manage/collections/' + collectionId + '/jobs/api';
-
-  // Toggle log rows
-  document.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var id = btn.dataset.id;
-      var row = document.getElementById('log-row-' + id);
-      row.style.display = row.style.display === 'none' ? '' : 'none';
-    });
-  });
-
-  document.querySelectorAll('.retry-btn').forEach(function(btn) {
-    btn.addEventListener('click', async function() {
-      btn.disabled = true;
-      try {
-        await fetch(apiBase + '/import/' + btn.dataset.id + '/retry', {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content }
-        });
-        window.location.reload();
-      } catch (e) {
-        btn.disabled = false;
-      }
-    });
-  });
-
-  // AJAX polling: update job rows in-place every 5s when active jobs exist
-  var currentFilter = '<%= filter %>';
-  var currentTypeFilter = '<%= typeFilter %>';
-
-  function isActiveStatus(s) {
-    return s === 'queued' || s === 'running' || s === 'processing';
-  }
-
-  function formatDuration(job) {
-    if (job.started_at && job.completed_at) {
-      var ms = new Date(job.completed_at) - new Date(job.started_at);
-      return (ms / 1000).toFixed(1) + 's';
-    }
-    if (job.started_at && job.status === 'running') return 'running…';
-    if (job.status === 'processing') return 'processing…';
-    return '—';
-  }
-
-  function buildProgressHtml(job) {
-    if (job.job_type !== 'import') return '';
-    if (job.job_kind === 'submit' && job.page_count) {
-      var submitPct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
-      var nextDoc = Math.min((job.pages_rendered || 0) + 1, job.page_count);
-      return '<div class="import-progress"><div class="import-progress-bar" style="width:' + submitPct + '%"></div></div>' +
-             '<small class="muted">Creating document ' + nextDoc + ' of ' + job.page_count + '</small>';
-    }
-    if (job.status === 'processing' && job.page_count) {
-      var pct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
-      return '<div class="import-progress"><div class="import-progress-bar" style="width:' + pct + '%"></div></div>' +
-             '<small class="muted">Rendering page ' + (job.pages_rendered || 0) + ' of ' + job.page_count + '</small>';
-    }
-    if (job.status === 'processing') return '<small class="muted">Starting...</small>';
-    if (job.page_count) return '<small class="muted"> (' + job.page_count + ' pages)</small>';
-    return '';
-  }
-
-  function escapeHtml(value) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  function buildBatchHtml(job) {
-    if (job.job_type !== 'transcription' || job.job_kind !== 'batch') return '';
-    var name = escapeHtml(job.batch_display_name || 'Batch transcription job');
-    var parts = [String(job.batch_document_count || 0) + ' documents'];
-    if (job.batch_page_count) parts.push(String(job.batch_page_count) + ' pages');
-    if (job.batch_remote_status) parts.push(String(job.batch_remote_status));
-    return '<span>' + name + '</span><small class="muted">' + escapeHtml(parts.join(' • ')) + '</small>';
-  }
-
-  function pollJobs() {
-    fetch(apiBase)
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        // Update filter tab counts
-        var countMap = { all: data.counts.total, queued: data.counts.queued, running: data.counts.running, done: data.counts.done, failed: data.counts.failed };
-        document.querySelectorAll('.filter-tab').forEach(function(tab) {
-          var href = tab.getAttribute('href') || '';
-          var badge = tab.querySelector('.filter-count');
-          if (!badge) return;
-          Object.keys(countMap).forEach(function(key) {
-            var baseJobsUrl = '/manage/collections/' + collectionId + '/jobs';
-            if (href.indexOf('filter=' + key) !== -1 || (key === 'all' && href === baseJobsUrl)) {
-              badge.textContent = countMap[key];
-            }
-          });
-        });
-
-        var jobs = data.jobs;
-        if (currentTypeFilter !== 'all') {
-          jobs = jobs.filter(function(j) { return j.job_type === currentTypeFilter; });
-        }
-        if (currentFilter !== 'all') {
-          if (currentFilter === 'running') {
-            jobs = jobs.filter(function(j) { return j.status === 'running' || j.status === 'processing'; });
-          } else {
-            jobs = jobs.filter(function(j) { return j.status === currentFilter; });
-          }
-        }
-
-        var tbody = document.getElementById('jobs-tbody');
-        jobs.forEach(function(job) {
-          var row = tbody.querySelector('tr.job-row[data-id="' + job.id + '"][data-type="' + job.job_type + '"]');
-          if (!row) return;
-
-          var statusBadge = row.querySelector('.status-badge');
-          if (statusBadge && statusBadge.textContent !== job.status) {
-            statusBadge.className = 'status-badge status-' + job.status;
-            statusBadge.textContent = job.status;
-            row.dataset.status = job.status;
-          }
-
-          var cells = row.querySelectorAll('td');
-          var timeCell = row.querySelector('.job-time-cell');
-          if (timeCell) {
-            var durEl = timeCell.querySelector('.job-duration');
-            var dur = formatDuration(job);
-            if (dur && durEl) {
-              durEl.textContent = dur;
-            } else if (dur && !durEl) {
-              timeCell.insertAdjacentHTML('beforeend', '<span class="job-duration">' + dur + '</span>');
-            }
-          }
-
-          if (job.job_type === 'import') {
-            var docCell = cells[2];
-            var progressEl = docCell.querySelector('.import-progress');
-            var smallEl = docCell.querySelector('small');
-            var newProgress = buildProgressHtml(job);
-            if (progressEl) progressEl.remove();
-            if (smallEl) smallEl.remove();
-            if (newProgress) {
-              var nameEl = docCell.querySelector('span');
-              if (nameEl) nameEl.insertAdjacentHTML('afterend', newProgress);
-            }
-          } else if (job.job_kind === 'batch') {
-            var batchCell = cells[2];
-            batchCell.innerHTML = buildBatchHtml(job);
-          }
-        });
-
-        var hasActive = data.jobs.some(function(j) { return isActiveStatus(j.status); });
-        if (hasActive) {
-          setTimeout(pollJobs, 5000);
-        }
-      })
-      .catch(function() {
-        setTimeout(pollJobs, 15000);
-      });
-  }
-
-  var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
-  if (hasActive) {
-    setTimeout(pollJobs, 5000);
-  }
-
-  // Live-update log for running transcription jobs
-  document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"]').forEach(function(row) {
-    var id = row.dataset.id;
-    var logEl = document.getElementById('job-log-' + id);
-    if (!logEl) return;
-    setInterval(async function() {
-      try {
-        var r = await fetch(apiBase + '/' + id);
-        var job = await r.json();
-        logEl.textContent = job.log || '(no log yet)';
-      } catch(e) {}
-    }, 5000);
-  });
-})();
-</script>
+<script id="jobs-page-config" type="application/json"><%- JSON.stringify({
+  mode: 'manage',
+  filter,
+  typeFilter,
+  pageBaseUrl: '/manage/collections/' + collection.id + '/jobs',
+  apiBase: '/manage/collections/' + collection.id + '/jobs/api',
+  activePollUrl: '/manage/collections/' + collection.id + '/jobs/api'
+}).replace(/</g, '\\u003c') %></script>
+<script src="/js/jobs-page.js"></script>
 
 <%- include('../partials/footer') %>

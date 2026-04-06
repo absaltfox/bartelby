@@ -1,0 +1,77 @@
+<%- include('../partials/header', { pageTitle: 'Review Extractions', query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Review Extractions</h1>
+    <p class="subtitle">Confirm or reject extracted entities before they are merged into the graph</p>
+    <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
+  </div>
+
+  <p class="search-advanced-link-row"><a href="/admin/entities/merge">Merge entities</a></p>
+
+  <% if (citations.length === 0) { %>
+    <div class="empty-state">
+      <p>No extraction results pending review.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th scope="col">Transcript</th>
+            <th scope="col">Status</th>
+            <th scope="col">Counts</th>
+            <th scope="col" class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% citations.forEach(function(citation) { %>
+            <tr>
+              <td>
+                <% if (citation.document_title) { %>
+                  <a href="/documents/<%= citation.document_id %>"><%= citation.document_title %></a>
+                <% } else { %>
+                  <span class="muted">Transcript #<%= citation.transcript_id %></span>
+                <% } %>
+                <% if (citation.entity_name) { %>
+                  <div class="muted"><strong><%= citation.entity_name %></strong> (<%= citation.entity_type || 'entity' %>)</div>
+                <% } else if (citation.relationship_type) { %>
+                  <div class="muted"><strong><%= citation.relationship_type %></strong> relationship</div>
+                <% } %>
+                <% if (citation.passage_text) { %>
+                  <div class="muted"><%= String(citation.passage_text).slice(0, 160) %></div>
+                <% } %>
+              </td>
+              <td><span class="status-badge status-running">Pending</span></td>
+              <td>
+                <% if (citation.entity_name) { %>
+                  Entity citation
+                <% } else if (citation.relationship_type) { %>
+                  Relationship citation
+                <% } else { %>
+                  Citation
+                <% } %>
+              </td>
+              <td>
+                <div class="job-actions">
+                  <form method="POST" action="/admin/review-extractions/<%= citation.id %>/confirm" class="inline-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-action btn-sm">Confirm</button>
+                  </form>
+                  <form method="POST" action="/admin/review-extractions/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-delete btn-sm">Reject</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

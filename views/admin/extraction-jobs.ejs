@@ -1,0 +1,66 @@
+<%- include('../partials/header', { pageTitle: 'Extraction Jobs', query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Extraction Jobs</h1>
+    <p class="subtitle">LLM-powered entity extraction runs</p>
+    <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
+  </div>
+
+  <p class="search-advanced-link-row"><a href="/admin/review-extractions">Review extractions</a></p>
+
+  <% if (jobs.length === 0) { %>
+    <div class="empty-state">
+      <p>No extraction jobs found.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th scope="col">Status</th>
+            <th scope="col">Transcript</th>
+            <th scope="col">Entities</th>
+            <th scope="col">Relationships</th>
+            <th scope="col">Recorded</th>
+            <th scope="col" class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% jobs.forEach(function(job) { %>
+            <tr>
+              <td><span class="status-badge status-<%= job.status %>"><%= job.status %></span></td>
+              <td>
+                <% if (job.document_title) { %>
+                  <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
+                <% } else { %>
+                  <span class="muted">Transcript #<%= job.transcript_id %></span>
+                <% } %>
+                <% if (job.error) { %><div class="job-error">Error: <%= job.error %></div><% } %>
+              </td>
+              <td><%= job.entity_count || 0 %></td>
+              <td><%= job.relationship_count || 0 %></td>
+              <td><span class="muted"><%= new Date(job.created_at).toLocaleString() %></span></td>
+              <td>
+                <div class="job-actions">
+                  <form method="POST" action="/admin/extraction-jobs/<%= job.id %>/retry" class="inline-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-action btn-sm">Retry</button>
+                  </form>
+                  <form method="POST" action="/admin/extraction-jobs/<%= job.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction job?">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-delete btn-sm">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

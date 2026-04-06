@@ -15,13 +15,13 @@
     <div class="alert alert-success">
       <p><%= flash.message %></p>
       <% if (flash.inviteUrl) { %>
-        <p style="margin-top:8px;">
+        <p class="mt-2">
           <strong>Invite link:</strong>
           <a href="<%= flash.inviteUrl %>"><%= flash.inviteUrl %></a>
         </p>
       <% } %>
       <% if (flash.resetUrl) { %>
-        <p style="margin-top:8px;">
+        <p class="mt-2">
           <strong>Password reset link:</strong>
           <a href="<%= flash.resetUrl %>"><%= flash.resetUrl %></a>
         </p>
@@ -33,16 +33,16 @@
     <div class="settings-section">
       <h2>Open Invitations (<%= invites.length %>)</h2>
       <% if (!smtpConfigured) { %>
-        <p class="field-hint" style="margin-bottom:12px;">SMTP is not configured, so invitation links must be copied manually from the success message after creation.</p>
+        <p class="field-hint field-hint--mb-sm">SMTP is not configured, so invitation links must be copied manually from the success message after creation.</p>
       <% } %>
       <div class="users-table-wrap">
         <table class="users-table users-table--auto">
           <thead>
             <tr>
-              <th>Email</th>
-              <th>Access</th>
-              <th>Expires</th>
-              <th class="col-actions">Actions</th>
+              <th scope="col">Email</th>
+              <th scope="col">Access</th>
+              <th scope="col">Expires</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -67,7 +67,7 @@
                 <td class="user-date-cell"><%= new Date(invite.expires_at).toLocaleDateString() %></td>
                 <td class="col-actions">
                   <form method="POST" action="/admin/users/invites/<%= invite.id %>/revoke" class="inline-form"
-                        onsubmit="return confirm('Revoke the invitation for ' + this.dataset.name + '?')" data-name="<%= invite.email %>">
+                        data-confirm-message="Revoke the invitation for <%= invite.email %>?">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
                   </form>
@@ -91,10 +91,10 @@
         <table class="users-table users-table--auto">
           <thead>
             <tr>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Requested</th>
-              <th class="col-actions">Actions</th>
+              <th scope="col">Username</th>
+              <th scope="col">Email</th>
+              <th scope="col">Requested</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -107,7 +107,7 @@
                   <div class="user-actions-row">
                     <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote btn-sm">Review</a>
                     <form method="POST" action="/admin/users/<%= u.id %>/reject" class="inline-form"
-                          onsubmit="return confirm('Reject ' + this.dataset.name + '\'s request?')" data-name="<%= u.username %>">
+                          data-confirm-message="Reject <%= u.username %>&apos;s request?">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <button type="submit" class="btn-action btn-delete btn-sm">Reject</button>
                     </form>
@@ -125,16 +125,16 @@
   <div class="settings-section">
     <h2>Active Users (<%= active.length %>)</h2>
     <% if (active.length === 0) { %>
-      <p class="muted" style="font-style:italic;">No active users.</p>
+      <p class="muted is-italic">No active users.</p>
     <% } else { %>
       <div class="users-table-wrap">
         <table class="users-table users-table--auto">
           <thead>
             <tr>
-              <th>User</th>
-              <th>Permissions</th>
-              <th>Security</th>
-              <th class="col-actions">Actions</th>
+              <th scope="col">User</th>
+              <th scope="col">Permissions</th>
+              <th scope="col">Security</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -178,7 +178,7 @@
                     <div class="user-actions-row">
                       <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote btn-sm">Edit Access</a>
                       <form method="POST" action="/admin/users/<%= u.id %>/password-reset" class="inline-form"
-                          onsubmit="return confirm('Create a password reset link for ' + this.dataset.name + '?')" data-name="<%= u.username %>">
+                          data-confirm-message="Create a password reset link for <%= u.username %>?">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn-action btn-promote btn-sm">Reset Password</button>
                       </form>
@@ -189,7 +189,7 @@
                       </form>
                     </div>
                   <% } else { %>
-                    <span class="muted" style="font-size:0.8125rem; font-style:italic;">Current user</span>
+                    <span class="muted is-italic mt-2">Current user</span>
                   <% } %>
                 </td>
               </tr>
@@ -208,10 +208,10 @@
         <table class="users-table users-table--auto">
           <thead>
             <tr>
-              <th>Username</th>
-              <th>Email</th>
-              <th>Requested</th>
-              <th class="col-actions">Actions</th>
+              <th scope="col">Username</th>
+              <th scope="col">Email</th>
+              <th scope="col">Requested</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -239,15 +239,15 @@
   <% } %>
 </div>
 
-<div class="tag-modal-overlay" id="delete-user-modal" style="display:none;">
-  <div class="tag-modal" style="width:420px;">
+<div class="tag-modal-overlay is-hidden" id="delete-user-modal">
+  <div class="tag-modal tag-modal--wide">
     <div class="tag-modal-header">
       <h3 id="delete-user-modal-title">Delete User</h3>
       <button type="button" class="tag-modal-close" id="delete-user-modal-close">&times;</button>
     </div>
-    <div class="tag-modal-body" style="padding:16px 20px;">
-      <p style="margin:0 0 10px;">Delete <strong id="delete-user-name"></strong>?</p>
-      <p class="field-hint" style="margin:0;">This permanently removes the account and cannot be undone.</p>
+    <div class="tag-modal-body tag-modal-body--pad">
+      <p class="mb-4">Delete <strong id="delete-user-name"></strong>?</p>
+      <p class="field-hint admin-note--tight">This permanently removes the account and cannot be undone.</p>
     </div>
     <div class="tag-modal-footer">
       <button type="button" class="btn-action btn-sm" id="delete-user-cancel">Cancel</button>
@@ -255,44 +255,5 @@
     </div>
   </div>
 </div>
-
-<script>
-(function() {
-  var modal = document.getElementById('delete-user-modal');
-  var nameEl = document.getElementById('delete-user-name');
-  var confirmBtn = document.getElementById('delete-user-confirm');
-  var activeForm = null;
-
-  function openModal(form) {
-    activeForm = form;
-    nameEl.textContent = form.dataset.name || 'this user';
-    modal.style.display = 'flex';
-  }
-
-  function closeModal() {
-    modal.style.display = 'none';
-    activeForm = null;
-  }
-
-  document.querySelectorAll('.delete-user-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      openModal(btn.closest('form'));
-    });
-  });
-
-  confirmBtn.addEventListener('click', function() {
-    if (activeForm) activeForm.submit();
-  });
-
-  document.getElementById('delete-user-modal-close').addEventListener('click', closeModal);
-  document.getElementById('delete-user-cancel').addEventListener('click', closeModal);
-  modal.addEventListener('click', function(e) {
-    if (e.target === modal) closeModal();
-  });
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
-  });
-})();
-</script>
 
 <%- include('../partials/footer') %>

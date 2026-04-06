@@ -1,0 +1,79 @@
+<%- include('partials/header', { pageTitle: 'Knowledge Graph', query: '' }) %>
+
+<div class="graph-page" data-graph-explorer data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>">
+  <% if (!graphReady) { %>
+    <div class="empty-state graph-empty-state--intro">
+      <p>Knowledge graph helpers are not wired yet. The explorer will activate once the backend support is mounted.</p>
+    </div>
+  <% } %>
+  <div class="graph-page-header">
+    <div>
+      <p class="graph-page-eyebrow">Knowledge Graph</p>
+      <h1>Entity Explorer</h1>
+      <p class="graph-page-summary">Explore extracted entities, relationships, and cited passages across the archive.</p>
+    </div>
+    <form class="graph-toolbar" id="graph-search-form">
+      <input type="search" id="graph-search-input" name="q" placeholder="Search entities or aliases" autocomplete="off">
+      <select id="graph-type-filter" name="type">
+        <option value="">All types</option>
+        <option value="person">People</option>
+        <option value="place">Places</option>
+        <option value="event">Events</option>
+        <option value="date">Dates</option>
+        <option value="organization">Organizations</option>
+        <option value="topic">Topics</option>
+        <option value="artifact">Artifacts</option>
+        <option value="claim">Claims</option>
+      </select>
+      <button type="submit" class="btn-action btn-sm">Search</button>
+    </form>
+  </div>
+
+  <div class="graph-explorer">
+    <aside class="graph-sidebar">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Browse</p>
+        <h2>Entities</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <div class="graph-search">
+          <p class="graph-muted">Select an entity to inspect its aliases, citations, and connected nodes.</p>
+          <div class="graph-empty-state" id="graph-empty-state">Loading entities...</div>
+          <div class="graph-entity-list" id="graph-entity-list" hidden></div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="graph-visual">
+      <div class="graph-visual-header">
+        <div>
+          <p class="kg-panel-eyebrow">Network</p>
+          <h2 id="graph-visual-title">Graph view</h2>
+          <p id="graph-visual-subtitle">Click a node to load details.</p>
+        </div>
+        <div class="graph-toolbar">
+          <span class="graph-detail-tab active" id="graph-node-count">0 nodes</span>
+          <span class="graph-detail-tab" id="graph-edge-count">0 relationships</span>
+        </div>
+      </div>
+      <div class="graph-canvas" id="graph-canvas">
+        <div class="graph-empty-state">Choose an entity to render its neighborhood graph.</div>
+      </div>
+    </section>
+
+    <aside class="graph-detail">
+      <div class="graph-detail-header">
+        <p class="kg-panel-eyebrow">Details</p>
+        <h2 id="graph-detail-title">No entity selected</h2>
+        <p class="graph-muted" id="graph-detail-subtitle">Search or click a node to begin.</p>
+      </div>
+      <div class="graph-detail-body" id="graph-detail-body">
+        <div class="graph-empty-state">Entity metadata, aliases, citations, and relationships appear here.</div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script src="/js/graph-explorer.js"></script>
+
+<%- include('partials/footer') %>

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { transcriptsAsync, documentsAsync, collectionsAsync, userCollectionAccessAsync } = require('../database/db');
+const { transcriptsAsync, documentsAsync, collectionsAsync, userCollectionAccessAsync, graphAccess, citations } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
 
@@ -30,6 +30,7 @@ async function getAccessibleCollections(req, opts) {
 router.get('/', async (req, res) => {
   const query = req.query.q || '';
   let results = [];
+  let entityResults = [];
 
   if (query.trim()) {
     try {
@@ -37,9 +38,34 @@ router.get('/', async (req, res) => {
     } catch (err) {
       console.error('Search error:', err);
     }
+
+    try {
+      if (graphAccess && typeof graphAccess.searchEntities === 'function') {
+        const matched = await graphAccess.searchEntities(
+          query,
+          req.user.id,
+          req.user.role === 'admin',
+          !!req.user.access_all,
+          10
+        );
+        entityResults = await Promise.all((matched || []).map(async (entity) => {
+          const citeRows = citations && citations.getByEntityId
+            ? await citations.getByEntityId(entity.id)
+            : [];
+          const documentIds = new Set((citeRows || []).map((row) => row.document_id).filter(Boolean));
+          return {
+            ...entity,
+            citationCount: citeRows.length,
+            documentCount: documentIds.size
+          };
+        }));
+      }
+    } catch (err) {
+      console.error('Entity search error:', err);
+    }
   }
 
-  res.render('search', { query, results, resultCount: results.length });
+  res.render('search', { query, results, resultCount: results.length, entityResults });
 });
 
 router.get('/advanced', async (req, res) => {

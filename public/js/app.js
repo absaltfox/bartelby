@@ -34,6 +34,11 @@ function initAnnotations() {
     form.addEventListener('submit', handleAnnotationSubmit);
   }
 
+  const cancelBtn = document.getElementById('annotation-cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', hideAnnotationForm);
+  }
+
   // Handle annotation deletion
   document.querySelectorAll('.delete-annotation').forEach(btn => {
     btn.addEventListener('click', handleAnnotationDelete);

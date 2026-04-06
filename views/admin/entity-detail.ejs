@@ -1,0 +1,91 @@
+<%- include('../partials/header', { pageTitle: entity.canonical_name, query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1><%= entity.canonical_name %></h1>
+    <p class="subtitle"><span class="job-type-badge job-type-transcription"><%= entity.entity_type %></span></p>
+    <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
+  </div>
+
+  <p class="search-advanced-link-row"><a href="/admin/entities">&larr; Back to entities</a></p>
+
+  <% if (entity.description) { %>
+    <div class="empty-state empty-state--left">
+      <p><%= entity.description %></p>
+    </div>
+  <% } %>
+
+  <div class="knowledge-graph-detail-grid admin-grid--2up">
+    <section class="empty-state empty-state--left">
+      <h2 class="mt-0">Properties</h2>
+      <dl class="metadata-list">
+        <dt>ID</dt>
+        <dd><%= entity.id %></dd>
+        <dt>Type</dt>
+        <dd><%= entity.entity_type %></dd>
+        <dt>Canonical name</dt>
+        <dd><%= entity.canonical_name %></dd>
+        <% Object.entries(entity.properties || {}).forEach(function(entry) { %>
+          <dt><%= entry[0] %></dt>
+          <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
+        <% }) %>
+      </dl>
+    </section>
+
+    <section class="empty-state empty-state--left">
+      <h2 class="mt-0">Aliases</h2>
+      <% if (aliases.length === 0) { %>
+        <p class="muted">No aliases recorded.</p>
+      <% } else { %>
+        <ul>
+          <% aliases.forEach(function(alias) { %><li><%= alias.alias || alias.label || alias.canonical_name || alias %></li><% }) %>
+        </ul>
+      <% } %>
+    </section>
+
+    <section class="empty-state empty-state--left">
+      <h2 class="mt-0">Dates</h2>
+      <% if (dates.length === 0) { %>
+        <p class="muted">No date expressions recorded.</p>
+      <% } else { %>
+        <ul>
+          <% dates.forEach(function(date) { %><li><strong><%= date.label || date.mention %></strong> <span class="muted">(<%= date.earliest %> to <%= date.latest %>)</span></li><% }) %>
+        </ul>
+      <% } %>
+    </section>
+
+    <section class="empty-state empty-state--left">
+      <h2 class="mt-0">Citations</h2>
+      <% if (citations.length === 0) { %>
+        <p class="muted">No citations recorded.</p>
+      <% } else { %>
+        <p><%= citations.length %> citations tied to this entity.</p>
+      <% } %>
+    </section>
+
+    <section class="empty-state empty-state--left">
+      <h2 class="mt-0">Relationships</h2>
+      <% if (relationships.length === 0) { %>
+        <p class="muted">No relationships recorded.</p>
+      <% } else { %>
+        <ul>
+          <% relationships.forEach(function(rel) { %>
+            <li><%= rel.relationship_type || rel.type || 'related' %> to <%= rel.source_name || rel.target_name || 'another entity' %></li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </section>
+  </div>
+
+  <div class="admin-actions mt-5">
+    <h2>Danger zone</h2>
+    <form method="POST" action="/admin/entities/<%= entity.id %>/delete" data-confirm-message="Delete this entity? This cannot be undone.">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn-delete btn-sm">Delete Entity</button>
+    </form>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

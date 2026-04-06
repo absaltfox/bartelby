@@ -1,0 +1,57 @@
+<%- include('../partials/header', { pageTitle: 'Merge Entities', query: '' }) %>
+
+<div class="admin-page workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Merge Entities</h1>
+    <p class="subtitle">Choose a source entity to merge into a target canonical entity</p>
+    <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
+  </div>
+
+  <div class="empty-state empty-state--left">
+    <form method="POST" action="/admin/entities/merge" class="edit-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="edit-field">
+        <label for="source_entity_id">Source entity</label>
+        <select name="source_entity_id" id="source_entity_id" required>
+          <option value="">Select an entity...</option>
+          <% entities.forEach(function(entity) { %>
+            <option value="<%= entity.id %>"><%= entity.canonical_name %> (<%= entity.entity_type %>)</option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label for="target_entity_id">Target entity</label>
+        <select name="target_entity_id" id="target_entity_id" required>
+          <option value="">Select an entity...</option>
+          <% entities.forEach(function(entity) { %>
+            <option value="<%= entity.id %>"><%= entity.canonical_name %> (<%= entity.entity_type %>)</option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="edit-actions">
+        <button type="submit" class="btn-primary btn-sm">Merge Entities</button>
+      </div>
+    </form>
+  </div>
+
+  <% if (sourceEntity || targetEntity) { %>
+    <div class="knowledge-graph-detail-grid admin-grid--2up">
+      <% if (sourceEntity) { %>
+        <section class="empty-state empty-state--left">
+          <h2 class="mt-0">Source</h2>
+          <p><strong><%= sourceEntity.canonical_name %></strong> (<%= sourceEntity.entity_type %>)</p>
+        </section>
+      <% } %>
+      <% if (targetEntity) { %>
+        <section class="empty-state empty-state--left">
+          <h2 class="mt-0">Target</h2>
+          <p><strong><%= targetEntity.canonical_name %></strong> (<%= targetEntity.entity_type %>)</p>
+        </section>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>
