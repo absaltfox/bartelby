@@ -76,10 +76,12 @@ row. It contains, top to bottom:
   separate "Aliases" section.
 - **Description** — optional, rendered below aliases when present.
 
-The pane chrome's "Details" eyebrow in `graph.ejs` and `collection-graph.ejs`
-stays but the current entity title/subtitle in that chrome is updated to serve
-as a short subheading (type · selected-from source) rather than restating the
-name. The redundant entity card inside the body is removed.
+The entire `.graph-detail-header` chrome block in `graph.ejs` and
+`collection-graph.ejs` — "Details" eyebrow, `#graph-detail-title`, and
+`#graph-detail-subtitle` — is removed. The detail body owns its own header,
+so the chrome adds nothing but repetition. An empty `.graph-detail-body` now
+shows the fallback message "Select an entity to see its sources and
+connections." in place of the old chrome title.
 
 ### Section 2 — Sources (merged)
 
