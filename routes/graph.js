@@ -183,11 +183,30 @@ router.get('/entities/:id/neighbors', async (req, res) => {
       allowed: await canAccessEntity(stores.graphAccess, neighbor.id, req)
     }))
   );
-  let accessible = accessChecks.filter(c => c.allowed).map(c => c.neighbor);
+  let accessible = accessChecks.filter((c) => c.allowed).map((c) => c.neighbor);
   if (relType) {
-    accessible = accessible.filter(n => n.relationship_type === relType);
+    accessible = accessible.filter((n) => n.relationship_type === relType);
   }
-  return res.json({ entity, neighbors: accessible, depth });
+
+  const relationshipIds = Array.from(new Set(
+    accessible.map((n) => n.relationship_id).filter((value) => Number.isInteger(value))
+  ));
+  const relationshipCitations = relationshipIds.length && stores.citations && stores.citations.getByRelationshipIds
+    ? await stores.citations.getByRelationshipIds(relationshipIds, { approvalStatus: 'approved', collectionId })
+    : [];
+  const firstExcerptByRelationship = new Map();
+  for (const citation of relationshipCitations) {
+    if (!firstExcerptByRelationship.has(citation.relationship_id) && citation.passage_text) {
+      firstExcerptByRelationship.set(citation.relationship_id, citation.passage_text);
+    }
+  }
+
+  const enrichedNeighbors = accessible.map((neighbor) => ({
+    ...neighbor,
+    evidence_text: firstExcerptByRelationship.get(neighbor.relationship_id) || null
+  }));
+
+  return res.json({ entity, neighbors: enrichedNeighbors, depth });
 });
 
 router.get('/relationships/:id', async (req, res) => {
