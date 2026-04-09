@@ -1,6 +1,6 @@
 <%- include('../partials/header', { pageTitle: 'Documents', query: '' }) %>
 
-<div class="admin-page">
+<div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header">
@@ -13,10 +13,16 @@
   <% } %>
   <% if (queryError === 'not_found') { %>
     <div class="alert alert-error">Document not found.</div>
+  <% } else if (queryError) { %>
+    <div class="alert alert-error"><%= queryError %></div>
+  <% } %>
+  <% if (queuedDocumentTitle) { %>
+    <div class="alert alert-success">
+      Queued a fresh knowledge extraction run for <strong><%= queuedDocumentTitle %></strong>.
+    </div>
   <% } %>
 
-  <!-- Toolbar: always visible -->
-  <div class="doc-toolbar">
+  <div class="doc-toolbar doc-toolbar--sticky">
     <div class="doc-toolbar-left">
       <label class="doc-toolbar-select-all" title="Select all">
         <input type="checkbox" id="select-all-cb">
@@ -26,7 +32,7 @@
     </div>
     <div class="doc-toolbar-actions is-hidden" id="bulk-actions">
       <button type="button" class="btn-secondary btn-sm" id="bulk-tag-btn">Add to Collection</button>
-      <button type="button" class="btn-action btn-delete btn-sm" id="bulk-delete-btn">Delete Selected</button>
+      <button type="button" class="btn-danger btn-sm" id="bulk-delete-btn">Delete Selected</button>
     </div>
     <div class="doc-toolbar-right">
       <% if (allCollections.length > 0) { %>
@@ -52,13 +58,18 @@
           <label class="doc-card-select">
             <input type="checkbox" class="doc-cb" value="<%= doc.id %>">
           </label>
-          <a href="/documents/<%= doc.id %>" class="doc-card-image">
+          <div class="doc-card-image">
+            <button type="button" class="doc-card-image-select" data-doc-card-image aria-label="Select <%= doc.title %>"></button>
             <img src="<%= doc.image_path || '' %>" alt=""
                  data-hide-on-image-error
                  data-fallback-message="📄">
-          </a>
+            <span class="doc-card-image-hint">Click image to select</span>
+            <button type="button" class="doc-card-zoom-btn" aria-label="Zoom document preview" title="Zoom document preview" data-doc-card-zoom>
+              &#128269;
+            </button>
+          </div>
           <div class="doc-card-body">
-            <a href="/documents/<%= doc.id %>" class="doc-card-title"><%= doc.title %></a>
+            <h2 class="doc-card-title"><%= doc.title %></h2>
             <% if (doc.date_created) { %>
               <span class="doc-card-date"><%= doc.date_created %></span>
             <% } %>
@@ -74,17 +85,36 @@
             </div>
           </div>
           <div class="doc-card-actions">
-            <button type="button"
-                    class="btn-tag-edit tag-edit-btn"
-                    data-doc-id="<%= doc.id %>"
-                    data-collection-ids="<%= (doc.collections || []).map(c => c.id).join(',') %>"
-                    title="Edit collections">&#9998;</button>
-            <form method="POST" action="/admin/documents/<%= doc.id %>/delete"
-                  class="inline-form--inline"
-                  data-confirm="Delete &quot;<%= doc.title %>&quot; and all its transcriptions?">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button type="submit" class="btn-card-delete" title="Delete">&times;</button>
-            </form>
+            <div class="doc-card-more-menu" data-doc-card-menu>
+              <button type="button"
+                      class="doc-card-more-toggle"
+                      aria-expanded="false"
+                      aria-haspopup="true"
+                      aria-label="More actions for <%= doc.title %>"
+                      title="More actions"
+                      data-doc-card-menu-toggle>&#8942;</button>
+                <div class="doc-card-more-panel" hidden data-doc-card-menu-panel>
+                  <a href="/documents/<%= doc.id %>" class="doc-card-more-item">Open document</a>
+                  <% if (Number(doc.transcript_count || 0) > 0) { %>
+                    <form method="POST" action="/admin/knowledge/documents/reextract" class="doc-card-more-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="document_id" value="<%= doc.id %>">
+                      <input type="hidden" name="returnTo" value="/admin/documents<%= currentPage > 1 || collectionFilter || perPage !== 25 ? ('?page=' + currentPage + (collectionFilter ? '&collection=' + collectionFilter : '') + (perPage !== 25 ? '&perPage=' + perPage : '')) : '' %>">
+                      <button type="submit" class="doc-card-more-item">Re-extract</button>
+                    </form>
+                  <% } %>
+                  <button type="button"
+                          class="doc-card-more-item tag-edit-btn"
+                          data-doc-id="<%= doc.id %>"
+                          data-collection-ids="<%= (doc.collections || []).map(c => c.id).join(',') %>">Edit collections</button>
+                  <form method="POST" action="/admin/documents/<%= doc.id %>/delete"
+                        class="doc-card-more-form"
+                        data-confirm="Delete &quot;<%= doc.title %>&quot; and all its transcriptions?">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="doc-card-more-item doc-card-more-item--danger">Delete document</button>
+                  </form>
+                </div>
+            </div>
           </div>
         </div>
       <% }) %>
@@ -117,6 +147,12 @@
       <% } %>
     </div>
   <% } %>
+</div>
+
+<div id="doc-zoom-overlay" class="zoom-overlay is-hidden" aria-hidden="true">
+  <button type="button" class="zoom-close" id="doc-zoom-close" aria-label="Close zoom">&times;</button>
+  <img src="" alt="" id="doc-zoom-image">
+  <div class="zoom-label" id="doc-zoom-label"></div>
 </div>
 
 <!-- Collection tagger modal -->

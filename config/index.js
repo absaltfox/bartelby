@@ -50,7 +50,7 @@ const config = {
     analyticsWorkerMemoryMb: parseInt(process.env.ANALYTICS_WORKER_MEMORY_MB || '4096', 10)
   },
   database: {
-    driver: process.env.DATABASE_DRIVER || 'sqljs',
+    driver: process.env.DATABASE_DRIVER || 'auto',
     dataDir: path.join(rootDir, 'data'),
     sqljs: {
       filePath: process.env.SQLJS_FILE_PATH || (process.env.NODE_ENV === 'test'

@@ -1,0 +1,54 @@
+<section
+  class="knowledge-graph-panel"
+  id="document-knowledge-graph"
+  data-graph-document
+  data-document-id="<%= document.id %>"
+  hidden>
+  <div class="kg-panel-header">
+    <div>
+      <p class="kg-panel-eyebrow">Knowledge Graph</p>
+      <h3>Linked entities and relationships</h3>
+    </div>
+    <p class="kg-panel-meta">From approved transcript evidence</p>
+  </div>
+  <div class="kg-panel-empty" data-kg-empty>
+    Loading knowledge graph...
+  </div>
+  <div class="kg-panel-body" data-kg-body hidden>
+    <div class="kg-document-layout">
+      <section class="kg-section">
+        <div class="kg-document-visual-header">
+          <div>
+            <h4>Relationship map</h4>
+            <p class="kg-document-visual-copy">Select an entity to inspect its neighboring entities and cited relationship evidence from this document.</p>
+          </div>
+          <div class="kg-document-stats">
+            <span class="graph-detail-tab active" data-kg-node-count>0 nodes</span>
+            <span class="graph-detail-tab" data-kg-edge-count>0 relationships</span>
+          </div>
+        </div>
+        <div class="kg-document-visual">
+          <div class="kg-document-canvas" data-kg-network-canvas>
+            <div class="graph-empty-state" data-kg-network-empty>Select an entity to render the document graph.</div>
+          </div>
+          <aside class="kg-document-detail" data-kg-detail>
+            <div class="graph-empty-state">Entity context and graph details appear here.</div>
+          </aside>
+        </div>
+      </section>
+      <section class="kg-section">
+        <h4>Evidence</h4>
+        <div class="kg-relationship-list" data-kg-relationships></div>
+      </section>
+      <section class="kg-section">
+        <h4>Entity index</h4>
+        <div class="kg-entity-groups" data-kg-entities></div>
+      </section>
+      <section class="kg-section">
+        <h4>Related documents</h4>
+        <p class="kg-panel-meta">Other documents sharing entities with this one</p>
+        <div class="kg-related-documents" data-kg-related-documents></div>
+      </section>
+    </div>
+  </div>
+</section>

@@ -9,7 +9,7 @@ function formatBytes(bytes) {
 %>
 <%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
 
-<div class="admin-page">
+<div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header analytics-settings-header">
@@ -24,24 +24,59 @@ function formatBytes(bytes) {
   <form method="POST" action="/admin/analytics-settings">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <section class="settings-section analytics-settings-section">
-      <h2>Schedule</h2>
-      <div class="analytics-settings-grid">
-        <label class="analytics-toggle-row">
+      <div class="analytics-section-header analytics-section-header--stacked">
+        <div>
+          <p class="admin-section-label">Scheduling</p>
+          <h2>Analytics Schedule</h2>
+          <p class="subtitle">Choose when collection analytics should run automatically and when document growth should trigger an earlier refresh.</p>
+        </div>
+      </div>
+
+      <div class="analytics-settings-summary">
+        <div class="analytics-settings-summary-card">
+          <span class="analytics-settings-summary-label">Current schedule</span>
+          <strong><%= analyticsScheduleSummary %></strong>
+        </div>
+        <div class="analytics-settings-summary-card">
+          <span class="analytics-settings-summary-label">Change trigger</span>
+          <strong><%= settings.analytics_change_threshold || '10' %>% growth since the last analytics snapshot</strong>
+        </div>
+      </div>
+
+      <div class="analytics-settings-grid analytics-settings-grid--schedule">
+        <label class="analytics-toggle-row analytics-toggle-row--wide">
           <input type="checkbox" name="analytics_enabled"
             <%= settings.analytics_enabled !== '0' ? 'checked' : '' %>>
           <span>
             <strong>Enable scheduled analytics</strong>
-            <small>Run collection analytics automatically on the schedule below.</small>
+            <small>Run collection analytics automatically using the cadence below. Manual runs remain available any time.</small>
           </span>
         </label>
 
         <div class="form-group">
           <label for="analytics_schedule_interval">Run interval</label>
           <select id="analytics_schedule_interval" name="analytics_schedule_interval">
-            <option value="24"  <%= settings.analytics_schedule_interval === '24'  ? 'selected' : '' %>>Daily</option>
-            <option value="168" <%= (!settings.analytics_schedule_interval || settings.analytics_schedule_interval === '168') ? 'selected' : '' %>>Weekly</option>
-            <option value="720" <%= settings.analytics_schedule_interval === '720' ? 'selected' : '' %>>Monthly</option>
+            <option value="24"  <%= analyticsSchedule.interval === '24'  ? 'selected' : '' %>>Daily</option>
+            <option value="168" <%= analyticsSchedule.interval === '168' ? 'selected' : '' %>>Weekly</option>
+            <option value="720" <%= analyticsSchedule.interval === '720' ? 'selected' : '' %>>Monthly</option>
           </select>
+          <p class="field-hint">Weekly runs use the weekday below. Monthly runs happen on the first day of the month.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="analytics_schedule_day_of_week">Day of week</label>
+          <select id="analytics_schedule_day_of_week" name="analytics_schedule_day_of_week">
+            <% analyticsDayOptions.forEach(function(option) { %>
+              <option value="<%= option.value %>" <%= analyticsSchedule.dayOfWeek === option.value ? 'selected' : '' %>><%= option.label %></option>
+            <% }) %>
+          </select>
+          <p class="field-hint">Used for weekly runs. Daily and monthly runs ignore this setting.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="analytics_schedule_time">Run time</label>
+          <input type="time" id="analytics_schedule_time" name="analytics_schedule_time" value="<%= analyticsSchedule.time %>" step="300">
+          <p class="field-hint">Server local time.</p>
         </div>
 
         <div class="form-group">
@@ -60,11 +95,17 @@ function formatBytes(bytes) {
 
   <section class="settings-section analytics-settings-section">
     <div class="analytics-section-header">
-      <h2>Collection Status</h2>
-      <form method="POST" action="/admin/analytics-settings/run-all" class="inline-form">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button type="submit" class="btn-secondary btn-sm">Run All Now</button>
-      </form>
+      <div>
+        <p class="admin-section-label">Monitoring</p>
+        <h2>Collection Status</h2>
+        <p class="subtitle">Review the most recent analytics snapshot for each collection and trigger manual refreshes when needed.</p>
+      </div>
+      <div class="analytics-section-actions">
+        <form method="POST" action="/admin/analytics-settings/run-all" class="inline-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="btn-secondary btn-sm">Run All Now</button>
+        </form>
+      </div>
     </div>
     <% if (statusRows.length === 0) { %>
       <p class="muted">No analytics have been run yet.</p>
@@ -111,7 +152,7 @@ function formatBytes(bytes) {
               <td class="col-actions">
                 <form method="POST" action="/admin/analytics-settings/run/<%= row.collection_id %>" class="inline-form">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <button type="submit" class="btn-action btn-promote btn-sm">Run Now</button>
+                  <button type="submit" class="btn-secondary btn-sm">Run Now</button>
                 </form>
               </td>
             </tr>

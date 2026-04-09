@@ -48,6 +48,12 @@
     return `${count} ${count === 1 ? singular : plural}`;
   }
 
+  function appendQueryParam(url, key, value) {
+    if (value == null || value === '') return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+
   function entityTypeLabel(type) {
     return ENTITY_TYPE_LABELS[type] || (type ? String(type).charAt(0).toUpperCase() + String(type).slice(1) : 'Topic');
   }
@@ -68,9 +74,28 @@
     return await response.json();
   }
 
-  function entityLinkHref(entity) {
+  function entityLinkHref(entity, collectionId) {
     if (!entity || entity.id == null) return '#';
-    return `/graph?entity=${encodeURIComponent(entity.id)}`;
+    let href = `/graph?entity=${encodeURIComponent(entity.id)}`;
+    if (collectionId) {
+      href += `&collectionId=${encodeURIComponent(collectionId)}`;
+    }
+    return href;
+  }
+
+  function currentLocationPath() {
+    return `${window.location.pathname || ''}${window.location.search || ''}`;
+  }
+
+  function documentLinkHref(documentId) {
+    if (documentId == null) return '#';
+    return appendQueryParam(`/documents/${encodeURIComponent(documentId)}`, 'back', currentLocationPath());
+  }
+
+  function normalizeCitationExcerpt(text) {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!value) return '';
+    return value.length > 280 ? `${value.slice(0, 277).trimEnd()}...` : value;
   }
 
   function renderEntityCard(entity, selectedId, onSelect) {
@@ -86,7 +111,10 @@
     return button;
   }
 
-  function renderEntityPills(entities) {
+  function renderEntityPills(entities, opts) {
+    const collectionId = opts && opts.collectionId ? opts.collectionId : '';
+    const selectable = !!(opts && opts.selectable);
+    const activeEntityId = opts && opts.activeEntityId != null ? Number(opts.activeEntityId) : null;
     if (!entities.length) {
       return '<p class="graph-muted">No entities found for this document.</p>';
     }
@@ -111,13 +139,15 @@
               const meta = [];
               if (citationCount) meta.push(formatCount(citationCount, 'citation', 'citations'));
               if (documentCount) meta.push(formatCount(documentCount, 'document', 'documents'));
-              return `
-                <li>
-                  <a class="kg-entity-pill ${entityTypeClass(entity.entity_type)}" href="${entityLinkHref(entity)}" data-entity-id="${escHtml(entity.id)}">
+              const label = `
                     <span class="kg-entity-pill-type">${escHtml(entityTypeLabel(entity.entity_type))}</span>
                     <span class="kg-entity-pill-name">${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</span>
-                    ${meta.length ? `<span class="kg-entity-pill-meta">${escHtml(meta.join(' • '))}</span>` : ''}
-                  </a>
+                    ${meta.length ? `<span class="kg-entity-pill-meta">${escHtml(meta.join(' • '))}</span>` : ''}`;
+              return `
+                <li class="kg-entity-row">
+                  ${selectable
+                    ? `<button type="button" class="kg-entity-pill kg-entity-pill-button ${entityTypeClass(entity.entity_type)} ${activeEntityId === Number(entity.id) ? 'active' : ''}" data-kg-select-entity="${escHtml(entity.id)}">${label}</button>`
+                    : `<a class="kg-entity-pill ${entityTypeClass(entity.entity_type)}" href="${entityLinkHref(entity, collectionId)}" data-entity-id="${escHtml(entity.id)}">${label}</a>`}
                 </li>
               `;
             }).join('')}
@@ -140,16 +170,153 @@
       const relationType = relationship.type || relationship.relationship_type || 'related_to';
       return `
         <article class="kg-relationship-item">
-          <div>
-            <strong>${escHtml(relationship.source_name || relationship.source_mention || 'Unknown')}</strong>
-            <span class="kg-relationship-type"> ${escHtml(relationType.replace(/_/g, ' '))} </span>
-            <strong>${escHtml(relationship.target_name || relationship.target_mention || 'Unknown')}</strong>
+          <div class="kg-relationship-item-header">
+            <div class="kg-relationship-statement">
+              <strong>${escHtml(relationship.source_name || relationship.source_mention || 'Unknown')}</strong>
+              <span class="kg-relationship-type">${escHtml(relationType.replace(/_/g, ' '))}</span>
+              <strong>${escHtml(relationship.target_name || relationship.target_mention || 'Unknown')}</strong>
+            </div>
           </div>
           ${passage ? `<div class="kg-relationship-meta">${escHtml(passage)}</div>` : ''}
-          ${evidenceLink}
+          ${evidenceLink ? `<div class="kg-relationship-actions">${evidenceLink}</div>` : ''}
         </article>
       `;
     }).join('');
+  }
+
+  function createEntityMap(entities) {
+    const map = new Map();
+    safeArray(entities).forEach((entity) => {
+      if (entity && entity.id != null) {
+        map.set(Number(entity.id), entity);
+      }
+    });
+    return map;
+  }
+
+  function getDocumentEntityNeighbors(entityId, entities, relationships) {
+    const entityMap = createEntityMap(entities);
+    const neighborGroups = new Map();
+
+    safeArray(relationships).forEach((relationship) => {
+      const sourceId = Number(relationship.source_entity_id);
+      const targetId = Number(relationship.target_entity_id);
+      let neighborId = null;
+      if (sourceId === Number(entityId)) neighborId = targetId;
+      else if (targetId === Number(entityId)) neighborId = sourceId;
+      if (!neighborId || !entityMap.has(neighborId)) return;
+
+      if (!neighborGroups.has(neighborId)) {
+        neighborGroups.set(neighborId, {
+          ...entityMap.get(neighborId),
+          relationshipTypes: new Set(),
+          relationshipCount: 0
+        });
+      }
+
+      const group = neighborGroups.get(neighborId);
+      group.relationshipCount += 1;
+      group.relationshipTypes.add(String(relationship.relationship_type || relationship.type || 'related_to'));
+    });
+
+    return Array.from(neighborGroups.values()).map((neighbor) => ({
+      ...neighbor,
+      relationship_type: Array.from(neighbor.relationshipTypes).join(', '),
+      relationshipCount: neighbor.relationshipCount
+    }));
+  }
+
+  function renderDocumentGraphCanvas(container, centerEntity, neighbors, onSelect) {
+    const width = container.clientWidth || 780;
+    const height = Math.max(container.clientHeight || 360, 360);
+    const nodeLayer = document.createElement('div');
+    nodeLayer.className = 'graph-node-layer';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('aria-hidden', 'true');
+
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) * 0.34;
+    const count = neighbors.length || 0;
+
+    neighbors.forEach((neighbor, index) => {
+      const angle = (Math.PI * 2 * index) / Math.max(count, 1) - Math.PI / 2;
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', centerX);
+      line.setAttribute('y1', centerY);
+      line.setAttribute('x2', x);
+      line.setAttribute('y2', y);
+      line.setAttribute('class', 'graph-edge');
+      svg.appendChild(line);
+
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', x);
+      label.setAttribute('y', y - 12);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('class', 'graph-node-subtitle');
+      label.textContent = neighbor.relationship_type ? neighbor.relationship_type.replace(/_/g, ' ') : entityTypeLabel(neighbor.entity_type);
+      svg.appendChild(label);
+    });
+
+    const centerButton = createNodeButton(centerEntity, 'center', centerX, centerY, true, onSelect);
+    centerButton.style.minWidth = '210px';
+    centerButton.style.zIndex = '2';
+    centerButton.classList.add('graph-node-button--compact');
+
+    const targetCount = Math.max(neighbors.length, 1);
+    neighbors.forEach((neighbor, index) => {
+      const angle = (Math.PI * 2 * index) / targetCount - Math.PI / 2;
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      const button = createNodeButton(neighbor, 'neighbor', x, y, false, onSelect);
+      button.style.minWidth = '160px';
+      button.classList.add('graph-node-button--compact');
+      nodeLayer.appendChild(button);
+    });
+
+    nodeLayer.appendChild(centerButton);
+    container.innerHTML = '';
+    container.appendChild(svg);
+    container.appendChild(nodeLayer);
+  }
+
+  function renderDocumentEntityDetail(entity, neighbors, relationships, container) {
+    if (!entity) {
+      container.innerHTML = '<div class="graph-empty-state">Entity context and graph details appear here.</div>';
+      return;
+    }
+
+    const relatedRelationships = safeArray(relationships).filter((relationship) =>
+      Number(relationship.source_entity_id) === Number(entity.id) || Number(relationship.target_entity_id) === Number(entity.id)
+    );
+    const relationTypes = Array.from(new Set(relatedRelationships.map((relationship) =>
+      String(relationship.relationship_type || relationship.type || 'related_to').replace(/_/g, ' ')
+    )));
+
+    container.innerHTML = `
+      <div class="graph-detail-card">
+        <div class="kg-document-detail-header">
+          <span class="entity-type-badge ${entityTypeClass(entity.entity_type)}">${escHtml(entityTypeLabel(entity.entity_type))}</span>
+          <a class="btn-secondary btn-sm" href="${entityLinkHref(entity)}">Open in graph</a>
+        </div>
+        <h3>${escHtml(entity.canonical_name || entity.name || 'Entity')}</h3>
+        ${entity.description ? `<p class="graph-detail-description">${escHtml(entity.description)}</p>` : ''}
+      </div>
+      <div class="graph-detail-tabs">
+        <span class="graph-detail-tab active">${formatCount(neighbors.length, 'neighbor', 'neighbors')}</span>
+        <span class="graph-detail-tab active">${formatCount(relatedRelationships.length, 'relationship', 'relationships')}</span>
+      </div>
+      <section class="graph-detail-section">
+        <h4>Relationship types</h4>
+        ${relationTypes.length
+          ? `<div class="graph-detail-list">${relationTypes.map((type) => `<div class="graph-detail-card"><strong>${escHtml(type)}</strong></div>`).join('')}</div>`
+          : '<div class="graph-empty-state">No approved relationships were found for this entity in this document.</div>'}
+      </section>
+    `;
   }
 
   function selectTranscriptSpan(start, end) {
@@ -190,22 +357,111 @@
       const data = await fetchJson(`/graph/documents/${encodeURIComponent(docId)}/entities`);
       const entities = safeArray(data.entities);
       const relationships = safeArray(data.relationships);
-      if (!entities.length && !relationships.length) {
-        panel.hidden = true;
-        return;
-      }
 
       panel.hidden = false;
       const empty = qs('[data-kg-empty]', panel);
       const body = qs('[data-kg-body]', panel);
+      const networkCanvas = qs('[data-kg-network-canvas]', panel);
+      const networkEmpty = qs('[data-kg-network-empty]', panel);
+      const detailContainer = qs('[data-kg-detail]', panel);
+      const nodeCount = qs('[data-kg-node-count]', panel);
+      const edgeCount = qs('[data-kg-edge-count]', panel);
       const entityContainer = qs('[data-kg-entities]', panel);
       const relationshipContainer = qs('[data-kg-relationships]', panel);
+      const pendingCount = Number(data.pendingCount || 0);
+
+      if (!entities.length && !relationships.length) {
+        if (empty) {
+          empty.hidden = false;
+          empty.textContent = pendingCount > 0
+            ? `Knowledge extractions are waiting for approval (${pendingCount}).`
+            : 'No approved knowledge graph evidence is available for this transcript yet.';
+        }
+        if (body) body.hidden = true;
+        return;
+      }
+
+      const selectedDefault = relationships.length
+        ? Number(relationships[0].source_entity_id || relationships[0].target_entity_id || 0)
+        : (entities[0] ? Number(entities[0].id) : null);
+      let activeEntityId = Number.isFinite(selectedDefault) ? selectedDefault : null;
+
+      const renderDocumentGraphSelection = function(entityId) {
+        activeEntityId = Number(entityId);
+        const entityMap = createEntityMap(entities);
+        const selectedEntity = entityMap.get(activeEntityId) || entities[0] || null;
+        const neighbors = selectedEntity ? getDocumentEntityNeighbors(selectedEntity.id, entities, relationships) : [];
+        const filteredRelationships = selectedEntity
+          ? relationships.filter((relationship) =>
+            Number(relationship.source_entity_id) === Number(selectedEntity.id)
+              || Number(relationship.target_entity_id) === Number(selectedEntity.id))
+          : relationships;
+
+        if (nodeCount) nodeCount.textContent = formatCount(entities.length, 'node', 'nodes');
+        if (edgeCount) edgeCount.textContent = formatCount(filteredRelationships.length, 'relationship', 'relationships');
+        if (entityContainer) entityContainer.innerHTML = renderEntityPills(entities, { selectable: true, activeEntityId: selectedEntity && selectedEntity.id });
+        if (relationshipContainer) relationshipContainer.innerHTML = renderRelationships(filteredRelationships);
+        if (detailContainer) renderDocumentEntityDetail(selectedEntity, neighbors, filteredRelationships, detailContainer);
+
+        if (networkCanvas) {
+          if (!selectedEntity) {
+            networkCanvas.innerHTML = '';
+            if (networkEmpty) networkEmpty.hidden = false;
+          } else {
+            if (networkEmpty) networkEmpty.hidden = true;
+            renderDocumentGraphCanvas(networkCanvas, selectedEntity, neighbors, renderDocumentGraphSelection);
+          }
+        }
+      };
 
       if (empty) empty.hidden = true;
       if (body) body.hidden = false;
-      if (entityContainer) entityContainer.innerHTML = renderEntityPills(entities);
-      if (relationshipContainer) relationshipContainer.innerHTML = renderRelationships(relationships);
       attachPassageLinks(panel);
+
+      // Fetch and render related documents
+      var relatedContainer = qs('[data-kg-related-documents]', panel);
+      if (relatedContainer) {
+        fetchJson('/graph/documents/' + encodeURIComponent(docId) + '/related?limit=10')
+          .then(function(data) {
+            var related = safeArray(data.related);
+            if (!related.length) {
+              relatedContainer.innerHTML = '<div class="graph-empty-state">No related documents share entities with this one.</div>';
+              return;
+            }
+            relatedContainer.innerHTML = related.map(function(doc) {
+              var badgesHtml = '';
+              if (doc.sharedEntities && doc.sharedEntities.length) {
+                var badges = doc.sharedEntities.slice(0, 8).map(function(e) {
+                  return '<span class="entity-type-badge ' + entityTypeClass(e.entity_type) + '" style="font-size:0.75rem;margin:0 2px 2px 0">' + escHtml(e.canonical_name || 'Entity') + '</span>';
+                }).join('');
+                if (doc.sharedEntities.length > 8) {
+                  badges += '<span class="graph-muted">+' + (doc.sharedEntities.length - 8) + ' more</span>';
+                }
+                badgesHtml = '<div class="kg-relationship-meta">' + badges + '</div>';
+              }
+              return '<article class="kg-relationship-item">' +
+                '<div class="kg-relationship-item-header">' +
+                  '<div class="kg-relationship-statement">' +
+                    '<a href="' + documentLinkHref(doc.documentId) + '"><strong>' + escHtml(doc.documentTitle) + '</strong></a>' +
+                    '<span class="kg-relationship-type">' + formatCount(doc.sharedEntityCount, 'shared entity', 'shared entities') + '</span>' +
+                  '</div>' +
+                '</div>' +
+                badgesHtml +
+              '</article>';
+            }).join('');
+          })
+          .catch(function() {
+            relatedContainer.innerHTML = '<div class="graph-empty-state">Unable to load related documents.</div>';
+          });
+      }
+
+      panel.addEventListener('click', function(ev) {
+        const button = ev.target.closest('[data-kg-select-entity]');
+        if (!button) return;
+        ev.preventDefault();
+        renderDocumentGraphSelection(button.dataset.kgSelectEntity);
+      });
+      renderDocumentGraphSelection(activeEntityId);
     } catch (err) {
       panel.hidden = true;
     }
@@ -290,64 +546,129 @@
     return button;
   }
 
+  function forceLayout(centerEntity, neighbors, width, height) {
+    var nodes = [
+      { id: centerEntity.id, entity: centerEntity, x: width / 2, y: height / 2, vx: 0, vy: 0, fixed: true }
+    ];
+    var nodeMap = new Map();
+    nodeMap.set(centerEntity.id, nodes[0]);
+
+    neighbors.forEach(function(n, i) {
+      var angle = (Math.PI * 2 * i) / Math.max(neighbors.length, 1);
+      var r = Math.min(width, height) * 0.3;
+      var node = {
+        id: n.id,
+        entity: n,
+        x: width / 2 + Math.cos(angle) * r + (Math.random() - 0.5) * 20,
+        y: height / 2 + Math.sin(angle) * r + (Math.random() - 0.5) * 20,
+        vx: 0, vy: 0, fixed: false
+      };
+      nodes.push(node);
+      nodeMap.set(n.id, node);
+    });
+
+    var edges = neighbors.map(function(n) {
+      return {
+        source: nodeMap.get(centerEntity.id),
+        target: nodeMap.get(n.id),
+        neighbor: n
+      };
+    });
+
+    var REPULSION = 8000;
+    var ATTRACTION = 0.005;
+    var CENTER_GRAVITY = 0.01;
+    var DAMPING = 0.85;
+    var ITERATIONS = 150;
+    var PADDING = 80;
+
+    for (var iter = 0; iter < ITERATIONS; iter++) {
+      for (var i = 0; i < nodes.length; i++) {
+        for (var j = i + 1; j < nodes.length; j++) {
+          var dx = nodes[j].x - nodes[i].x;
+          var dy = nodes[j].y - nodes[i].y;
+          var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var force = REPULSION / (dist * dist);
+          var fx = (dx / dist) * force;
+          var fy = (dy / dist) * force;
+          if (!nodes[i].fixed) { nodes[i].vx -= fx; nodes[i].vy -= fy; }
+          if (!nodes[j].fixed) { nodes[j].vx += fx; nodes[j].vy += fy; }
+        }
+      }
+
+      for (var e = 0; e < edges.length; e++) {
+        var edge = edges[e];
+        var edx = edge.target.x - edge.source.x;
+        var edy = edge.target.y - edge.source.y;
+        var edist = Math.sqrt(edx * edx + edy * edy) || 1;
+        var eforce = edist * ATTRACTION;
+        var efx = (edx / edist) * eforce;
+        var efy = (edy / edist) * eforce;
+        if (!edge.source.fixed) { edge.source.vx += efx; edge.source.vy += efy; }
+        if (!edge.target.fixed) { edge.target.vx -= efx; edge.target.vy -= efy; }
+      }
+
+      for (var k = 0; k < nodes.length; k++) {
+        var node = nodes[k];
+        if (node.fixed) continue;
+        node.vx += (width / 2 - node.x) * CENTER_GRAVITY;
+        node.vy += (height / 2 - node.y) * CENTER_GRAVITY;
+        node.vx *= DAMPING;
+        node.vy *= DAMPING;
+        node.x += node.vx;
+        node.y += node.vy;
+        node.x = Math.max(PADDING, Math.min(width - PADDING, node.x));
+        node.y = Math.max(PADDING, Math.min(height - PADDING, node.y));
+      }
+    }
+
+    return { nodes: nodes, edges: edges };
+  }
+
   function renderGraphCanvas(container, centerEntity, neighbors, onSelect) {
-    const width = container.clientWidth || 800;
-    const height = Math.max(container.clientHeight || 560, 560);
-    const nodeLayer = document.createElement('div');
+    var width = container.clientWidth || 800;
+    var height = Math.max(container.clientHeight || 560, 560);
+    var nodeLayer = document.createElement('div');
     nodeLayer.className = 'graph-node-layer';
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
     svg.setAttribute('aria-hidden', 'true');
-    svg.innerHTML = `
-      <defs>
-        <filter id="graph-shadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1e1610" flood-opacity="0.08"></feDropShadow>
-        </filter>
-      </defs>
-    `;
+    svg.innerHTML = '<defs>' +
+      '<filter id="graph-shadow" x="-20%" y="-20%" width="140%" height="140%">' +
+      '<feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1e1610" flood-opacity="0.08"></feDropShadow>' +
+      '</filter>' +
+      '</defs>';
 
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(width, height) * 0.32;
-    const count = neighbors.length || 0;
+    var layout = forceLayout(centerEntity, neighbors, width, height);
 
-    neighbors.forEach((neighbor, index) => {
-      const angle = (Math.PI * 2 * index) / Math.max(count, 1) - Math.PI / 2;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', centerX);
-      line.setAttribute('y1', centerY);
-      line.setAttribute('x2', x);
-      line.setAttribute('y2', y);
+    layout.edges.forEach(function(edge) {
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', edge.source.x);
+      line.setAttribute('y1', edge.source.y);
+      line.setAttribute('x2', edge.target.x);
+      line.setAttribute('y2', edge.target.y);
       line.setAttribute('class', 'graph-edge');
       svg.appendChild(line);
 
-      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', x);
-      label.setAttribute('y', y - 16);
+      var midX = (edge.source.x + edge.target.x) / 2;
+      var midY = (edge.source.y + edge.target.y) / 2;
+      var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', midX);
+      label.setAttribute('y', midY - 6);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('class', 'graph-node-subtitle');
-      label.textContent = neighbor.relationship_type ? neighbor.relationship_type.replace(/_/g, ' ') : entityTypeLabel(neighbor.entity_type);
+      label.textContent = edge.neighbor.relationship_type ? edge.neighbor.relationship_type.replace(/_/g, ' ') : entityTypeLabel(edge.neighbor.entity_type);
       svg.appendChild(label);
     });
 
-    const centerButton = createNodeButton(centerEntity, 'center', centerX, centerY, true, onSelect);
-    centerButton.style.minWidth = '220px';
-    centerButton.style.zIndex = '2';
-
-    const targetCount = Math.max(neighbors.length, 1);
-    neighbors.forEach((neighbor, index) => {
-      const angle = (Math.PI * 2 * index) / targetCount - Math.PI / 2;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
-      const button = createNodeButton(neighbor, 'neighbor', x, y, false, onSelect);
-      button.style.minWidth = '180px';
+    layout.nodes.forEach(function(node) {
+      var isCenter = node.fixed;
+      var button = createNodeButton(node.entity, isCenter ? 'center' : 'neighbor', node.x, node.y, isCenter, onSelect);
+      button.style.minWidth = isCenter ? '220px' : '180px';
+      if (isCenter) button.style.zIndex = '2';
       nodeLayer.appendChild(button);
     });
-
-    nodeLayer.appendChild(centerButton);
 
     container.innerHTML = '';
     container.appendChild(svg);
@@ -380,8 +701,20 @@
     const citationHtml = citations.length
       ? `<div class="graph-citation-list">${citations.map((citation) => `
         <div class="graph-citation-card">
-          <strong>Document ${escHtml(citation.document_id)}</strong>
-          <div class="graph-muted">${escHtml(citation.passage_text || '')}</div>
+          <div class="graph-citation-card-header">
+            <div>
+              <div class="graph-citation-label">Cited in</div>
+              ${citation.document_id
+                ? `<a class="graph-citation-link" href="${documentLinkHref(citation.document_id)}">${escHtml(citation.document_title || `Document ${citation.document_id}`)}</a>`
+                : `<strong>${escHtml(citation.document_title || 'Source document')}</strong>`}
+            </div>
+            ${citation.document_id
+              ? `<a class="btn-secondary btn-sm graph-citation-action" href="${documentLinkHref(citation.document_id)}">Open document</a>`
+              : ''}
+          </div>
+          ${normalizeCitationExcerpt(citation.passage_text)
+            ? `<blockquote class="graph-citation-quote">${escHtml(normalizeCitationExcerpt(citation.passage_text))}</blockquote>`
+            : '<div class="graph-empty-state graph-empty-state--compact">No excerpt was stored for this citation.</div>'}
         </div>
       `).join('')}</div>`
       : '<div class="graph-empty-state">No citations attached to this entity.</div>';
@@ -400,7 +733,7 @@
       <div class="graph-detail-card">
         <h3>${escHtml(detail.entity.canonical_name || detail.entity.name || 'Entity')}</h3>
         <div class="graph-muted">${escHtml(entityTypeLabel(detail.entity.entity_type))}</div>
-        ${detail.entity.description ? `<p style="margin-top:8px;">${escHtml(detail.entity.description)}</p>` : ''}
+        ${detail.entity.description ? `<p class="graph-detail-description">${escHtml(detail.entity.description)}</p>` : ''}
       </div>
       <div class="graph-detail-tabs">
         <span class="graph-detail-tab active">${aliases.length ? `${aliases.length} aliases` : 'Aliases'}</span>
@@ -408,23 +741,63 @@
         <span class="graph-detail-tab active">${citations.length ? `${citations.length} citations` : 'Citations'}</span>
         <span class="graph-detail-tab active">${neighbors.length ? `${neighbors.length} neighbors` : 'Neighbors'}</span>
       </div>
-      <section style="margin-bottom:14px;">
+      <section class="graph-detail-section">
         <h4>Aliases</h4>
         ${aliasHtml}
       </section>
-      <section style="margin-bottom:14px;">
+      <section class="graph-detail-section">
         <h4>Dates</h4>
         ${dateHtml}
       </section>
-      <section style="margin-bottom:14px;">
+      <section class="graph-detail-section">
         <h4>Citations</h4>
         ${citationHtml}
       </section>
-      <section>
+      <section class="graph-detail-section">
         <h4>Connected entities</h4>
         ${neighborHtml}
       </section>
+      <section class="graph-detail-section" style="margin-top:14px;">
+        <h4>Cited in documents</h4>
+        <div class="graph-document-list" id="graph-entity-documents">
+          <div class="graph-empty-state">Loading related documents...</div>
+        </div>
+      </section>
     `;
+
+    // Fetch documents that cite this entity
+    if (detail.entity && detail.entity.id) {
+      fetchJson(`/graph/entities/${encodeURIComponent(detail.entity.id)}/documents`)
+        .then(function(data) {
+          var docList = container.querySelector('#graph-entity-documents');
+          if (!docList || !data.documents || !data.documents.length) {
+            if (docList) docList.innerHTML = '<div class="graph-empty-state">No documents cite this entity.</div>';
+            return;
+          }
+          docList.innerHTML = data.documents.map(function(doc) {
+            var passageHtml = '';
+            if (doc.passages && doc.passages.length) {
+              passageHtml = doc.passages.map(function(p) {
+                return '<blockquote class="graph-citation-quote">' + escHtml(normalizeCitationExcerpt(p.text)) + '</blockquote>';
+              }).join('');
+            }
+            return '<div class="graph-citation-card">' +
+              '<div class="graph-citation-card-header">' +
+                '<div>' +
+                  '<div class="graph-citation-label">' + escHtml(formatCount(doc.citationCount, 'citation', 'citations')) + '</div>' +
+                  '<a class="graph-citation-link" href="' + documentLinkHref(doc.documentId) + '">' + escHtml(doc.documentTitle) + '</a>' +
+                '</div>' +
+                '<a class="btn-secondary btn-sm" href="' + documentLinkHref(doc.documentId) + '">Open</a>' +
+              '</div>' +
+              passageHtml +
+            '</div>';
+          }).join('');
+        })
+        .catch(function() {
+          var docList = container.querySelector('#graph-entity-documents');
+          if (docList) docList.innerHTML = '<div class="graph-empty-state">Unable to load documents.</div>';
+        });
+    }
   }
 
   async function initGraphExplorer(panel) {
@@ -441,7 +814,11 @@
     const searchForm = qs('#graph-search-form', panel);
     const searchInput = qs('#graph-search-input', panel);
     const typeFilter = qs('#graph-type-filter', panel);
+    const dateFromInput = qs('#graph-date-from', panel);
+    const dateToInput = qs('#graph-date-to', panel);
+    const relFilter = qs('#graph-rel-filter', panel);
     const initialEntityId = parseInt(panel.dataset.initialEntityId || '', 10);
+    const collectionId = panel.dataset.collectionId || '';
 
     const state = {
       entities: [],
@@ -450,16 +827,26 @@
       selectedNeighbors: [],
       activeEntityId: Number.isInteger(initialEntityId) ? initialEntityId : null,
       activeQuery: '',
-      activeType: ''
+      activeType: '',
+      activeDateFrom: '',
+      activeDateTo: '',
+      activeRelType: ''
     };
 
-    async function loadSidebarEntities(query, type) {
+    async function loadSidebarEntities(query, type, dateFrom, dateTo, relType) {
       state.activeQuery = query || '';
       state.activeType = type || '';
+      state.activeDateFrom = dateFrom || '';
+      state.activeDateTo = dateTo || '';
+      state.activeRelType = relType || '';
 
       let url = '/graph/entities?limit=24';
       if (query) url += `&q=${encodeURIComponent(query)}`;
       if (type) url += `&type=${encodeURIComponent(type)}`;
+      if (collectionId) url += `&collectionId=${encodeURIComponent(collectionId)}`;
+      if (dateFrom) url += `&from=${encodeURIComponent(dateFrom)}`;
+      if (dateTo) url += `&to=${encodeURIComponent(dateTo)}`;
+      if (relType) url += `&relType=${encodeURIComponent(relType)}`;
 
       try {
         const data = await fetchJson(url);
@@ -490,9 +877,13 @@
       state.activeEntityId = entityId;
 
       try {
+        let neighborsUrl = `/graph/entities/${encodeURIComponent(entityId)}/neighbors?depth=1`;
+        neighborsUrl = appendQueryParam(neighborsUrl, 'collectionId', collectionId);
+        if (state.activeRelType) neighborsUrl = appendQueryParam(neighborsUrl, 'relType', state.activeRelType);
+
         const [detail, neighborData] = await Promise.all([
-          fetchJson(`/graph/entities/${encodeURIComponent(entityId)}`),
-          fetchJson(`/graph/entities/${encodeURIComponent(entityId)}/neighbors?depth=2`)
+          fetchJson(appendQueryParam(`/graph/entities/${encodeURIComponent(entityId)}`, 'collectionId', collectionId)),
+          fetchJson(neighborsUrl)
         ]);
 
         const neighbors = safeArray(neighborData.neighbors);
@@ -529,12 +920,15 @@
         ev.preventDefault();
         const query = (searchInput && searchInput.value || '').trim();
         const type = typeFilter ? typeFilter.value : '';
+        const dateFrom = dateFromInput ? dateFromInput.value : '';
+        const dateTo = dateToInput ? dateToInput.value : '';
+        const relType = relFilter ? relFilter.value : '';
         state.activeEntityId = null;
-        await loadSidebarEntities(query, type);
+        await loadSidebarEntities(query, type, dateFrom, dateTo, relType);
       });
     }
 
-    await loadSidebarEntities('', '');
+    await loadSidebarEntities('', '', '', '', '');
     if (Number.isInteger(initialEntityId)) {
       await loadEntity(state.activeEntityId);
     }

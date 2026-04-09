@@ -12,6 +12,9 @@ const request = require('supertest');
 let app;
 let graphDocumentId;
 let graphEntityId;
+let pendingDocumentId;
+let pendingTranscriptId;
+let pendingEntityId;
 
 function extractCsrfToken(html) {
   const match = html.match(/name="_csrf"\s+value="([^"]+)"/);
@@ -102,6 +105,44 @@ beforeAll(async () => {
     extraction_model: 'jest',
     confidence: 1
   });
+
+  pendingDocumentId = await db.documentsAsync.create({
+    title: 'Pending Knowledge Graph Source Document',
+    date_created: '1872-03-15',
+    description: 'A test document with pending graph evidence.',
+    image_path: '/uploads/test-graph-pending.png',
+    metadata: { author: 'John Doe' }
+  });
+  await db.documentCollectionsAsync.add(pendingDocumentId, collectionId);
+
+  pendingTranscriptId = await db.transcriptsAsync.create({
+    document_id: pendingDocumentId,
+    content: 'John Doe appears in a low-confidence extraction.',
+    transcriber: 'Test',
+    version: 1,
+    notes: null,
+    is_best: true
+  });
+
+  pendingEntityId = await db.entities.create({
+    entity_type: 'person',
+    canonical_name: 'John Doe',
+    description: 'Pending test entity',
+    properties: {}
+  });
+
+  await db.citations.create({
+    entity_id: pendingEntityId,
+    relationship_id: null,
+    transcript_id: pendingTranscriptId,
+    document_id: pendingDocumentId,
+    passage_start: 0,
+    passage_end: 8,
+    passage_text: 'John Doe',
+    extraction_method: 'test',
+    extraction_model: 'jest',
+    confidence: 0.2
+  });
 }, 30_000);
 
 describe('knowledge graph routes', () => {
@@ -113,6 +154,24 @@ describe('knowledge graph routes', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.entities)).toBe(true);
     expect(res.body.entities.some((entity) => entity.id === graphEntityId)).toBe(true);
+  });
+
+  it('hides pending extraction evidence until it is approved', async () => {
+    const db = require('../../database/db');
+    const agent = request.agent(app);
+    await loginAsAdmin(agent);
+
+    const hiddenRes = await agent.get(`/graph/documents/${pendingDocumentId}/entities`);
+    expect(hiddenRes.status).toBe(200);
+    expect(hiddenRes.body.entities.some((entity) => entity.id === pendingEntityId)).toBe(false);
+    expect(hiddenRes.body.pendingCount).toBeGreaterThan(0);
+
+    const pendingCitation = (await db.citationsAsync.getByDocumentId(pendingDocumentId, { approvalStatus: 'pending' }))[0];
+    await db.citationsAsync.approve(pendingCitation.id, 1, 'manual');
+
+    const visibleRes = await agent.get(`/graph/documents/${pendingDocumentId}/entities`);
+    expect(visibleRes.status).toBe(200);
+    expect(visibleRes.body.entities.some((entity) => entity.id === pendingEntityId)).toBe(true);
   });
 
   it('exposes entity matches through the graph search API and renders the search panel shell', async () => {

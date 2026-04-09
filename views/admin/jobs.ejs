@@ -1,11 +1,11 @@
 <%- include('../partials/header', { pageTitle: 'Jobs', query: '' }) %>
 
-<div class="admin-page workflows-page">
+<div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header">
     <h1>Jobs</h1>
-    <p class="subtitle">Background import and transcription jobs</p>
+    <p class="subtitle">Background import, transcription, and knowledge extraction jobs</p>
   </div>
 
   <!-- Filter tabs: status -->
@@ -53,6 +53,9 @@
     <a href="<%= filterHref(filter, 'transcription') %>" class="filter-tab filter-tab-type <%= typeFilter === 'transcription' ? 'active' : '' %>">
       Transcription <span class="filter-count"><%= typeCounts.transcription %></span>
     </a>
+    <a href="<%= filterHref(filter, 'extraction') %>" class="filter-tab filter-tab-type <%= typeFilter === 'extraction' ? 'active' : '' %>">
+      Extraction <span class="filter-count"><%= typeCounts.extraction %></span>
+    </a>
   </div>
 
   <!-- Bulk action bar -->
@@ -63,8 +66,8 @@
     </label>
     <span id="jobs-bulk-count" class="bulk-count">0 selected</span>
     <div class="jobs-toolbar-actions">
-      <button type="button" class="btn-action btn-sm is-hidden" id="bulk-retry-btn">Retry Selected</button>
-      <button type="button" class="btn-action btn-delete btn-sm" id="bulk-delete-btn">Delete Selected</button>
+      <button type="button" class="btn-secondary btn-sm is-hidden" id="bulk-retry-btn">Retry Selected</button>
+      <button type="button" class="btn-danger btn-sm" id="bulk-delete-btn">Delete Selected</button>
     </div>
   </div>
 
@@ -112,7 +115,9 @@
                        data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
               </td>
               <td>
-                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImport ? 'Import' : 'Transcription' %></span>
+                <span class="job-type-badge job-type-<%= job.job_type %>">
+                  <%= isImport ? 'Import' : job.job_type === 'extraction' ? 'Extraction' : 'Transcription' %>
+                </span>
               </td>
               <td>
                 <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
@@ -137,6 +142,16 @@
                   <% } else if (job.page_count) { %>
                     <small class="muted"> (<%= job.page_count %> pages)</small>
                   <% } %>
+                <% } else if (job.job_type === 'extraction' && job.job_kind === 'batch') { %>
+                  <span><%= job.batch_display_name || 'Batch extraction job' %></span>
+                  <small class="muted">
+                    <%= job.batch_document_count || 0 %> documents
+                    <% if (job.batch_completed_count || job.batch_failed_count) { %>
+                      • <%= job.batch_completed_count || 0 %> complete
+                      <% if (job.batch_failed_count) { %> • <%= job.batch_failed_count %> failed<% } %>
+                    <% } %>
+                    <% if (job.batch_remote_status) { %> • <%= job.batch_remote_status %><% } %>
+                  </small>
                 <% } else if (isBatch) { %>
                   <span><%= job.batch_display_name || 'Batch transcription job' %></span>
                   <small class="muted">
@@ -158,16 +173,16 @@
               <td class="job-actions-cell">
                 <div class="job-actions">
                   <% if (!isImport) { %>
-                    <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
+                    <button type="button" class="btn-secondary btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
                   <% } %>
                   <% if (isImport && job.status === 'done' && !job.submitted) { %>
-                    <a href="/admin/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-promote">Continue</a>
+                    <a href="/admin/import?importJobId=<%= job.id %>" class="btn-secondary btn-sm">Continue</a>
                   <% } %>
                   <% if (canRetry) { %>
-                    <button type="button" class="btn-action btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
+                    <button type="button" class="btn-secondary btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
                   <% } %>
                   <% if (canDelete) { %>
-                    <button type="button" class="btn-action btn-delete btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>
+                    <button type="button" class="btn-danger btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>
                   <% } %>
                 </div>
               </td>

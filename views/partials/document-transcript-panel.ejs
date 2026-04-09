@@ -204,35 +204,6 @@
     <% } %>
   </div>
 
-  <section
-    class="knowledge-graph-panel"
-    id="document-knowledge-graph"
-    data-graph-document
-    data-document-id="<%= document.id %>"
-    hidden>
-    <div class="kg-panel-header">
-      <div>
-        <p class="kg-panel-eyebrow">Knowledge Graph</p>
-        <h3>Entities, relationships, and cited passages</h3>
-      </div>
-      <p class="kg-panel-meta">Extracted from the selected transcript</p>
-    </div>
-    <div class="kg-panel-empty" data-kg-empty>
-      Loading knowledge graph...
-    </div>
-    <div class="kg-panel-body" data-kg-body hidden>
-      <div class="kg-grid">
-        <section class="kg-section">
-          <h4>Entities</h4>
-          <div class="kg-entity-groups" data-kg-entities></div>
-        </section>
-        <section class="kg-section">
-          <h4>Relationships</h4>
-          <div class="kg-relationship-list" data-kg-relationships></div>
-        </section>
-      </div>
-    </div>
-  </section>
 <% } else { %>
   <p class="no-transcript">No transcripts available for this document.</p>
   <% if (typeof canEdit !== 'undefined' && canEdit) { %>

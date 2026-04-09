@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobsAsync, importJobsAsync, adminJobsAsync } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, adminJobsAsync } = require('../database/db');
 
 router.use(requireAdmin);
 
@@ -49,6 +49,8 @@ router.post('/api/bulk/retry', express.json(), async (req, res) => {
     try {
       if (type === 'import') {
         await importJobsAsync.retry(parseInt(id));
+      } else if (type === 'extraction') {
+        await extractionJobsAsync.retry(parseInt(id));
       } else {
         await transcriptionJobsAsync.retry(parseInt(id));
       }
@@ -67,6 +69,8 @@ router.post('/api/bulk/delete', express.json(), async (req, res) => {
     try {
       if (type === 'import') {
         await importJobsAsync.delete(parseInt(id));
+      } else if (type === 'extraction') {
+        await extractionJobsAsync.delete(parseInt(id));
       } else {
         await transcriptionJobsAsync.delete(parseInt(id));
       }
@@ -97,9 +101,22 @@ router.get('/api/:id', async (req, res) => {
   res.json(job);
 });
 
+// API: single extraction job with log
+router.get('/api/extraction/:id', async (req, res) => {
+  const job = await extractionJobsAsync.getById(parseInt(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json(job);
+});
+
 // API: retry failed transcription job
 router.post('/api/:id/retry', async (req, res) => {
   await transcriptionJobsAsync.retry(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+// API: retry failed extraction job
+router.post('/api/extraction/:id/retry', async (req, res) => {
+  await extractionJobsAsync.retry(parseInt(req.params.id));
   res.json({ success: true });
 });
 
@@ -112,6 +129,12 @@ router.post('/api/import/:id/retry', async (req, res) => {
 // API: delete transcription job record
 router.delete('/api/:id', express.json(), async (req, res) => {
   await transcriptionJobsAsync.delete(parseInt(req.params.id));
+  res.json({ success: true });
+});
+
+// API: delete extraction job record
+router.delete('/api/extraction/:id', express.json(), async (req, res) => {
+  await extractionJobsAsync.delete(parseInt(req.params.id));
   res.json({ success: true });
 });
 

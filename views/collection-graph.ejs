@@ -1,0 +1,101 @@
+<%- include('partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<%- include('partials/collection-hero', {
+  collection: collection,
+  latestAnalytics: latestAnalytics,
+  activeTab: 'graph',
+  showGraphTab: true,
+  currentUser: currentUser
+}) %>
+
+<div class="graph-page graph-page--collection" data-graph-explorer data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>" data-collection-id="<%= collectionId %>">
+  <div class="collection-graph-toolbar">
+    <div class="collection-graph-intro">
+      <p class="collection-graph-label">Knowledge Graph</p>
+      <p class="collection-graph-summary">Explore approved entities, relationships, and cited passages within <%= collection.name %>.</p>
+    </div>
+    <form class="graph-toolbar" id="graph-search-form">
+      <input type="search" id="graph-search-input" name="q" placeholder="Search entities or aliases" autocomplete="off">
+      <select id="graph-type-filter" name="type">
+        <option value="">All types</option>
+        <option value="person">People</option>
+        <option value="place">Places</option>
+        <option value="event">Events</option>
+        <option value="date">Dates</option>
+        <option value="organization">Organizations</option>
+        <option value="topic">Topics</option>
+        <option value="artifact">Artifacts</option>
+        <option value="claim">Claims</option>
+      </select>
+      <input type="date" id="graph-date-from" name="from" placeholder="From date" title="Filter entities active from this date">
+      <input type="date" id="graph-date-to" name="to" placeholder="To date" title="Filter entities active until this date">
+      <select id="graph-rel-filter" name="relType">
+        <option value="">All relationships</option>
+        <option value="authored">Authored</option>
+        <option value="received">Received</option>
+        <option value="mentioned_in">Mentioned in</option>
+        <option value="sent_from">Sent from</option>
+        <option value="sent_to">Sent to</option>
+        <option value="resided_at">Resided at</option>
+        <option value="employed_by">Employed by</option>
+        <option value="member_of">Member of</option>
+        <option value="parent_of">Parent of</option>
+        <option value="spouse_of">Spouse of</option>
+        <option value="participated_in">Participated in</option>
+        <option value="owns">Owns</option>
+        <option value="makes_claim">Makes claim</option>
+      </select>
+      <button type="submit" class="btn-action btn-sm">Search</button>
+    </form>
+  </div>
+
+  <div class="graph-explorer">
+    <aside class="graph-sidebar">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Browse</p>
+        <h2>Entities</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <div class="graph-search">
+          <p class="graph-muted">Select an entity to inspect its approved aliases, citations, and connected nodes inside this collection.</p>
+          <div class="graph-empty-state" id="graph-empty-state">Loading entities...</div>
+          <div class="graph-entity-list" id="graph-entity-list" hidden></div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="graph-main">
+      <section class="graph-visual">
+        <div class="graph-visual-header">
+          <div>
+            <p class="kg-panel-eyebrow">Network</p>
+            <h2 id="graph-visual-title">Graph view</h2>
+            <p id="graph-visual-subtitle">Click a node to load details for this collection.</p>
+          </div>
+          <div class="graph-toolbar">
+            <span class="graph-detail-tab active" id="graph-node-count">0 nodes</span>
+            <span class="graph-detail-tab" id="graph-edge-count">0 relationships</span>
+          </div>
+        </div>
+        <div class="graph-canvas" id="graph-canvas">
+          <div class="graph-empty-state">Choose an entity to render its neighborhood graph.</div>
+        </div>
+      </section>
+
+      <aside class="graph-detail">
+        <div class="graph-detail-header">
+          <p class="kg-panel-eyebrow">Details</p>
+          <h2 id="graph-detail-title">No entity selected</h2>
+          <p class="graph-muted" id="graph-detail-subtitle">Search or click a node to begin.</p>
+        </div>
+        <div class="graph-detail-body" id="graph-detail-body">
+          <div class="graph-empty-state">Entity metadata, aliases, citations, and relationships appear here.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<script src="/js/graph-explorer.js"></script>
+
+<%- include('partials/footer') %>

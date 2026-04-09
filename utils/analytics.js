@@ -136,6 +136,94 @@ async function getScheduleIntervalMs() {
   return hours * 60 * 60 * 1000;
 }
 
+function normalizeScheduleIntervalHours(value) {
+  const numeric = parseInt(value, 10);
+  return [24, 168, 720].includes(numeric) ? numeric : 168;
+}
+
+function normalizeScheduleDayOfWeek(value) {
+  const numeric = parseInt(value, 10);
+  return Number.isInteger(numeric) && numeric >= 0 && numeric <= 6 ? numeric : 1;
+}
+
+function normalizeScheduleTime(value) {
+  const text = String(value || '').trim();
+  if (!/^\d{2}:\d{2}$/.test(text)) return '02:00';
+  const parts = text.split(':');
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return '02:00';
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return '02:00';
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function withTime(date, timeString) {
+  const parts = String(timeString || '02:00').split(':');
+  const hours = parseInt(parts[0], 10) || 0;
+  const minutes = parseInt(parts[1], 10) || 0;
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    hours,
+    minutes,
+    0,
+    0
+  );
+}
+
+function getLatestScheduledBoundary(now, schedule) {
+  if (schedule.intervalHours === 24) {
+    const todayAtTime = withTime(now, schedule.time);
+    if (now >= todayAtTime) return todayAtTime;
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    return withTime(yesterday, schedule.time);
+  }
+
+  if (schedule.intervalHours === 168) {
+    const daysSinceTarget = (now.getDay() - schedule.dayOfWeek + 7) % 7;
+    const targetDate = new Date(now);
+    targetDate.setDate(now.getDate() - daysSinceTarget);
+    let boundary = withTime(targetDate, schedule.time);
+    if (boundary > now) {
+      targetDate.setDate(targetDate.getDate() - 7);
+      boundary = withTime(targetDate, schedule.time);
+    }
+    return boundary;
+  }
+
+  const monthBoundary = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1,
+    0,
+    0,
+    0,
+    0
+  );
+  let boundary = withTime(monthBoundary, schedule.time);
+  if (boundary > now) {
+    boundary = withTime(new Date(now.getFullYear(), now.getMonth() - 1, 1), schedule.time);
+  }
+  return boundary;
+}
+
+async function getScheduleConfig() {
+  const db = require('../database/db');
+  const [intervalValue, dayValue, timeValue] = await Promise.all([
+    db.settingsAsync.get('analytics_schedule_interval'),
+    db.settingsAsync.get('analytics_schedule_day_of_week'),
+    db.settingsAsync.get('analytics_schedule_time')
+  ]);
+
+  return {
+    intervalHours: normalizeScheduleIntervalHours(intervalValue),
+    dayOfWeek: normalizeScheduleDayOfWeek(dayValue),
+    time: normalizeScheduleTime(timeValue)
+  };
+}
+
 /**
  * Returns true if the collection's document count has grown by more than
  * thresholdFraction (default 0.10 = 10%) since the last analytics run.
@@ -180,9 +268,10 @@ async function shouldRunAnalytics(collectionId) {
   const latest = await db.collectionAnalyticsAsync.getLatest(collectionId);
   if (!latest) return true;
 
-  const intervalMs = await getScheduleIntervalMs();
-  const lastRun = new Date(latest.computed_at).getTime();
-  return (Date.now() - lastRun) >= intervalMs;
+  const schedule = await getScheduleConfig();
+  const boundary = getLatestScheduledBoundary(new Date(), schedule);
+  const lastRun = new Date(latest.computed_at);
+  return lastRun.getTime() < boundary.getTime();
 }
 
 const { spawn } = require('child_process');
@@ -369,6 +458,7 @@ module.exports = {
   computeStorageBytes,
   hasSignificantChange,
   shouldRunAnalytics,
+  getScheduleConfig,
   getScheduleIntervalMs,
   runBertopicAnalysis,
   runAnalyticsForCollection,

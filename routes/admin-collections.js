@@ -36,7 +36,12 @@ router.get('/', async (req, res) => {
     allCollections: collectionsWithAccess,
     activeUsers,
     saved: req.query.saved === '1',
-    error: req.query.error || null
+    error: req.query.error || null,
+    queuedCollectionName: req.query.queuedCollectionName || null,
+    queuedCount: parseInt(req.query.queuedCount, 10) || 0,
+    queuedMode: req.query.queuedMode || null,
+    skippedPending: parseInt(req.query.skippedPending, 10) || 0,
+    skippedNoTranscript: parseInt(req.query.skippedNoTranscript, 10) || 0
   });
 });
 

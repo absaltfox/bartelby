@@ -1,6 +1,6 @@
 <%- include('partials/header', { pageTitle: 'Knowledge Graph', query: '' }) %>
 
-<div class="graph-page" data-graph-explorer data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>">
+<div class="graph-page" data-graph-explorer data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>" data-collection-id="<%= typeof collectionId !== 'undefined' ? collectionId : '' %>">
   <% if (!graphReady) { %>
     <div class="empty-state graph-empty-state--intro">
       <p>Knowledge graph helpers are not wired yet. The explorer will activate once the backend support is mounted.</p>
@@ -25,6 +25,24 @@
         <option value="artifact">Artifacts</option>
         <option value="claim">Claims</option>
       </select>
+      <input type="date" id="graph-date-from" name="from" placeholder="From date" title="Filter entities active from this date">
+      <input type="date" id="graph-date-to" name="to" placeholder="To date" title="Filter entities active until this date">
+      <select id="graph-rel-filter" name="relType">
+        <option value="">All relationships</option>
+        <option value="authored">Authored</option>
+        <option value="received">Received</option>
+        <option value="mentioned_in">Mentioned in</option>
+        <option value="sent_from">Sent from</option>
+        <option value="sent_to">Sent to</option>
+        <option value="resided_at">Resided at</option>
+        <option value="employed_by">Employed by</option>
+        <option value="member_of">Member of</option>
+        <option value="parent_of">Parent of</option>
+        <option value="spouse_of">Spouse of</option>
+        <option value="participated_in">Participated in</option>
+        <option value="owns">Owns</option>
+        <option value="makes_claim">Makes claim</option>
+      </select>
       <button type="submit" class="btn-action btn-sm">Search</button>
     </form>
   </div>
@@ -44,33 +62,35 @@
       </div>
     </aside>
 
-    <section class="graph-visual">
-      <div class="graph-visual-header">
-        <div>
-          <p class="kg-panel-eyebrow">Network</p>
-          <h2 id="graph-visual-title">Graph view</h2>
-          <p id="graph-visual-subtitle">Click a node to load details.</p>
+    <div class="graph-main">
+      <section class="graph-visual">
+        <div class="graph-visual-header">
+          <div>
+            <p class="kg-panel-eyebrow">Network</p>
+            <h2 id="graph-visual-title">Graph view</h2>
+            <p id="graph-visual-subtitle">Click a node to load details.</p>
+          </div>
+          <div class="graph-toolbar">
+            <span class="graph-detail-tab active" id="graph-node-count">0 nodes</span>
+            <span class="graph-detail-tab" id="graph-edge-count">0 relationships</span>
+          </div>
         </div>
-        <div class="graph-toolbar">
-          <span class="graph-detail-tab active" id="graph-node-count">0 nodes</span>
-          <span class="graph-detail-tab" id="graph-edge-count">0 relationships</span>
+        <div class="graph-canvas" id="graph-canvas">
+          <div class="graph-empty-state">Choose an entity to render its neighborhood graph.</div>
         </div>
-      </div>
-      <div class="graph-canvas" id="graph-canvas">
-        <div class="graph-empty-state">Choose an entity to render its neighborhood graph.</div>
-      </div>
-    </section>
+      </section>
 
-    <aside class="graph-detail">
-      <div class="graph-detail-header">
-        <p class="kg-panel-eyebrow">Details</p>
-        <h2 id="graph-detail-title">No entity selected</h2>
-        <p class="graph-muted" id="graph-detail-subtitle">Search or click a node to begin.</p>
-      </div>
-      <div class="graph-detail-body" id="graph-detail-body">
-        <div class="graph-empty-state">Entity metadata, aliases, citations, and relationships appear here.</div>
-      </div>
-    </aside>
+      <aside class="graph-detail">
+        <div class="graph-detail-header">
+          <p class="kg-panel-eyebrow">Details</p>
+          <h2 id="graph-detail-title">No entity selected</h2>
+          <p class="graph-muted" id="graph-detail-subtitle">Search or click a node to begin.</p>
+        </div>
+        <div class="graph-detail-body" id="graph-detail-body">
+          <div class="graph-empty-state">Entity metadata, aliases, citations, and relationships appear here.</div>
+        </div>
+      </aside>
+    </div>
   </div>
 </div>
 

@@ -10,6 +10,7 @@ const { loadEnv } = require('./utils/secrets');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
 const { resolveApplicationSettings } = require('./utils/application-settings');
+const logger = require('./utils/logger');
 
 loadEnv();
 
@@ -18,6 +19,8 @@ const PORT = config.runtime.port;
 const isProduction = config.runtime.nodeEnv === 'production';
 const bootStartedAt = Date.now();
 const startupDebugEnabled = /^(1|true|yes|on)$/i.test(String(process.env.STARTUP_DEBUG || ''));
+const routeLoadMetrics = [];
+const deferredRouteLoaders = [];
 
 function formatBootElapsed(ms) {
   if (ms < 1000) return `${ms}ms`;
@@ -25,7 +28,10 @@ function formatBootElapsed(ms) {
 }
 
 function logBoot(message) {
-  console.log(`[boot +${formatBootElapsed(Date.now() - bootStartedAt)}] ${message}`);
+  const elapsedMs = Date.now() - bootStartedAt;
+  const rendered = `[boot +${formatBootElapsed(elapsedMs)}] ${message}`;
+  console.log(rendered);
+  void logger.info('boot', message, { elapsedMs }, { console: false });
 }
 
 function logBootDebug(message) {
@@ -33,11 +39,115 @@ function logBootDebug(message) {
   logBoot(message);
 }
 
-function loadRoute(routePath, label) {
-  logBootDebug(`Loading ${label}`);
+function loadRouteModule(routePath, label, options = {}) {
+  const tier = options.tier || 'core';
+  const trigger = options.trigger || 'boot';
+  const startedAt = Date.now();
+  logBootDebug(`Loading ${tier} route (${trigger}): ${label}`);
   const route = require(routePath);
-  logBootDebug(`Loaded ${label}`);
+  const durationMs = Date.now() - startedAt;
+  routeLoadMetrics.push({
+    routePath,
+    label,
+    tier,
+    trigger,
+    durationMs
+  });
+  logBoot(`Loaded ${tier} route (${trigger}): ${label} in ${formatBootElapsed(durationMs)}`);
   return route;
+}
+
+function logRouteLoadSummary(trigger = null, tierFilter = null) {
+  const relevantMetrics = routeLoadMetrics.filter((metric) => {
+    if (trigger && metric.trigger !== trigger) return false;
+    if (tierFilter && metric.tier !== tierFilter) return false;
+    return true;
+  });
+
+  const byTier = relevantMetrics.reduce((acc, metric) => {
+    if (!acc[metric.tier]) {
+      acc[metric.tier] = {
+        count: 0,
+        totalMs: 0,
+        slowest: metric
+      };
+    }
+    acc[metric.tier].count += 1;
+    acc[metric.tier].totalMs += metric.durationMs;
+    if (metric.durationMs > acc[metric.tier].slowest.durationMs) {
+      acc[metric.tier].slowest = metric;
+    }
+    return acc;
+  }, {});
+
+  ['core', 'management', 'admin'].forEach((tier) => {
+    const summary = byTier[tier];
+    if (!summary) return;
+    logBoot(
+      `Route load summary (${tier}${trigger ? `, ${trigger}` : ''}): `
+      + `${summary.count} route${summary.count === 1 ? '' : 's'}, `
+      + `${formatBootElapsed(summary.totalMs)} total, slowest ${summary.slowest.label} `
+      + `at ${formatBootElapsed(summary.slowest.durationMs)}`
+    );
+  });
+}
+
+function loadRoute(routePath, label, options = {}) {
+  return loadRouteModule(routePath, label, { ...options, trigger: 'boot' });
+}
+
+function createDeferredRouteLoader(routePath, label, options = {}) {
+  let route = null;
+  let loadingPromise = null;
+
+  async function ensureLoaded(trigger) {
+    if (route) return route;
+    if (!loadingPromise) {
+      loadingPromise = Promise.resolve().then(() => {
+        route = loadRouteModule(routePath, label, { ...options, trigger });
+        return route;
+      }).finally(() => {
+        loadingPromise = null;
+      });
+    }
+    return loadingPromise;
+  }
+
+  const middleware = (req, res, next) => {
+    ensureLoaded('request')
+      .then((loadedRoute) => loadedRoute(req, res, next))
+      .catch(next);
+  };
+
+  middleware.prewarm = () => ensureLoaded('prewarm');
+  middleware.routeLabel = label;
+  middleware.routeTier = options.tier || 'core';
+  return middleware;
+}
+
+function registerDeferredRoute(routePath, label, options = {}) {
+  const loader = createDeferredRouteLoader(routePath, label, options);
+  deferredRouteLoaders.push(loader);
+  return loader;
+}
+
+async function prewarmDeferredRoutes(tier, options = {}) {
+  const matchingLoaders = deferredRouteLoaders.filter((loader) => loader.routeTier === tier);
+  if (matchingLoaders.length === 0) return;
+
+  logBoot(`Deferred route prewarm start (${tier})`);
+  for (const loader of matchingLoaders) {
+    // Yield between prewarms so first interactive requests are not blocked
+    // by a long burst of synchronous module loading.
+    await new Promise((resolve) => setImmediate(resolve));
+    await loader.prewarm();
+  }
+  logRouteLoadSummary('prewarm', tier);
+  logBoot(`Deferred route prewarm complete (${tier})`);
+  const delayMs = Number(options.nextDelayMs || 0);
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
 }
 
 logBoot(`Starting Bartelby (pid ${process.pid}, env ${config.runtime.nodeEnv}, port ${PORT})`);
@@ -94,15 +204,16 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // Auth is deferred until after Passport is initialized (see below).
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(logger.requestLoggingMiddleware());
 logBoot('Core middleware configured');
 
 // ── Sessions ───────────────────────────────────────────────────────────────
 if (!process.env.SESSION_SECRET) {
   if (isProduction) {
-    console.error('[security] SESSION_SECRET must be set in production. Exiting.');
-    process.exit(1);
+    logger.fatal('security', 'SESSION_SECRET must be set in production.')
+      .finally(() => process.exit(1));
   }
-  console.warn('[security] SESSION_SECRET is not set — using a random secret. Sessions will not persist across restarts. Set SESSION_SECRET in .env for production.');
+  void logger.warn('security', 'SESSION_SECRET is not set. Using a random secret; sessions will not persist across restarts.');
 }
 const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 
@@ -145,7 +256,7 @@ async function createSessionMiddleware() {
     });
 
     redisClient.on('error', (err) => {
-      console.error('[redis] session store error:', err);
+      void logger.error('redis', 'Session store error.', { error: err.message });
     });
 
     await redisClient.connect();
@@ -297,23 +408,29 @@ if (config.storage.driver === 's3') {
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // Auth routes get CSRF protection on POST
-app.use('/', loadRoute('./routes/auth', 'auth routes'));
-app.use('/account', loadRoute('./routes/account', 'account routes'));
-app.use('/', loadRoute('./routes/documents', 'document routes'));
-app.use('/transcripts', loadRoute('./routes/transcripts', 'transcript routes'));
-app.use('/api/annotations', requireAuthApi, loadRoute('./routes/annotations', 'annotation routes'));
-app.use('/export', loadRoute('./routes/export', 'export routes'));
-app.use('/search', loadRoute('./routes/search', 'search routes'));
-app.use('/admin', requireAdmin, loadRoute('./routes/admin', 'admin routes'));
-app.use('/admin/documents', loadRoute('./routes/admin-documents', 'admin document routes')); // has its own requireAdmin
-app.use('/admin/users', loadRoute('./routes/admin-users', 'admin user routes')); // has its own requireAdmin
-app.use('/admin/collections', loadRoute('./routes/admin-collections', 'admin collection routes')); // has its own requireAdmin
-app.use('/admin/jobs', loadRoute('./routes/admin-jobs', 'admin job routes')); // has its own requireAdmin
-app.use('/admin/extraction-jobs', loadRoute('./routes/admin-extraction', 'admin extraction routes')); // has its own requireAdmin
-app.use('/admin/entities', loadRoute('./routes/admin-entities', 'admin entity routes')); // has its own requireAdmin
-app.use('/admin', loadRoute('./routes/admin-review', 'admin review routes')); // has its own requireAdmin
-app.use('/graph', loadRoute('./routes/graph', 'graph routes'));
-app.use('/manage', loadRoute('./routes/manage', 'manage routes')); // has its own requireAdminOrManager
+app.use('/', loadRoute('./routes/auth', 'auth routes', { tier: 'core' }));
+app.use('/account', loadRoute('./routes/account', 'account routes', { tier: 'core' }));
+app.use('/', loadRoute('./routes/documents', 'document routes', { tier: 'core' }));
+app.use('/transcripts', loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
+app.use('/api/annotations', requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));
+app.use('/export', loadRoute('./routes/export', 'export routes', { tier: 'core' }));
+app.use('/search', loadRoute('./routes/search', 'search routes', { tier: 'core' }));
+app.use('/graph', loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
+app.use('/manage', registerDeferredRoute('./routes/manage', 'manage routes', { tier: 'management' })); // has its own requireAdminOrManager
+app.use('/admin', requireAdmin, registerDeferredRoute('./routes/admin', 'admin routes', { tier: 'admin' }));
+app.use('/admin/documents', registerDeferredRoute('./routes/admin-documents', 'admin document routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/users', registerDeferredRoute('./routes/admin-users', 'admin user routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/collections', registerDeferredRoute('./routes/admin-collections', 'admin collection routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/jobs', registerDeferredRoute('./routes/admin-jobs', 'admin job routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/logging', registerDeferredRoute('./routes/admin-logging', 'admin logging routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-knowledge', 'admin knowledge routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin knowledge extraction routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge/entities', registerDeferredRoute('./routes/admin-entities', 'admin knowledge entity routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-review', 'admin knowledge review routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin extraction routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/entities', registerDeferredRoute('./routes/admin-entities', 'admin entity routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin', registerDeferredRoute('./routes/admin-review', 'admin review routes', { tier: 'admin' })); // has its own requireAdmin
+logRouteLoadSummary('boot');
 logBoot('Routes mounted');
 
 // Export CSRF validator for routes that need it
@@ -324,7 +441,14 @@ app.get('/healthz', (req, res) => res.status(200).send('ok'));
 
 // ── Error handling ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  void logger.error('http', 'Unhandled Express error.', {
+    requestId: req.requestId || null,
+    method: req.method,
+    path: req.originalUrl,
+    statusCode: 500,
+    userId: req.user ? req.user.id : null,
+    error: err.stack || err.message
+  });
   res.status(500).render('error', {
     message: 'Something went wrong!',
     error: process.env.NODE_ENV === 'development' ? err : {}
@@ -339,12 +463,14 @@ app.use((req, res) => {
 // Without these, Node.js 15+ exits the process on any unhandled promise
 // rejection, causing Fly.io to restart the machine repeatedly.
 process.on('unhandledRejection', (reason) => {
-  console.error('[crash] Unhandled promise rejection:', reason);
-  process.exit(1);
+  logger.fatal('crash', 'Unhandled promise rejection.', {
+    error: reason instanceof Error ? reason.stack || reason.message : String(reason)
+  }).finally(() => process.exit(1));
 });
 process.on('uncaughtException', (err) => {
-  console.error('[crash] Uncaught exception:', err);
-  process.exit(1);
+  logger.fatal('crash', 'Uncaught exception.', {
+    error: err.stack || err.message
+  }).finally(() => process.exit(1));
 });
 
 // ── Initialization (shared by start() and tests) ───────────────────────────
@@ -358,6 +484,8 @@ async function initApp() {
   logBoot('Session middleware initialization start');
   sessionMiddleware = await createSessionMiddleware();
   logBoot('Session middleware initialization complete');
+  logger.startEventLoopMonitor();
+  logger.startLogMaintenance();
   return app;
 }
 
@@ -366,7 +494,7 @@ async function start() {
   let startupPhase = 'schema initialization';
   try {
     await initApp();
-    console.log('Database initialized');
+    void logger.info('boot', 'Database initialized.');
     startupPhase = 'session middleware initialization';
     if (config.runtime.startWorker) {
       startupPhase = 'background worker startup';
@@ -376,43 +504,54 @@ async function start() {
       logBoot('Background worker startup complete');
     } else {
       logBoot('Background worker startup disabled by configuration');
-      console.log('Background worker startup disabled by configuration');
+      void logger.info('boot', 'Background worker startup disabled by configuration.');
     }
 
     startupPhase = 'http listen';
     logBoot(`Binding HTTP listener on 0.0.0.0:${PORT}`);
     const server = app.listen(PORT, '0.0.0.0', () => {
       logBoot(`HTTP listener ready on port ${PORT}`);
-      console.log(`Bartelby running on port ${PORT}`);
+      void logger.info('boot', `Bartelby running on port ${PORT}.`);
+      void (async () => {
+        try {
+          await prewarmDeferredRoutes('management', { nextDelayMs: 150 });
+          await prewarmDeferredRoutes('admin');
+        } catch (err) {
+          void logger.warn('boot', 'Deferred route prewarm failed.', {
+            error: err.stack || err.message
+          });
+        }
+      })();
     });
 
     // ── Graceful shutdown (fly.io sends SIGTERM on deploy) ──────────────
     const { saveDatabase } = require('./database/db');
 
     async function shutdown(signal) {
-      console.log(`${signal} received — shutting down gracefully…`);
+      void logger.warn('shutdown', `${signal} received — shutting down gracefully.`);
       server.close(async () => {
         try {
           if (redisClient) await redisClient.quit().catch(() => {});
           await saveDatabase();
         } catch (err) {
-          console.error('Shutdown cleanup error:', err);
+          void logger.error('shutdown', 'Shutdown cleanup error.', { error: err.message });
         }
         process.exit(0);
       });
 
       // Force exit after 10s if graceful shutdown stalls
       setTimeout(() => {
-        console.error('Graceful shutdown timed out — forcing exit');
-        process.exit(1);
+        logger.fatal('shutdown', 'Graceful shutdown timed out — forcing exit.')
+          .finally(() => process.exit(1));
       }, 10_000).unref();
     }
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (err) {
-    console.error(`[boot] Failed during ${startupPhase}`);
-    console.error('Failed to start server:', err);
+    await logger.fatal('boot', `Failed during ${startupPhase}.`, {
+      error: err.stack || err.message
+    });
     process.exit(1);
   }
 }

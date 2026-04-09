@@ -13,7 +13,6 @@ const {
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
-const importApiRouter = require('./import-api');
 
 router.use(requireAdminOrManager);
 
@@ -309,7 +308,11 @@ router.post('/collections/:collectionId/users/:userId/revoke', requireCollection
 
 // ── Import document into a managed collection ────────────────────────────────
 router.get('/collections/:collectionId/import', requireCollectionRole('manager'), async (req, res) => {
-  const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
+const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
+
+function getImportApiRouter() {
+  return require('./import-api');
+}
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
@@ -341,7 +344,7 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
       resumeJob = {
         id: job.id,
         originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview),
+        pages: JSON.parse(job.pages).map(getImportApiRouter().attachTempPreview),
         groupingState
       };
     }
@@ -365,6 +368,6 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
 });
 
 // Mount shared import API routes for managers
-router.use('/api', importApiRouter);
+router.use('/api', (req, res, next) => getImportApiRouter()(req, res, next));
 
 module.exports = router;

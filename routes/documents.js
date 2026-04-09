@@ -482,6 +482,44 @@ router.get('/collections/:id/analytics', async (req, res) => {
   });
 });
 
+// ── Collection graph view ───────────────────────────────────────────────────
+router.get('/collections/:id/graph', async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', error: {} });
+
+  const collection = await collectionsAsync.getById(collectionId);
+  if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
+
+  const user = req.user;
+  if (!user) {
+    req.session.returnTo = req.originalUrl;
+    return res.redirect('/login');
+  }
+  const userId = user ? user.id : null;
+  const isAdmin = user ? user.role === 'admin' : false;
+  const accessAll = user ? !!user.access_all : false;
+
+  if (!(await collectionsAsync.canAccess(collection.id, userId, isAdmin, accessAll))) {
+    if (!user) {
+      req.session.returnTo = req.originalUrl;
+      return res.redirect('/login');
+    }
+    return res.status(403).render('error', { message: 'Access denied', error: {} });
+  }
+
+  const latestAnalytics = await collectionAnalyticsAsync.getLatest(collectionId);
+
+  res.render('collection-graph', {
+    pageTitle: `${collection.name} — Knowledge Graph`,
+    collection,
+    collectionId,
+    latestAnalytics,
+    graphReady: true,
+    entityId: req.query.entity || '',
+    currentUser: req.user || null
+  });
+});
+
 // ── Document detail view ─────────────────────────────────────────────────────
 router.get('/documents/:id', async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);

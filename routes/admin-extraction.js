@@ -9,6 +9,10 @@ router.use(requireAdmin);
 
 const PAGE_SIZE = 50;
 
+function knowledgePath(pathname, queryString) {
+  return '/admin/knowledge' + pathname + (queryString || '');
+}
+
 function extractionStore() {
   return db.extractionJobsAsync || db.extractionJobs || null;
 }
@@ -69,39 +73,27 @@ async function loadExtractionJobs({ statusFilter, page }) {
 }
 
 router.get('/', async (req, res) => {
-  const statusFilter = req.query.status || 'all';
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const state = await loadExtractionJobs({ statusFilter, page });
-
-  res.render('admin/extraction-jobs', {
-    pageTitle: 'Extraction Jobs',
-    jobs: state.jobs,
-    statusFilter,
-    counts: state.counts,
-    currentPage: page,
-    totalPages: Math.max(1, Math.ceil(state.totalCount / PAGE_SIZE)),
-    totalCount: state.totalCount,
-    graphReady: state.ready,
-    graphNotice: state.notice
-  });
+  const query = new URLSearchParams(req.query || {});
+  query.set('type', 'extraction');
+  return res.redirect('/admin/jobs?' + query.toString());
 });
 
 router.post('/:id/retry', express.urlencoded({ extended: false }), async (req, res) => {
   const store = extractionStore();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.'));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.')));
   }
 
   if (!store || typeof store.retry !== 'function') {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction retry is not wired yet.'));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction retry is not wired yet.')));
   }
 
   try {
     await store.retry(id);
-    return res.redirect('/admin/extraction-jobs?retried=1');
+    return res.redirect(knowledgePath('/extraction-jobs?retried=1'));
   } catch (err) {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent(err.message));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent(err.message)));
   }
 });
 
@@ -109,18 +101,18 @@ router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, 
   const store = extractionStore();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.'));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent('Invalid extraction job id.')));
   }
 
   if (!store || typeof store.delete !== 'function') {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction delete is not wired yet.'));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent('Knowledge graph extraction delete is not wired yet.')));
   }
 
   try {
     await store.delete(id);
-    return res.redirect('/admin/extraction-jobs?deleted=1');
+    return res.redirect(knowledgePath('/extraction-jobs?deleted=1'));
   } catch (err) {
-    return res.redirect('/admin/extraction-jobs?error=' + encodeURIComponent(err.message));
+    return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent(err.message)));
   }
 });
 

@@ -1,11 +1,12 @@
 <%- include('../partials/header', { pageTitle: 'Entities', query: '' }) %>
 
-<div class="admin-page workflows-page">
+<div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
 
   <div class="admin-header">
     <h1>Entities</h1>
-    <p class="subtitle">Knowledge graph entities extracted from transcripts</p>
+    <p class="subtitle">Browse approved and pending knowledge graph entities, then inspect the evidence behind each node.</p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
@@ -16,7 +17,7 @@
         if (type && type !== 'all') params.push('type=' + encodeURIComponent(type));
         if (query) params.push('q=' + encodeURIComponent(query));
         if (page && page > 1) params.push('page=' + page);
-        return '/admin/entities' + (params.length ? '?' + params.join('&') : '');
+        return '/admin/knowledge/entities' + (params.length ? '?' + params.join('&') : '');
       }
     %>
     <a href="<%= filterHref('all', q, 1) %>" class="filter-tab <%= typeFilter === 'all' ? 'active' : '' %>">All <span class="filter-count"><%= totalCount %></span></a>
@@ -28,13 +29,13 @@
     <% }) %>
   </div>
 
-  <div class="search-advanced-link-row admin-search-row">
-    <form method="GET" action="/admin/entities" class="admin-search-form">
+  <div class="knowledge-toolbar">
+    <form method="GET" action="/admin/knowledge/entities" class="admin-search-form">
       <input type="hidden" name="type" value="<%= typeFilter %>">
       <input type="search" name="q" value="<%= q %>" placeholder="Search entities..." class="admin-search-input">
-      <button type="submit" class="btn-action btn-sm">Search</button>
+      <button type="submit" class="btn-secondary btn-sm">Search</button>
       <% if (q) { %>
-        <a href="/admin/entities?type=<%= encodeURIComponent(typeFilter) %>" class="btn-secondary btn-sm">Clear</a>
+        <a href="/admin/knowledge/entities?type=<%= encodeURIComponent(typeFilter) %>" class="btn-secondary btn-sm">Clear</a>
       <% } %>
     </form>
   </div>
@@ -58,9 +59,9 @@
         <tbody>
           <% entities.forEach(function(entity) { %>
             <tr>
-              <td><span class="job-type-badge job-type-transcription"><%= entity.entity_type %></span></td>
+              <td><span class="entity-type-badge entity-type-<%= entity.entity_type %>"><%= entity.entity_type %></span></td>
               <td>
-                <strong><a href="/admin/entities/<%= entity.id %>"><%= entity.canonical_name %></a></strong>
+                <strong><a href="/admin/knowledge/entities/<%= entity.id %>"><%= entity.canonical_name %></a></strong>
                 <% if (entity.description) { %>
                   <div class="muted"><%= entity.description %></div>
                 <% } %>
@@ -68,7 +69,7 @@
               <td><%= entity.alias_count || 0 %></td>
               <td><%= entity.citation_count || 0 %></td>
               <td>
-                <a href="/admin/entities/<%= entity.id %>" class="btn-action btn-sm">Open</a>
+                <a href="/admin/knowledge/entities/<%= entity.id %>" class="btn-secondary btn-sm">Open</a>
               </td>
             </tr>
           <% }) %>

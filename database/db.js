@@ -7,6 +7,10 @@ const {
 const crypto = require('crypto');
 const { hashOtpCode } = require('../utils/mfa');
 const { initDriver } = require('./driver');
+const {
+  CITATION_APPROVAL_STATUSES,
+  deriveCitationApproval
+} = require('../utils/knowledge-approval');
 
 let db = null;
 const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key', 'google_api_key']);
@@ -692,6 +696,187 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   `
 ];
 
+// v46 — reset-aware extraction reruns
+MIGRATIONS.push(`
+  ALTER TABLE extraction_jobs ADD COLUMN reset_existing INTEGER NOT NULL DEFAULT 0
+`);
+
+MIGRATIONS.push(`
+  ALTER TABLE extraction_jobs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'single';
+  ALTER TABLE extraction_jobs ADD COLUMN batch_display_name TEXT;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_document_count INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_completed_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_failed_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_remote_id TEXT;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_remote_status TEXT;
+  ALTER TABLE extraction_jobs ADD COLUMN batch_manifest TEXT;
+  CREATE TABLE IF NOT EXISTS extraction_job_documents (
+    job_id INTEGER NOT NULL REFERENCES extraction_jobs(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    transcript_id INTEGER NOT NULL REFERENCES transcripts(id) ON DELETE CASCADE,
+    PRIMARY KEY (job_id, document_id, transcript_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_extraction_job_documents_document_id
+    ON extraction_job_documents(document_id);
+  CREATE INDEX IF NOT EXISTS idx_extraction_job_documents_job_id
+    ON extraction_job_documents(job_id);
+`);
+
+// v48 — explicit citation approval workflow for knowledge graph visibility
+MIGRATIONS.push(`
+  ALTER TABLE citations ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'pending';
+  ALTER TABLE citations ADD COLUMN approval_method TEXT;
+  ALTER TABLE citations ADD COLUMN approved_at DATETIME;
+  ALTER TABLE citations ADD COLUMN approved_by_user_id INTEGER;
+  ALTER TABLE citations ADD COLUMN rejected_at DATETIME;
+  ALTER TABLE citations ADD COLUMN rejected_by_user_id INTEGER;
+  UPDATE citations
+  SET approval_status = CASE
+        WHEN reviewed_at IS NOT NULL THEN 'approved'
+        WHEN COALESCE(confidence, 0) >= 0.85 THEN 'approved'
+        ELSE 'pending'
+      END,
+      approval_method = CASE
+        WHEN reviewed_at IS NOT NULL THEN 'manual'
+        WHEN COALESCE(confidence, 0) >= 0.85 THEN 'auto'
+        ELSE NULL
+      END,
+      approved_at = CASE
+        WHEN reviewed_at IS NOT NULL THEN reviewed_at
+        WHEN COALESCE(confidence, 0) >= 0.85 THEN CURRENT_TIMESTAMP
+        ELSE NULL
+      END,
+      approved_by_user_id = CASE
+        WHEN reviewed_at IS NOT NULL THEN reviewed_by_user_id
+        ELSE NULL
+      END
+  WHERE approval_status = 'pending';
+  CREATE INDEX IF NOT EXISTS idx_citations_approval_status ON citations(approval_status);
+`);
+
+// v49 — structured application logs and logging settings
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS app_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    level TEXT NOT NULL,
+    category TEXT NOT NULL,
+    message TEXT NOT NULL,
+    context_json TEXT,
+    request_id TEXT,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+    job_type TEXT,
+    job_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_app_logs_created_at ON app_logs(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_app_logs_level ON app_logs(level);
+  CREATE INDEX IF NOT EXISTS idx_app_logs_category ON app_logs(category);
+  INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('log_level', 'info'),
+    ('log_persist_enabled', '1'),
+    ('log_persist_min_level', 'warn'),
+    ('log_slow_request_ms', '1000'),
+    ('log_event_loop_monitor_enabled', '0'),
+    ('log_event_loop_lag_warn_ms', '250'),
+    ('log_retention_days', '14');
+`);
+
+// v50 — analytics schedule day/time settings
+MIGRATIONS.push(`
+  INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('analytics_schedule_day_of_week', '1'),
+    ('analytics_schedule_time', '02:00');
+`);
+
+// v51 — composite citation indexes (always safe) plus FTS5 virtual tables
+// (only available on libSQL/Turso; sql.js may not include the fts5 module).
+// FTS5 table creation and triggers are attempted separately in ensureFts5()
+// so that environments without FTS5 still complete the migration.
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_citations_entity_approval ON citations(entity_id, approval_status);
+  CREATE INDEX IF NOT EXISTS idx_citations_relationship_approval ON citations(relationship_id, approval_status);
+  CREATE INDEX IF NOT EXISTS idx_citations_document_approval ON citations(document_id, approval_status);
+`);
+
+// FTS5 sync triggers — run as whole statements outside the semicolon-splitting
+// migration runner. Each trigger contains internal semicolons inside BEGIN…END
+// that would be incorrectly split by the migration loop. These are idempotent
+// (IF NOT EXISTS) so safe to run on every startup.
+const FTS_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS entities_fts_insert AFTER INSERT ON entities BEGIN
+    INSERT INTO entities_fts(rowid, canonical_name) VALUES (new.id, new.canonical_name);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS entities_fts_update AFTER UPDATE OF canonical_name ON entities BEGIN
+    INSERT INTO entities_fts(entities_fts, rowid, canonical_name) VALUES('delete', old.id, old.canonical_name);
+    INSERT INTO entities_fts(rowid, canonical_name) VALUES (new.id, new.canonical_name);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS entities_fts_delete AFTER DELETE ON entities BEGIN
+    INSERT INTO entities_fts(entities_fts, rowid, canonical_name) VALUES('delete', old.id, old.canonical_name);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS entity_aliases_fts_insert AFTER INSERT ON entity_aliases BEGIN
+    INSERT INTO entity_aliases_fts(rowid, alias) VALUES (new.id, new.alias);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS entity_aliases_fts_update AFTER UPDATE OF alias ON entity_aliases BEGIN
+    INSERT INTO entity_aliases_fts(entity_aliases_fts, rowid, alias) VALUES('delete', old.id, old.alias);
+    INSERT INTO entity_aliases_fts(rowid, alias) VALUES (new.id, new.alias);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS entity_aliases_fts_delete AFTER DELETE ON entity_aliases BEGIN
+    INSERT INTO entity_aliases_fts(entity_aliases_fts, rowid, alias) VALUES('delete', old.id, old.alias);
+  END`
+];
+
+let fts5Available = false;
+
+async function ensureFts5() {
+  // Attempt to create FTS5 virtual tables. This will fail silently on SQLite
+  // builds that lack the fts5 module (e.g. the default sql.js package used in
+  // local dev and tests). Search functions fall back to LIKE when FTS5 is absent.
+  const FTS_TABLES = [
+    `CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(canonical_name, content=entities, content_rowid=id)`,
+    `CREATE VIRTUAL TABLE IF NOT EXISTS entity_aliases_fts USING fts5(alias, content=entity_aliases, content_rowid=id)`
+  ];
+
+  for (const sql of FTS_TABLES) {
+    try {
+      await db.run(sql);
+    } catch (e) {
+      if (e.message.includes('no such module: fts5')) {
+        console.log('[db] FTS5 not available in this SQLite build — entity search will use LIKE fallback.');
+        return; // skip triggers and rebuild too
+      }
+      if (!e.message.includes('already exists')) {
+        console.error('[db] FTS5 table creation failed:', e.message);
+        return;
+      }
+    }
+  }
+
+  // Rebuild FTS indexes from current data (idempotent, fast on small tables)
+  try {
+    await db.run(`INSERT INTO entities_fts(entities_fts) VALUES('rebuild')`);
+    await db.run(`INSERT INTO entity_aliases_fts(entity_aliases_fts) VALUES('rebuild')`);
+  } catch (e) {
+    console.error('[db] FTS5 rebuild failed:', e.message);
+    return;
+  }
+
+  // Create sync triggers so FTS stays in sync with base tables
+  for (const sql of FTS_TRIGGERS) {
+    try {
+      await db.run(sql);
+    } catch (e) {
+      if (!e.message.includes('already exists')) {
+        console.error('[db] FTS trigger creation failed:', e.message);
+      }
+    }
+  }
+
+  fts5Available = true;
+  console.log('[db] FTS5 entity search indexes ready.');
+}
+
 // ── Core database setup ─────────────────────────────────────────────────────
 
 async function initDatabase() {
@@ -770,6 +955,10 @@ async function initializeSchema() {
 
     await saveDatabase();
   }
+
+  // Attempt to set up FTS5 virtual tables and sync triggers (idempotent).
+  // Skipped silently on SQLite builds without fts5 (e.g. default sql.js).
+  await ensureFts5();
 
   // Recover from unclean shutdown: any jobs left in processing/running
   // can never complete (the process that was handling them is gone).
@@ -1208,6 +1397,14 @@ async function runAsync(sql, params = []) {
   const result = await db.run(sql, params);
   await saveDatabase();
   return result;
+}
+
+function safeJsonParse(value, fallback = null) {
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    return fallback;
+  }
 }
 
 // ── Documents ──────────────────────────────────────────────────────────────
@@ -2658,11 +2855,14 @@ const adminJobsAsync = {
         SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
         SUM(CASE WHEN job_type = 'import' THEN 1 ELSE 0 END) AS import_count,
-        SUM(CASE WHEN job_type = 'transcription' THEN 1 ELSE 0 END) AS transcription_count
+        SUM(CASE WHEN job_type = 'transcription' THEN 1 ELSE 0 END) AS transcription_count,
+        SUM(CASE WHEN job_type = 'extraction' THEN 1 ELSE 0 END) AS extraction_count
       FROM (
         SELECT status, 'transcription' AS job_type FROM transcription_jobs
         UNION ALL
         SELECT status, 'import' AS job_type FROM import_jobs
+        UNION ALL
+        SELECT status, 'extraction' AS job_type FROM extraction_jobs
       )
     `);
     return {
@@ -2675,7 +2875,8 @@ const adminJobsAsync = {
       },
       typeCounts: {
         import: row.import_count || 0,
-        transcription: row.transcription_count || 0
+        transcription: row.transcription_count || 0,
+        extraction: row.extraction_count || 0
       }
     };
   },
@@ -2686,12 +2887,20 @@ const adminJobsAsync = {
       : statusFilter === 'running' ? "status IN ('running','processing')"
       : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
     const typeCond = typeFilter === 'all' ? '1=1'
-      : "job_type = '" + (typeFilter === 'import' ? 'import' : 'transcription') + "'";
+      : "job_type = '" + (
+        typeFilter === 'import'
+          ? 'import'
+          : typeFilter === 'extraction'
+            ? 'extraction'
+            : 'transcription'
+      ) + "'";
     const row = await getAsync(`
       SELECT COUNT(*) AS n FROM (
         SELECT status, 'transcription' AS job_type FROM transcription_jobs
         UNION ALL
         SELECT status, 'import' AS job_type FROM import_jobs
+        UNION ALL
+        SELECT status, 'extraction' AS job_type FROM extraction_jobs
       ) WHERE ${statusCond} AND ${typeCond}
     `);
     return row ? (row.n || 0) : 0;
@@ -2703,7 +2912,13 @@ const adminJobsAsync = {
       : statusFilter === 'running' ? "status IN ('running','processing')"
       : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
     const typeCond = typeFilter === 'all' ? '1=1'
-      : "job_type = '" + (typeFilter === 'import' ? 'import' : 'transcription') + "'";
+      : "job_type = '" + (
+        typeFilter === 'import'
+          ? 'import'
+          : typeFilter === 'extraction'
+            ? 'extraction'
+            : 'transcription'
+      ) + "'";
     return await allAsync(`
       SELECT * FROM (
         SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
@@ -2724,6 +2939,16 @@ const adminJobsAsync = {
                NULL AS batch_remote_status,
                original_name, page_count, pages_rendered, submitted
         FROM import_jobs
+        UNION ALL
+        SELECT j.id, j.created_at, j.status, 'extraction' AS job_type,
+               j.document_id, j.started_at, j.completed_at, j.error, j.log,
+               j.provider, j.model, d.title AS document_title,
+               j.job_kind, j.batch_display_name, j.batch_document_count,
+               0 AS batch_page_count, j.batch_completed_count, j.batch_failed_count,
+               j.batch_remote_status,
+               NULL AS original_name, NULL AS page_count, NULL AS pages_rendered, NULL AS submitted
+        FROM extraction_jobs j
+        LEFT JOIN documents d ON j.document_id = d.id
       ) combined
       WHERE ${statusCond} AND ${typeCond}
       ORDER BY created_at DESC
@@ -2754,6 +2979,17 @@ const adminJobsAsync = {
              original_name, page_count, pages_rendered
       FROM import_jobs
       WHERE status IN ('processing','queued')
+      UNION ALL
+      SELECT j.id, j.created_at, j.status, 'extraction' AS job_type,
+             j.document_id, j.started_at, j.completed_at, j.error,
+             j.provider, d.title AS document_title,
+             j.job_kind, j.batch_display_name, j.batch_document_count,
+             0 AS batch_page_count, j.batch_completed_count, j.batch_failed_count,
+             j.batch_remote_status,
+             NULL AS original_name, NULL AS page_count, NULL AS pages_rendered
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.status IN ('queued','running')
       ORDER BY created_at DESC
     `);
   }
@@ -3513,6 +3749,74 @@ function buildAccessibleDocumentFilter(opts = {}, column = 'c.document_id') {
   };
 }
 
+function buildCollectionDocumentFilter(collectionId, column = 'c.document_id') {
+  const normalizedId = Number(collectionId);
+  if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+    return { clause: '1=1', params: [] };
+  }
+  return {
+    clause: `${column} IN (
+      SELECT dc.document_id
+      FROM document_collections dc
+      WHERE dc.collection_id = ?
+    )`,
+    params: [normalizedId]
+  };
+}
+
+function buildKnowledgeCitationVisibilityFilter(opts = {}, citationAlias = 'c', documentColumn = `${citationAlias}.document_id`) {
+  const access = buildAccessibleDocumentFilter(opts, documentColumn);
+  const collection = buildCollectionDocumentFilter(opts.collectionId, documentColumn);
+  return {
+    clause: `(${access.clause}) AND (${collection.clause}) AND ${citationAlias}.approval_status = ?`,
+    params: [...access.params, ...collection.params, CITATION_APPROVAL_STATUSES.APPROVED]
+  };
+}
+
+function buildCitationQueryConditions(opts = {}, alias = 'c') {
+  const clauses = [];
+  const params = [];
+
+  if (opts.approvalStatus) {
+    clauses.push(`${alias}.approval_status = ?`);
+    params.push(opts.approvalStatus);
+  }
+
+  if (Number.isInteger(Number(opts.collectionId)) && Number(opts.collectionId) > 0) {
+    clauses.push(`${alias}.document_id IN (
+      SELECT dc.document_id
+      FROM document_collections dc
+      WHERE dc.collection_id = ?
+    )`);
+    params.push(Number(opts.collectionId));
+  }
+
+  if (Number.isInteger(Number(opts.documentId)) && Number(opts.documentId) > 0) {
+    clauses.push(`${alias}.document_id = ?`);
+    params.push(Number(opts.documentId));
+  }
+
+  if (Number.isInteger(Number(opts.transcriptId)) && Number(opts.transcriptId) > 0) {
+    clauses.push(`${alias}.transcript_id = ?`);
+    params.push(Number(opts.transcriptId));
+  }
+
+  if (Number.isInteger(Number(opts.entityId)) && Number(opts.entityId) > 0) {
+    clauses.push(`${alias}.entity_id = ?`);
+    params.push(Number(opts.entityId));
+  }
+
+  if (Number.isInteger(Number(opts.relationshipId)) && Number(opts.relationshipId) > 0) {
+    clauses.push(`${alias}.relationship_id = ?`);
+    params.push(Number(opts.relationshipId));
+  }
+
+  return {
+    clause: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    params
+  };
+}
+
 const entities = {
   async create({ entity_type, canonical_name, description, properties }) {
     const result = await runAsync(`
@@ -3529,6 +3833,13 @@ const entities = {
 
   async getById(id) {
     return hydrateEntity(await getAsync('SELECT * FROM entities WHERE id = ?', [id]));
+  },
+
+  async getByIds(ids) {
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await allAsync(`SELECT * FROM entities WHERE id IN (${placeholders})`, ids);
+    return rows.map(hydrateEntity);
   },
 
   async getAll(limit = 50, offset = 0) {
@@ -3565,25 +3876,54 @@ const entities = {
   },
 
   async search(query, limit = 50) {
-    const like = `%${String(query || '').trim()}%`;
-    return (await allAsync(`
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    if (!sanitized) return [];
+    if (fts5Available) {
+      const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
+      try {
+        const rows = await allAsync(`
+          SELECT DISTINCT e.*
+          FROM entities e
+          WHERE e.id IN (
+            SELECT rowid FROM entities_fts WHERE entities_fts MATCH ?
+            UNION
+            SELECT ea.entity_id FROM entity_aliases ea
+            JOIN entity_aliases_fts af ON af.rowid = ea.id
+            WHERE entity_aliases_fts MATCH ?
+          )
+          ORDER BY e.canonical_name
+          LIMIT ?
+        `, [ftsQuery, ftsQuery, limit]);
+        return rows.map(hydrateEntity);
+      } catch (err) {
+        // fall through to LIKE
+      }
+    }
+    const pattern = `%${sanitized}%`;
+    const rows = await allAsync(`
       SELECT DISTINCT e.*
       FROM entities e
       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
       WHERE e.canonical_name LIKE ? OR ea.alias LIKE ?
       ORDER BY e.canonical_name
       LIMIT ?
-    `, [like, like, limit])).map(hydrateEntity);
+    `, [pattern, pattern, limit]);
+    return rows.map(hydrateEntity);
   },
 
-  async getByDocumentId(documentId) {
+  async getByDocumentId(documentId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      documentId,
+      approvalStatus: opts.approvalStatus || CITATION_APPROVAL_STATUSES.APPROVED
+    });
     return (await allAsync(`
       SELECT DISTINCT e.*
       FROM entities e
       INNER JOIN citations c ON c.entity_id = e.id
-      WHERE c.document_id = ?
+      ${queryFilter.clause}
       ORDER BY e.entity_type, e.canonical_name
-    `, [documentId])).map(hydrateEntity);
+    `, queryFilter.params)).map(hydrateEntity);
   },
 
   async update(id, fields = {}) {
@@ -3678,6 +4018,21 @@ const entityAliases = {
     return result.lastInsertRowid;
   },
 
+  async findExisting(entityId, alias) {
+    return await getAsync(`
+      SELECT * FROM entity_aliases
+      WHERE entity_id = ? AND lower(alias) = lower(?)
+      LIMIT 1
+    `, [entityId, alias]);
+  },
+
+  async createIfMissing({ entity_id, alias, source }) {
+    if (!alias) return null;
+    const existing = await this.findExisting(entity_id, alias);
+    if (existing) return existing.id;
+    return await this.create({ entity_id, alias, source });
+  },
+
   async getByEntityId(entityId) {
     return await allAsync(`
       SELECT * FROM entity_aliases
@@ -3687,7 +4042,26 @@ const entityAliases = {
   },
 
   async search(query, limit = 50) {
-    const like = `%${String(query || '').trim()}%`;
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    if (!sanitized) return [];
+    if (fts5Available) {
+      const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
+      try {
+        return await allAsync(`
+          SELECT ea.*, e.canonical_name, e.entity_type
+          FROM entity_aliases ea
+          JOIN entities e ON e.id = ea.entity_id
+          WHERE ea.id IN (
+            SELECT rowid FROM entity_aliases_fts WHERE entity_aliases_fts MATCH ?
+          )
+          ORDER BY ea.alias
+          LIMIT ?
+        `, [ftsQuery, limit]);
+      } catch (err) {
+        // fall through to LIKE
+      }
+    }
+    const pattern = `%${sanitized}%`;
     return await allAsync(`
       SELECT ea.*, e.canonical_name, e.entity_type
       FROM entity_aliases ea
@@ -3695,7 +4069,14 @@ const entityAliases = {
       WHERE ea.alias LIKE ?
       ORDER BY ea.alias
       LIMIT ?
-    `, [like, limit]);
+    `, [pattern, limit]);
+  },
+
+  async getByEntityIds(entityIds) {
+    if (!entityIds.length) return [];
+    const placeholders = entityIds.map(() => '?').join(',');
+    const rows = await allAsync(`SELECT * FROM entity_aliases WHERE entity_id IN (${placeholders}) ORDER BY alias`, entityIds);
+    return rows;
   },
 
   async delete(id) {
@@ -3718,6 +4099,42 @@ const dateExpressions = {
       calendar || 'gregorian'
     ]);
     return result.lastInsertRowid;
+  },
+
+  async findExisting({ entity_id, label, earliest, latest, precision, qualifier, calendar }) {
+    return await getAsync(`
+      SELECT * FROM date_expressions
+      WHERE entity_id = ?
+        AND label = ?
+        AND COALESCE(earliest, '') = COALESCE(?, '')
+        AND COALESCE(latest, '') = COALESCE(?, '')
+        AND COALESCE(precision, '') = COALESCE(?, '')
+        AND COALESCE(qualifier, '') = COALESCE(?, '')
+        AND COALESCE(calendar, '') = COALESCE(?, '')
+      LIMIT 1
+    `, [
+      entity_id,
+      label,
+      earliest || null,
+      latest || null,
+      precision || 'unknown',
+      qualifier || null,
+      calendar || 'gregorian'
+    ]);
+  },
+
+  async createIfMissing({ entity_id, label, earliest, latest, precision, qualifier, calendar }) {
+    const existing = await this.findExisting({
+      entity_id,
+      label,
+      earliest,
+      latest,
+      precision,
+      qualifier,
+      calendar
+    });
+    if (existing) return existing.id;
+    return await this.create({ entity_id, label, earliest, latest, precision, qualifier, calendar });
   },
 
   async getByEntityId(entityId) {
@@ -3804,7 +4221,12 @@ const relationships = {
     `, [entityA, entityB, entityB, entityA])).map(hydrateRelationship);
   },
 
-  async getByDocumentId(documentId) {
+  async getByDocumentId(documentId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      documentId,
+      approvalStatus: opts.approvalStatus || CITATION_APPROVAL_STATUSES.APPROVED
+    });
     return (await allAsync(`
       SELECT DISTINCT
         r.*,
@@ -3814,9 +4236,9 @@ const relationships = {
       JOIN citations c ON c.relationship_id = r.id
       JOIN entities se ON se.id = r.source_entity_id
       JOIN entities te ON te.id = r.target_entity_id
-      WHERE c.document_id = ?
+      ${queryFilter.clause}
       ORDER BY r.created_at DESC
-    `, [documentId])).map(hydrateRelationship);
+    `, queryFilter.params)).map(hydrateRelationship);
   },
 
   async findExisting(source_entity_id, target_entity_id, relationship_type) {
@@ -3828,13 +4250,43 @@ const relationships = {
 };
 
 const citations = {
-  async create({ entity_id, relationship_id, transcript_id, document_id, passage_start, passage_end, passage_text, extraction_method, extraction_model, confidence }) {
+  async create({
+    entity_id,
+    relationship_id,
+    transcript_id,
+    document_id,
+    passage_start,
+    passage_end,
+    passage_text,
+    extraction_method,
+    extraction_model,
+    confidence,
+    approval_status,
+    approval_method,
+    approved_at,
+    approved_by_user_id,
+    rejected_at,
+    rejected_by_user_id
+  }) {
+    const approval = deriveCitationApproval(confidence, approval_status || null);
+    const finalStatus = approval_status || approval.approvalStatus;
+    const finalMethod = approval_method || approval.approvalMethod || null;
+    const autoApprovedAt = finalStatus === CITATION_APPROVAL_STATUSES.APPROVED
+      ? (approved_at || new Date().toISOString())
+      : null;
+    const autoRejectedAt = finalStatus === CITATION_APPROVAL_STATUSES.REJECTED
+      ? (rejected_at || new Date().toISOString())
+      : null;
     const result = await runAsync(`
       INSERT INTO citations (
         entity_id, relationship_id, transcript_id, document_id,
         passage_start, passage_end, passage_text,
-        extraction_method, extraction_model, confidence
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        extraction_method, extraction_model, confidence,
+        reviewed_at, reviewed_by_user_id,
+        approval_status, approval_method,
+        approved_at, approved_by_user_id,
+        rejected_at, rejected_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       entity_id || null,
       relationship_id || null,
@@ -3845,7 +4297,15 @@ const citations = {
       passage_text,
       extraction_method,
       extraction_model || null,
-      confidence != null ? confidence : null
+      confidence != null ? confidence : null,
+      finalStatus === CITATION_APPROVAL_STATUSES.APPROVED ? autoApprovedAt : null,
+      finalStatus === CITATION_APPROVAL_STATUSES.APPROVED ? (approved_by_user_id || null) : null,
+      finalStatus,
+      finalMethod,
+      finalStatus === CITATION_APPROVAL_STATUSES.APPROVED ? autoApprovedAt : null,
+      finalStatus === CITATION_APPROVAL_STATUSES.APPROVED ? (approved_by_user_id || null) : null,
+      finalStatus === CITATION_APPROVAL_STATUSES.REJECTED ? autoRejectedAt : null,
+      finalStatus === CITATION_APPROVAL_STATUSES.REJECTED ? (rejected_by_user_id || null) : null
     ]);
     return result.lastInsertRowid;
   },
@@ -3862,37 +4322,97 @@ const citations = {
     `, [id]);
   },
 
-  async getByEntityId(entityId) {
+  async getByEntityId(entityId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      entityId
+    });
     return await allAsync(`
       SELECT c.*, d.title AS document_title
       FROM citations c
       LEFT JOIN documents d ON d.id = c.document_id
-      WHERE c.entity_id = ?
+      ${queryFilter.clause}
       ORDER BY c.created_at DESC
-    `, [entityId]);
+    `, queryFilter.params);
   },
 
-  async getByRelationshipId(relationshipId) {
+  async getByRelationshipId(relationshipId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      relationshipId
+    });
     return await allAsync(`
       SELECT c.*, d.title AS document_title
       FROM citations c
       LEFT JOIN documents d ON d.id = c.document_id
-      WHERE c.relationship_id = ?
+      ${queryFilter.clause}
       ORDER BY c.created_at DESC
-    `, [relationshipId]);
+    `, queryFilter.params);
   },
 
-  async getByDocumentId(documentId) {
+  async getByDocumentId(documentId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      documentId
+    });
     return await allAsync(`
       SELECT c.*, e.canonical_name AS entity_name, e.entity_type
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
-      WHERE c.document_id = ?
+      ${queryFilter.clause}
       ORDER BY c.created_at DESC
-    `, [documentId]);
+    `, queryFilter.params);
   },
 
-  async getUnreviewed(limit = 50) {
+  async getByTranscriptId(transcriptId, opts = {}) {
+    const queryFilter = buildCitationQueryConditions({
+      ...opts,
+      transcriptId
+    });
+    return await allAsync(`
+      SELECT c.*, e.canonical_name AS entity_name, e.entity_type
+      FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      ${queryFilter.clause}
+      ORDER BY c.created_at DESC
+    `, queryFilter.params);
+  },
+
+  async getStatusCounts(opts = {}) {
+    const access = opts.userId || opts.isAdmin || opts.accessAll
+      ? buildAccessibleDocumentFilter(opts, 'c.document_id')
+      : { clause: '1=1', params: [] };
+    const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
+    const rows = await allAsync(`
+      SELECT c.approval_status, COUNT(*) AS count
+      FROM citations c
+      WHERE (${access.clause})
+        AND (${collection.clause})
+      GROUP BY c.approval_status
+    `, [...access.params, ...collection.params]);
+    return rows.reduce((acc, row) => {
+      acc[row.approval_status || CITATION_APPROVAL_STATUSES.PENDING] = row.count;
+      return acc;
+    }, {
+      [CITATION_APPROVAL_STATUSES.PENDING]: 0,
+      [CITATION_APPROVAL_STATUSES.APPROVED]: 0,
+      [CITATION_APPROVAL_STATUSES.REJECTED]: 0
+    });
+  },
+
+  async list(status = 'all', limit = 50, offset = 0, opts = {}) {
+    const access = opts.userId || opts.isAdmin || opts.accessAll
+      ? buildAccessibleDocumentFilter(opts, 'c.document_id')
+      : { clause: '1=1', params: [] };
+    const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
+    const params = [...access.params, ...collection.params];
+    const statusClause = status === 'all'
+      ? ''
+      : ' AND c.approval_status = ?';
+    if (status !== 'all') {
+      params.push(status);
+    }
+    params.push(limit, offset);
     return await allAsync(`
       SELECT c.*, e.canonical_name AS entity_name, e.entity_type,
              r.relationship_type, d.title AS document_title
@@ -3900,19 +4420,147 @@ const citations = {
       LEFT JOIN entities e ON e.id = c.entity_id
       LEFT JOIN relationships r ON r.id = c.relationship_id
       LEFT JOIN documents d ON d.id = c.document_id
-      WHERE c.reviewed_at IS NULL
+      WHERE (${access.clause})
+        AND (${collection.clause})
+        ${statusClause}
       ORDER BY c.created_at DESC
       LIMIT ?
-    `, [limit]);
+      OFFSET ?
+    `, params);
   },
 
-  async review(id, reviewedByUserId) {
+  async getByStatus(status = CITATION_APPROVAL_STATUSES.PENDING, limit = 50, opts = {}) {
+    return await this.list(status, limit, 0, opts);
+  },
+
+  async getUnreviewed(limit = 50, opts = {}) {
+    return await this.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, limit, opts);
+  },
+
+  async approve(id, approvedByUserId, method = 'manual') {
     await runAsync(`
       UPDATE citations
       SET reviewed_at = CURRENT_TIMESTAMP,
-          reviewed_by_user_id = ?
+          reviewed_by_user_id = ?,
+          approval_status = ?,
+          approval_method = ?,
+          approved_at = CURRENT_TIMESTAMP,
+          approved_by_user_id = ?,
+          rejected_at = NULL,
+          rejected_by_user_id = NULL
       WHERE id = ?
-    `, [reviewedByUserId || null, id]);
+    `, [
+      approvedByUserId || null,
+      CITATION_APPROVAL_STATUSES.APPROVED,
+      method || 'manual',
+      approvedByUserId || null,
+      id
+    ]);
+  },
+
+  async review(id, reviewedByUserId) {
+    return await this.approve(id, reviewedByUserId, 'manual');
+  },
+
+  async reject(id, rejectedByUserId) {
+    await runAsync(`
+      UPDATE citations
+      SET reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?,
+          approval_status = ?,
+          approval_method = 'manual',
+          rejected_at = CURRENT_TIMESTAMP,
+          rejected_by_user_id = ?,
+          approved_at = NULL,
+          approved_by_user_id = NULL
+      WHERE id = ?
+    `, [
+      rejectedByUserId || null,
+      CITATION_APPROVAL_STATUSES.REJECTED,
+      rejectedByUserId || null,
+      id
+    ]);
+  },
+
+  async rejectByDocumentEntity(documentId, entityId, rejectedByUserId) {
+    const result = await runAsync(`
+      UPDATE citations
+      SET reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?,
+          approval_status = ?,
+          approval_method = 'manual',
+          rejected_at = CURRENT_TIMESTAMP,
+          rejected_by_user_id = ?,
+          approved_at = NULL,
+          approved_by_user_id = NULL
+      WHERE document_id = ?
+        AND entity_id = ?
+        AND approval_status = ?
+    `, [
+      rejectedByUserId || null,
+      CITATION_APPROVAL_STATUSES.REJECTED,
+      rejectedByUserId || null,
+      documentId,
+      entityId,
+      CITATION_APPROVAL_STATUSES.APPROVED
+    ]);
+    return result.changes || 0;
+  },
+
+  async rejectByDocumentRelationship(documentId, relationshipId, rejectedByUserId) {
+    const result = await runAsync(`
+      UPDATE citations
+      SET reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?,
+          approval_status = ?,
+          approval_method = 'manual',
+          rejected_at = CURRENT_TIMESTAMP,
+          rejected_by_user_id = ?,
+          approved_at = NULL,
+          approved_by_user_id = NULL
+      WHERE document_id = ?
+        AND relationship_id = ?
+        AND approval_status = ?
+    `, [
+      rejectedByUserId || null,
+      CITATION_APPROVAL_STATUSES.REJECTED,
+      rejectedByUserId || null,
+      documentId,
+      relationshipId,
+      CITATION_APPROVAL_STATUSES.APPROVED
+    ]);
+    return result.changes || 0;
+  },
+
+  async getByEntityIds(entityIds, opts = {}) {
+    if (!entityIds.length) return [];
+    const placeholders = entityIds.map(() => '?').join(',');
+    const { clause, params } = buildCitationQueryConditions(opts);
+    // clause is either '' or 'WHERE ...' — strip the WHERE prefix so we can AND it
+    const extra = clause ? 'AND ' + clause.replace(/^WHERE\s+/i, '') : '';
+    const rows = await allAsync(`
+      SELECT c.*, d.title AS document_title
+      FROM citations c
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.entity_id IN (${placeholders}) ${extra}
+      ORDER BY c.created_at DESC
+    `, [...entityIds, ...params]);
+    return rows;
+  },
+
+  async getByRelationshipIds(relationshipIds, opts = {}) {
+    if (!relationshipIds.length) return [];
+    const placeholders = relationshipIds.map(() => '?').join(',');
+    const { clause, params } = buildCitationQueryConditions(opts);
+    const extra = clause ? 'AND ' + clause.replace(/^WHERE\s+/i, '') : '';
+    const rows = await allAsync(`
+      SELECT c.*, d.title AS document_title
+      FROM citations c
+      LEFT JOIN documents d ON d.id = c.document_id
+      WHERE c.relationship_id IN (${placeholders}) ${extra}
+      ORDER BY c.created_at DESC
+    `, [...relationshipIds, ...params]);
+    return rows;
   },
 
   async delete(id) {
@@ -3920,14 +4568,104 @@ const citations = {
   }
 };
 
+const graphMaintenance = {
+  async resetTranscriptExtraction(transcriptId) {
+    const transcriptCitations = await allAsync(`
+      SELECT entity_id, relationship_id
+      FROM citations
+      WHERE transcript_id = ?
+    `, [transcriptId]);
+
+    if (!transcriptCitations.length) {
+      return {
+        deletedCitations: 0,
+        deletedRelationships: 0,
+        deletedEntities: 0
+      };
+    }
+
+    const entityIds = [...new Set(
+      transcriptCitations
+        .map((row) => row.entity_id)
+        .filter((value) => Number.isInteger(value))
+    )];
+    const relationshipIds = [...new Set(
+      transcriptCitations
+        .map((row) => row.relationship_id)
+        .filter((value) => Number.isInteger(value))
+    )];
+
+    await runAsync('DELETE FROM citations WHERE transcript_id = ?', [transcriptId]);
+
+    let deletedRelationships = 0;
+    for (const relationshipId of relationshipIds) {
+      const stillReferenced = await getAsync(`
+        SELECT 1
+        FROM citations
+        WHERE relationship_id = ?
+        LIMIT 1
+      `, [relationshipId]);
+      if (!stillReferenced) {
+        await runAsync('DELETE FROM relationships WHERE id = ?', [relationshipId]);
+        deletedRelationships += 1;
+      }
+    }
+
+    let deletedEntities = 0;
+    for (const entityId of entityIds) {
+      const hasCitations = await getAsync(`
+        SELECT 1
+        FROM citations
+        WHERE entity_id = ?
+        LIMIT 1
+      `, [entityId]);
+      const hasRelationships = await getAsync(`
+        SELECT 1
+        FROM relationships
+        WHERE source_entity_id = ? OR target_entity_id = ?
+        LIMIT 1
+      `, [entityId, entityId]);
+
+      if (!hasCitations && !hasRelationships) {
+        await runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [entityId]);
+        await runAsync('DELETE FROM date_expressions WHERE entity_id = ?', [entityId]);
+        await runAsync('DELETE FROM entities WHERE id = ?', [entityId]);
+        deletedEntities += 1;
+      }
+    }
+
+    return {
+      deletedCitations: transcriptCitations.length,
+      deletedRelationships,
+      deletedEntities
+    };
+  }
+};
+
 const extractionJobs = {
-  async create({ transcript_id, document_id, provider, model, temperature, initiated_by, provider_key_scope, user_api_key_id, requested_by_user_id }) {
+  async create({
+    transcript_id,
+    document_id,
+    provider,
+    model,
+    temperature,
+    initiated_by,
+    provider_key_scope,
+    user_api_key_id,
+    requested_by_user_id,
+    reset_existing,
+    job_kind,
+    batch_display_name,
+    batch_document_count,
+    batch_manifest
+  }) {
     const result = await runAsync(`
       INSERT INTO extraction_jobs (
         transcript_id, document_id, provider, model, temperature, initiated_by,
         provider_key_scope, user_api_key_id, requested_by_user_id,
-        status, log
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
+        reset_existing, job_kind, batch_display_name, batch_document_count,
+        batch_manifest, status, log
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', '')
     `, [
       transcript_id,
       document_id,
@@ -3937,9 +4675,57 @@ const extractionJobs = {
       initiated_by || null,
       provider_key_scope || null,
       user_api_key_id || null,
-      requested_by_user_id || null
+      requested_by_user_id || null,
+      reset_existing ? 1 : 0,
+      job_kind || 'single',
+      batch_display_name || null,
+      Number.isInteger(batch_document_count) ? batch_document_count : 1,
+      batch_manifest ? JSON.stringify(batch_manifest) : null
     ]);
     return result.lastInsertRowid;
+  },
+
+  async createBatch({
+    transcript_id,
+    document_id,
+    provider,
+    model,
+    temperature,
+    initiated_by,
+    provider_key_scope,
+    user_api_key_id,
+    requested_by_user_id,
+    reset_existing,
+    batch_display_name,
+    batch_document_count,
+    batch_manifest,
+    documents
+  }) {
+    const jobId = await this.create({
+      transcript_id,
+      document_id,
+      provider,
+      model,
+      temperature,
+      initiated_by,
+      provider_key_scope,
+      user_api_key_id,
+      requested_by_user_id,
+      reset_existing,
+      job_kind: 'batch',
+      batch_display_name,
+      batch_document_count,
+      batch_manifest
+    });
+
+    for (const item of (documents || [])) {
+      await runAsync(`
+        INSERT OR IGNORE INTO extraction_job_documents (job_id, document_id, transcript_id)
+        VALUES (?, ?, ?)
+      `, [jobId, item.document_id, item.transcript_id]);
+    }
+
+    return jobId;
   },
 
   async claimNextQueued() {
@@ -4012,14 +4798,31 @@ const extractionJobs = {
       SET status = 'queued',
           error = NULL,
           started_at = NULL,
-          completed_at = NULL
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
       WHERE id = ?
     `, [id]);
     await saveDatabase();
   },
 
   async retry(id) {
-    await this.requeueForRetry(id);
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          reset_existing = 1,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ?
+    `, [id]);
+    await saveDatabase();
   },
 
   async getAll() {
@@ -4046,9 +4849,69 @@ const extractionJobs = {
       SELECT * FROM extraction_jobs
       WHERE document_id = ?
         AND status IN ('queued', 'running')
+      UNION
+      SELECT j.*
+      FROM extraction_jobs j
+      INNER JOIN extraction_job_documents ejd ON ejd.job_id = j.id
+      WHERE ejd.document_id = ?
+        AND j.status IN ('queued', 'running')
       ORDER BY created_at DESC
       LIMIT 1
-    `, [documentId]);
+    `, [documentId, documentId]);
+  },
+
+  async getRunningBatches() {
+    return await allAsync(`
+      SELECT j.*, d.title AS document_title
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON d.id = j.document_id
+      WHERE j.job_kind = 'batch' AND j.status = 'running'
+      ORDER BY j.created_at ASC
+    `);
+  },
+
+  async updateBatchRemote(id, { remoteId, remoteStatus }) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET batch_remote_id = COALESCE(?, batch_remote_id),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [remoteId || null, remoteStatus || null, id]);
+    await saveDatabase();
+  },
+
+  async updateBatchProgress(id, { completedCount, failedCount, remoteStatus }) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET batch_completed_count = COALESCE(?, batch_completed_count),
+          batch_failed_count = COALESCE(?, batch_failed_count),
+          batch_remote_status = COALESCE(?, batch_remote_status)
+      WHERE id = ?
+    `, [
+      Number.isInteger(completedCount) ? completedCount : null,
+      Number.isInteger(failedCount) ? failedCount : null,
+      remoteStatus || null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async getBatchDocuments(jobId) {
+    return await allAsync(`
+      SELECT * FROM extraction_job_documents
+      WHERE job_id = ?
+      ORDER BY document_id, transcript_id
+    `, [jobId]);
+  },
+
+  async getPendingForTranscript(transcriptId) {
+    return await getAsync(`
+      SELECT * FROM extraction_jobs
+      WHERE transcript_id = ?
+        AND status IN ('queued', 'running')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [transcriptId]);
   },
 
   async delete(id) {
@@ -4089,9 +4952,33 @@ const relationshipTypes = {
 };
 
 const graphAccess = {
-  async searchEntities(query, userId, isAdmin, accessAll, limit = 50) {
-    const like = `%${String(query || '').trim()}%`;
-    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+  async searchEntities(query, userId, isAdmin, accessAll, limit = 50, collectionId = null) {
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    if (!sanitized) return [];
+    const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
+    if (fts5Available) {
+      const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
+      try {
+        return (await allAsync(`
+          SELECT DISTINCT e.*
+          FROM entities e
+          INNER JOIN citations c ON c.entity_id = e.id
+          WHERE (${access.clause})
+            AND e.id IN (
+              SELECT rowid FROM entities_fts WHERE entities_fts MATCH ?
+              UNION
+              SELECT ea.entity_id FROM entity_aliases ea
+              JOIN entity_aliases_fts af ON af.rowid = ea.id
+              WHERE entity_aliases_fts MATCH ?
+            )
+          ORDER BY e.canonical_name
+          LIMIT ?
+        `, [...access.params, ftsQuery, ftsQuery, limit])).map(hydrateEntity);
+      } catch (err) {
+        // fall through to LIKE
+      }
+    }
+    const pattern = `%${sanitized}%`;
     return (await allAsync(`
       SELECT DISTINCT e.*
       FROM entities e
@@ -4101,11 +4988,11 @@ const graphAccess = {
         AND (e.canonical_name LIKE ? OR ea.alias LIKE ?)
       ORDER BY e.canonical_name
       LIMIT ?
-    `, [...access.params, like, like, limit])).map(hydrateEntity);
+    `, [...access.params, pattern, pattern, limit])).map(hydrateEntity);
   },
 
-  async getEntitiesByType(entityType, userId, isAdmin, accessAll, limit = 50, offset = 0) {
-    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+  async getEntitiesByType(entityType, userId, isAdmin, accessAll, limit = 50, offset = 0, collectionId = null) {
+    const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
     const params = [...access.params];
     let typeClause = '';
     if (entityType) {
@@ -4123,8 +5010,8 @@ const graphAccess = {
     `, params)).map(hydrateEntity);
   },
 
-  async canAccessEntity(entityId, userId, isAdmin, accessAll) {
-    const access = buildAccessibleDocumentFilter({ userId, isAdmin, accessAll }, 'c.document_id');
+  async canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId = null) {
+    const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
     const row = await getAsync(`
       SELECT 1
       FROM citations c
@@ -4133,6 +5020,35 @@ const graphAccess = {
       LIMIT 1
     `, [entityId, ...access.params]);
     return !!row;
+  },
+
+  async getNeighbors(entityId, userId, isAdmin, accessAll, collectionId = null) {
+    const visibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
+    return (await allAsync(`
+      SELECT DISTINCT
+        e.*,
+        r.id AS relationship_id,
+        r.relationship_type,
+        r.confidence,
+        r.start_date,
+        r.end_date,
+        r.date_precision,
+        r.date_qualifier,
+        CASE WHEN r.source_entity_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type
+      FROM relationships r
+      JOIN citations c ON c.relationship_id = r.id
+      JOIN entities e
+        ON e.id = CASE WHEN r.source_entity_id = ? THEN r.target_entity_id ELSE r.source_entity_id END
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE (r.source_entity_id = ? OR r.target_entity_id = ?)
+        AND (${visibility.clause})
+      ORDER BY e.canonical_name
+    `, [entityId, entityId, entityId, entityId, ...visibility.params])).map(hydrateEntity);
   }
 };
 
@@ -4800,6 +5716,147 @@ const documentEventsAsync = {
   }
 };
 
+// ── Application Logs ───────────────────────────────────────────────────────
+
+const appLogsAsync = {
+  async create({
+    level,
+    category,
+    message,
+    context = null,
+    requestId = null,
+    userId = null,
+    documentId = null,
+    collectionId = null,
+    jobType = null,
+    jobId = null
+  }) {
+    await runAsync(`
+      INSERT INTO app_logs (
+        level,
+        category,
+        message,
+        context_json,
+        request_id,
+        user_id,
+        document_id,
+        collection_id,
+        job_type,
+        job_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      level,
+      category,
+      message,
+      context ? JSON.stringify(context) : null,
+      requestId,
+      userId,
+      documentId,
+      collectionId,
+      jobType,
+      jobId
+    ]);
+  },
+
+  async list({ level = 'all', category = 'all', query = '', limit = 100, offset = 0 } = {}) {
+    const where = [];
+    const params = [];
+
+    if (level !== 'all') {
+      where.push('level = ?');
+      params.push(level);
+    }
+    if (category !== 'all') {
+      where.push('category = ?');
+      params.push(category);
+    }
+    if (String(query || '').trim()) {
+      where.push('(message LIKE ? OR context_json LIKE ?)');
+      params.push(`%${query.trim()}%`, `%${query.trim()}%`);
+    }
+
+    params.push(limit, offset);
+
+    const rows = await allAsync(`
+      SELECT *
+      FROM app_logs
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    `, params);
+
+    return rows.map((row) => ({
+      ...row,
+      context: row.context_json ? safeJsonParse(row.context_json, {}) : {}
+    }));
+  },
+
+  async getFilteredCount({ level = 'all', category = 'all', query = '' } = {}) {
+    const where = [];
+    const params = [];
+
+    if (level !== 'all') {
+      where.push('level = ?');
+      params.push(level);
+    }
+    if (category !== 'all') {
+      where.push('category = ?');
+      params.push(category);
+    }
+    if (String(query || '').trim()) {
+      where.push('(message LIKE ? OR context_json LIKE ?)');
+      params.push(`%${query.trim()}%`, `%${query.trim()}%`);
+    }
+
+    const row = await getAsync(`
+      SELECT COUNT(*) AS count
+      FROM app_logs
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    `, params);
+    return row ? row.count : 0;
+  },
+
+  async getCounts() {
+    const totalRow = await getAsync('SELECT COUNT(*) AS count FROM app_logs');
+    const rows = await allAsync(`
+      SELECT level, COUNT(*) AS count
+      FROM app_logs
+      GROUP BY level
+    `);
+    const counts = {
+      total: totalRow ? totalRow.count : 0,
+      trace: 0,
+      debug: 0,
+      info: 0,
+      warn: 0,
+      error: 0,
+      fatal: 0
+    };
+    for (const row of rows) {
+      counts[row.level] = row.count;
+    }
+    return counts;
+  },
+
+  async getCategories() {
+    const rows = await allAsync(`
+      SELECT category, COUNT(*) AS count
+      FROM app_logs
+      GROUP BY category
+      ORDER BY category
+    `);
+    return rows;
+  },
+
+  async deleteOlderThanDays(days) {
+    const safeDays = Math.max(1, parseInt(days, 10) || 14);
+    await runAsync(`
+      DELETE FROM app_logs
+      WHERE created_at < datetime('now', ?)
+    `, [`-${safeDays} days`]);
+  }
+};
+
 function getDb() { return db; }
 
 module.exports = {
@@ -4836,6 +5893,7 @@ module.exports = {
   userApiKeysAsync,
   mfaRememberTokensAsync,
   documentEventsAsync,
+  appLogsAsync,
   roleAtLeast,
   collectionAnalyticsAsync,
   documentEmbeddingsAsync,
@@ -4853,6 +5911,8 @@ module.exports = {
   relationshipsAsync: relationships,
   citations,
   citationsAsync: citations,
+  graphMaintenance,
+  graphMaintenanceAsync: graphMaintenance,
   extractionJobs,
   extractionJobsAsync: extractionJobs,
   relationshipTypes,

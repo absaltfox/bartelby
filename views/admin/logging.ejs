@@ -1,0 +1,156 @@
+<%- include('../partials/header', { pageTitle: 'Logging', query: '' }) %>
+
+<div class="admin-page admin-page--workspace logging-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Logging</h1>
+    <p class="subtitle">Review persisted operational events and investigate recent application behavior.</p>
+  </div>
+
+  <%- include('../partials/logging-nav', { activeLoggingPage: 'logs' }) %>
+
+  <% if (cleaned) { %>
+    <div class="alert alert-success">Persisted logs were pruned using the current retention window.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <div class="admin-stats logging-stats">
+    <div class="stat-card">
+      <div class="stat-value"><%= counts.total %></div>
+      <div class="stat-label">Persisted Events</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= counts.warn %></div>
+      <div class="stat-label">Warnings</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= counts.error + counts.fatal %></div>
+      <div class="stat-label">Errors + Fatal</div>
+    </div>
+  </div>
+
+  <section class="settings-section logging-viewer-panel">
+    <div class="logging-viewer-header">
+      <div>
+        <h2>Recent Logs</h2>
+        <p class="subtitle">Curated operational events stored for review in the admin interface.</p>
+      </div>
+    </div>
+
+    <%
+      function filterHref(targetPage) {
+        const params = [];
+        if (level !== 'all') params.push('level=' + encodeURIComponent(level));
+        if (category !== 'all') params.push('category=' + encodeURIComponent(category));
+        if (query) params.push('q=' + encodeURIComponent(query));
+        if (targetPage > 1) params.push('page=' + targetPage);
+        return '/admin/logging' + (params.length ? '?' + params.join('&') : '');
+      }
+    %>
+
+    <form method="GET" action="/admin/logging" class="logging-filters">
+      <div class="form-group">
+        <label for="level">Level</label>
+        <select id="level" name="level">
+          <option value="all" <%= level === 'all' ? 'selected' : '' %>>All levels</option>
+          <% levelOptions.forEach(function(option) { %>
+            <option value="<%= option %>" <%= level === option ? 'selected' : '' %>><%= option %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="category">Category</label>
+        <select id="category" name="category">
+          <option value="all" <%= category === 'all' ? 'selected' : '' %>>All categories</option>
+          <% categories.forEach(function(entry) { %>
+            <option value="<%= entry.category %>" <%= category === entry.category ? 'selected' : '' %>>
+              <%= entry.category %> (<%= entry.count %>)
+            </option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group logging-search-group">
+        <label for="q">Search message/context</label>
+        <input type="text" id="q" name="q" value="<%= query %>" placeholder="Search logs">
+      </div>
+      <div class="form-group logging-filters-actions">
+        <button type="submit" class="btn-secondary">Filter</button>
+      </div>
+    </form>
+
+    <% if (logs.length === 0) { %>
+      <div class="empty-state">
+        <p>No persisted logs match the current filters.</p>
+      </div>
+    <% } else { %>
+      <div class="workflows-table-wrap">
+        <table class="workflows-table workflows-table--auto">
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Level</th>
+              <th scope="col">Category</th>
+              <th scope="col">Message</th>
+              <th scope="col">Context</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% logs.forEach(function(log) { %>
+              <tr>
+                <td class="job-time-cell"><span class="muted"><%= new Date(log.created_at).toLocaleString() %></span></td>
+                <td><span class="status-badge status-<%= log.level %>"><%= log.level %></span></td>
+                <td><code><%= log.category %></code></td>
+                <td>
+                  <strong><%= log.message %></strong>
+                  <% if (log.document_id || log.collection_id || log.job_id) { %>
+                    <div class="log-links">
+                      <% if (log.document_id) { %><a href="/documents/<%= log.document_id %>">Document <%= log.document_id %></a><% } %>
+                      <% if (log.collection_id) { %><a href="/collections/<%= log.collection_id %>">Collection <%= log.collection_id %></a><% } %>
+                      <% if (log.job_id && log.job_type) { %><a href="/admin/jobs?type=<%= encodeURIComponent(log.job_type) %>">Job <%= log.job_id %></a><% } %>
+                    </div>
+                  <% } %>
+                </td>
+                <td class="log-context-cell">
+                  <% if (log.context && Object.keys(log.context).length > 0) { %>
+                    <details>
+                      <summary>View context</summary>
+                      <pre class="job-log"><%= JSON.stringify(log.context, null, 2) %></pre>
+                    </details>
+                  <% } else { %>
+                    <span class="muted">—</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+      <% if (totalPages > 1) { %>
+        <div class="pagination">
+          <% if (page > 1) { %>
+            <a href="<%= filterHref(page - 1) %>" class="pagination-btn">&lsaquo; Prev</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+          <% } %>
+
+          <span class="pagination-info">
+            Page <%= page %> of <%= totalPages %>
+            <span class="muted">(<%= filteredTotal %> logs)</span>
+          </span>
+
+          <% if (page < totalPages) { %>
+            <a href="<%= filterHref(page + 1) %>" class="pagination-btn">Next &rsaquo;</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+          <% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </section>
+</div>
+
+<%- include('../partials/footer') %>

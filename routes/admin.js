@@ -4,14 +4,64 @@ const multer = require('multer');
 const config = require('../config');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync, saveDatabase, collectionAnalyticsAsync } = require('../database/db');
-const { runAnalyticsForCollection, runScheduledAnalytics } = require('../utils/analytics');
 const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
-const importApiRouter = require('./import-api');
 
 const svgUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 256 * 1024 }
 });
+
+const ANALYTICS_DAY_OPTIONS = [
+  { value: '0', label: 'Sunday' },
+  { value: '1', label: 'Monday' },
+  { value: '2', label: 'Tuesday' },
+  { value: '3', label: 'Wednesday' },
+  { value: '4', label: 'Thursday' },
+  { value: '5', label: 'Friday' },
+  { value: '6', label: 'Saturday' }
+];
+
+function normalizeAnalyticsSchedule(settings = {}) {
+  const interval = ['24', '168', '720'].includes(String(settings.analytics_schedule_interval || ''))
+    ? String(settings.analytics_schedule_interval)
+    : '168';
+  const dayOfWeek = /^[0-6]$/.test(String(settings.analytics_schedule_day_of_week || ''))
+    ? String(settings.analytics_schedule_day_of_week)
+    : '1';
+  const time = /^\d{2}:\d{2}$/.test(String(settings.analytics_schedule_time || ''))
+    ? String(settings.analytics_schedule_time)
+    : '02:00';
+
+  return {
+    interval,
+    dayOfWeek,
+    time
+  };
+}
+
+function buildAnalyticsScheduleSummary(schedule) {
+  const intervalLabel = schedule.interval === '24'
+    ? 'daily'
+    : schedule.interval === '168'
+      ? 'weekly'
+      : 'monthly';
+  const timeLabel = schedule.time;
+
+  if (schedule.interval === '168') {
+    const dayLabel = (ANALYTICS_DAY_OPTIONS.find((option) => option.value === schedule.dayOfWeek) || ANALYTICS_DAY_OPTIONS[1]).label;
+    return `Runs ${intervalLabel} on ${dayLabel} at ${timeLabel} server time.`;
+  }
+
+  if (schedule.interval === '720') {
+    return `Runs ${intervalLabel} on the first day of each month at ${timeLabel} server time.`;
+  }
+
+  return `Runs ${intervalLabel} at ${timeLabel} server time.`;
+}
+
+function getImportApiRouter() {
+  return require('./import-api');
+}
 
 function normalizeSvgUpload(file) {
   if (!file) return null;
@@ -77,8 +127,7 @@ router.get('/', async (req, res) => {
     docCount,
     pendingCount,
     collectionCount,
-    userCount,
-    providers: require('../utils/llm').listProviders()
+    userCount
   });
 });
 
@@ -211,7 +260,7 @@ router.get('/import', async (req, res) => {
       resumeJob = {
         id: job.id,
         originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(importApiRouter.attachTempPreview),
+        pages: JSON.parse(job.pages).map(getImportApiRouter().attachTempPreview),
         groupingState
       };
     }
@@ -236,10 +285,11 @@ router.get('/import', async (req, res) => {
 });
 
 // Mount shared import API routes
-router.use('/api', importApiRouter);
+router.use('/api', (req, res, next) => getImportApiRouter()(req, res, next));
 
 router.get('/analytics-settings', async (req, res) => {
   const settings = await settingsAsync.getAll();
+  const schedule = normalizeAnalyticsSchedule(settings);
   const [collections, latestStats] = await Promise.all([
     collectionsAsync.getAll(),
     collectionAnalyticsAsync.getAllLatest()
@@ -267,6 +317,9 @@ router.get('/analytics-settings', async (req, res) => {
   res.render('admin/analytics-settings', {
     pageTitle: 'Analytics Settings',
     settings,
+    analyticsSchedule: schedule,
+    analyticsDayOptions: ANALYTICS_DAY_OPTIONS,
+    analyticsScheduleSummary: buildAnalyticsScheduleSummary(schedule),
     statusRows,
     flashMessage: req.session.flashMessage || null
   });
@@ -274,9 +327,16 @@ router.get('/analytics-settings', async (req, res) => {
 });
 
 router.post('/analytics-settings', express.urlencoded({ extended: false }), async (req, res) => {
-  const { analytics_enabled, analytics_schedule_interval, analytics_change_threshold } = req.body;
+  const { analytics_enabled, analytics_schedule_interval, analytics_schedule_day_of_week, analytics_schedule_time, analytics_change_threshold } = req.body;
+  const normalized = normalizeAnalyticsSchedule({
+    analytics_schedule_interval,
+    analytics_schedule_day_of_week,
+    analytics_schedule_time
+  });
   await settingsAsync.set('analytics_enabled', analytics_enabled === 'on' ? '1' : '0');
-  await settingsAsync.set('analytics_schedule_interval', analytics_schedule_interval || '168');
+  await settingsAsync.set('analytics_schedule_interval', normalized.interval);
+  await settingsAsync.set('analytics_schedule_day_of_week', normalized.dayOfWeek);
+  await settingsAsync.set('analytics_schedule_time', normalized.time);
   await settingsAsync.set('analytics_change_threshold', analytics_change_threshold || '10');
   await saveDatabase();
   req.session.flashMessage = { type: 'success', text: 'Analytics settings saved.' };
@@ -290,6 +350,7 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
     return res.redirect('/admin/analytics-settings');
   }
   try {
+    const { runAnalyticsForCollection } = require('../utils/analytics');
     await runAnalyticsForCollection(collectionId);
     const collection = await collectionsAsync.getById(collectionId);
     const label = collection ? collection.name : `collection ${collectionId}`;
@@ -301,6 +362,7 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
 });
 
 router.post('/analytics-settings/run-all', async (req, res) => {
+  const { runScheduledAnalytics } = require('../utils/analytics');
   runScheduledAnalytics().catch(err => console.error('[admin] run-all analytics error:', err));
   req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections. Topic analysis will continue in the background.' };
   res.redirect('/admin/analytics-settings');

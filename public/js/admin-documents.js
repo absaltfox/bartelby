@@ -36,11 +36,16 @@
     var closeBtn = document.getElementById('tag-modal-close');
     var cancelBtn = document.getElementById('tag-modal-cancel');
     var titleEl = document.getElementById('tag-modal-title');
+    var zoomOverlay = document.getElementById('doc-zoom-overlay');
+    var zoomImage = document.getElementById('doc-zoom-image');
+    var zoomLabel = document.getElementById('doc-zoom-label');
+    var zoomClose = document.getElementById('doc-zoom-close');
     var lastChecked = null;
     var bulkMode = false;
     var currentDocId = null;
     var dragging = false;
     var dragState = false;
+    var actionMenus = Array.from(document.querySelectorAll('[data-doc-card-menu]'));
 
     if (!selectAllCb || !bulkCount || !bulkActions || !overlay || !saveBtn || !titleEl) {
       return;
@@ -103,6 +108,38 @@
       saveBtn.textContent = 'Save';
     }
 
+    function openZoom(card) {
+      if (!zoomOverlay || !zoomImage || !card) return;
+      var img = card.querySelector('.doc-card-image img');
+      if (!img || !img.getAttribute('src')) return;
+      zoomImage.src = img.getAttribute('src');
+      zoomImage.alt = card.querySelector('.doc-card-title') ? card.querySelector('.doc-card-title').textContent.trim() : 'Document preview';
+      if (zoomLabel) {
+        zoomLabel.textContent = zoomImage.alt;
+      }
+      zoomOverlay.classList.remove('is-hidden');
+      zoomOverlay.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeZoom() {
+      if (!zoomOverlay || !zoomImage) return;
+      zoomOverlay.classList.add('is-hidden');
+      zoomOverlay.setAttribute('aria-hidden', 'true');
+      zoomImage.src = '';
+      zoomImage.alt = '';
+      if (zoomLabel) zoomLabel.textContent = '';
+    }
+
+    function closeActionMenus() {
+      actionMenus.forEach(function(menu) {
+        var toggle = menu.querySelector('[data-doc-card-menu-toggle]');
+        var panel = menu.querySelector('[data-doc-card-menu-panel]');
+        menu.classList.remove('open');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        if (panel) panel.hidden = true;
+      });
+    }
+
     function syncModalSelections(collectionIds) {
       var selectedIds = new Set((collectionIds || []).map(function(id) { return parseInt(id, 10); }).filter(Number.isInteger));
       document.querySelectorAll('.tag-cb').forEach(function(cb) {
@@ -126,6 +163,25 @@
         updateSelectionUI();
       });
       cb.addEventListener('change', updateSelectionUI);
+    });
+
+    document.querySelectorAll('[data-doc-card-image]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        var card = button.closest('.doc-card');
+        var cb = card ? card.querySelector('.doc-cb') : null;
+        if (!cb) return;
+        cb.checked = !cb.checked;
+        lastChecked = cb;
+        updateSelectionUI();
+      });
+    });
+
+    document.querySelectorAll('[data-doc-card-zoom]').forEach(function(button) {
+      button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openZoom(button.closest('.doc-card'));
+      });
     });
 
     selectAllCb.addEventListener('change', function() {
@@ -214,8 +270,52 @@
       });
     }
 
+    actionMenus.forEach(function(menu) {
+      var toggle = menu.querySelector('[data-doc-card-menu-toggle]');
+      var panel = menu.querySelector('[data-doc-card-menu-panel]');
+      if (!toggle || !panel) return;
+
+      toggle.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var isOpen = menu.classList.contains('open');
+        closeActionMenus();
+        if (!isOpen) {
+          menu.classList.add('open');
+          toggle.setAttribute('aria-expanded', 'true');
+          panel.hidden = false;
+        }
+      });
+    });
+
+    document.addEventListener('click', function(event) {
+      if (!event.target.closest('[data-doc-card-menu]')) {
+        closeActionMenus();
+      }
+    });
+
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        closeActionMenus();
+        closeZoom();
+      }
+    });
+
+    if (zoomClose) {
+      zoomClose.addEventListener('click', closeZoom);
+    }
+
+    if (zoomOverlay) {
+      zoomOverlay.addEventListener('click', function(event) {
+        if (event.target === zoomOverlay) {
+          closeZoom();
+        }
+      });
+    }
+
     document.querySelectorAll('.tag-edit-btn').forEach(function(btn) {
       btn.addEventListener('click', function() {
+        closeActionMenus();
         openModal('single', btn.dataset.docId);
         syncModalSelections((btn.dataset.collectionIds || '').split(',').filter(Boolean));
       });

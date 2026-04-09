@@ -3,7 +3,6 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const bcrypt = require('bcryptjs');
 const passport = require('passport');
 const {
   usersAsync,
@@ -16,6 +15,15 @@ const {
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 const { resolveApplicationSettings } = require('../utils/application-settings');
+
+let bcryptModule = null;
+
+function getBcrypt() {
+  if (!bcryptModule) {
+    bcryptModule = require('bcryptjs');
+  }
+  return bcryptModule;
+}
 
 function getBootstrapToken() {
   return String(process.env.BOOTSTRAP_ADMIN_TOKEN || '').trim();
@@ -370,7 +378,7 @@ router.post('/setup', async (req, res, next) => {
     return res.redirect('/setup');
   }
 
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const passwordHash = getBcrypt().hashSync(password, 12);
   let id;
   try {
     id = await usersAsync.create({
@@ -436,7 +444,7 @@ router.post('/register', async (req, res, next) => {
     return res.redirect('/register');
   }
 
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const passwordHash = getBcrypt().hashSync(password, 12);
   let id;
   try {
     id = await usersAsync.create({
@@ -527,7 +535,7 @@ router.post('/invite/:token', async (req, res, next) => {
     return res.redirect(`/invite/${token}`);
   }
 
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const passwordHash = getBcrypt().hashSync(password, 12);
   let userId;
   try {
     userId = await usersAsync.create({
@@ -605,7 +613,7 @@ router.post('/reset-password/:token', async (req, res) => {
     return res.redirect(`/reset-password/${token}`);
   }
 
-  const passwordHash = bcrypt.hashSync(password, 12);
+  const passwordHash = getBcrypt().hashSync(password, 12);
   await usersAsync.updatePassword(reset.user_id, passwordHash);
   await usersAsync.updatePasswordChangedAt(reset.user_id);
   await passwordResetTokensAsync.markUsed(reset.id);

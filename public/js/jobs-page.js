@@ -58,12 +58,26 @@
   }
 
   function buildBatchHtml(job) {
-    if (job.job_type !== 'transcription' || job.job_kind !== 'batch') return '';
-    var name = escapeHtml(job.batch_display_name || 'Batch transcription job');
+    if (job.job_kind !== 'batch') return '';
+    var isExtraction = job.job_type === 'extraction';
+    var name = escapeHtml(job.batch_display_name || (isExtraction ? 'Batch extraction job' : 'Batch transcription job'));
     var parts = [String(job.batch_document_count || 0) + ' documents'];
-    if (job.batch_page_count) parts.push(String(job.batch_page_count) + ' pages');
+    if (!isExtraction && job.batch_page_count) parts.push(String(job.batch_page_count) + ' pages');
+    if (isExtraction && (job.batch_completed_count || job.batch_failed_count)) {
+      parts.push(String(job.batch_completed_count || 0) + ' complete');
+      if (job.batch_failed_count) parts.push(String(job.batch_failed_count) + ' failed');
+    }
     if (job.batch_remote_status) parts.push(String(job.batch_remote_status));
     return '<span>' + name + '</span><small class="muted">' + escapeHtml(parts.join(' • ')) + '</small>';
+  }
+
+  function getJobApiBase(config, type) {
+    if (config.mode !== 'admin') {
+      return config.apiBase + '/import/';
+    }
+    if (type === 'import') return config.apiBase + '/import/';
+    if (type === 'extraction') return config.apiBase + '/extraction/';
+    return config.apiBase + '/';
   }
 
   function updateFilterTabCounts(countMap, pageBaseUrl) {
@@ -145,14 +159,7 @@
         try {
           var row = btn.closest('.job-row');
           var type = row ? row.dataset.type : 'transcription';
-          var url;
-          if (config.mode === 'admin') {
-            url = type === 'import'
-              ? config.apiBase + '/import/' + btn.dataset.id + '/retry'
-              : config.apiBase + '/' + btn.dataset.id + '/retry';
-          } else {
-            url = config.apiBase + '/import/' + btn.dataset.id + '/retry';
-          }
+          var url = getJobApiBase(config, type) + btn.dataset.id + '/retry';
           await fetch(url, { method: 'POST', headers: { 'X-CSRF-Token': getCsrfToken() } });
           window.location.reload();
         } catch (err) {
@@ -170,7 +177,7 @@
         if (!window.confirm('Delete this job record?')) return;
         btn.disabled = true;
         var type = btn.dataset.type;
-        var apiBase = type === 'import' ? config.apiBase + '/import/' : config.apiBase + '/';
+        var apiBase = getJobApiBase(config, type);
         try {
           await fetch(apiBase + btn.dataset.id, {
             method: 'DELETE',
@@ -279,13 +286,14 @@
   }
 
   function initLogPolling(config) {
-    document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"]').forEach(function(row) {
+    document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"], .job-row[data-status="running"][data-type="extraction"]').forEach(function(row) {
       var id = row.dataset.id;
+      var type = row.dataset.type || 'transcription';
       var logEl = document.getElementById('job-log-' + id);
       if (!logEl) return;
       window.setInterval(async function() {
         try {
-          var r = await fetch(config.apiBase + '/' + id);
+          var r = await fetch(getJobApiBase(config, type) + id);
           if (!r.ok) return;
           var job = await r.json();
           logEl.textContent = job.log || '(no log yet)';

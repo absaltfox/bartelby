@@ -46,6 +46,9 @@
     <div class="collection-tabs collection-tabs-hero">
       <a href="/collections/<%= collection.id %>" class="collection-tab <%= activeTab === 'documents' ? 'collection-tab-active' : '' %>">Documents</a>
       <a href="/collections/<%= collection.id %>/analytics" class="collection-tab <%= activeTab === 'analytics' ? 'collection-tab-active' : '' %>">Analytics</a>
+      <% if ((typeof showGraphTab !== 'undefined' && showGraphTab) || (typeof currentUser !== 'undefined' && currentUser)) { %>
+        <a href="/collections/<%= collection.id %>/graph" class="collection-tab <%= activeTab === 'graph' ? 'collection-tab-active' : '' %>">Graph</a>
+      <% } %>
     </div>
   </div>
 </div>

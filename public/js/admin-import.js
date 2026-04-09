@@ -664,11 +664,11 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="page-group-header">
           <strong>${g.label}</strong>
           <span class="page-group-count">${g.pages.length} page${g.pages.length !== 1 ? 's' : ''}</span>
-          <button type="button" class="btn-action btn-delete btn-sm" data-group-id="${g.id}">Ungroup</button>
+          <button type="button" class="btn-danger btn-sm" data-group-id="${g.id}">Ungroup</button>
         </div>
         <div class="page-group-thumbs">${thumbs}</div>
       `;
-      div.querySelector('.btn-delete').addEventListener('click', () => ungroupPages(g.id));
+      div.querySelector('.btn-danger').addEventListener('click', () => ungroupPages(g.id));
       container.appendChild(div);
     });
   }

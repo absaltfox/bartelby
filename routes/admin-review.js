@@ -4,10 +4,15 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
+const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
 router.use(requireAdmin);
 
 const PAGE_SIZE = 25;
+
+function knowledgePath(pathname, queryString) {
+  return '/admin/knowledge' + pathname + (queryString || '');
+}
 
 function graphStores() {
   return {
@@ -26,98 +31,183 @@ function parseEntityId(value) {
   return Number.isInteger(id) ? id : null;
 }
 
+function normalizeStatus(value) {
+  if (value === CITATION_APPROVAL_STATUSES.APPROVED) return CITATION_APPROVAL_STATUSES.APPROVED;
+  if (value === CITATION_APPROVAL_STATUSES.REJECTED) return CITATION_APPROVAL_STATUSES.REJECTED;
+  if (value === 'all') return 'all';
+  return CITATION_APPROVAL_STATUSES.PENDING;
+}
+
+function reviewRedirect(status, params = {}) {
+  return knowledgePath('/review-extractions', appendQuery({
+    status,
+    ...params
+  }));
+}
+
+function appendQuery(params = {}) {
+  const url = new URL('http://localhost/admin/knowledge/review-extractions');
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  return url.search;
+}
+
 router.get('/review-extractions', async (req, res) => {
+  if (req.baseUrl === '/admin') {
+    const queryString = req.originalUrl.includes('?')
+      ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
+      : '';
+    return res.redirect(knowledgePath('/review-extractions', queryString));
+  }
+
   const stores = graphStores();
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
-  const citations = stores.citations && typeof stores.citations.getUnreviewed === 'function'
-    ? await stores.citations.getUnreviewed(500)
-    : [];
+  const status = normalizeStatus(req.query.status);
+  const [citations, statusCounts] = stores.citations && typeof stores.citations.getStatusCounts === 'function'
+    ? await Promise.all([
+      typeof stores.citations.list === 'function'
+        ? stores.citations.list(status, PAGE_SIZE, offset)
+        : (status === 'all'
+          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000).then(async (pending) => {
+            const [approved, rejected] = await Promise.all([
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000),
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000)
+            ]);
+            return [...pending, ...approved, ...rejected].sort((a, b) => {
+              return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+            }).slice(offset, offset + PAGE_SIZE);
+          })
+          : stores.citations.getByStatus(status, PAGE_SIZE, {})),
+      stores.citations.getStatusCounts()
+    ])
+    : [[], {
+      [CITATION_APPROVAL_STATUSES.PENDING]: 0,
+      [CITATION_APPROVAL_STATUSES.APPROVED]: 0,
+      [CITATION_APPROVAL_STATUSES.REJECTED]: 0
+    }];
+  const totalCount = status === 'all'
+    ? Object.values(statusCounts || {}).reduce((sum, count) => sum + Number(count || 0), 0)
+    : Number((statusCounts && statusCounts[status]) || 0);
 
   res.render('admin/review-extractions', {
     pageTitle: 'Review Extractions',
-    citations: citations.slice(offset, offset + PAGE_SIZE),
+    citations,
     currentPage: page,
-    totalPages: Math.max(1, Math.ceil(citations.length / PAGE_SIZE)),
-    totalCount: citations.length,
+    totalPages: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
+    totalCount,
+    approvalStatus: status,
+    statusCounts: statusCounts || {
+      pending: 0,
+      approved: 0,
+      rejected: 0
+    },
     graphReady: !!stores.citations,
-    graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.'
+    graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',
+    activeKnowledgePage: 'review-extractions',
+    error: req.query.error || null,
+    confirmed: req.query.confirmed || null,
+    rejected: req.query.rejected || null,
+    deleted: req.query.deleted || null
   });
 });
 
 router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
+  const page = Math.max(1, parseInt(req.body.page, 10) || 1);
   if (!id) {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent('Invalid extraction job id.'));
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Invalid extraction citation id.'
+    }));
   }
 
-  if (!stores.citations || typeof stores.citations.review !== 'function') {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent('Extraction review confirm is not wired yet.'));
+  if (!stores.citations || typeof stores.citations.approve !== 'function') {
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Extraction review confirm is not wired yet.'
+    }));
   }
 
   try {
-    await stores.citations.review(id, req.user.id);
-    return res.redirect('/admin/review-extractions?confirmed=1');
+    await stores.citations.approve(id, req.user.id, 'manual');
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      confirmed: 1
+    }));
   } catch (err) {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent(err.message));
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: err.message
+    }));
   }
 });
 
 router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
+  const page = Math.max(1, parseInt(req.body.page, 10) || 1);
   if (!id) {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent('Invalid extraction job id.'));
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Invalid extraction citation id.'
+    }));
+  }
+
+  if (!stores.citations || typeof stores.citations.reject !== 'function') {
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Extraction review reject is not wired yet.'
+    }));
+  }
+
+  try {
+    await stores.citations.reject(id, req.user.id);
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      rejected: 1
+    }));
+  } catch (err) {
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: err.message
+    }));
+  }
+});
+
+router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
+  const stores = graphStores();
+  const id = parseId(req.params.id);
+  const page = Math.max(1, parseInt(req.body.page, 10) || 1);
+  if (!id) {
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Invalid extraction citation id.'
+    }));
   }
 
   if (!stores.citations || typeof stores.citations.delete !== 'function') {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent('Extraction review reject is not wired yet.'));
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: 'Extraction evidence delete is not wired yet.'
+    }));
   }
 
   try {
     await stores.citations.delete(id);
-    return res.redirect('/admin/review-extractions?rejected=1');
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      deleted: 1
+    }));
   } catch (err) {
-    return res.redirect('/admin/review-extractions?error=' + encodeURIComponent(err.message));
-  }
-});
-
-router.get('/entities/merge', async (req, res) => {
-  const stores = graphStores();
-  const entities = stores.entities && typeof stores.entities.getAll === 'function'
-    ? await stores.entities.getAll(200, 0)
-    : [];
-
-  res.render('admin/merge-entities', {
-    pageTitle: 'Merge Entities',
-    entities: Array.isArray(entities) ? entities : [],
-    sourceEntity: null,
-    targetEntity: null,
-    graphReady: !!stores.entities,
-    graphNotice: stores.entities ? null : 'Knowledge graph entity helpers are not wired yet.'
-  });
-});
-
-router.post('/entities/merge', express.urlencoded({ extended: false }), async (req, res) => {
-  const stores = graphStores();
-  const sourceId = parseEntityId(req.body.source_entity_id);
-  const targetId = parseEntityId(req.body.target_entity_id);
-
-  if (!sourceId || !targetId || sourceId === targetId) {
-    return res.redirect('/admin/entities/merge?error=' + encodeURIComponent('Choose two different entities to merge.'));
-  }
-
-  if (!stores.entities) {
-    return res.redirect('/admin/entities/merge?error=' + encodeURIComponent('Entity merge is not wired yet.'));
-  }
-
-  try {
-    const { mergeEntities } = require('../utils/entity-resolution');
-    await mergeEntities(targetId, sourceId);
-    return res.redirect('/admin/entities/' + targetId + '?merged=1');
-  } catch (err) {
-    return res.redirect('/admin/entities/merge?error=' + encodeURIComponent(err.message));
+    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+      page,
+      error: err.message
+    }));
   }
 });
 

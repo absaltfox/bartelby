@@ -1,5 +1,12 @@
 # Local Development
 
+For project-wide architecture, principles, and contribution workflow, also see:
+
+- [`docs/architecture.md`](./architecture.md)
+- [`docs/development-principles.md`](./development-principles.md)
+- [`docs/knowledge-graph-design.md`](./knowledge-graph-design.md)
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+
 For UI- and template-layer changes, follow
 [`docs/ui-template-standards.md`](./ui-template-standards.md). That document is
 the project baseline for EJS, shared partials, CSS organization, and

@@ -10,6 +10,10 @@ router.use(requireAdmin);
 const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim'];
 const PAGE_SIZE = 25;
 
+function knowledgePath(pathname, queryString) {
+  return '/admin/knowledge' + pathname + (queryString || '');
+}
+
 function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
@@ -44,15 +48,32 @@ function buildTypeCounts(rows) {
 
 async function enrichEntityRows(rows) {
   const { citations, entityAliases } = graphStores();
-  return Promise.all((rows || []).map(async (entity) => {
-    const citationRows = citations && citations.getByEntityId ? await citations.getByEntityId(entity.id) : [];
-    const aliasRows = entityAliases && entityAliases.getByEntityId ? await entityAliases.getByEntityId(entity.id) : [];
-    return {
-      ...entity,
-      properties: parseJsonMaybe(entity.properties),
-      citation_count: Array.isArray(citationRows) ? citationRows.length : 0,
-      alias_count: Array.isArray(aliasRows) ? aliasRows.length : 0
-    };
+  if (!rows || !rows.length) return [];
+
+  const entityIds = rows.map(e => e.id);
+
+  const [allCitations, allAliases] = await Promise.all([
+    citations && citations.getByEntityIds ? citations.getByEntityIds(entityIds) : [],
+    entityAliases && entityAliases.getByEntityIds ? entityAliases.getByEntityIds(entityIds) : []
+  ]);
+
+  const citationsByEntity = new Map();
+  const aliasesByEntity = new Map();
+
+  for (const c of (allCitations || [])) {
+    if (!citationsByEntity.has(c.entity_id)) citationsByEntity.set(c.entity_id, []);
+    citationsByEntity.get(c.entity_id).push(c);
+  }
+  for (const a of (allAliases || [])) {
+    if (!aliasesByEntity.has(a.entity_id)) aliasesByEntity.set(a.entity_id, []);
+    aliasesByEntity.get(a.entity_id).push(a);
+  }
+
+  return rows.map(entity => ({
+    ...entity,
+    properties: parseJsonMaybe(entity.properties),
+    citation_count: (citationsByEntity.get(entity.id) || []).length,
+    alias_count: (aliasesByEntity.get(entity.id) || []).length
   }));
 }
 
@@ -116,7 +137,177 @@ async function loadEntitiesPage({ q, typeFilter, page }) {
   };
 }
 
+function serializeEntityListItem(entity) {
+  return {
+    id: entity.id,
+    canonical_name: entity.canonical_name,
+    entity_type: entity.entity_type,
+    description: entity.description || '',
+    alias_count: entity.alias_count || 0,
+    citation_count: entity.citation_count || 0
+  };
+}
+
+async function buildEntityPreview(entityId) {
+  const stores = graphStores();
+  if (!stores.entities || typeof stores.entities.getById !== 'function') {
+    return null;
+  }
+
+  const entity = await stores.entities.getById(entityId);
+  if (!entity) return null;
+
+  const [aliases, citations, relationships] = await Promise.all([
+    stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(entityId) : [],
+    stores.citations && stores.citations.getByEntityId ? stores.citations.getByEntityId(entityId) : [],
+    stores.relationships && stores.relationships.getByEntityId ? stores.relationships.getByEntityId(entityId) : []
+  ]);
+
+  return {
+    id: entity.id,
+    canonical_name: entity.canonical_name,
+    entity_type: entity.entity_type,
+    description: entity.description || '',
+    alias_count: Array.isArray(aliases) ? aliases.length : 0,
+    relationship_count: Array.isArray(relationships) ? relationships.length : 0,
+    citation_count: Array.isArray(citations) ? citations.length : 0,
+    aliases: Array.isArray(aliases) ? aliases.slice(0, 8).map((alias) => alias.alias) : [],
+    citations: Array.isArray(citations)
+      ? citations.slice(0, 5).map((citation) => ({
+          id: citation.id,
+          document_id: citation.document_id,
+          document_title: citation.document_title || `Document #${citation.document_id}`,
+          passage_text: citation.passage_text || '',
+          approval_status: citation.approval_status || null
+        }))
+      : []
+  };
+}
+
+router.get('/api/search', async (req, res) => {
+  const stores = graphStores();
+  if (!stores.entities || typeof stores.entities.search !== 'function') {
+    return res.json({ results: [] });
+  }
+
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) {
+    return res.json({ results: [] });
+  }
+
+  const typeFilter = String(req.query.type || 'all').trim();
+  let rows = await stores.entities.search(q, 20);
+  if (typeFilter !== 'all') {
+    rows = rows.filter((entity) => entity.entity_type === typeFilter);
+  }
+
+  const enriched = await Promise.all(rows.slice(0, 12).map(async (entity) => {
+    const [aliases, citations] = await Promise.all([
+      stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(entity.id) : [],
+      stores.citations && stores.citations.getByEntityId ? stores.citations.getByEntityId(entity.id) : []
+    ]);
+    return {
+      id: entity.id,
+      canonical_name: entity.canonical_name,
+      entity_type: entity.entity_type,
+      description: entity.description || '',
+      alias_count: Array.isArray(aliases) ? aliases.length : 0,
+      citation_count: Array.isArray(citations) ? citations.length : 0,
+      aliases: Array.isArray(aliases) ? aliases.slice(0, 3).map((alias) => alias.alias) : []
+    };
+  }));
+
+  return res.json({ results: enriched });
+});
+
+router.get('/api/browse', async (req, res) => {
+  const typeFilter = String(req.query.type || 'all').trim();
+  const q = String(req.query.q || '').trim();
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const graphState = await loadEntitiesPage({ q, typeFilter, page });
+
+  return res.json({
+    results: (graphState.rows || []).map(serializeEntityListItem),
+    totalCount: graphState.totalCount || 0,
+    totalPages: Math.max(1, Math.ceil((graphState.totalCount || 0) / PAGE_SIZE)),
+    currentPage: page,
+    typeCounts: graphState.typeCounts || buildTypeCounts([]),
+    typeFilter,
+    query: q
+  });
+});
+
+router.get('/api/:id/preview', async (req, res) => {
+  const entityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(entityId)) {
+    return res.status(400).json({ error: 'Invalid entity id.' });
+  }
+
+  const preview = await buildEntityPreview(entityId);
+  if (!preview) {
+    return res.status(404).json({ error: 'Entity not found.' });
+  }
+
+  return res.json({ entity: preview });
+});
+
+router.get('/merge', async (req, res) => {
+  if (req.baseUrl === '/admin/entities') {
+    const queryString = req.originalUrl.includes('?')
+      ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
+      : '';
+    return res.redirect(knowledgePath('/entities/merge', queryString));
+  }
+
+  const stores = graphStores();
+
+  res.render('admin/merge-entities', {
+    pageTitle: 'Merge Entities',
+    sourceEntity: null,
+    targetEntity: null,
+    entityTypes: ENTITY_TYPES,
+    typeCounts: stores.entities && typeof stores.entities.getCountsByType === 'function'
+      ? (await stores.entities.getCountsByType()).reduce((acc, row) => {
+          acc[row.entity_type] = row.count;
+          return acc;
+        }, buildTypeCounts([]))
+      : buildTypeCounts([]),
+    graphReady: hasGraphStores(),
+    graphNotice: hasGraphStores() ? null : 'Knowledge graph entity helpers are not wired yet.',
+    activeKnowledgePage: 'merge-entities'
+  });
+});
+
+router.post('/merge', express.urlencoded({ extended: false }), async (req, res) => {
+  const stores = graphStores();
+  const sourceId = parseInt(req.body.source_entity_id, 10);
+  const targetId = parseInt(req.body.target_entity_id, 10);
+
+  if (!Number.isInteger(sourceId) || !Number.isInteger(targetId) || sourceId === targetId) {
+    return res.redirect(knowledgePath('/entities/merge?error=' + encodeURIComponent('Choose two different entities to merge.')));
+  }
+
+  if (!stores.entities) {
+    return res.redirect(knowledgePath('/entities/merge?error=' + encodeURIComponent('Entity merge is not wired yet.')));
+  }
+
+  try {
+    const { mergeEntities } = require('../utils/entity-resolution');
+    await mergeEntities(targetId, sourceId);
+    return res.redirect(knowledgePath(`/entities/${targetId}?merged=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath('/entities/merge?error=' + encodeURIComponent(err.message)));
+  }
+});
+
 router.get('/', async (req, res) => {
+  if (req.baseUrl === '/admin/entities') {
+    const queryString = req.originalUrl.includes('?')
+      ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
+      : '';
+    return res.redirect(knowledgePath('/entities', queryString));
+  }
+
   const typeFilter = req.query.type || 'all';
   const q = String(req.query.q || '').trim();
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -135,11 +326,16 @@ router.get('/', async (req, res) => {
     entityTypes: ENTITY_TYPES,
     typeCounts: graphState.typeCounts,
     graphReady: graphState.graphReady,
-    graphNotice: graphState.graphNotice
+    graphNotice: graphState.graphNotice,
+    activeKnowledgePage: 'entities'
   });
 });
 
 router.get('/:id', async (req, res) => {
+  if (req.baseUrl === '/admin/entities') {
+    return res.redirect(knowledgePath(`/entities/${req.params.id}`));
+  }
+
   const stores = graphStores();
   if (!stores.entities || typeof stores.entities.getById !== 'function') {
     return res.status(501).render('error', {
@@ -176,26 +372,92 @@ router.get('/:id', async (req, res) => {
     citations: Array.isArray(citations) ? citations : [],
     relationships: Array.isArray(relationships) ? relationships : [],
     graphReady: true,
-    graphNotice: null
+    graphNotice: null,
+    activeKnowledgePage: 'entities',
+    error: req.query.error || null,
+    merged: req.query.merged || null,
+    approved: req.query.approved || null,
+    rejected: req.query.rejected || null,
+    deleted: req.query.deleted || null
   });
+});
+
+router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const citationId = parseInt(req.params.citationId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(citationId)) {
+    return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Invalid citation id.')));
+  }
+
+  try {
+    const citation = await stores.citations.getById(citationId);
+    if (!citation || citation.entity_id !== entityId) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Citation not found.')));
+    }
+    await stores.citations.approve(citationId, req.user.id, 'manual');
+    return res.redirect(knowledgePath(`/entities/${entityId}?approved=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
+});
+
+router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: false }), async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const citationId = parseInt(req.params.citationId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(citationId)) {
+    return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Invalid citation id.')));
+  }
+
+  try {
+    const citation = await stores.citations.getById(citationId);
+    if (!citation || citation.entity_id !== entityId) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Citation not found.')));
+    }
+    await stores.citations.reject(citationId, req.user.id);
+    return res.redirect(knowledgePath(`/entities/${entityId}?rejected=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
+});
+
+router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: false }), async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const citationId = parseInt(req.params.citationId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(citationId)) {
+    return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Invalid citation id.')));
+  }
+
+  try {
+    const citation = await stores.citations.getById(citationId);
+    if (!citation || citation.entity_id !== entityId) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Citation not found.')));
+    }
+    await stores.citations.delete(citationId);
+    return res.redirect(knowledgePath(`/entities/${entityId}?deleted=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
 });
 
 router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
-    return res.redirect('/admin/entities?error=' + encodeURIComponent('Invalid entity id.'));
+    return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Invalid entity id.')));
   }
 
   if (!stores.entities || typeof stores.entities.delete !== 'function') {
-    return res.redirect('/admin/entities/' + id + '?error=' + encodeURIComponent('Knowledge graph delete is not wired yet.'));
+    return res.redirect(knowledgePath(`/entities/${id}?error=` + encodeURIComponent('Knowledge graph delete is not wired yet.')));
   }
 
   try {
     await stores.entities.delete(id);
-    return res.redirect('/admin/entities?deleted=1');
+    return res.redirect(knowledgePath('/entities?deleted=1'));
   } catch (err) {
-    return res.redirect('/admin/entities/' + id + '?error=' + encodeURIComponent(err.message));
+    return res.redirect(knowledgePath(`/entities/${id}?error=` + encodeURIComponent(err.message)));
   }
 });
 

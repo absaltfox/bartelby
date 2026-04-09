@@ -12,7 +12,9 @@ function formatBytes(bytes) {
 <%- include('partials/collection-hero', {
   collection: collection,
   latestAnalytics: latestAnalytics,
-  activeTab: 'analytics'
+  activeTab: 'analytics',
+  showGraphTab: !!currentUser,
+  currentUser: currentUser
 }) %>
 
 <% if (!analytics) { %>

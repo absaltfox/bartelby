@@ -1,6 +1,6 @@
 <%- include('../partials/header', { pageTitle: 'Admin Dashboard', query: '' }) %>
 
-<div class="admin-page">
+<div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header">
@@ -66,6 +66,20 @@
         </div>
         <div class="action-title">Jobs</div>
         <div class="action-description">Monitor background imports and transcription runs</div>
+      </a>
+      <a href="/admin/logging" class="action-card">
+        <div class="action-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12"/><path d="M8 10h8"/><path d="M8 14h8"/><path d="M8 18h5"/></svg>
+        </div>
+        <div class="action-title">Logging</div>
+        <div class="action-description">Configure log levels, monitor slow requests, and review operational events</div>
+      </a>
+      <a href="/admin/knowledge" class="action-card">
+        <div class="action-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 12h6"/><path d="M16.5 7.5 8 11"/><path d="M16.5 16.5 8 13"/></svg>
+        </div>
+        <div class="action-title">Knowledge</div>
+        <div class="action-description">Re-run graph extraction, inspect entities, and review knowledge evidence</div>
       </a>
       <a href="/admin/analytics-settings" class="action-card">
         <div class="action-icon">

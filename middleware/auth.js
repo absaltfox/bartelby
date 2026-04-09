@@ -2,8 +2,16 @@
 
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
-const bcrypt = require('bcryptjs');
 const { usersAsync, userCollectionAccessAsync, roleAtLeast } = require('../database/db');
+
+let bcryptModule = null;
+
+function getBcrypt() {
+  if (!bcryptModule) {
+    bcryptModule = require('bcryptjs');
+  }
+  return bcryptModule;
+}
 
 // ── Passport strategy ──────────────────────────────────────────────────────
 
@@ -15,7 +23,7 @@ passport.use(new LocalStrategy(
       if (!user) {
         return done(null, false, { message: 'Invalid username or password.' });
       }
-      const match = bcrypt.compareSync(password, user.password_hash);
+      const match = getBcrypt().compareSync(password, user.password_hash);
       if (!match) {
         return done(null, false, { message: 'Invalid username or password.' });
       }

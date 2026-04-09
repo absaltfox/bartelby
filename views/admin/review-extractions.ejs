@@ -1,77 +1,224 @@
 <%- include('../partials/header', { pageTitle: 'Review Extractions', query: '' }) %>
 
-<div class="admin-page workflows-page">
+<div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header">
     <h1>Review Extractions</h1>
-    <p class="subtitle">Confirm or reject extracted entities before they are merged into the graph</p>
+    <p class="subtitle">Approve, reject, or remove extracted evidence before it becomes visible in the knowledge graph.</p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
-  <p class="search-advanced-link-row"><a href="/admin/entities/merge">Merge entities</a></p>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
 
-  <% if (citations.length === 0) { %>
-    <div class="empty-state">
-      <p>No extraction results pending review.</p>
+  <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
+  <% if (typeof confirmed !== 'undefined' && confirmed) { %><div class="alert alert-success">Citation approved.</div><% } %>
+  <% if (typeof rejected !== 'undefined' && rejected) { %><div class="alert alert-success">Citation rejected.</div><% } %>
+  <% if (typeof deleted !== 'undefined' && deleted) { %><div class="alert alert-success">Citation deleted.</div><% } %>
+
+  <%
+    function reviewHref(targetStatus, targetPage) {
+      var params = [];
+      if (targetStatus && targetStatus !== 'pending') params.push('status=' + encodeURIComponent(targetStatus));
+      if (targetPage && targetPage > 1) params.push('page=' + encodeURIComponent(targetPage));
+      return '/admin/knowledge/review-extractions' + (params.length ? '?' + params.join('&') : '');
+    }
+
+    function documentHref(citation) {
+      var back = encodeURIComponent(reviewHref(approvalStatus, currentPage));
+      return '/documents/' + citation.document_id + '?back=' + back;
+    }
+
+    function citationKind(citation) {
+      if (citation.entity_name) return 'Entity citation';
+      if (citation.relationship_type) return 'Relationship citation';
+      return 'Citation';
+    }
+
+    function evidenceLabel(citation) {
+      if (citation.entity_name) {
+        return citation.entity_name + ' (' + (citation.entity_type || 'entity') + ')';
+      }
+      if (citation.relationship_type) {
+        return citation.relationship_type + ' relationship';
+      }
+      return 'Transcript #' + citation.transcript_id;
+    }
+  %>
+
+  <div class="knowledge-toolbar review-extractions-toolbar">
+    <div class="review-status-tabs" role="tablist" aria-label="Extraction review status">
+      <a href="<%= reviewHref('pending', 1) %>" class="review-status-tab <%= approvalStatus === 'pending' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'pending' ? 'true' : 'false' %>">
+        Pending <span class="review-status-count"><%= statusCounts.pending || 0 %></span>
+      </a>
+      <a href="<%= reviewHref('approved', 1) %>" class="review-status-tab <%= approvalStatus === 'approved' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'approved' ? 'true' : 'false' %>">
+        Approved <span class="review-status-count"><%= statusCounts.approved || 0 %></span>
+      </a>
+      <a href="<%= reviewHref('rejected', 1) %>" class="review-status-tab <%= approvalStatus === 'rejected' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'rejected' ? 'true' : 'false' %>">
+        Rejected <span class="review-status-count"><%= statusCounts.rejected || 0 %></span>
+      </a>
+      <a href="<%= reviewHref('all', 1) %>" class="review-status-tab <%= approvalStatus === 'all' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'all' ? 'true' : 'false' %>">
+        All <span class="review-status-count"><%= totalCount %></span>
+      </a>
     </div>
-  <% } else { %>
-    <div class="workflows-table-wrap">
-      <table class="workflows-table">
-        <thead>
-          <tr>
-            <th scope="col">Transcript</th>
-            <th scope="col">Status</th>
-            <th scope="col">Counts</th>
-            <th scope="col" class="col-actions">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% citations.forEach(function(citation) { %>
-            <tr>
-              <td>
+    <div class="knowledge-toolbar-actions">
+      <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
+    </div>
+  </div>
+
+  <section class="settings-section review-extractions-panel">
+    <div class="review-extractions-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Queue</p>
+        <h2>
+          <% if (approvalStatus === 'approved') { %>
+            Approved evidence
+          <% } else if (approvalStatus === 'rejected') { %>
+            Rejected evidence
+          <% } else if (approvalStatus === 'all') { %>
+            All evidence states
+          <% } else { %>
+            Pending review
+          <% } %>
+        </h2>
+        <p class="subtitle">
+          Showing <%= citations.length %> of <%= totalCount %> citation<%= totalCount === 1 ? '' : 's' %>.
+          <% if (approvalStatus === 'pending') { %>
+            Review low-confidence extractions before they appear in the graph.
+          <% } else if (approvalStatus === 'approved') { %>
+            Already-visible evidence can still be revisited or removed here.
+          <% } else if (approvalStatus === 'rejected') { %>
+            Rejected evidence stays hidden from the graph until it is approved.
+          <% } else { %>
+            Use the status tabs to narrow the queue when you are triaging specific states.
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <% if (citations.length === 0) { %>
+      <div class="empty-state">
+        <% if (approvalStatus === 'pending') { %>
+          <p>No extraction evidence is waiting for review right now.</p>
+          <p class="muted">New low-confidence extractions will appear here automatically, while high-confidence evidence is auto-approved.</p>
+          <p><a href="/admin/knowledge">Return to Knowledge overview</a> or <a href="/admin/jobs?type=extraction">check extraction jobs</a>.</p>
+        <% } else if (approvalStatus === 'approved') { %>
+          <p>No approved evidence is available in this view.</p>
+          <p class="muted">Approved citations become visible in the knowledge graph and can still be managed from entity pages.</p>
+        <% } else if (approvalStatus === 'rejected') { %>
+          <p>No rejected evidence is recorded right now.</p>
+          <p class="muted">Rejected citations remain hidden from the graph until they are manually approved.</p>
+        <% } else { %>
+          <p>No extraction evidence has been recorded yet.</p>
+          <p class="muted">Run knowledge extraction from the Knowledge overview to begin building the review queue.</p>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="review-extraction-list">
+        <% citations.forEach(function(citation) { %>
+          <%
+            var citationStatus = citation.approval_status || 'pending';
+            var statusLabel = citationStatus.charAt(0).toUpperCase() + citationStatus.slice(1);
+            var statusClass = citationStatus === 'approved'
+              ? 'status-done'
+              : citationStatus === 'rejected'
+                ? 'status-failed'
+                : 'status-running';
+          %>
+          <article class="review-extraction-card">
+            <div class="review-extraction-card-header">
+              <div class="review-extraction-title-group">
+                <p class="kg-panel-eyebrow"><%= citationKind(citation) %></p>
                 <% if (citation.document_title) { %>
-                  <a href="/documents/<%= citation.document_id %>"><%= citation.document_title %></a>
+                  <h3><a href="<%= documentHref(citation) %>"><%= citation.document_title %></a></h3>
                 <% } else { %>
-                  <span class="muted">Transcript #<%= citation.transcript_id %></span>
+                  <h3>Transcript #<%= citation.transcript_id %></h3>
                 <% } %>
-                <% if (citation.entity_name) { %>
-                  <div class="muted"><strong><%= citation.entity_name %></strong> (<%= citation.entity_type || 'entity' %>)</div>
-                <% } else if (citation.relationship_type) { %>
-                  <div class="muted"><strong><%= citation.relationship_type %></strong> relationship</div>
+                <p class="review-extraction-context"><strong><%= evidenceLabel(citation) %></strong></p>
+              </div>
+              <div class="review-extraction-summary">
+                <span class="status-badge <%= statusClass %>"><%= statusLabel %></span>
+                <% if (citation.confidence != null) { %>
+                  <span class="review-confidence">Confidence <%= Math.round(Number(citation.confidence) * 100) %>%</span>
                 <% } %>
-                <% if (citation.passage_text) { %>
-                  <div class="muted"><%= String(citation.passage_text).slice(0, 160) %></div>
+                <% if (citation.approval_method === 'auto') { %>
+                  <span class="review-method-note">Auto-approved</span>
+                <% } else if (citation.approval_method === 'manual') { %>
+                  <span class="review-method-note">Reviewed by a human</span>
                 <% } %>
-              </td>
-              <td><span class="status-badge status-running">Pending</span></td>
-              <td>
-                <% if (citation.entity_name) { %>
-                  Entity citation
-                <% } else if (citation.relationship_type) { %>
-                  Relationship citation
-                <% } else { %>
-                  Citation
+                <% if (citation.document_id) { %>
+                  <a href="<%= documentHref(citation) %>" class="btn-secondary btn-sm">Open Document</a>
                 <% } %>
-              </td>
-              <td>
-                <div class="job-actions">
-                  <form method="POST" action="/admin/review-extractions/<%= citation.id %>/confirm" class="inline-form">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-action btn-sm">Confirm</button>
-                  </form>
-                  <form method="POST" action="/admin/review-extractions/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-delete btn-sm">Reject</button>
-                  </form>
+              </div>
+            </div>
+
+            <div class="review-extraction-evidence">
+              <% if (citation.passage_text) { %>
+                <blockquote class="graph-citation-quote"><%= citation.passage_text %></blockquote>
+              <% } else { %>
+                <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
+              <% } %>
+            </div>
+
+            <div class="review-extraction-footer">
+              <div class="review-extraction-meta">
+                <span class="review-meta-item">Transcript #<%= citation.transcript_id %></span>
+                <% if (citation.created_at) { %>
+                  <span class="review-meta-item">Queued <%= new Date(citation.created_at).toLocaleString() %></span>
+                <% } %>
+              </div>
+
+              <div class="review-extraction-actions">
+                <div class="review-extraction-decisions">
+                  <% if (citationStatus !== 'approved') { %>
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/confirm" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="status" value="<%= approvalStatus %>">
+                      <input type="hidden" name="page" value="<%= currentPage %>">
+                      <button type="submit" class="btn-primary btn-sm">Approve</button>
+                    </form>
+                  <% } %>
+                  <% if (citationStatus !== 'rejected') { %>
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="status" value="<%= approvalStatus %>">
+                      <input type="hidden" name="page" value="<%= currentPage %>">
+                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
+                    </form>
+                  <% } %>
                 </div>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
-  <% } %>
+                <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction evidence permanently?">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <input type="hidden" name="status" value="<%= approvalStatus %>">
+                  <input type="hidden" name="page" value="<%= currentPage %>">
+                  <button type="submit" class="btn-danger btn-sm">Delete</button>
+                </form>
+              </div>
+            </div>
+          </article>
+        <% }) %>
+      </div>
+
+      <% if (totalPages > 1) { %>
+        <div class="pagination">
+          <% if (currentPage > 1) { %>
+            <a href="<%= reviewHref(approvalStatus, currentPage - 1) %>" class="pagination-btn">&lsaquo; Prev</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+          <% } %>
+          <span class="pagination-info">
+            Page <%= currentPage %> of <%= totalPages %>
+            <span class="muted">(<%= totalCount %> citations)</span>
+          </span>
+          <% if (currentPage < totalPages) { %>
+            <a href="<%= reviewHref(approvalStatus, currentPage + 1) %>" class="pagination-btn">Next &rsaquo;</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+          <% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </section>
 </div>
 
 <%- include('../partials/footer') %>

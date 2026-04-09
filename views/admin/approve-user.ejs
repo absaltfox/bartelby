@@ -1,6 +1,6 @@
 <%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
 
-<div class="admin-page">
+<div class="admin-page admin-page--workspace">
   <div class="admin-header">
     <a href="/admin/users" class="back-link">&larr; Back to Users</a>
     <h1><%= editMode ? 'Edit Access' : 'Approve Account' %></h1>
@@ -96,7 +96,7 @@
           <%= editMode ? 'Save Changes' : 'Approve Account' %>
         </button>
         <% if (!editMode) { %>
-          <button type="submit" form="reject-form" class="btn-action btn-delete ml-auto">
+          <button type="submit" form="reject-form" class="btn-danger ml-auto">
             Reject Request
           </button>
         <% } %>

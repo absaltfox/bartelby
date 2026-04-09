@@ -29,7 +29,9 @@
     collection: collection,
     totalCount: totalCount,
     latestAnalytics: latestAnalytics,
-    activeTab: 'documents'
+    activeTab: 'documents',
+    showGraphTab: !!currentUser,
+    currentUser: currentUser
   }) %>
 <% } else { %>
   <div class="page-header">

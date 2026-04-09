@@ -1,0 +1,98 @@
+<%- include('../partials/header', { pageTitle: 'Logging Settings', query: '' }) %>
+
+<div class="admin-page admin-page--workspace logging-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Logging Settings</h1>
+    <p class="subtitle">Configure operational logging, persistence, and diagnostic thresholds.</p>
+  </div>
+
+  <%- include('../partials/logging-nav', { activeLoggingPage: 'settings' }) %>
+
+  <% if (saved) { %>
+    <div class="alert alert-success">Logging settings saved successfully.</div>
+  <% } %>
+  <% if (cleaned) { %>
+    <div class="alert alert-success">Persisted logs were pruned using the current retention window.</div>
+  <% } %>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <section class="settings-section logging-settings-panel">
+    <h2>Logging Configuration</h2>
+    <form method="POST" action="/admin/logging/settings">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+      <div class="form-group">
+        <label for="log_level">Console log level</label>
+        <select id="log_level" name="log_level">
+          <% levelOptions.forEach(function(option) { %>
+            <option value="<%= option %>" <%= (cfg.log_level || 'info') === option ? 'selected' : '' %>>
+              <%= option %>
+            </option>
+          <% }) %>
+        </select>
+        <p class="field-hint">Controls what is written to stdout/stderr. Lower levels are more verbose.</p>
+      </div>
+
+      <div class="form-group checkbox-group">
+        <label>
+          <input type="checkbox" name="log_persist_enabled" <%= (cfg.log_persist_enabled || '1') === '1' ? 'checked' : '' %>>
+          Persist operational logs to the database
+        </label>
+        <p class="field-hint">Only warning-and-above events should normally be persisted. Sensitive request bodies and secrets are never written.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="log_persist_min_level">Minimum persisted level</label>
+        <select id="log_persist_min_level" name="log_persist_min_level">
+          <% levelOptions.forEach(function(option) { %>
+            <option value="<%= option %>" <%= (cfg.log_persist_min_level || 'warn') === option ? 'selected' : '' %>>
+              <%= option %>
+            </option>
+          <% }) %>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="log_slow_request_ms">Slow request threshold (ms)</label>
+        <input type="number" id="log_slow_request_ms" name="log_slow_request_ms" min="50" step="50" value="<%= cfg.log_slow_request_ms || '1000' %>">
+        <p class="field-hint">Requests slower than this threshold are logged as warnings.</p>
+      </div>
+
+      <div class="form-group checkbox-group">
+        <label>
+          <input type="checkbox" name="log_event_loop_monitor_enabled" <%= (cfg.log_event_loop_monitor_enabled || '0') === '1' ? 'checked' : '' %>>
+          Monitor event-loop lag
+        </label>
+        <p class="field-hint">Useful for diagnosing intermittent whole-process stalls. This stays lightweight and only logs spikes.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="log_event_loop_lag_warn_ms">Event-loop lag warning (ms)</label>
+        <input type="number" id="log_event_loop_lag_warn_ms" name="log_event_loop_lag_warn_ms" min="10" step="10" value="<%= cfg.log_event_loop_lag_warn_ms || '250' %>">
+      </div>
+
+      <div class="form-group">
+        <label for="log_retention_days">Retention window (days)</label>
+        <input type="number" id="log_retention_days" name="log_retention_days" min="1" step="1" value="<%= cfg.log_retention_days || '14' %>">
+        <p class="field-hint">Old persisted logs are pruned automatically and can also be pruned immediately below.</p>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Save Logging Settings</button>
+      </div>
+    </form>
+
+    <form method="POST" action="/admin/logging/cleanup" class="logging-maintenance-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-actions">
+        <button type="submit" class="btn-secondary">Prune Old Logs Now</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,172 @@
+<%- include('../partials/header', { pageTitle: 'Knowledge', query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Knowledge</h1>
+    <p class="subtitle">Manage entity extraction, approve graph evidence, and re-run knowledge graph generation for existing materials.</p>
+  </div>
+
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'overview' }) %>
+
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
+  <% } %>
+
+  <% if (queuedDocumentTitle) { %>
+    <div class="alert alert-success">
+      Queued a fresh extraction run for <strong><%= queuedDocumentTitle %></strong>. Existing graph artifacts for that transcript will be replaced when the job starts.
+    </div>
+  <% } %>
+
+  <% if (queuedCollectionName) { %>
+    <div class="alert alert-success">
+      <% if (queuedMode === 'batch') { %>
+        Queued <strong>1 provider batch job</strong> for <strong><%= queuedCollectionName %></strong>, covering <strong><%= queuedCount %></strong> document<%= queuedCount !== 1 ? 's' : '' %>.
+      <% } else { %>
+        Queued <strong><%= queuedCount %></strong> extraction job<%= queuedCount !== 1 ? 's' : '' %> for <strong><%= queuedCollectionName %></strong>.
+      <% } %>
+      <% if (skippedPending || skippedNoTranscript) { %>
+        <span class="muted">
+          Skipped <%= skippedPending %> already in progress and <%= skippedNoTranscript %> without transcripts.
+        </span>
+      <% } %>
+    </div>
+  <% } %>
+
+  <div class="admin-stats">
+    <div class="stat-card">
+      <div class="stat-value"><%= extractionCounts.total || 0 %></div>
+      <div class="stat-label">Extraction Jobs</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= extractionCounts.queued || 0 %></div>
+      <div class="stat-label">Queued</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= extractionCounts.running || 0 %></div>
+      <div class="stat-label">Running</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= extractionCounts.failed || 0 %></div>
+      <div class="stat-label">Failed</div>
+    </div>
+  </div>
+
+  <section class="settings-section knowledge-overview-section">
+    <div class="knowledge-overview-header">
+      <div>
+        <p class="knowledge-section-label">Extraction Control</p>
+        <h2>Queue Re-extraction</h2>
+        <p class="subtitle">Choose a single document or an entire collection and Bartelby will rebuild the graph artifacts from the current best transcript.</p>
+      </div>
+    </div>
+
+    <div class="knowledge-admin-grid">
+      <section class="knowledge-task-card">
+        <p class="knowledge-card-label">Single Document</p>
+        <h3>Re-run One Document</h3>
+        <p class="muted">Use the current best transcript for one document and replace the knowledge graph artifacts generated from that transcript.</p>
+        <form method="POST" action="/admin/knowledge/documents/reextract" class="edit-form" data-knowledge-document-form>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" id="knowledge_document_id" name="document_id" required>
+          <div class="edit-field">
+            <label for="knowledge-document-search">Document</label>
+            <input
+              type="search"
+              id="knowledge-document-search"
+              class="admin-search-input knowledge-document-search-input"
+              placeholder="Search documents with transcripts..."
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="knowledge-document-search-help"
+              data-knowledge-document-search
+            >
+            <p class="muted knowledge-document-search-help" id="knowledge-document-search-help">Search by title, transcript text, author, or location. Start typing to load matching documents.</p>
+            <div class="knowledge-document-selection" data-knowledge-document-selected hidden></div>
+            <div class="knowledge-document-results" data-knowledge-document-results hidden></div>
+          </div>
+          <div class="edit-actions">
+            <button type="submit" class="btn-primary btn-sm">Queue Document Re-extraction</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="knowledge-task-card">
+        <p class="knowledge-card-label">Whole Collection</p>
+        <h3>Re-run One Collection</h3>
+        <p class="muted">Queue a fresh extraction run for every transcript-bearing document in a collection. When the provider supports it and more than one document is eligible, Bartelby submits the rerun as a single provider batch job.</p>
+        <form method="POST" action="/admin/knowledge/collections/reextract" class="edit-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="edit-field">
+            <label for="knowledge_collection_id">Collection</label>
+            <select id="knowledge_collection_id" name="collection_id" required>
+              <option value="">Select a collection...</option>
+              <% collections.forEach(function(collection) { %>
+                <option value="<%= collection.id %>"><%= collection.name %> (<%= collection.document_count || 0 %> documents)</option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="edit-actions">
+            <button type="submit" class="btn-primary btn-sm">Queue Collection Re-extraction</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </section>
+
+  <section class="admin-actions knowledge-tools-section">
+    <div class="knowledge-overview-header">
+      <div>
+        <p class="knowledge-section-label">Tools</p>
+        <h2>Knowledge Workspace</h2>
+        <p class="subtitle">Inspect approved nodes, review evidence, resolve duplicates, and open the archive-wide explorer.</p>
+      </div>
+    </div>
+    <div class="action-cards">
+      <a href="/admin/knowledge/entities" class="action-card">
+        <div class="action-title">Entities</div>
+        <div class="action-description">Browse the extracted graph entities and inspect their evidence.</div>
+      </a>
+      <a href="/admin/knowledge/review-extractions" class="action-card">
+        <div class="action-title">Review Extractions</div>
+        <div class="action-description">Approve low-confidence evidence, reject weak extractions, and remove evidence later when needed.</div>
+      </a>
+      <a href="/admin/knowledge/entities/merge" class="action-card">
+        <div class="action-title">Merge Entities</div>
+        <div class="action-description">Resolve duplicates by merging entity records into one canonical node.</div>
+      </a>
+      <a href="/graph" class="action-card">
+        <div class="action-title">Open Graph Explorer</div>
+        <div class="action-description">Inspect the approved archive-wide graph from the same explorer used on collection pages.</div>
+      </a>
+    </div>
+  </section>
+
+  <section class="settings-section knowledge-guidance-section">
+    <div class="knowledge-overview-header">
+      <div>
+        <p class="knowledge-section-label">Workflow</p>
+        <h2>How Knowledge Runs Work</h2>
+      </div>
+    </div>
+    <div class="knowledge-guidance-grid">
+      <div class="knowledge-guidance-card">
+        <h3>Approval rules</h3>
+        <p class="muted">High-confidence evidence is auto-approved. Lower-confidence evidence stays hidden until a human approves it in Review.</p>
+      </div>
+      <div class="knowledge-guidance-card">
+        <h3>Batch behavior</h3>
+        <p class="muted">Single-document reruns stay as ordinary queued jobs. Collection reruns use provider batch APIs when OpenAI, Claude, or Gemini is configured and more than one document is eligible.</p>
+      </div>
+      <div class="knowledge-guidance-card">
+        <h3>Replacement timing</h3>
+        <p class="muted">Existing graph state remains in place until the queued job starts successfully, at which point the current transcript’s artifacts are rebuilt.</p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="/js/knowledge-page.js"></script>
+<%- include('../partials/footer') %>

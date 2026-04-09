@@ -51,7 +51,8 @@ router.get('/', async (req, res) => {
     perPage,
     collectionFilter,
     deleted: req.query.deleted === '1',
-    queryError: req.query.error || null
+    queryError: req.query.error || null,
+    queuedDocumentTitle: req.query.queuedDocumentTitle || null
   });
 });
 

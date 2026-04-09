@@ -4,7 +4,32 @@
   <%- include('partials/document-header') %>
 
   <div class="doc-tab-content active" id="tab-info">
+    <% if (comparisonPages && comparisonPages.length > 1) { %>
+      <div class="comparison-toolbar" id="comparison-toolbar">
+        <div class="comparison-toolbar-copy">
+          <strong>Page Comparison</strong>
+          <span>View one page at a time, or switch to all pages for a full-document read-through.</span>
+        </div>
+        <div class="comparison-toolbar-controls">
+          <div class="comparison-page-nav" id="comparison-page-nav">
+            <% comparisonPages.forEach(function(page, index) { %>
+              <button
+                type="button"
+                class="comparison-page-chip <%= index === 0 ? 'active' : '' %>"
+                data-page-number="<%= page.pageNumber %>">
+                Page <%= page.pageNumber %>
+              </button>
+            <% }) %>
+          </div>
+          <button type="button" class="btn-secondary btn-sm" id="comparison-toggle-view">Show All Pages</button>
+        </div>
+      </div>
+    <% } %>
     <%- include('partials/document-info-panel') %>
+  </div>
+
+  <div class="doc-tab-content is-hidden" id="tab-knowledge">
+    <%- include('partials/document-knowledge-tab') %>
   </div>
 
   <%- include('partials/document-history-tab') %>

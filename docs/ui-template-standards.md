@@ -256,6 +256,29 @@ Page navigation hierarchy must be visually obvious:
 
 Child navigation must never visually overpower parent navigation.
 
+Use only these two navigation patterns:
+
+- primary section tabs:
+  underline tabs for sibling pages or sections, used for document tabs, collection tabs, admin subnav, and manage subnav
+- secondary view switchers:
+  quieter segmented controls or compact subtabs for in-page mode changes such as analytics view switches
+
+Do not introduce one-off tab styles for individual pages.
+
+Alignment rules:
+
+- admin and manage sub-nav groups should be left-justified within the page
+  shell
+- top-level and child admin sub-navs should span the available page width so
+  their divider lines read as part of the page structure, not just the label
+  cluster
+- when a nav group becomes too wide for the viewport, it may fall back to
+  horizontal scrolling on smaller screens
+- child nav groups such as Logging and Knowledge should follow the same
+  left-justified, full-width behavior as the top-level admin nav rather than
+  inventing their own alignment
+  alignment
+
 ## Active States
 
 Active states must be:
@@ -290,6 +313,21 @@ Rules:
 - use buttons for actions
 - use links for navigation
 - avoid mixing navigation and destructive behavior in the same visual treatment
+
+Operational row actions should use one consistent button family:
+
+- neutral actions such as `Open`, `Log`, `Continue`, `Retry`, `Filter`, and
+  other non-destructive row/workspace actions should use the shared secondary
+  button treatment
+- positive mutating actions such as `Approve`, `Grant Access`, and similar
+  commit actions may use the shared primary button treatment when they are the
+  single dominant action in that row or card
+- destructive actions such as `Delete`, `Remove`, or other irreversible
+  operations should use the shared danger button treatment
+- avoid mixing legacy one-off button classes with the shared button family in
+  the same action row
+- if a link is presented as a button, its hover and focus treatment must match
+  the button family rather than reverting to text-link behavior
 
 ## CSRF
 
@@ -395,9 +433,86 @@ Avoid:
 - oversized dense tables without grouping
 - very wide account/settings tables without a responsive plan
 
+## Workspace Toolbars
+
+Long operational workspaces such as review queues, document grids, and other
+selection-heavy admin pages may use a sticky toolbar when it materially helps
+users keep filters, selection state, or bulk actions in reach.
+
+Rules:
+
+- sticky toolbars should remain visually attached to the page shell, not float
+  like detached overlays
+- use a subtle surface and border treatment rather than elevated modal styling
+- keep sticky toolbars shallow and compact
+- do not make ordinary page headers or navigation bars sticky unless the page
+  family specifically requires it
+- if a toolbar becomes visually noisy when sticky, prefer a static toolbar
+  instead
+
+## Spacing Rhythm
+
+Vertical spacing must be deliberate and consistent across page shells.
+
+Required baseline:
+
+- the first section-level nav under the global site header must have a visible top inset; do not let page tabs sit flush against the site header
+- top-level section nav and the page header block must have a distinct gap large enough to read them as separate layers
+- when a page header is followed by a child sub-nav, that sub-nav should sit close enough to feel attached to the header, but not collapse into it
+- content panels should start after another clear spacing step below the final nav or header row
+
+Preferred shell rhythm:
+
+- site header -> first page nav: small inset
+- first page nav -> page header: medium gap
+- page header -> child sub-nav: small-to-medium gap
+- last header/nav row -> first content section: medium gap
+
+Rules:
+
+- never use negative margins to "pull" unrelated page regions together unless the pattern is documented and shared
+- when introducing a new page family, define its spacing in shared shell/component rules rather than page-specific overrides
+- if two adjacent UI layers feel visually fused, add spacing before adding borders or extra decorative separators
+
 ## Page Archetypes
 
 The app should standardize around these page families:
+
+## Width Archetypes
+
+Admin and manage pages must use shared width archetypes rather than choosing
+one-off max widths.
+
+Use these page shell widths:
+
+- workspace shell:
+  around `1360px` max width for the full admin section and for dense
+  operational pages such as logs, jobs, graph/knowledge review, entity
+  management, and other table-or-grid-heavy workspaces
+- standard shell:
+  around `1100px` max width for non-admin dashboard, settings, and form-heavy
+  pages
+
+Current admin mapping:
+
+- workspace shell:
+  all `/admin` pages, including dashboard, settings, import, approval flows,
+  documents, collections, users, jobs, logging, and knowledge pages
+
+Admin forms should stay readable by constraining the form itself rather than
+shrinking the whole page shell.
+
+Rules:
+
+- do not add page-specific max widths when an existing shell archetype fits
+- all `/admin` pages should use the shared workspace shell unless there is a
+  documented exception
+- if a page needs a narrower reading measure, constrain the inner form or panel
+  rather than changing the outer admin shell
+- pages within the same family should share the same shell width unless there
+  is a documented reason not to
+- prefer semantic shell classes such as `admin-page--workspace` over
+  presentation-only names such as `wide`
 
 ## List Pages
 
@@ -539,4 +654,3 @@ Use this checklist for all future UI/template changes:
 - Does the empty state tell the user what to do next?
 - Is the CSS change adding a duplicate selector instead of extending the
   canonical component?
-

@@ -1,6 +1,6 @@
 <%- include('../partials/header', { pageTitle: 'User Management', query: '' }) %>
 
-<div class="admin-page">
+<div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
 
   <div class="admin-header">
@@ -69,7 +69,7 @@
                   <form method="POST" action="/admin/users/invites/<%= invite.id %>/revoke" class="inline-form"
                         data-confirm-message="Revoke the invitation for <%= invite.email %>?">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-action btn-delete btn-sm">Revoke</button>
+                    <button type="submit" class="btn-danger btn-sm">Revoke</button>
                   </form>
                 </td>
               </tr>
@@ -105,11 +105,11 @@
                 <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
                 <td class="col-actions">
                   <div class="user-actions-row">
-                    <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote btn-sm">Review</a>
+                    <a href="/admin/users/<%= u.id %>/approve" class="btn-secondary btn-sm">Review</a>
                     <form method="POST" action="/admin/users/<%= u.id %>/reject" class="inline-form"
                           data-confirm-message="Reject <%= u.username %>&apos;s request?">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn-action btn-delete btn-sm">Reject</button>
+                      <button type="submit" class="btn-danger btn-sm">Reject</button>
                     </form>
                   </div>
                 </td>
@@ -176,16 +176,16 @@
                 <td class="col-actions">
                   <% if (u.id !== currentUserId) { %>
                     <div class="user-actions-row">
-                      <a href="/admin/users/<%= u.id %>/access" class="btn-action btn-demote btn-sm">Edit Access</a>
+                      <a href="/admin/users/<%= u.id %>/access" class="btn-secondary btn-sm">Edit Access</a>
                       <form method="POST" action="/admin/users/<%= u.id %>/password-reset" class="inline-form"
                           data-confirm-message="Create a password reset link for <%= u.username %>?">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="submit" class="btn-action btn-promote btn-sm">Reset Password</button>
+                        <button type="submit" class="btn-secondary btn-sm">Reset Password</button>
                       </form>
                       <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form delete-user-form"
                           data-name="<%= u.username %>">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="button" class="btn-action btn-delete btn-sm delete-user-btn">Delete</button>
+                        <button type="button" class="btn-danger btn-sm delete-user-btn">Delete</button>
                       </form>
                     </div>
                   <% } else { %>
@@ -222,11 +222,11 @@
                 <td class="user-date-cell"><%= new Date(u.created_at).toLocaleDateString() %></td>
                 <td class="col-actions">
                   <div class="user-actions-row">
-                    <a href="/admin/users/<%= u.id %>/approve" class="btn-action btn-promote btn-sm">Approve</a>
+                    <a href="/admin/users/<%= u.id %>/approve" class="btn-primary btn-sm">Approve</a>
                     <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form delete-user-form"
                           data-name="<%= u.username %>">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="button" class="btn-action btn-delete btn-sm delete-user-btn">Delete</button>
+                      <button type="button" class="btn-danger btn-sm delete-user-btn">Delete</button>
                     </form>
                   </div>
                 </td>
@@ -250,8 +250,8 @@
       <p class="field-hint admin-note--tight">This permanently removes the account and cannot be undone.</p>
     </div>
     <div class="tag-modal-footer">
-      <button type="button" class="btn-action btn-sm" id="delete-user-cancel">Cancel</button>
-      <button type="button" class="btn-action btn-delete btn-sm" id="delete-user-confirm">Delete User</button>
+      <button type="button" class="btn-secondary btn-sm" id="delete-user-cancel">Cancel</button>
+      <button type="button" class="btn-danger btn-sm" id="delete-user-confirm">Delete User</button>
     </div>
   </div>
 </div>
