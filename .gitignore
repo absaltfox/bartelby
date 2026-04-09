@@ -14,3 +14,4 @@ __pycache__/
 *.swo
 .claude/
 .worktrees/
+.superpowers/
