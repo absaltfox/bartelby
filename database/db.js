@@ -3922,6 +3922,7 @@ const entities = {
       FROM entities e
       INNER JOIN citations c ON c.entity_id = e.id
       ${queryFilter.clause}
+        AND e.entity_type != 'date'
       ORDER BY e.entity_type, e.canonical_name
     `, queryFilter.params)).map(hydrateEntity);
   },
@@ -4964,6 +4965,7 @@ const graphAccess = {
           FROM entities e
           INNER JOIN citations c ON c.entity_id = e.id
           WHERE (${access.clause})
+            AND e.entity_type != 'date'
             AND e.id IN (
               SELECT rowid FROM entities_fts WHERE entities_fts MATCH ?
               UNION
@@ -4985,6 +4987,7 @@ const graphAccess = {
       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
       INNER JOIN citations c ON c.entity_id = e.id
       WHERE (${access.clause})
+        AND e.entity_type != 'date'
         AND (e.canonical_name LIKE ? OR ea.alias LIKE ?)
       ORDER BY e.canonical_name
       LIMIT ?
@@ -5004,7 +5007,9 @@ const graphAccess = {
       SELECT DISTINCT e.*
       FROM entities e
       INNER JOIN citations c ON c.entity_id = e.id
-      WHERE (${access.clause}) ${typeClause}
+      WHERE (${access.clause})
+        AND e.entity_type != 'date'
+        ${typeClause}
       ORDER BY e.canonical_name
       LIMIT ? OFFSET ?
     `, params)).map(hydrateEntity);
@@ -5046,6 +5051,7 @@ const graphAccess = {
       JOIN entities se ON se.id = r.source_entity_id
       JOIN entities te ON te.id = r.target_entity_id
       WHERE (r.source_entity_id = ? OR r.target_entity_id = ?)
+        AND e.entity_type != 'date'
         AND (${visibility.clause})
       ORDER BY e.canonical_name
     `, [entityId, entityId, entityId, entityId, ...visibility.params])).map(hydrateEntity);

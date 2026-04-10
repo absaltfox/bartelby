@@ -39,6 +39,8 @@ RULES:
 4. Use lower confidence when the evidence is uncertain or damaged.
 5. If none exist for a field, return an empty array.
 6. Respond with valid JSON only.
+7. Every date in "dates" must include "entity_mention" — the normalized name of the entity the date describes (e.g. the person born, the event that occurred, the organization that was active). Only extract a date if you can identify which entity it belongs to. Do not extract free-floating dates with no clear subject entity.
+8. Use "qualifier" on dates to indicate the nature of the temporal relationship: born_in, died_in, active_during, created_on, occurred_on, dated, valid_from, valid_to, or similar.
 
 Return this exact shape:
 {
@@ -70,6 +72,7 @@ Return this exact shape:
   ],
   "dates": [
     {
+      "entity_mention": "John Jessop",
       "mention": "March 1872",
       "span_start": 0,
       "span_end": 10,
@@ -77,7 +80,7 @@ Return this exact shape:
       "earliest": "1872-03-01",
       "latest": "1872-03-31",
       "precision": "month",
-      "qualifier": null
+      "qualifier": "active_during"
     }
   ]
 }`;

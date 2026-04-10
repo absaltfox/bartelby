@@ -24,11 +24,13 @@ Common entity types include:
 - `person`
 - `place`
 - `event`
-- `date`
 - `organization`
 - `topic`
 - `artifact`
 - `claim`
+
+The schema still supports a legacy `date` entity type, but current extraction
+does not create standalone date nodes for explorer use.
 
 ### Aliases
 
@@ -39,8 +41,12 @@ Common entity types include:
 ### Dates
 
 - Stored in `date_expressions`
-- Represent normalized temporal expressions attached to a date entity
+- Represent normalized temporal expressions attached directly to the entity
+  they describe
 - Include earliest/latest bounds, precision, qualifier, and calendar
+- Current extraction requires an `entity_mention` so each date expression is
+  anchored to a person, event, organization, or other subject entity instead
+  of becoming a free-floating date node
 
 ### Relationships
 
@@ -80,6 +86,8 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - An LLM prompt extracts entities, dates, and relationships from transcript
   content
 - Entity aliases are deduplicated where possible
+- Date expressions are attached to the referenced subject entity rather than
+  creating a separate date node
 - Relationships are deduplicated by source, target, and type
 - Citations are always written for the transcript and document being processed
 

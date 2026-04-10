@@ -21,6 +21,11 @@ const DEFAULT_CONFIG = Object.freeze({
   eventLoopLagWarnMs: 250,
   retentionDays: 14
 });
+const TEST_CONFIG = Object.freeze({
+  ...DEFAULT_CONFIG,
+  persistEnabled: false,
+  eventLoopMonitorEnabled: false
+});
 
 const SENSITIVE_KEY_PATTERN = /(secret|password|token|cookie|authorization|api[_-]?key|session|csrf|prompt|transcript|content)/i;
 const MAX_STRING_LENGTH = 500;
@@ -29,6 +34,12 @@ const CONFIG_CACHE_MS = 5000;
 let cachedConfig = { expiresAt: 0, value: DEFAULT_CONFIG };
 let eventLoopMonitorStarted = false;
 let logMaintenanceStarted = false;
+let eventLoopMonitorHandle = null;
+let logMaintenanceHandle = null;
+
+function isTestEnv() {
+  return process.env.NODE_ENV === 'test';
+}
 
 function normalizeLevel(level, fallback = DEFAULT_CONFIG.logLevel) {
   const name = String(level || '').trim().toLowerCase();
@@ -93,6 +104,13 @@ function formatLine(level, category, message, context) {
 async function loadConfig() {
   const now = Date.now();
   if (cachedConfig.expiresAt > now) return cachedConfig.value;
+  if (isTestEnv()) {
+    cachedConfig = {
+      value: TEST_CONFIG,
+      expiresAt: now + CONFIG_CACHE_MS
+    };
+    return TEST_CONFIG;
+  }
 
   const next = { ...DEFAULT_CONFIG };
   try {
@@ -213,21 +231,30 @@ function startEventLoopMonitor() {
   eventLoopMonitorStarted = true;
 
   let last = Date.now();
-  setInterval(async () => {
-    const now = Date.now();
-    const delta = now - last;
-    last = now;
+  async function checkEventLoopLag() {
+    try {
+      const now = Date.now();
+      const delta = now - last;
+      last = now;
 
-    const config = await loadConfig();
-    if (!config.eventLoopMonitorEnabled) return;
+      const config = await loadConfig();
+      if (!config.eventLoopMonitorEnabled) return;
 
-    const lagMs = delta - 10000;
-    if (lagMs >= config.eventLoopLagWarnMs) {
-      await emit('warn', 'event-loop', 'Event loop lag spike detected.', {
-        lagMs: Math.round(lagMs)
-      });
+      const lagMs = delta - 10000;
+      if (lagMs >= config.eventLoopLagWarnMs) {
+        await emit('warn', 'event-loop', 'Event loop lag spike detected.', {
+          lagMs: Math.round(lagMs)
+        });
+      }
+    } catch (err) {
+      // Ignore monitoring failures.
     }
-  }, 10000).unref();
+  }
+
+  eventLoopMonitorHandle = setInterval(() => {
+    void checkEventLoopLag();
+  }, 10000);
+  eventLoopMonitorHandle.unref();
 }
 
 function startLogMaintenance() {
@@ -247,9 +274,23 @@ function startLogMaintenance() {
   }
 
   void prune();
-  setInterval(() => {
+  logMaintenanceHandle = setInterval(() => {
     void prune();
-  }, 6 * 60 * 60 * 1000).unref();
+  }, 6 * 60 * 60 * 1000);
+  logMaintenanceHandle.unref();
+}
+
+function stopBackgroundTasks() {
+  if (eventLoopMonitorHandle) {
+    clearInterval(eventLoopMonitorHandle);
+    eventLoopMonitorHandle = null;
+  }
+  if (logMaintenanceHandle) {
+    clearInterval(logMaintenanceHandle);
+    logMaintenanceHandle = null;
+  }
+  eventLoopMonitorStarted = false;
+  logMaintenanceStarted = false;
 }
 
 module.exports = {
@@ -264,6 +305,7 @@ module.exports = {
   requestLoggingMiddleware,
   startEventLoopMonitor,
   startLogMaintenance,
+  stopBackgroundTasks,
   trace: bind('trace'),
   debug: bind('debug'),
   info: bind('info'),

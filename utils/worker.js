@@ -619,26 +619,14 @@ async function materializeExtractionResult({
     try {
       const label = String(dateExt.label || dateExt.mention || '').trim();
       const mention = String(dateExt.mention || label).trim();
-      if (!label) continue;
+      const entityMentionKey = String(dateExt.entity_mention || '').trim().toLowerCase();
+      if (!label || !entityMentionKey) continue;
 
-      const resolved = await resolveEntity(mention, label, 'date');
-      let entityId = resolved?.entityId || null;
+      // Attach date expression to the entity it describes, not as a standalone date entity
+      const entityId = mentionToEntityId.get(entityMentionKey);
       if (!entityId) {
-        entityId = await entities.create({
-          entity_type: 'date',
-          canonical_name: label,
-          description: null,
-          properties: {}
-        });
-        await entityAliases.createIfMissing({ entity_id: entityId, alias: label, source: 'extracted' });
-        if (mention && mention.toLowerCase() !== label.toLowerCase()) {
-          await entityAliases.createIfMissing({ entity_id: entityId, alias: mention, source: 'extracted' });
-        }
-      } else {
-        await entityAliases.createIfMissing({ entity_id: entityId, alias: label, source: 'extracted' });
-        if (mention && mention.toLowerCase() !== label.toLowerCase()) {
-          await entityAliases.createIfMissing({ entity_id: entityId, alias: mention, source: 'extracted' });
-        }
+        await logLine(`WARN: Skipping date "${label}" — entity_mention "${dateExt.entity_mention}" not found`);
+        continue;
       }
 
       await dateExpressions.createIfMissing({
@@ -650,9 +638,6 @@ async function materializeExtractionResult({
         qualifier: dateExt.qualifier || null,
         calendar: 'gregorian'
       });
-
-      mentionToEntityId.set(mention.toLowerCase(), entityId);
-      mentionToEntityId.set(label.toLowerCase(), entityId);
 
       const spanStart = Number.isInteger(dateExt.span_start) ? dateExt.span_start : 0;
       const spanEnd = Number.isInteger(dateExt.span_end)

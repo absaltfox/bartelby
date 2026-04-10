@@ -10,7 +10,8 @@
     "import": "node utils/import.js",
     "migrate:turso": "node scripts/migrate-to-turso.js",
     "migrate:s3": "node scripts/migrate-uploads-to-s3.js",
-    "test": "jest",
+    "test": "npm run test:hygiene && jest",
+    "test:hygiene": "node scripts/check-repo-hygiene.js",
     "test:unit": "jest tests/unit",
     "test:integration": "jest tests/integration --runInBand"
   },

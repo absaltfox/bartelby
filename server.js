@@ -484,8 +484,10 @@ async function initApp() {
   logBoot('Session middleware initialization start');
   sessionMiddleware = await createSessionMiddleware();
   logBoot('Session middleware initialization complete');
-  logger.startEventLoopMonitor();
-  logger.startLogMaintenance();
+  if (process.env.NODE_ENV !== 'test') {
+    logger.startEventLoopMonitor();
+    logger.startLogMaintenance();
+  }
   return app;
 }
 
@@ -529,6 +531,7 @@ async function start() {
 
     async function shutdown(signal) {
       void logger.warn('shutdown', `${signal} received — shutting down gracefully.`);
+      logger.stopBackgroundTasks();
       server.close(async () => {
         try {
           if (redisClient) await redisClient.quit().catch(() => {});

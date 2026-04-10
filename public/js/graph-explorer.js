@@ -5,7 +5,6 @@
     person: 'Person',
     place: 'Place',
     event: 'Event',
-    date: 'Date',
     organization: 'Organization',
     topic: 'Topic',
     artifact: 'Artifact',
@@ -17,7 +16,6 @@
     person: '#4a6fa5',
     place: '#1e6144',
     event: '#c9906a',
-    date: '#7b5ea7',
     organization: '#2a7a7a',
     topic: '#8a7a6a',
     artifact: '#9a6324',
@@ -126,7 +124,7 @@
       groups.get(type).push(entity);
     });
 
-    const order = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'document'];
+    const order = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'document'];
     return order.filter((type) => groups.has(type)).map((type) => {
       const items = groups.get(type);
       return `
@@ -258,14 +256,15 @@
       label.setAttribute('y', y - 12);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('class', 'graph-node-subtitle');
-      label.textContent = neighbor.relationship_type ? neighbor.relationship_type.replace(/_/g, ' ') : entityTypeLabel(neighbor.entity_type);
+      label.textContent = neighbor.relationship_type
+        ? neighbor.relationship_type.replace(/_/g, ' ')
+        : entityTypeLabel(neighbor.entity_type);
       svg.appendChild(label);
     });
 
     const centerButton = createNodeButton(centerEntity, 'center', centerX, centerY, true, onSelect);
     centerButton.style.minWidth = '210px';
     centerButton.style.zIndex = '2';
-    centerButton.classList.add('graph-node-button--compact');
 
     const targetCount = Math.max(neighbors.length, 1);
     neighbors.forEach((neighbor, index) => {
@@ -274,7 +273,6 @@
       const y = centerY + Math.sin(angle) * radius;
       const button = createNodeButton(neighbor, 'neighbor', x, y, false, onSelect);
       button.style.minWidth = '160px';
-      button.classList.add('graph-node-button--compact');
       nodeLayer.appendChild(button);
     });
 
@@ -540,10 +538,33 @@
     button.innerHTML = `
       <span class="entity-type-badge ${entityTypeClass(entity.entity_type)}">${escHtml(entityTypeLabel(entity.entity_type))}</span>
       <strong>${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</strong>
-      <span class="graph-node-button-meta">${escHtml(entity.description || entity.relationship_type || '')}</span>
     `;
     button.addEventListener('click', () => onSelect(entity.id));
     return button;
+  }
+
+  function dedupeNeighbors(neighbors) {
+    var seen = new Map();
+    var rows = [];
+    safeArray(neighbors).forEach(function(n) {
+      var id = Number(n.id);
+      var direction = n.direction === 'incoming' ? 'incoming' : 'outgoing';
+      var relType = String(n.relationship_type || n.type || 'related_to');
+      var key = id + '|' + direction + '|' + relType;
+      if (seen.has(key)) return;
+      seen.set(key, true);
+      rows.push({
+        id: n.id,
+        canonical_name: n.canonical_name || n.name,
+        entity_type: n.entity_type,
+        description: n.description || '',
+        relationship_id: n.relationship_id != null ? Number(n.relationship_id) : null,
+        relationship_type: relType,
+        direction: direction,
+        evidence_text: n.evidence_text || null
+      });
+    });
+    return rows;
   }
 
   function forceLayout(centerEntity, neighbors, width, height) {
@@ -658,7 +679,9 @@
       label.setAttribute('y', midY - 6);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('class', 'graph-node-subtitle');
-      label.textContent = edge.neighbor.relationship_type ? edge.neighbor.relationship_type.replace(/_/g, ' ') : entityTypeLabel(edge.neighbor.entity_type);
+      label.textContent = edge.neighbor.relationship_type
+        ? edge.neighbor.relationship_type.replace(/_/g, ' ')
+        : entityTypeLabel(edge.neighbor.entity_type);
       svg.appendChild(label);
     });
 
@@ -675,128 +698,196 @@
     container.appendChild(nodeLayer);
   }
 
-  function renderDetail(detail, neighbors, container) {
-    const aliases = safeArray(detail.aliases);
-    const dates = safeArray(detail.dates);
-    const citations = safeArray(detail.citations);
+  function humaniseRelType(relType) {
+    return String(relType || 'related_to').replace(/_/g, ' ');
+  }
 
-    const aliasHtml = aliases.length
-      ? `<div class="graph-alias-list">${aliases.map((alias) => `
-        <div class="graph-detail-card">
-          <strong>${escHtml(alias.alias || alias.label || alias.canonical_name || '')}</strong>
-          <div class="graph-muted">${escHtml(alias.source || 'alias')}</div>
-        </div>
-      `).join('')}</div>`
-      : '<div class="graph-empty-state">No alternate names were recorded.</div>';
+  function collectAliasNames(aliases) {
+    var seen = new Set();
+    return safeArray(aliases)
+      .map(function(alias) {
+        return String(alias.alias || alias.label || alias.canonical_name || '').trim();
+      })
+      .filter(function(alias) {
+        if (!alias) return false;
+        var normalized = alias.toLowerCase();
+        if (seen.has(normalized)) return false;
+        seen.add(normalized);
+        return true;
+      });
+  }
 
-    const dateHtml = dates.length
-      ? `<div class="graph-citation-list">${dates.map((date) => `
-        <div class="graph-citation-card">
-          <strong>${escHtml(date.label || date.mention || '')}</strong>
-          <div class="graph-muted">${escHtml(date.earliest || '')}${date.latest && date.latest !== date.earliest ? ` to ${escHtml(date.latest)}` : ''}</div>
-        </div>
-      `).join('')}</div>`
-      : '<div class="graph-empty-state">No dates attached to this entity.</div>';
-
-    const citationHtml = citations.length
-      ? `<div class="graph-citation-list">${citations.map((citation) => `
-        <div class="graph-citation-card">
-          <div class="graph-citation-card-header">
-            <div>
-              <div class="graph-citation-label">Cited in</div>
-              ${citation.document_id
-                ? `<a class="graph-citation-link" href="${documentLinkHref(citation.document_id)}">${escHtml(citation.document_title || `Document ${citation.document_id}`)}</a>`
-                : `<strong>${escHtml(citation.document_title || 'Source document')}</strong>`}
-            </div>
-            ${citation.document_id
-              ? `<a class="btn-secondary btn-sm graph-citation-action" href="${documentLinkHref(citation.document_id)}">Open document</a>`
-              : ''}
-          </div>
-          ${normalizeCitationExcerpt(citation.passage_text)
-            ? `<blockquote class="graph-citation-quote">${escHtml(normalizeCitationExcerpt(citation.passage_text))}</blockquote>`
-            : '<div class="graph-empty-state graph-empty-state--compact">No excerpt was stored for this citation.</div>'}
-        </div>
-      `).join('')}</div>`
-      : '<div class="graph-empty-state">No citations attached to this entity.</div>';
-
-    const neighborHtml = neighbors.length
-      ? `<div class="graph-detail-list">${neighbors.map((neighbor) => `
-        <div class="graph-detail-card">
-          <span class="entity-type-badge ${entityTypeClass(neighbor.entity_type)}">${escHtml(entityTypeLabel(neighbor.entity_type))}</span>
-          <strong>${escHtml(neighbor.canonical_name || neighbor.name || '')}</strong>
-          <div class="graph-muted">${escHtml((neighbor.relationship_type || 'related_to').replace(/_/g, ' '))}</div>
-        </div>
-      `).join('')}</div>`
-      : '<div class="graph-empty-state">No neighboring entities were found.</div>';
-
-    container.innerHTML = `
-      <div class="graph-detail-card">
-        <h3>${escHtml(detail.entity.canonical_name || detail.entity.name || 'Entity')}</h3>
-        <div class="graph-muted">${escHtml(entityTypeLabel(detail.entity.entity_type))}</div>
-        ${detail.entity.description ? `<p class="graph-detail-description">${escHtml(detail.entity.description)}</p>` : ''}
-      </div>
-      <div class="graph-detail-tabs">
-        <span class="graph-detail-tab active">${aliases.length ? `${aliases.length} aliases` : 'Aliases'}</span>
-        <span class="graph-detail-tab active">${dates.length ? `${dates.length} dates` : 'Dates'}</span>
-        <span class="graph-detail-tab active">${citations.length ? `${citations.length} citations` : 'Citations'}</span>
-        <span class="graph-detail-tab active">${neighbors.length ? `${neighbors.length} neighbors` : 'Neighbors'}</span>
-      </div>
-      <section class="graph-detail-section">
-        <h4>Aliases</h4>
-        ${aliasHtml}
-      </section>
-      <section class="graph-detail-section">
-        <h4>Dates</h4>
-        ${dateHtml}
-      </section>
-      <section class="graph-detail-section">
-        <h4>Citations</h4>
-        ${citationHtml}
-      </section>
-      <section class="graph-detail-section">
-        <h4>Connected entities</h4>
-        ${neighborHtml}
-      </section>
-      <section class="graph-detail-section" style="margin-top:14px;">
-        <h4>Cited in documents</h4>
-        <div class="graph-document-list" id="graph-entity-documents">
-          <div class="graph-empty-state">Loading related documents...</div>
-        </div>
-      </section>
-    `;
-
-    // Fetch documents that cite this entity
-    if (detail.entity && detail.entity.id) {
-      fetchJson(`/graph/entities/${encodeURIComponent(detail.entity.id)}/documents`)
-        .then(function(data) {
-          var docList = container.querySelector('#graph-entity-documents');
-          if (!docList || !data.documents || !data.documents.length) {
-            if (docList) docList.innerHTML = '<div class="graph-empty-state">No documents cite this entity.</div>';
-            return;
-          }
-          docList.innerHTML = data.documents.map(function(doc) {
-            var passageHtml = '';
-            if (doc.passages && doc.passages.length) {
-              passageHtml = doc.passages.map(function(p) {
-                return '<blockquote class="graph-citation-quote">' + escHtml(normalizeCitationExcerpt(p.text)) + '</blockquote>';
-              }).join('');
-            }
-            return '<div class="graph-citation-card">' +
-              '<div class="graph-citation-card-header">' +
-                '<div>' +
-                  '<div class="graph-citation-label">' + escHtml(formatCount(doc.citationCount, 'citation', 'citations')) + '</div>' +
-                  '<a class="graph-citation-link" href="' + documentLinkHref(doc.documentId) + '">' + escHtml(doc.documentTitle) + '</a>' +
-                '</div>' +
-                '<a class="btn-secondary btn-sm" href="' + documentLinkHref(doc.documentId) + '">Open</a>' +
-              '</div>' +
-              passageHtml +
-            '</div>';
-          }).join('');
-        })
-        .catch(function() {
-          var docList = container.querySelector('#graph-entity-documents');
-          if (docList) docList.innerHTML = '<div class="graph-empty-state">Unable to load documents.</div>';
+  function groupCitationsByDocument(citations) {
+    var byDoc = new Map();
+    safeArray(citations).forEach(function(citation) {
+      var docId = citation.document_id;
+      if (!docId) return;
+      if (!byDoc.has(docId)) {
+        byDoc.set(docId, {
+          documentId: docId,
+          documentTitle: citation.document_title || ('Document #' + docId),
+          citationCount: 0,
+          passages: []
         });
+      }
+      var entry = byDoc.get(docId);
+      entry.citationCount += 1;
+      var excerpt = normalizeCitationExcerpt(citation.passage_text);
+      if (excerpt && entry.passages.length < 3) {
+        entry.passages.push(excerpt);
+      }
+    });
+    return Array.from(byDoc.values()).sort(function(a, b) {
+      return b.citationCount - a.citationCount;
+    });
+  }
+
+  function buildAliasMarkup(entityId, aliases, maxInline) {
+    var list = collectAliasNames(aliases);
+    if (!list.length) return '';
+    var limit = maxInline || 3;
+    var prefix = 'Also known as: ';
+    if (list.length <= limit) {
+      return '<div class="graph-detail-aliases-inline">' + prefix + list.map(escHtml).join(', ') + '</div>';
+    }
+    var extraId = 'graph-alias-extra-' + String(entityId || 'selected').replace(/[^a-zA-Z0-9_-]/g, '');
+    return ''
+      + '<div class="graph-detail-aliases-inline">'
+      +   prefix
+      +   '<span>' + list.slice(0, limit).map(escHtml).join(', ') + '</span>'
+      +   '<span class="graph-alias-extra" id="' + extraId + '" hidden>'
+      +     ', ' + list.slice(limit).map(escHtml).join(', ')
+      +   '</span>'
+      +   ' <button type="button" class="graph-alias-toggle" aria-controls="' + extraId + '" aria-expanded="false">Show more</button>'
+      + '</div>';
+  }
+
+  function renderDetail(detail, neighbors, container, onSelect) {
+    var entity = detail && detail.entity ? detail.entity : {};
+    var aliases = safeArray(detail.aliases);
+    var dates = safeArray(detail.dates);
+    var citations = safeArray(detail.citations);
+
+    var hasSources = citations.length > 0;
+    var hasConnections = neighbors.length > 0;
+    var hasDates = dates.length > 0;
+    var hasDescription = !!(entity.description && String(entity.description).trim());
+    var hasAnyContent = hasSources || hasConnections || hasDates || hasDescription || aliases.length > 0;
+
+    var aliasMarkup = buildAliasMarkup(entity.id, aliases, 3);
+    var headerHtml = ''
+      + '<div class="graph-detail-header-compact">'
+      +   '<span class="entity-type-badge ' + entityTypeClass(entity.entity_type) + '">'
+      +     escHtml(entityTypeLabel(entity.entity_type))
+      +   '</span>'
+      +   '<h3 class="graph-detail-name">' + escHtml(entity.canonical_name || entity.name || 'Entity') + '</h3>'
+      +   aliasMarkup
+      +   (hasDescription ? '<p class="graph-detail-description">' + escHtml(entity.description) + '</p>' : '')
+      + '</div>';
+
+    if (!hasAnyContent) {
+      container.innerHTML = headerHtml + '<div class="graph-detail-empty-fallback">No approved details yet for this entity.</div>';
+      return;
+    }
+
+    var sourcesHtml = '';
+    if (hasSources) {
+      var grouped = groupCitationsByDocument(citations);
+      var passageTotal = citations.length;
+      var docTotal = grouped.length;
+      var countPill = docTotal + (docTotal === 1 ? ' document · ' : ' documents · ')
+        + passageTotal + (passageTotal === 1 ? ' passage' : ' passages');
+      var cards = grouped.map(function(entry) {
+        var href = documentLinkHref(entry.documentId);
+        var passageHtml = entry.passages.map(function(text) {
+          return '<blockquote class="graph-citation-quote">' + escHtml(text) + '</blockquote>';
+        }).join('');
+        return ''
+          + '<div class="graph-source-card">'
+          +   '<div class="graph-source-card-header">'
+          +     '<a class="graph-citation-link" href="' + href + '">' + escHtml(entry.documentTitle) + '</a>'
+          +     '<span class="graph-source-card-count">' + formatCount(entry.citationCount, 'passage', 'passages') + '</span>'
+          +   '</div>'
+          +   passageHtml
+          +   '<a class="btn-secondary btn-sm graph-source-card-action" href="' + href + '">Open document</a>'
+          + '</div>';
+      }).join('');
+      sourcesHtml = ''
+        + '<hr class="graph-detail-divider">'
+        + '<section class="graph-detail-section">'
+        +   '<div class="graph-detail-section-label">Sources <span class="graph-detail-section-count">' + escHtml(countPill) + '</span></div>'
+        +   '<div class="graph-citation-list">' + cards + '</div>'
+        + '</section>';
+    }
+
+    var connectionsHtml = '';
+    if (hasConnections) {
+      var rows = neighbors.map(function(neighbor) {
+        var arrow = neighbor.direction === 'incoming' ? '&larr;' : '&rarr;';
+        var relLabel = escHtml(humaniseRelType(neighbor.relationship_type));
+        var typeBadge = '<span class="entity-type-badge ' + entityTypeClass(neighbor.entity_type) + '">'
+          + escHtml(entityTypeLabel(neighbor.entity_type))
+          + '</span>';
+        var evidence = neighbor.evidence_text
+          ? '<div class="graph-connection-evidence">' + escHtml(normalizeCitationExcerpt(neighbor.evidence_text)) + '</div>'
+          : '';
+        return ''
+          + '<button type="button" class="graph-connection-row" data-neighbor-id="' + escHtml(neighbor.id) + '">'
+          +   '<span class="graph-connection-arrow">' + arrow + '</span>'
+          +   '<span class="graph-connection-rel">' + relLabel + '</span>'
+          +   '<span class="graph-connection-name">' + escHtml(neighbor.canonical_name || 'Entity') + typeBadge + '</span>'
+          +   evidence
+          + '</button>';
+      }).join('');
+      connectionsHtml = ''
+        + '<hr class="graph-detail-divider">'
+        + '<section class="graph-detail-section">'
+        +   '<div class="graph-detail-section-label">Connections <span class="graph-detail-section-count">' + neighbors.length + '</span></div>'
+        +   '<div class="graph-connection-list">' + rows + '</div>'
+        + '</section>';
+    }
+
+    var datesHtml = '';
+    if (hasDates) {
+      var dateCards = dates.map(function(date) {
+        var earliest = date.earliest || '';
+        var latest = date.latest && date.latest !== date.earliest ? ' to ' + date.latest : '';
+        return ''
+          + '<div class="graph-detail-card">'
+          +   '<strong>' + escHtml(date.label || date.mention || '') + '</strong>'
+          +   '<div class="graph-muted">' + escHtml(earliest) + escHtml(latest) + '</div>'
+          + '</div>';
+      }).join('');
+      datesHtml = ''
+        + '<hr class="graph-detail-divider">'
+        + '<section class="graph-detail-section">'
+        +   '<div class="graph-detail-section-label">Timeline <span class="graph-detail-section-count">' + dates.length + '</span></div>'
+        +   '<div class="graph-detail-list">' + dateCards + '</div>'
+        + '</section>';
+    }
+
+    container.innerHTML = headerHtml + sourcesHtml + connectionsHtml + datesHtml;
+
+    var aliasToggle = container.querySelector('.graph-alias-toggle');
+    if (aliasToggle) {
+      aliasToggle.addEventListener('click', function() {
+        var extra = container.querySelector('.graph-alias-extra');
+        if (!extra) return;
+        var expanded = aliasToggle.getAttribute('aria-expanded') === 'true';
+        extra.hidden = expanded;
+        aliasToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+        aliasToggle.textContent = expanded ? 'Show more' : 'Show less';
+      });
+    }
+
+    if (typeof onSelect === 'function') {
+      var connectionButtons = container.querySelectorAll('.graph-connection-row[data-neighbor-id]');
+      connectionButtons.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var nid = Number(btn.getAttribute('data-neighbor-id'));
+          if (Number.isInteger(nid)) onSelect(nid);
+        });
+      });
     }
   }
 
@@ -804,8 +895,6 @@
     const canvas = qs('#graph-canvas', panel);
     const entityList = qs('#graph-entity-list', panel);
     const emptyState = qs('#graph-empty-state', panel);
-    const detailTitle = qs('#graph-detail-title', panel);
-    const detailSubtitle = qs('#graph-detail-subtitle', panel);
     const detailBody = qs('#graph-detail-body', panel);
     const visualTitle = qs('#graph-visual-title', panel);
     const visualSubtitle = qs('#graph-visual-subtitle', panel);
@@ -886,13 +975,11 @@
           fetchJson(neighborsUrl)
         ]);
 
-        const neighbors = safeArray(neighborData.neighbors);
+        const neighbors = dedupeNeighbors(neighborData.neighbors);
         state.selectedDetail = detail;
         state.selectedNeighbors = neighbors;
         state.selectedEntity = detail.entity;
 
-        if (detailTitle) detailTitle.textContent = detail.entity.canonical_name || detail.entity.name || 'Entity';
-        if (detailSubtitle) detailSubtitle.textContent = `${entityTypeLabel(detail.entity.entity_type)} · ${formatCount(neighbors.length, 'neighbor', 'neighbors')}`;
         if (visualTitle) visualTitle.textContent = detail.entity.canonical_name || 'Graph view';
         if (visualSubtitle) visualSubtitle.textContent = detail.entity.description || 'Neighborhood graph and citations';
         if (edgeCount) edgeCount.textContent = formatCount(neighbors.length, 'relationship', 'relationships');
@@ -902,7 +989,7 @@
         }
 
         if (detailBody) {
-          renderDetail(detail, neighbors, detailBody);
+          renderDetail(detail, neighbors, detailBody, loadEntity);
         }
 
         qsa('.graph-entity-card', entityList).forEach((card) => {
