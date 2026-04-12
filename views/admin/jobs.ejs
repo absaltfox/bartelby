@@ -10,11 +10,12 @@
 
   <!-- Filter tabs: status -->
   <div class="filter-tabs">
-    <%
-      function filterHref(f, t) {
-        var params = [];
-        if (f !== 'all') params.push('filter=' + f);
-        if (t !== 'all') params.push('type=' + t);
+  <%
+    const jobsApiBase = '/admin/jobs/api';
+    function filterHref(f, t) {
+      var params = [];
+      if (f !== 'all') params.push('filter=' + f);
+      if (t !== 'all') params.push('type=' + t);
         // Reset to page 1 when changing filters
         return '/admin/jobs' + (params.length ? '?' + params.join('&') : '');
       }
@@ -122,7 +123,7 @@
               <td>
                 <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
               </td>
-              <td>
+              <td class="job-subject-cell" data-job-cell="subject">
                 <% if (isImport) { %>
                   <span><%= job.original_name || 'PDF Import' %></span>
                   <% if (isImportSubmit && (job.status === 'running' || job.status === 'queued') && job.page_count) { %>
@@ -230,10 +231,16 @@
   filter,
   typeFilter,
   pageBaseUrl: '/admin/jobs',
-  apiBase: '/admin/jobs/api',
-  activePollUrl: '/admin/jobs/api/all',
-  bulkRetryUrl: '/admin/jobs/api/bulk/retry',
-  bulkDeleteUrl: '/admin/jobs/api/bulk/delete'
+  apiBase: jobsApiBase,
+  apiBasesByType: {
+    transcription: jobsApiBase + '/',
+    extraction: jobsApiBase + '/extraction/',
+    import: jobsApiBase + '/import/'
+  },
+  pollUrl: jobsApiBase + '/all',
+  activePollUrl: jobsApiBase + '/all',
+  bulkRetryUrl: jobsApiBase + '/bulk/retry',
+  bulkDeleteUrl: jobsApiBase + '/bulk/delete'
 }).replace(/</g, '\\u003c') %></script>
 <script src="/js/jobs-page.js"></script>
 

@@ -80,6 +80,12 @@ function buildComparisonPages(document, transcript) {
   });
 }
 
+function parseMultiValueFilter(value) {
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : String(value).split(',');
+  return values.map((entry) => String(entry).trim()).filter(Boolean);
+}
+
 // ── Collections landing page ────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   const user = req.user;
@@ -171,10 +177,10 @@ router.get('/collections/:id', async (req, res) => {
     filters.uncollected = true;
   }
   if (req.query.type) {
-    filters.docTypes = req.query.type.split(',').map(s => s.trim()).filter(Boolean);
+    filters.docTypes = parseMultiValueFilter(req.query.type);
   }
   if (req.query.location) {
-    filters.locations = req.query.location.split(',').map(s => s.trim()).filter(Boolean);
+    filters.locations = parseMultiValueFilter(req.query.location);
   }
   if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
   if (req.query.dateTo) filters.dateTo = req.query.dateTo;
@@ -358,14 +364,16 @@ router.get('/documents/:id', async (req, res) => {
   const docCollections = await documentCollectionsAsync.getByDocumentId(doc.id);
 
   // Default to best transcript, then first
-  const bestTranscript = docTranscripts.find(t => t.is_best);
-  const selectedTranscriptId = req.query.transcript
+  const bestTranscript = docTranscripts.find(t => t.is_best) || null;
+  const requestedTranscriptId = req.query.transcript
     ? parseInt(req.query.transcript)
-    : (bestTranscript?.id || docTranscripts[0]?.id || null);
-
-  const selectedTranscript = selectedTranscriptId
-    ? await transcriptsAsync.getById(selectedTranscriptId)
     : null;
+
+  const selectedTranscript = (
+    requestedTranscriptId
+      ? (docTranscripts.find((transcript) => transcript.id === requestedTranscriptId) || null)
+      : null
+  ) || bestTranscript || docTranscripts[0] || null;
 
   const transcriptAnnotations = selectedTranscript
     ? await annotationsAsync.getByTranscriptId(selectedTranscript.id)

@@ -170,6 +170,7 @@ async function tickImportRenderJobs() {
   const { spawnLocalPdfWorker } = require('../utils/import-workflow');
 
   let job = null;
+  let localRenderHandled = false;
   try {
     job = await importJobsAsync.claimNextQueuedRender();
     if (!job) return;
@@ -190,28 +191,40 @@ async function tickImportRenderJobs() {
         throw new Error(`Failed to launch worker: ${err.message}`);
       }
     } else {
-      spawnLocalPdfWorker({
-        pdfTempFile,
-        jobRef: job.id,
-        originalName: job.original_name,
-        onProgress: (msg) => {
-          importJobsAsync.updateProgress(job.id, {
-            page_count: msg.pageCount,
-            pages_rendered: msg.pagesRendered
-          }).catch(() => {});
-        },
-        onDone: (msg) => {
-          importJobsAsync.markDone(job.id, msg.pages).catch(() => {});
-          console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
-        },
-        onFailed: (error) => {
-          importJobsAsync.markFailed(job.id, error).catch(() => {});
-        }
+      await new Promise((resolve, reject) => {
+        spawnLocalPdfWorker({
+          pdfTempFile,
+          jobRef: job.id,
+          originalName: job.original_name,
+          onProgress: (msg) => {
+            importJobsAsync.updateProgress(job.id, {
+              page_count: msg.pageCount,
+              pages_rendered: msg.pagesRendered
+            }).catch(() => {});
+          },
+          onDone: (msg) => {
+            importJobsAsync.markDone(job.id, msg.pages)
+              .then(() => {
+                localRenderHandled = true;
+                console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
+                resolve();
+              })
+              .catch(reject);
+          },
+          onFailed: (error) => {
+            importJobsAsync.markFailed(job.id, error)
+              .then(() => {
+                localRenderHandled = true;
+                resolve();
+              })
+              .catch(reject);
+          }
+        });
       });
     }
   } catch (err) {
     console.error('[worker] PDF render job failed:', err.message);
-    if (job) await importJobsAsync.markFailed(job.id, err.message);
+    if (job && !localRenderHandled) await importJobsAsync.markFailed(job.id, err.message);
   } finally {
     importRenderBusy = false;
   }
@@ -255,6 +268,7 @@ async function tickGroupingJobs() {
 module.exports = {
   startWorker,
   __testables: {
-    tickGroupingJobs
+    tickGroupingJobs,
+    tickImportRenderJobs
   }
 };

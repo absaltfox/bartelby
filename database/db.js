@@ -203,6 +203,7 @@ let _saveReject = null;
 let _savePending = null;
 function saveDatabase() {
   if (!db) return Promise.resolve();
+  if (db.persistent === false) return Promise.resolve();
   // If no pending flush, create one
   if (!_savePending) {
     _savePending = new Promise((resolve, reject) => {
@@ -224,6 +225,9 @@ function saveDatabase() {
       resolve(); // resolve so fire-and-forget callers don't get unhandled rejections
     }
   }, 300);
+  if (typeof _saveTimer.unref === 'function') {
+    _saveTimer.unref();
+  }
   return _savePending;
 }
 
@@ -602,7 +606,7 @@ const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userIn
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
-const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
+const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);

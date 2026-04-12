@@ -175,7 +175,9 @@ fly secrets set \
 >
 > **Important:** Production now fails closed for non-durable local defaults. `SESSION_STORE=memory` and `STORAGE_DRIVER=local` are rejected unless you set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` or `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1`. Those overrides are intended only for deliberate single-node deployments.
 >
-> **Important:** `TRUST_PROXY` is optional. When unset, Bartelby defaults to trusting one proxy hop, which matches the standard Fly/ingress setup. If you need to override it, use an integer hop count, `true`/`false`, or standard proxy-addr values like `loopback` or a CIDR list.
+> **Important:** Set `PUBLIC_APP_URL` in production. Invite links, password-reset links, and other absolute URLs now fail fast at boot if this value is missing.
+>
+> **Important:** `TRUST_PROXY` now defaults to `0` when unset. That is the safe choice for direct listeners such as `docker-compose`. On Fly or behind another trusted ingress, set `TRUST_PROXY=1` (or a more specific proxy-addr value) explicitly.
 
 ### Deploy
 

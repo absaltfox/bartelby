@@ -41,7 +41,7 @@
 
   function buildProgressHtml(job) {
     if (job.job_type !== 'import') return '';
-    if (job.job_kind === 'submit' && job.page_count) {
+    if (job.job_kind === 'submit' && (job.status === 'running' || job.status === 'queued') && job.page_count) {
       var submitPct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
       var nextDoc = Math.min((job.pages_rendered || 0) + 1, job.page_count);
       return '<div class="import-progress"><div class="import-progress-bar" data-progress="' + submitPct + '"></div></div>' +
@@ -53,8 +53,19 @@
         '<small class="muted">Rendering page ' + (job.pages_rendered || 0) + ' of ' + job.page_count + '</small>';
     }
     if (job.status === 'processing') return '<small class="muted">Starting...</small>';
+    if (job.job_kind === 'submit' && job.page_count) {
+      return '<small class="muted"> (' + job.page_count + ' documents)</small>';
+    }
     if (job.page_count) return '<small class="muted"> (' + job.page_count + ' pages)</small>';
     return '';
+  }
+
+  function buildImportHtml(job) {
+    var title = '<span>' + escapeHtml(job.original_name || 'PDF Import') + '</span>';
+    var scopeLabel = job.scope_label
+      ? '<small class="muted">' + escapeHtml(job.scope_label) + '</small>'
+      : '';
+    return title + scopeLabel + buildProgressHtml(job);
   }
 
   function buildBatchHtml(job) {
@@ -71,10 +82,19 @@
     return '<span>' + name + '</span><small class="muted">' + escapeHtml(parts.join(' • ')) + '</small>';
   }
 
-  function getJobApiBase(config, type) {
-    if (config.mode !== 'admin') {
-      return config.apiBase + '/import/';
+  function buildSubjectHtml(job) {
+    if (job.job_type === 'import') return buildImportHtml(job);
+    if (job.job_kind === 'batch') return buildBatchHtml(job);
+    if (job.document_title) {
+      return '<a href="/documents/' + job.document_id + '">' + escapeHtml(job.document_title) + '</a>';
     }
+    return '<span class="muted">Document #' + job.document_id + '</span>';
+  }
+
+  function getJobApiBase(config, type) {
+    var apiBases = config.apiBasesByType || {};
+    if (type && apiBases[type]) return apiBases[type];
+    if (!config.apiBase) return '';
     if (type === 'import') return config.apiBase + '/import/';
     if (type === 'extraction') return config.apiBase + '/extraction/';
     return config.apiBase + '/';
@@ -101,7 +121,6 @@
       row.dataset.status = job.status;
     }
 
-    var cells = row.querySelectorAll('td');
     var timeCell = row.querySelector('.job-time-cell');
     if (timeCell) {
       var durEl = timeCell.querySelector('.job-duration');
@@ -113,20 +132,9 @@
       }
     }
 
-    if (job.job_type === 'import') {
-      var docCell = cells[3] || cells[2];
-      var progressEl = docCell.querySelector('.import-progress');
-      var smallEl = docCell.querySelector('small');
-      var newProgress = buildProgressHtml(job);
-      if (progressEl) progressEl.remove();
-      if (smallEl) smallEl.remove();
-      if (newProgress) {
-        var nameEl = docCell.querySelector('span');
-        if (nameEl) nameEl.insertAdjacentHTML('afterend', newProgress);
-      }
-    } else if (job.job_kind === 'batch') {
-      var batchCell = cells[3] || cells[2];
-      batchCell.innerHTML = buildBatchHtml(job);
+    var subjectCell = row.querySelector('[data-job-cell="subject"]') || row.querySelector('.job-subject-cell');
+    if (subjectCell) {
+      subjectCell.innerHTML = buildSubjectHtml(job);
     }
 
     var canDelete = job.status === 'done' || job.status === 'failed';
@@ -303,11 +311,12 @@
   }
 
   function initPolling(config) {
+    var pollUrl = config.pollUrl || config.activePollUrl;
     var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
-    if (!hasActive || !config.activePollUrl) return;
+    if (!hasActive || !pollUrl) return;
 
     function pollJobs() {
-      fetch(config.activePollUrl)
+      fetch(pollUrl)
         .then(function(r) { return r.json(); })
         .then(function(data) {
           updateFilterTabCounts({

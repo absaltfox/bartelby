@@ -3,9 +3,9 @@
 const { parseProxyTrust } = require('../../utils/proxy-trust');
 
 describe('proxy trust parsing', () => {
-  it('defaults to one trusted proxy hop when unset', () => {
-    expect(parseProxyTrust(undefined)).toBe(1);
-    expect(parseProxyTrust('')).toBe(1);
+  it('defaults to zero trusted proxy hops when unset', () => {
+    expect(parseProxyTrust(undefined)).toBe(0);
+    expect(parseProxyTrust('')).toBe(0);
   });
 
   it('parses numeric hop counts', () => {
@@ -29,7 +29,7 @@ describe('proxy trust parsing', () => {
     const warnings = [];
     expect(parseProxyTrust('definitely not valid', {
       onWarning: (message) => warnings.push(message)
-    })).toBe(1);
+    })).toBe(0);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/Invalid TRUST_PROXY value/);
   });

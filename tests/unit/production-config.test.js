@@ -16,6 +16,7 @@ describe('production configuration validation', () => {
       SESSION_SECRET: 'production-test-secret',
       DISABLE_BACKGROUND_WORKER: '1',
       DATABASE_DRIVER: 'sqljs',
+      PUBLIC_APP_URL: 'https://bartelby.example.com',
       ...env
     };
 
@@ -67,5 +68,17 @@ describe('production configuration validation', () => {
 
     expect(() => server.validateProductionConfiguration()).not.toThrow();
     expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires PUBLIC_APP_URL in production', () => {
+    const { server } = loadServerWithEnv({
+      PUBLIC_APP_URL: '',
+      SESSION_STORE: 'redis',
+      STORAGE_DRIVER: 's3'
+    });
+
+    expect(() => server.validateProductionConfiguration()).toThrow(
+      'PUBLIC_APP_URL must be configured in production'
+    );
   });
 });

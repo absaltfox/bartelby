@@ -354,6 +354,34 @@ const transcriptionJobsAsync = {
     `, [docId, docId]);
   },
 
+  async getLatestForDocument(docId) {
+    return await getAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.document_id = ?
+         OR EXISTS (
+           SELECT 1
+           FROM transcription_job_documents tjd
+           WHERE tjd.job_id = j.id AND tjd.document_id = ?
+         )
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT 1
+    `, [docId, docId]);
+  },
+
+  async findBatchBySubmissionJobId(submissionJobId) {
+    return await getAsync(`
+      SELECT j.*, d.title as document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      WHERE j.job_kind = 'batch'
+        AND j.batch_manifest LIKE ?
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT 1
+    `, [`%"submissionJobId":${Number(submissionJobId)}%`]);
+  },
+
   async getAll() {
     return await allAsync(`
       SELECT j.*, d.title as document_title

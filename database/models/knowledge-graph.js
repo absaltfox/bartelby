@@ -1,7 +1,7 @@
 'use strict';
 const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
 
-module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
+module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, isFts5Available = () => false) => {
 const entities = {
   async create({ entity_type, canonical_name, description, properties }) {
     const result = await runAsync(`
@@ -63,7 +63,7 @@ const entities = {
   async search(query, limit = 50) {
     const sanitized = String(query || '').replace(/['"]/g, '').trim();
     if (!sanitized) return [];
-    if (fts5Available) {
+    if (isFts5Available()) {
       const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
       try {
         const rows = await allAsync(`
@@ -230,7 +230,7 @@ const entityAliases = {
   async search(query, limit = 50) {
     const sanitized = String(query || '').replace(/['"]/g, '').trim();
     if (!sanitized) return [];
-    if (fts5Available) {
+    if (isFts5Available()) {
       const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
       try {
         return await allAsync(`
@@ -865,7 +865,7 @@ const graphAccess = {
     const sanitized = String(query || '').replace(/['"]/g, '').trim();
     if (!sanitized) return [];
     const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
-    if (fts5Available) {
+    if (isFts5Available()) {
       const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
       try {
         return (await allAsync(`

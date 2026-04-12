@@ -44,6 +44,7 @@ async function createDriver() {
 
   return {
     kind: 'turso',
+    persistent: false,
 
     async exec(sql) {
       // exec() is used for multi-statement DDL during migrations.

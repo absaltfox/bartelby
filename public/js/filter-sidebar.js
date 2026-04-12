@@ -4,17 +4,55 @@
 
   var initialized = false;
 
+  function normalizeMultiselects(form, multiselects) {
+    multiselects.forEach(function(wrap) {
+      var fieldName = wrap.dataset.fieldName;
+      var dropdown = wrap.querySelector('[data-filter-dropdown="1"]');
+      if (!fieldName || !dropdown) return;
+
+      form.querySelectorAll('input[type="hidden"][data-generated-filter="' + fieldName + '"]').forEach(function(existing) {
+        existing.remove();
+      });
+
+      var checkboxes = Array.from(dropdown.querySelectorAll('input[type="checkbox"]'));
+      var checked = checkboxes.filter(function(cb) { return cb.checked; });
+
+      checkboxes.forEach(function(cb) {
+        cb.removeAttribute('name');
+      });
+
+      if (checked.length > 0) {
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = fieldName;
+        hidden.value = checked.map(function(cb) { return cb.value; }).join(',');
+        hidden.setAttribute('data-generated-filter', fieldName);
+        form.appendChild(hidden);
+      }
+    });
+  }
+
+  function submitFilterForm(form, multiselects) {
+    if (typeof form.requestSubmit === 'function') {
+      form.requestSubmit();
+      return;
+    }
+
+    normalizeMultiselects(form, multiselects);
+    form.submit();
+  }
+
   function initFilterForm(form) {
     if (!form || form.dataset.filterSidebarInitialized === '1') return;
     form.dataset.filterSidebarInitialized = '1';
+    var multiselects = Array.from(form.querySelectorAll('.filter-multiselect[data-field-name]'));
 
     form.querySelectorAll('[data-filter-autosubmit="1"]').forEach(function(select) {
       select.addEventListener('change', function() {
-        form.submit();
+        submitFilterForm(form, multiselects);
       });
     });
 
-    var multiselects = Array.from(form.querySelectorAll('.filter-multiselect[data-field-name]'));
     multiselects.forEach(function(wrap) {
       var toggle = wrap.querySelector('[data-filter-toggle="1"]');
       var dropdown = wrap.querySelector('[data-filter-dropdown="1"]');
@@ -52,31 +90,7 @@
     });
 
     form.addEventListener('submit', function() {
-      multiselects.forEach(function(wrap) {
-        var fieldName = wrap.dataset.fieldName;
-        var dropdown = wrap.querySelector('[data-filter-dropdown="1"]');
-        if (!fieldName || !dropdown) return;
-
-        form.querySelectorAll('input[type="hidden"][data-generated-filter="' + fieldName + '"]').forEach(function(existing) {
-          existing.remove();
-        });
-
-        var checkboxes = Array.from(dropdown.querySelectorAll('input[type="checkbox"]'));
-        var checked = checkboxes.filter(function(cb) { return cb.checked; });
-
-        checkboxes.forEach(function(cb) {
-          cb.removeAttribute('name');
-        });
-
-        if (checked.length > 0) {
-          var hidden = document.createElement('input');
-          hidden.type = 'hidden';
-          hidden.name = fieldName;
-          hidden.value = checked.map(function(cb) { return cb.value; }).join(',');
-          hidden.setAttribute('data-generated-filter', fieldName);
-          form.appendChild(hidden);
-        }
-      });
+      normalizeMultiselects(form, multiselects);
     });
   }
 

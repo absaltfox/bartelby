@@ -5,18 +5,19 @@
   <%- include('../partials/manage-collection-nav', {
     collection,
     heading: 'Jobs — ' + collection.name,
-    subtitle: 'Import and transcription jobs for this collection',
+    subtitle: 'Transcription jobs for this collection, plus your in-progress import work',
     activePage: 'jobs'
   }) %>
 
   <!-- Filter tabs: status -->
   <div class="filter-tabs">
-    <%
-      const baseUrl = '/manage/collections/' + collection.id + '/jobs';
-      function filterHref(f, t) {
-        var params = [];
-        if (f !== 'all') params.push('filter=' + f);
-        if (t !== 'all') params.push('type=' + t);
+  <%
+    const jobsApiBase = '/manage/collections/' + collection.id + '/jobs/api';
+    const baseUrl = '/manage/collections/' + collection.id + '/jobs';
+    function filterHref(f, t) {
+      var params = [];
+      if (f !== 'all') params.push('filter=' + f);
+      if (t !== 'all') params.push('type=' + t);
         return baseUrl + (params.length ? '?' + params.join('&') : '');
       }
     %>
@@ -89,9 +90,12 @@
               <td>
                 <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
               </td>
-              <td>
+              <td class="job-subject-cell" data-job-cell="subject">
                 <% if (isImport) { %>
                   <span><%= job.original_name || 'PDF Import' %></span>
+                  <% if (job.scope_label) { %>
+                    <small class="muted"><%= job.scope_label %></small>
+                  <% } %>
                   <% if (isImportSubmit && (job.status === 'running' || job.status === 'queued') && job.page_count) { %>
                     <div class="import-progress">
                       <div class="import-progress-bar" data-progress="<%= Math.round((job.pages_rendered || 0) / job.page_count * 100) %>"></div>
@@ -156,15 +160,20 @@
       </table>
     </div>
   <% } %>
-</div>
+  </div>
 
 <script id="jobs-page-config" type="application/json"><%- JSON.stringify({
   mode: 'manage',
   filter,
   typeFilter,
   pageBaseUrl: '/manage/collections/' + collection.id + '/jobs',
-  apiBase: '/manage/collections/' + collection.id + '/jobs/api',
-  activePollUrl: '/manage/collections/' + collection.id + '/jobs/api'
+  apiBase: jobsApiBase,
+  apiBasesByType: {
+    transcription: jobsApiBase + '/',
+    import: jobsApiBase + '/import/'
+  },
+  pollUrl: jobsApiBase,
+  activePollUrl: jobsApiBase
 }).replace(/</g, '\\u003c') %></script>
 <script src="/js/jobs-page.js"></script>
 

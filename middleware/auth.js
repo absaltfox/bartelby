@@ -3,6 +3,7 @@
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const { usersAsync, userCollectionAccessAsync, roleAtLeast } = require('../database/db');
+const { asyncHandler } = require('../utils/async-handler');
 
 let bcryptModule = null;
 const SQLITE_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
@@ -163,7 +164,7 @@ function requireAdmin(req, res, next) {
 
 /** Require at least the given role on the collection identified by req.params */
 function requireCollectionRole(minRole) {
-  return async (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     if (!req.isAuthenticated()) {
       req.session.returnTo = req.originalUrl;
       return res.redirect('/login');
@@ -176,12 +177,12 @@ function requireCollectionRole(minRole) {
     const userRole = await userCollectionAccessAsync.getRoleForUser(req.user.id, collectionId);
     if (userRole && roleAtLeast(userRole, minRole)) return next();
     res.status(403).render('error', { message: 'You do not have permission for this action.', error: {} });
-  };
+  });
 }
 
 /** Require at least the given role on any collection the document belongs to */
 function requireDocumentRole(minRole) {
-  return async (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     if (!req.isAuthenticated()) {
       req.session.returnTo = req.originalUrl;
       return res.redirect('/login');
@@ -195,11 +196,11 @@ function requireDocumentRole(minRole) {
     const hasRole = await userCollectionAccessAsync.hasRoleOnDocumentCollections(req.user.id, docId, minRole);
     if (hasRole) return next();
     res.status(403).render('error', { message: 'You do not have permission for this action.', error: {} });
-  };
+  });
 }
 
 /** Allow admins or users who manage at least one collection */
-async function requireAdminOrManager(req, res, next) {
+const requireAdminOrManager = asyncHandler(async (req, res, next) => {
   if (!req.isAuthenticated()) {
     req.session.returnTo = req.originalUrl;
     return res.redirect('/login');
@@ -211,7 +212,7 @@ async function requireAdminOrManager(req, res, next) {
     return next();
   }
   res.status(403).render('error', { message: 'Admin or collection manager access required.', error: {} });
-}
+});
 
 module.exports = {
   passport,

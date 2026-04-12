@@ -751,6 +751,19 @@ const documentsAsync = {
     return result.lastInsertRowid;
   },
 
+  async findByImportSubmission(submissionJobId, groupKey) {
+    return await getAsync(`
+      SELECT * FROM documents
+      WHERE metadata LIKE ?
+        AND metadata LIKE ?
+      ORDER BY id DESC
+      LIMIT 1
+    `, [
+      `%"import_submission_job_id":${Number(submissionJobId)}%`,
+      `%"import_group_key":"${String(groupKey)}"%`
+    ]);
+  },
+
   async delete(id) {
     const docTranscripts = await allAsync('SELECT id FROM transcripts WHERE document_id = ?', [id]);
     for (const t of docTranscripts) {

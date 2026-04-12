@@ -9,6 +9,7 @@ const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
+const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
 const { resolveApplicationSettings } = require('./utils/application-settings');
 const { parseProxyTrust } = require('./utils/proxy-trust');
 const logger = require('./utils/logger');
@@ -183,6 +184,8 @@ app.use(helmet({
 // Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies and rate
 // limiting work correctly behind TLS termination. Must be set before
 // rate limiters, which validate X-Forwarded-For against this setting.
+// The parser now defaults to 0 so direct listeners do not trust spoofed
+// forwarded headers unless the deployment opts in explicitly.
 const proxyTrust = parseProxyTrust(process.env.TRUST_PROXY, {
   onWarning: (message) => logBootWarn(message)
 });
@@ -262,6 +265,7 @@ function validateProductionConfiguration() {
 
   const sessionStore = String(config.session.store || 'memory').toLowerCase();
   const storageDriver = String(config.storage.driver || 'local').toLowerCase();
+  const publicAppUrl = String(process.env.PUBLIC_APP_URL || '').trim();
   const allowMemorySessionStore = readEnvFlag('ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION');
   const allowLocalStorage = readEnvFlag('ALLOW_LOCAL_STORAGE_IN_PRODUCTION');
 
@@ -287,6 +291,12 @@ function validateProductionConfiguration() {
       storageDriver,
       overrideEnv: 'ALLOW_LOCAL_STORAGE_IN_PRODUCTION'
     });
+  }
+
+  if (!publicAppUrl) {
+    throw new Error(
+      'PUBLIC_APP_URL must be configured in production so invite and password-reset links resolve correctly.'
+    );
   }
 }
 
@@ -340,50 +350,10 @@ app.use(cookieParser(sessionSecret));
 // ── CSRF protection ─────────────────────────────────────────────────────
 // Simple double-submit token approach for all state-changing requests.
 // Generate a CSRF token per session and validate on POST/PUT/DELETE.
-app.use((req, res, next) => {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
-  }
-  res.locals.csrfToken = req.session.csrfToken;
-  next();
-});
-
-function validateCsrf(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-
-  // Skip for multipart/form-data — body hasn't been parsed yet.
-  // These routes MUST use the withCsrf() wrapper to validate after multer.
-  const ct = req.headers['content-type'] || '';
-  if (ct.startsWith('multipart/form-data') && !req._csrfValidated) {
-    req._csrfDeferred = true;
-    return next();
-  }
-
-  const token = req.body?._csrf || req.headers['x-csrf-token'];
-  const valid = token && req.session.csrfToken &&
-    (() => {
-      const tokenBuf = Buffer.from(String(token));
-      const expectedBuf = Buffer.from(req.session.csrfToken);
-      return tokenBuf.length === expectedBuf.length &&
-        crypto.timingSafeEqual(tokenBuf, expectedBuf);
-    })();
-
-  if (!valid) {
-    // API requests get JSON error
-    if (req.path.startsWith('/api/')) {
-      return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
-    }
-    // Form submissions: redirect back so the user gets a fresh token
-    req.session.authError = 'Your session expired. Please try again.';
-    return res.redirect(req.get('Referrer') || '/login');
-  }
-  req._csrfValidated = true;
-  next();
-}
+app.use(ensureCsrfToken);
 
 // Apply CSRF validation to all state-changing requests
 app.use(validateCsrf);
-app.locals.validateCsrf = validateCsrf;
 
 // ── Passport ───────────────────────────────────────────────────────────────
 app.use(passport.initialize());
@@ -506,16 +476,29 @@ app.get('/healthz', (req, res) => res.status(200).send('ok'));
 
 // ── Error handling ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
+  const statusCode = Number.isInteger(err?.statusCode)
+    ? err.statusCode
+    : Number.isInteger(err?.status)
+      ? err.status
+      : 500;
+  const message = statusCode === 500
+    ? 'Something went wrong!'
+    : (err.message || 'Request failed.');
   void logger.error('http', 'Unhandled Express error.', {
     requestId: req.requestId || null,
     method: req.method,
     path: req.originalUrl,
-    statusCode: 500,
+    statusCode,
     userId: req.user ? req.user.id : null,
     error: err.stack || err.message
   });
-  res.status(500).render('error', {
-    message: 'Something went wrong!',
+  if ((req.originalUrl || '').includes('/api/')) {
+    return res.status(statusCode).json({
+      error: message
+    });
+  }
+  res.status(statusCode).render('error', {
+    message,
     error: process.env.NODE_ENV === 'development' ? err : {}
   });
 });

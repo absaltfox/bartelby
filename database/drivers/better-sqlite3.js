@@ -25,6 +25,7 @@ function createDriver() {
 
   return {
     kind: 'better-sqlite3',
+    persistent: !isInMemory,
     exec(sql) {
       db.exec(sql);
       return [];
