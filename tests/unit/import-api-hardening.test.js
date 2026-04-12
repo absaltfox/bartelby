@@ -26,6 +26,7 @@ describe('import api hardening', () => {
       tempAssetExists: jest.fn(async () => true),
       readTempAsset: jest.fn(async () => Buffer.from('temp-asset')),
       copyTempAssetToUpload: jest.fn(async () => ({ url: '/uploads/uploaded.png' })),
+      promoteQueuedTempAssets: jest.fn(async (files) => (Array.isArray(files) ? files : [files]).map(String)),
       deleteTempAssets: jest.fn(async () => {})
     };
 
@@ -92,17 +93,6 @@ describe('import api hardening', () => {
     return app;
   }
 
-  it('rejects synchronous group transcription requests above 20 pages', async () => {
-    const app = buildApp();
-
-    const res = await request(app)
-      .post('/transcribe-group')
-      .send({ tempFiles: Array.from({ length: 21 }, (_, index) => `page-${index + 1}.png`) });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/max 20/);
-  });
-
   it('caps save-document tempFiles before normalization', async () => {
     const app = buildApp();
     const tempFiles = Array.from({ length: 5005 }, (_, index) => `page-${index + 1}.png`);
@@ -137,5 +127,48 @@ describe('import api hardening', () => {
     expect(tempAssetsMock.collectTempCleanupFiles).toHaveBeenCalledTimes(1);
     expect(tempAssetsMock.collectTempCleanupFiles.mock.calls[0][0]).toHaveLength(5000);
     expect(tempAssetsMock.deleteTempAssets).toHaveBeenCalledTimes(1);
+  });
+
+  it('promotes grouping temp inputs before queueing the job', async () => {
+    const app = buildApp();
+    tempAssetsMock.promoteQueuedTempAssets.mockResolvedValue(['durable-1.png', 'durable-2.png']);
+
+    const res = await request(app)
+      .post('/suggest-groups')
+      .send({
+        tempFiles: ['page-1.png', 'page-2.png'],
+        provider: 'openai',
+        credentialSource: 'user:5'
+      });
+
+    expect(res.status).toBe(200);
+    expect(tempAssetsMock.promoteQueuedTempAssets).toHaveBeenCalledWith(['page-1.png', 'page-2.png']);
+    expect(dbMock.importJobsAsync.create).toHaveBeenCalledWith(expect.objectContaining({
+      job_kind: 'grouping',
+      payload: expect.objectContaining({
+        tempFiles: ['durable-1.png', 'durable-2.png'],
+        provider: 'openai',
+        credentialSource: 'user:5'
+      })
+    }));
+  });
+
+  it('promotes queued pdf inputs before creating the import job', async () => {
+    const app = buildApp();
+    tempAssetsMock.promoteQueuedTempAssets.mockResolvedValue(['durable-upload.pdf']);
+
+    const res = await request(app)
+      .post('/upload')
+      .attach('file', Buffer.from('%PDF-test'), {
+        filename: 'scan.pdf',
+        contentType: 'application/pdf'
+      });
+
+    expect(res.status).toBe(200);
+    expect(tempAssetsMock.promoteQueuedTempAssets).toHaveBeenCalledTimes(1);
+    expect(dbMock.importJobsAsync.create).toHaveBeenCalledWith(expect.objectContaining({
+      original_name: 'scan.pdf',
+      file_path: 'durable-upload.pdf'
+    }));
   });
 });

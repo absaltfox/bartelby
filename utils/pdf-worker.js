@@ -10,6 +10,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const sharp = require('sharp');
 const storage = require('./storage');
+const { readTempAsset, deleteTempAssets } = require('./temp-assets');
 
 const isStandalone = process.env.PDF_WORKER_MODE === '1';
 const PREVIEW_MAX_WIDTH = 960;
@@ -450,21 +451,35 @@ if (isStandalone) {
   runStandalone();
 } else {
   process.on('message', async (msg) => {
-    const { pdfTempFile, dbJobId, originalName } = msg;
-
-    try {
-      const pdfBuffer = storage.readTempFile(pdfTempFile);
-      try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-
-      const pages = await renderPdf(pdfBuffer, dbJobId);
-
-      await reportDone(dbJobId, pages, originalName);
-      process.exit(0);
-    } catch (err) {
-      console.error('PDF worker error:', err);
-      await reportFailed(dbJobId, err.message);
-      try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-      process.exit(1);
-    }
+    const result = await processIpcJob(msg);
+    process.exit(result.ok ? 0 : 1);
   });
 }
+
+async function processIpcJob(msg, options = {}) {
+  const { pdfTempFile, dbJobId, originalName } = msg;
+  const renderPdfImpl = typeof options.renderPdfImpl === 'function' ? options.renderPdfImpl : renderPdf;
+  const reportDoneImpl = typeof options.reportDoneImpl === 'function' ? options.reportDoneImpl : reportDone;
+  const reportFailedImpl = typeof options.reportFailedImpl === 'function' ? options.reportFailedImpl : reportFailed;
+  const deleteTempAssetsImpl = typeof options.deleteTempAssetsImpl === 'function' ? options.deleteTempAssetsImpl : deleteTempAssets;
+
+  try {
+    const pdfBuffer = await readTempAsset(pdfTempFile);
+    const pages = await renderPdfImpl(pdfBuffer, dbJobId);
+
+    await reportDoneImpl(dbJobId, pages, originalName);
+    await deleteTempAssetsImpl([pdfTempFile]);
+    return { ok: true, pages };
+  } catch (err) {
+    console.error('PDF worker error:', err);
+    await reportFailedImpl(dbJobId, err.message);
+    await deleteTempAssetsImpl([pdfTempFile]);
+    return { ok: false, error: err };
+  }
+}
+
+module.exports = {
+  __testables: {
+    processIpcJob
+  }
+};

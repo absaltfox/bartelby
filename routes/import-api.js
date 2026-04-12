@@ -11,7 +11,6 @@ const { extensionFromMimeType, mimeTypeFromFilename } = require('../utils/mime-t
 const {
   getTempImageContentType,
   parseGroupingState,
-  buildTranscriptPageSegments,
   getAuthorizedCollectionIds,
   spawnLocalPdfWorker,
   stripPageMarkers,
@@ -26,6 +25,7 @@ const {
   tempAssetExists,
   readTempAsset,
   copyTempAssetToUpload,
+  promoteQueuedTempAssets,
   deleteTempAssets
 } = require('../utils/temp-assets');
 const {
@@ -35,7 +35,6 @@ const {
 } = require('../database/db');
 const { withCsrf } = require('../middleware/upload');
 
-const MAX_SYNC_TRANSCRIBE_GROUP_PAGES = 20;
 const MAX_TEMP_FILE_INPUTS = 5000;
 
 // Initialize storage (temp dirs, etc.)
@@ -71,38 +70,40 @@ const uploadFileMiddleware = (req, res, next) => {
 router.post('/upload', withCsrf(uploadFileMiddleware), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-  const tempName = storage.sanitizeTempName(req.file.filename);
-  const tempPath = storage.getTempFilePath(tempName);
-  const extFromName = path.extname(req.file.originalname || '').toLowerCase();
-  const extFromMime = extensionFromMimeType(req.file.mimetype, '');
-  const uploadExt = extFromName || extFromMime || (req.file.mimetype === 'application/pdf' ? '.pdf' : '');
+  try {
+    const tempName = storage.sanitizeTempName(req.file.filename);
+    const tempPath = storage.getTempFilePath(tempName);
+    const extFromName = path.extname(req.file.originalname || '').toLowerCase();
+    const extFromMime = extensionFromMimeType(req.file.mimetype, '');
+    const uploadExt = extFromName || extFromMime || (req.file.mimetype === 'application/pdf' ? '.pdf' : '');
 
-  if (tempPath && uploadExt && !tempName.toLowerCase().endsWith(uploadExt)) {
-    // Keep the temp filename extension aligned with the source MIME so later
-    // transcribe/save paths can infer the real type without extra schema state.
-    const renamed = `${tempName}${uploadExt}`;
-    fs.renameSync(tempPath, storage.getTempFilePath(renamed));
-    req.file.filename = renamed;
-    if (req.file.path) req.file.path = storage.getTempFilePath(renamed);
-  }
+    if (tempPath && uploadExt && !tempName.toLowerCase().endsWith(uploadExt)) {
+      // Keep the temp filename extension aligned with the source MIME so later
+      // transcribe/save paths can infer the real type without extra schema state.
+      const renamed = `${tempName}${uploadExt}`;
+      fs.renameSync(tempPath, storage.getTempFilePath(renamed));
+      req.file.filename = renamed;
+      if (req.file.path) req.file.path = storage.getTempFilePath(renamed);
+    }
 
-  if (req.file.mimetype === 'application/pdf') {
-    const pdfTempFile = storage.sanitizeTempName(req.file.filename);
+    if (req.file.mimetype === 'application/pdf') {
+      const [pdfTempFile] = await promoteQueuedTempAssets([req.file.filename]);
 
-    const dbJobId = await importJobsAsync.create({
-      original_name: req.file.originalname,
-      file_path: pdfTempFile,
-      user_id: req.user?.id || null
-    });
+      const dbJobId = await importJobsAsync.create({
+        original_name: req.file.originalname,
+        file_path: pdfTempFile,
+        user_id: req.user?.id || null
+      });
 
-    res.json({
-      success: true,
-      type: 'pdf_queued',
-      importJobId: dbJobId,
-      pageCount: null,
-      originalName: req.file.originalname
-    });
-  } else {
+      return res.json({
+        success: true,
+        type: 'pdf_queued',
+        importJobId: dbJobId,
+        pageCount: null,
+        originalName: req.file.originalname
+      });
+    }
+
     // Image: return temp file info immediately
     res.json({
       success: true,
@@ -111,6 +112,9 @@ router.post('/upload', withCsrf(uploadFileMiddleware), async (req, res) => {
       originalName: req.file.originalname,
       mimeType: req.file.mimetype
     });
+  } catch (err) {
+    console.error('Upload queueing error:', err);
+    res.status(err.statusCode || 500).json({ error: err.message || 'Upload failed' });
   }
 });
 
@@ -195,70 +199,6 @@ router.post('/transcribe', express.json(), async (req, res) => {
   } catch (err) {
     console.error('Transcription error:', err);
     res.status(500).json({ error: 'Transcription failed' });
-  }
-});
-
-// ── API: Transcribe a group of pages ───────────────────────────────────────
-router.post('/transcribe-group', express.json(), async (req, res) => {
-  const { tempFiles, provider: providerName = 'openai', credentialSource = 'system', temperature, mimeTypes } = req.body;
-  if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
-    return res.status(400).json({ error: 'No files specified' });
-  }
-  if (tempFiles.length > MAX_SYNC_TRANSCRIBE_GROUP_PAGES) {
-    return res.status(400).json({ error: `Too many pages for synchronous transcription (max ${MAX_SYNC_TRANSCRIBE_GROUP_PAGES})` });
-  }
-
-  try {
-    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
-    const { createProvider } = require('../utils/llm');
-    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
-    const provider = await createProvider(providerName, selection.runtimeConfig);
-    const opts = {
-      temperature: temperature !== '' && temperature != null
-        ? parseFloat(temperature)
-        : null
-    };
-
-    const results = [];
-    for (let index = 0; index < tempFiles.length; index++) {
-      const tf = tempFiles[index];
-      const safeTempFile = storage.sanitizeTempName(tf);
-      if (!(await tempAssetExists(safeTempFile))) continue;
-      const imageBuffer = await readTempAsset(safeTempFile);
-      const mimeType = Array.isArray(mimeTypes) ? mimeTypes[index] : null;
-      const result = await provider.transcribeDocument(
-        imageBuffer,
-        mimeTypeFromFilename(safeTempFile, mimeType || 'image/png'),
-        opts
-      );
-      results.push(result);
-    }
-
-    if (results.length === 0) {
-      return res.status(400).json({ error: 'No valid pages found' });
-    }
-
-    const combined = {
-      transcription: results.map(r => String(r.transcription || '').trim()).join('\n\n'),
-      pageSegments: results.length > 1 ? buildTranscriptPageSegments(results) : null,
-      metadata: results[0].metadata,
-      notes: results.map(r => r.notes).filter(Boolean).join(' | ') || null,
-      paradata: results[0].paradata
-    };
-
-    if (combined.paradata) {
-      combined.paradata.run_duration_ms = results.reduce(
-        (sum, r) => sum + (r.paradata?.run_duration_ms || 0), 0
-      );
-    }
-
-    res.json({ success: true, ...combined });
-    if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
-      await userApiKeysAsync.markUsed(selection.userApiKeyId, req.user.id);
-    }
-  } catch (err) {
-    console.error('Group transcription error:', err);
-    res.status(500).json({ error: 'Group transcription failed' });
   }
 });
 
@@ -512,13 +452,14 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const durableTempFiles = await promoteQueuedTempAssets(tempFiles);
 
     const dbJobId = await importJobsAsync.create({
-      original_name: `Auto Grouping ${tempFiles.length} pages`,
+      original_name: `Auto Grouping ${durableTempFiles.length} pages`,
       job_kind: 'grouping',
       user_id: req.user?.id || null,
       payload: {
-        tempFiles,
+        tempFiles: durableTempFiles,
         provider: providerName,
         credentialSource
       }
@@ -527,7 +468,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
     res.json({ success: true, importJobId: dbJobId });
   } catch (err) {
     console.error('Suggest groups queueing error:', err);
-    res.status(500).json({ error: 'Failed to queue grouping suggestions' });
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to queue grouping suggestions' });
   }
 });
 

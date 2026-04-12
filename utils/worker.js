@@ -167,7 +167,6 @@ async function tickImportRenderJobs() {
   const { importJobsAsync } = require('../database/db');
   const config = require('../config');
   const storage = require('../utils/storage');
-  const { readTempAsset } = require('../utils/temp-assets');
   const { spawnLocalPdfWorker } = require('../utils/import-workflow');
 
   let job = null;
@@ -182,14 +181,10 @@ async function tickImportRenderJobs() {
     
     if (useEphemeralMachine) {
       try {
-        const s3TempKey = `import_${Date.now()}_${job.id}.pdf`;
-        const pdfBuffer = await readTempAsset(pdfTempFile);
-        try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-        await storage.putTempObject(s3TempKey, pdfBuffer);
-
         const flyMachines = require('./fly-machines');
         const machineId = await flyMachines.runEphemeralWorker(job.id);
         await importJobsAsync.updateMachineId(job.id, machineId);
+        try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
         // We do not mark the job complete here; the ephemeral worker does it.
       } catch (err) {
         throw new Error(`Failed to launch worker: ${err.message}`);
@@ -241,7 +236,8 @@ async function tickGroupingJobs() {
     const groupingResult = await runDocumentGrouping(
       payload.provider,
       payload.tempFiles,
-      payload.credentialSource
+      payload.credentialSource,
+      job.user_id
     );
 
     // Save as done with the resulting groups mapped into pages
@@ -256,4 +252,9 @@ async function tickGroupingJobs() {
   }
 }
 
-module.exports = { startWorker };
+module.exports = {
+  startWorker,
+  __testables: {
+    tickGroupingJobs
+  }
+};
