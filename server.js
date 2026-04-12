@@ -175,7 +175,10 @@ app.use(helmet({
 // Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies and rate
 // limiting work correctly behind TLS termination. Must be set before
 // rate limiters, which validate X-Forwarded-For against this setting.
-app.set('trust proxy', 1);
+const proxyTrust = process.env.TRUST_PROXY ? 
+  (isNaN(parseInt(process.env.TRUST_PROXY, 10)) ? process.env.TRUST_PROXY : parseInt(process.env.TRUST_PROXY, 10)) 
+  : 1;
+app.set('trust proxy', proxyTrust);
 
 // ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
 const authLimiter = rateLimit({
@@ -341,9 +344,12 @@ function validateCsrf(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
 
   // Skip for multipart/form-data — body hasn't been parsed yet.
-  // These routes must call validateCsrf manually after multer runs.
+  // These routes MUST use the withCsrf() wrapper to validate after multer.
   const ct = req.headers['content-type'] || '';
-  if (ct.startsWith('multipart/form-data')) return next();
+  if (ct.startsWith('multipart/form-data') && !req._csrfValidated) {
+    req._csrfDeferred = true;
+    return next();
+  }
 
   const token = req.body?._csrf || req.headers['x-csrf-token'];
   const valid = token && req.session.csrfToken &&
@@ -363,11 +369,13 @@ function validateCsrf(req, res, next) {
     req.session.authError = 'Your session expired. Please try again.';
     return res.redirect(req.get('Referrer') || '/login');
   }
+  req._csrfValidated = true;
   next();
 }
 
 // Apply CSRF validation to all state-changing requests
 app.use(validateCsrf);
+app.locals.validateCsrf = validateCsrf;
 
 // ── Passport ───────────────────────────────────────────────────────────────
 app.use(passport.initialize());

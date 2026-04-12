@@ -22,7 +22,9 @@ const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout 
 
 function startWorker() {
   setInterval(tick, 5000);
-  setInterval(tickImportJobs, 5000);
+  setInterval(tickImportSubmissionJobs, 5000);
+  setInterval(tickImportRenderJobs, 5000);
+  setInterval(tickGroupingJobs, 5000);
   setInterval(tickExtractionJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
@@ -132,7 +134,7 @@ async function tickExtractionJobs() {
   }
 }
 
-async function tickImportJobs() {
+async function tickImportSubmissionJobs() {
   if (importBusy) return;
   importBusy = true;
 
@@ -154,6 +156,103 @@ async function tickImportJobs() {
     }
   } finally {
     importBusy = false;
+  }
+}
+
+let importRenderBusy = false;
+async function tickImportRenderJobs() {
+  if (importRenderBusy) return;
+  importRenderBusy = true;
+
+  const { importJobsAsync } = require('../database/db');
+  const config = require('../config');
+  const storage = require('../utils/storage');
+  const { readTempAsset } = require('../utils/temp-assets');
+  const { spawnLocalPdfWorker } = require('../utils/import-workflow');
+
+  let job = null;
+  try {
+    job = await importJobsAsync.claimNextQueuedRender();
+    if (!job) return;
+
+    console.log(`[worker] import job ${job.id}: starting PDF render processing`);
+    const pdfTempFile = job.file_path; // As stored, without path context
+
+    const useEphemeralMachine = config.flyMachines.enabled && config.storage.driver === 's3';
+    
+    if (useEphemeralMachine) {
+      try {
+        const s3TempKey = \`import_\${Date.now()}_\${job.id}.pdf\`;
+        const pdfBuffer = await readTempAsset(pdfTempFile);
+        try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
+        await storage.putTempObject(s3TempKey, pdfBuffer);
+
+        const flyMachines = require('./fly-machines');
+        const machineId = await flyMachines.runEphemeralWorker(job.id);
+        await importJobsAsync.updateMachineId(job.id, machineId);
+        // We do not mark the job complete here; the ephemeral worker does it.
+      } catch (err) {
+        throw new Error(\`Failed to launch worker: \${err.message}\`);
+      }
+    } else {
+      spawnLocalPdfWorker({
+        pdfTempFile,
+        jobRef: job.id,
+        originalName: job.original_name,
+        onProgress: (msg) => {
+          importJobsAsync.updateProgress(job.id, {
+            page_count: msg.pageCount,
+            pages_rendered: msg.pagesRendered
+          }).catch(() => {});
+        },
+        onDone: (msg) => {
+          importJobsAsync.markDone(job.id, msg.pages).catch(() => {});
+          console.log(\`[worker] PDF render "\${job.original_name}" job \${job.id} completed.\`);
+        },
+        onFailed: (error) => {
+          importJobsAsync.markFailed(job.id, error).catch(() => {});
+        }
+      });
+    }
+  } catch (err) {
+    console.error('[worker] PDF render job failed:', err.message);
+    if (job) await importJobsAsync.markFailed(job.id, err.message);
+  } finally {
+    importRenderBusy = false;
+  }
+}
+
+let groupingBusy = false;
+async function tickGroupingJobs() {
+  if (groupingBusy) return;
+  groupingBusy = true;
+
+  const { importJobsAsync } = require('../database/db');
+  let job = null;
+
+  try {
+    job = await importJobsAsync.claimNextQueuedGrouping();
+    if (!job) return;
+
+    console.log(\`[worker] grouping job \${job.id}: starting\`);
+    const payload = JSON.parse(job.submit_payload || '{}');
+    const { runDocumentGrouping } = require('./grouping-llm');
+    
+    const groupingResult = await runDocumentGrouping(
+      payload.provider,
+      payload.tempFiles,
+      payload.credentialSource
+    );
+
+    // Save as done with the resulting groups mapped into pages
+    await importJobsAsync.markDone(job.id, groupingResult.groups);
+    console.log(\`[worker] grouping job \${job.id}: complete (\${groupingResult.groups.length} groups)\`);
+
+  } catch (err) {
+    console.error('[worker] grouping job failed:', err.message);
+    if (job) await importJobsAsync.markFailed(job.id, err.message);
+  } finally {
+    groupingBusy = false;
   }
 }
 

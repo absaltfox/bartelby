@@ -5,6 +5,7 @@ const config = require('../config');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync, saveDatabase, collectionAnalyticsAsync } = require('../database/db');
 const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
+const { withCsrf } = require('../middleware/upload');
 
 const svgUpload = multer({
   storage: multer.memoryStorage(),
@@ -200,13 +201,10 @@ async function saveLlmSettings(req, res) {
 router.post('/settings', express.urlencoded({ extended: false }), saveLlmSettings);
 router.post('/llm-settings', express.urlencoded({ extended: false }), saveLlmSettings);
 
-router.post('/application-settings', svgUpload.fields([
+router.post('/application-settings', withCsrf(svgUpload.fields([
   { name: 'app_logo_svg_file', maxCount: 1 },
   { name: 'app_favicon_svg_file', maxCount: 1 }
-]), (req, res, next) => {
-  // CSRF deferred for multipart — validate now that multer has parsed req.body
-  req.app.locals.validateCsrf(req, res, next);
-}, async (req, res) => {
+])), async (req, res) => {
   try {
     const fields = [
       'app_name',

@@ -776,39 +776,91 @@ document.addEventListener('DOMContentLoaded', function() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to auto-group pages');
 
-      if (!data.groups || data.groups.length === 0) {
-        showError('No document groups were detected. The pages may not have visible archival page numbers.');
-        return;
+      if (!data.importJobId) {
+        throw new Error('No job ID returned for grouping');
       }
 
-      // Clear existing groups and apply suggestions
-      pageGroups = [];
-      groupIdCounter = 0;
-
-      data.groups.forEach(g => {
-        groupIdCounter++;
-        const filenames = g.pageIndices.map(idx => allTempFiles[idx]).filter(Boolean);
-        if (filenames.length < 2) return;
-        const pageNums = g.pageIndices.map(idx => idx + 1);
-        pageGroups.push({
-          id: groupIdCounter,
-          colorIndex: 0,
-          pages: filenames,
-          label: g.label || `Document (pages ${pageNums.join(', ')})`,
-          source: 'ai'
-        });
-      });
-
-      applyGroupColors();
-      autoGroupingCompleted = true;
-      scheduleGroupingStateSave();
+      await pollGroupingJob(data.importJobId);
 
     } catch (err) {
       showError(err.message);
-    } finally {
       updateSuggestGroupsAvailability();
     }
   });
+
+  async function pollGroupingJob(jobId) {
+    const progressWrap = document.getElementById('progress-bar-wrap');
+    const progressBar  = document.getElementById('progress-bar');
+    const processingText = document.getElementById('processing-text');
+    progressWrap.classList.remove('is-hidden');
+    progressBar.style.width = '50%'; // Indeterminate style since grouping doesn't stream progress yet
+    processingText.textContent = 'Evaluating optimal groupings...';
+    
+    // We are already on the 'pages' step, but we show the progress overlay
+    showStep('processing');
+
+    return new Promise((resolve, reject) => {
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch(`${apiBase}/import-job/${jobId}`);
+          if (!res.ok) throw new Error('Failed to check job status');
+          const job = await res.json();
+
+          if (job.status === 'done') {
+            clearInterval(interval);
+            progressWrap.classList.add('is-hidden');
+            
+            const groups = job.pages; // the groups array was saved into 'pages' field
+
+            if (!groups || groups.length === 0) {
+              showError('No document groups were detected. The pages may not have visible archival page numbers.');
+              showStep('pages');
+              updateSuggestGroupsAvailability();
+              return resolve();
+            }
+
+            // Clear existing groups and apply suggestions
+            pageGroups = [];
+            groupIdCounter = 0;
+
+            groups.forEach(g => {
+              groupIdCounter++;
+              const filenames = g.pageIndices.map(idx => allTempFiles[idx]).filter(Boolean);
+              if (filenames.length < 2) return;
+              const pageNums = g.pageIndices.map(idx => idx + 1);
+              pageGroups.push({
+                id: groupIdCounter,
+                colorIndex: 0,
+                pages: filenames,
+                label: g.label || `Document (pages ${pageNums.join(', ')})`,
+                source: 'ai'
+              });
+            });
+
+            applyGroupColors();
+            autoGroupingCompleted = true;
+            scheduleGroupingStateSave();
+            
+            showStep('pages');
+            updateSuggestGroupsAvailability();
+            resolve();
+          } else if (job.status === 'failed') {
+            clearInterval(interval);
+            progressWrap.classList.add('is-hidden');
+            showStep('pages');
+            throw new Error(job.error || 'Grouping failed');
+          }
+        } catch (err) {
+          clearInterval(interval);
+          progressWrap.classList.add('is-hidden');
+          showStep('pages');
+          showError(err.message);
+          updateSuggestGroupsAvailability();
+          reject(err);
+        }
+      }, 3000);
+    });
+  }
 
   // ── Submit All Pages ────────────────────────────────────────────
 

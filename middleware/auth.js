@@ -59,7 +59,9 @@ function locals(req, res, next) {
   // SQLite CURRENT_TIMESTAMP is UTC but lacks a timezone suffix, so we must
   // append 'Z' before parsing — otherwise JS treats it as local time.
   if (req.isAuthenticated() && req.user.password_changed_at && req.session.authenticatedAt) {
-    const rawTs = String(req.user.password_changed_at).replace(' ', 'T') + 'Z';
+    let rawTs = String(req.user.password_changed_at);
+    if (!rawTs.includes('T') && rawTs.includes(' ')) rawTs = rawTs.replace(' ', 'T');
+    if (!rawTs.endsWith('Z')) rawTs += 'Z';
     const changedAt = Date.parse(rawTs);
     if (!isNaN(changedAt) && changedAt > req.session.authenticatedAt) {
       return req.logout((err) => {

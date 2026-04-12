@@ -33,6 +33,7 @@ const {
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
   saveDatabase, userApiKeysAsync, userCollectionAccessAsync
 } = require('../database/db');
+const { withCsrf } = require('../middleware/upload');
 
 // Initialize storage (temp dirs, etc.)
 storage.init();
@@ -52,7 +53,7 @@ const upload = multer({
 });
 
 // ── API: Upload file (image or PDF) ────────────────────────────────────────
-router.post('/upload', (req, res, next) => {
+const uploadFileMiddleware = (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
@@ -62,10 +63,9 @@ router.post('/upload', (req, res, next) => {
     }
     next();
   });
-}, (req, res, next) => {
-  // CSRF deferred for multipart — validate now that multer has parsed req.body
-  req.app.locals.validateCsrf(req, res, next);
-}, async (req, res) => {
+};
+
+router.post('/upload', withCsrf(uploadFileMiddleware), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   const tempName = storage.sanitizeTempName(req.file.filename);
@@ -85,113 +85,20 @@ router.post('/upload', (req, res, next) => {
 
   if (req.file.mimetype === 'application/pdf') {
     const pdfTempFile = storage.sanitizeTempName(req.file.filename);
-    const fileSize = req.file.size || 0;
 
-    const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024;
-    const isLargePdf = fileSize >= FILE_SIZE_THRESHOLD;
+    const dbJobId = await importJobsAsync.create({
+      original_name: req.file.originalname,
+      file_path: pdfTempFile,
+      user_id: req.user?.id || null
+    });
 
-    if (isLargePdf) {
-      const useEphemeralMachine = config.flyMachines.enabled && config.storage.driver === 's3';
-      const s3TempKey = useEphemeralMachine ? `import_${Date.now()}.pdf` : null;
-
-      const dbJobId = await importJobsAsync.create({
-        original_name: req.file.originalname,
-        file_path: useEphemeralMachine ? s3TempKey : pdfTempFile,
-        user_id: req.user?.id || null
-      });
-
-      res.json({
-        success: true,
-        type: 'pdf_queued',
-        importJobId: dbJobId,
-        pageCount: null,
-        originalName: req.file.originalname
-      });
-
-      if (useEphemeralMachine) {
-        try {
-          const pdfBuffer = await readTempAsset(pdfTempFile);
-          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-          await storage.putTempObject(s3TempKey, pdfBuffer);
-
-          const flyMachines = require('../utils/fly-machines');
-          const machineId = await flyMachines.runEphemeralWorker(dbJobId);
-          await importJobsAsync.updateMachineId(dbJobId, machineId);
-        } catch (err) {
-          console.error('[import] Failed to launch ephemeral worker:', err);
-          importJobsAsync.markFailed(dbJobId, `Failed to launch worker: ${err.message}`).catch(() => {});
-        }
-      } else {
-        spawnLocalPdfWorker({
-          pdfTempFile,
-          jobRef: dbJobId,
-          originalName: req.file.originalname,
-          onProgress: (msg) => {
-            importJobsAsync.updateProgress(dbJobId, {
-              page_count: msg.pageCount,
-              pages_rendered: msg.pagesRendered
-            }).catch(err => {
-              console.error('Failed to update import job progress:', err);
-            });
-          },
-          onDone: (msg) => {
-            importJobsAsync.markDone(dbJobId, msg.pages).catch(err => {
-              console.error('Failed to mark import job done:', err);
-            });
-            console.log(`[import] PDF "${req.file.originalname}" processed: ${msg.pages.length} pages`);
-          },
-          onFailed: (error) => {
-            console.error('PDF worker process error:', error);
-            importJobsAsync.markFailed(dbJobId, error).catch(err => {
-              console.error('Failed to persist import worker error:', err);
-            });
-          }
-        });
-      }
-
-    } else {
-      // Small PDF: process in a forked worker, track via DB job
-      const dbJobId = await importJobsAsync.create({
-        original_name: req.file.originalname,
-        file_path: pdfTempFile,
-        user_id: req.user?.id || null
-      });
-
-      res.json({
-        success: true,
-        type: 'pdf_queued',
-        importJobId: dbJobId,
-        pageCount: null,
-        originalName: req.file.originalname
-      });
-
-      spawnLocalPdfWorker({
-        pdfTempFile,
-        jobRef: dbJobId,
-        originalName: req.file.originalname,
-        onProgress: (msg) => {
-          importJobsAsync.updateProgress(dbJobId, {
-            page_count: msg.pageCount,
-            pages_rendered: msg.pagesRendered
-          }).catch((err) => {
-            console.error('Failed to update import job progress:', err);
-          });
-        },
-        onDone: (msg) => {
-          importJobsAsync.markDone(dbJobId, msg.pages).catch((err) => {
-            console.error('Failed to mark import job done:', err);
-          });
-          console.log(`[import] PDF "${req.file.originalname}" processed: ${(msg.pages || []).length} pages`);
-        },
-        onFailed: (error) => {
-          console.error('PDF background processing error:', error);
-          importJobsAsync.markFailed(dbJobId, error).catch((err) => {
-            console.error('Failed to mark import job failed:', err);
-          });
-        }
-      });
-    }
-
+    res.json({
+      success: true,
+      type: 'pdf_queued',
+      importJobId: dbJobId,
+      pageCount: null,
+      originalName: req.file.originalname
+    });
   } else {
     // Image: return temp file info immediately
     res.json({
@@ -294,6 +201,9 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
   if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
     return res.status(400).json({ error: 'No files specified' });
   }
+  if (tempFiles.length > 20) {
+    return res.status(400).json({ error: 'Too many pages for synchronous transcription (max 20)' });
+  }
 
   try {
     const { resolveProviderSelectionAsync } = require('../utils/provider-access');
@@ -367,7 +277,7 @@ router.post('/save-document', express.json(), async (req, res) => {
 
   const isAiMode = transcriptionMode === 'ai';
   const rawFiles = tempFiles || (tempFile ? [tempFile] : []);
-  const files = sanitizeTempFiles(rawFiles);
+  const files = sanitizeTempFiles(rawFiles).slice(0, 5000);
   if (files.length === 0) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -599,68 +509,22 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
-    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
-    const { createProvider } = require('../utils/llm');
-    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
-    const provider = await createProvider(providerName, selection.runtimeConfig);
 
-    const { createCanvas, loadImage } = require('canvas');
-    const CROP_RATIO = 0.15; // top 15% of page
-    const BATCH_SIZE = 50;   // small strips → more per batch
-    const pageAnnotations = [];
-
-    for (let i = 0; i < tempFiles.length; i += BATCH_SIZE) {
-      const batch = tempFiles.slice(i, i + BATCH_SIZE);
-      const imageContents = [];
-
-      for (let j = 0; j < batch.length; j++) {
-        const safeName = storage.sanitizeTempName(batch[j]);
-        let buffer;
-        try {
-          if (await tempAssetExists(safeName)) {
-            buffer = await readTempAsset(safeName);
-          }
-        } catch (e) { continue; }
-        if (!buffer) continue;
-
-        // Crop the top strip of the page
-        try {
-          const img = await loadImage(buffer);
-          const cropHeight = Math.round(img.height * CROP_RATIO);
-          // Anthropic's many-image API limit: each dimension must be ≤ 1999px
-          const MAX_DIM = 1999;
-          const scale = Math.min(1, MAX_DIM / img.width, MAX_DIM / cropHeight);
-          const outW = Math.round(img.width * scale);
-          const outH = Math.round(cropHeight * scale);
-          const canvas = createCanvas(outW, outH);
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, img.width, cropHeight, 0, 0, outW, outH);
-          buffer = canvas.toBuffer('image/png');
-        } catch (e) {
-          // If cropping fails, skip this page rather than sending the full image
-          continue;
-        }
-
-        imageContents.push(
-          { type: 'text', text: `Image ${i + j + 1}:` },
-          { type: 'image', image: buffer, mimeType: mimeTypeFromFilename(safeName, 'image/png') }
-        );
+    const dbJobId = await importJobsAsync.create({
+      original_name: \`Auto Grouping \${tempFiles.length} pages\`,
+      job_kind: 'grouping',
+      user_id: req.user?.id || null,
+      payload: {
+        tempFiles,
+        provider: providerName,
+        credentialSource
       }
+    });
 
-      if (imageContents.length === 0) continue;
-
-      const result = await provider.generateGroupingSuggestion(imageContents, i, batch.length);
-      if (Array.isArray(result)) {
-        pageAnnotations.push(...result);
-      }
-    }
-
-    const groups = buildGroupsFromAnnotations(pageAnnotations, tempFiles);
-
-    res.json({ success: true, groups });
+    res.json({ success: true, importJobId: dbJobId });
   } catch (err) {
-    console.error('Suggest groups error:', err);
-    res.status(500).json({ error: 'Failed to generate grouping suggestions' });
+    console.error('Suggest groups queueing error:', err);
+    res.status(500).json({ error: 'Failed to queue grouping suggestions' });
   }
 });
 
@@ -668,7 +532,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
 router.post('/cancel-import', express.json(), async (req, res) => {
   const { tempFile, tempFiles, importJobId } = req.body;
   const parsedImportJobId = parseInt(importJobId, 10);
-  const files = tempFiles || (tempFile ? [tempFile] : []);
+  const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, 5000);
 
   try {
     const previewMap = Number.isInteger(parsedImportJobId)
