@@ -4,6 +4,7 @@ const { requireAdmin } = require('../middleware/auth');
 const storage = require('../utils/storage');
 const { normalizeDocumentAssets, parseMetadata } = require('../utils/document-assets');
 const { documentsAsync, collectionsAsync, documentCollectionsAsync } = require('../database/db');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -64,6 +65,7 @@ router.post('/bulk/delete', express.json(), async (req, res) => {
   if (ids.length === 0) return res.status(400).json({ error: 'No document IDs provided' });
 
   let deleted = 0;
+  const deletedIds = [];
   for (const id of ids) {
     const doc = await documentsAsync.getById(id);
     if (!doc) continue;
@@ -80,7 +82,13 @@ router.post('/bulk/delete', express.json(), async (req, res) => {
 
     await documentsAsync.delete(id);
     deleted++;
+    deletedIds.push(id);
   }
+  audit.log('admin.documents_bulk_deleted', {
+    ...audit.reqContext(req),
+    documentIds: deletedIds,
+    deletedCount: deleted
+  });
   res.json({ success: true, deleted });
 });
 
@@ -143,6 +151,11 @@ router.post('/:id/delete', async (req, res) => {
   }
 
   await documentsAsync.delete(doc.id);
+  audit.log('admin.document_deleted', {
+    ...audit.reqContext(req),
+    documentId: doc.id,
+    imagePath: doc.image_path || null
+  });
   res.redirect('/admin/documents?deleted=1');
 });
 

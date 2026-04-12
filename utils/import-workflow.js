@@ -1,0 +1,208 @@
+'use strict';
+
+const path = require('path');
+const { fork } = require('child_process');
+const { mimeTypeFromFilename } = require('./mime-types');
+const { sanitizeTempFiles } = require('./temp-assets');
+
+function getTempImageContentType(filename) {
+  return mimeTypeFromFilename(filename, 'image/png');
+}
+
+function parseGroupingState(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!parsed || !Array.isArray(parsed.groups)) return null;
+    return {
+      collectionIds: Array.isArray(parsed.collectionIds)
+        ? parsed.collectionIds.map((id) => parseInt(id, 10)).filter(Number.isInteger)
+        : [],
+      groups: parsed.groups
+        .map((group) => ({
+          label: String(group.label || '').trim() || null,
+          source: group.source === 'ai' ? 'ai' : 'manual',
+          pages: Array.isArray(group.pages) ? sanitizeTempFiles(group.pages) : []
+        }))
+        .filter((group) => group.pages.length >= 2)
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildTranscriptPageSegments(results) {
+  return results.map((result, index) => ({
+    pageNumber: index + 1,
+    charLength: String(result.transcription || '').trim().length
+  }));
+}
+
+function normalizeCollectionIds(collectionIds) {
+  if (!Array.isArray(collectionIds)) return [];
+  return [...new Set(collectionIds
+    .map((id) => parseInt(id, 10))
+    .filter(Number.isInteger))];
+}
+
+async function getAuthorizedCollectionIds(req, collectionIds) {
+  const normalized = normalizeCollectionIds(collectionIds);
+  if (normalized.length === 0) return [];
+
+  if (req.user?.role === 'admin') {
+    return normalized;
+  }
+
+  const { userCollectionAccessAsync } = require('../database/db');
+  const managedIds = req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
+  if (!normalized.every((id) => managedIds.includes(id))) {
+    const err = new Error('You do not have permission to import into one or more selected collections.');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return normalized;
+}
+
+function spawnLocalPdfWorker({ pdfTempFile, jobRef, originalName, onProgress, onDone, onFailed }) {
+  const child = fork(path.join(__dirname, 'pdf-worker.js'), [], {
+    stdio: ['pipe', 'inherit', 'inherit', 'ipc']
+  });
+
+  let childDone = false;
+
+  child.send({ pdfTempFile, dbJobId: jobRef, originalName });
+
+  child.on('message', (msg) => {
+    if (msg.type === 'progress') {
+      onProgress && onProgress(msg);
+      return;
+    }
+
+    if (msg.type === 'done') {
+      childDone = true;
+      onDone && onDone(msg);
+      return;
+    }
+
+    if (msg.type === 'failed') {
+      childDone = true;
+      onFailed && onFailed(msg.error || 'PDF processing failed');
+    }
+  });
+
+  child.on('error', (err) => {
+    if (childDone) return;
+    childDone = true;
+    onFailed && onFailed(err.message);
+  });
+
+  child.on('exit', (code) => {
+    if (childDone) return;
+    childDone = true;
+    onFailed && onFailed(`Worker process exited with code ${code}`);
+  });
+
+  return child;
+}
+
+function stripPageMarkers(text) {
+  return String(text || '')
+    .replace(/^\[Page\s+\d+\]\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildGroupsFromAnnotations(annotations, tempFiles) {
+  if (!annotations || annotations.length === 0) return [];
+
+  const annotationMap = new Map();
+  annotations.forEach((annotation) => {
+    const page = parseInt(annotation.page, 10);
+    if (!Number.isInteger(page) || page < 1 || page > tempFiles.length) return;
+    const number = annotation.number != null ? parseInt(annotation.number, 10) : null;
+    annotationMap.set(page, Number.isInteger(number) && number > 0 ? number : null);
+  });
+
+  const groups = [];
+  let index = 0;
+
+  function hasUpcomingExpectedNumber(startCursor, expectedNumber) {
+    for (let lookahead = startCursor; lookahead < tempFiles.length; lookahead++) {
+      const upcomingNumber = annotationMap.get(lookahead + 1);
+      if (upcomingNumber === expectedNumber) return true;
+      if (upcomingNumber === 1) return false;
+    }
+    return false;
+  }
+
+  while (index < tempFiles.length) {
+    const startNumber = annotationMap.get(index + 1);
+    if (startNumber !== 1) {
+      index += 1;
+      continue;
+    }
+
+    const pages = [index];
+    let explicitMatches = 1;
+    let expectedNumber = 2;
+    let cursor = index + 1;
+
+    while (cursor < tempFiles.length) {
+      const detectedNumber = annotationMap.get(cursor + 1);
+
+      if (detectedNumber === expectedNumber) {
+        pages.push(cursor);
+        explicitMatches += 1;
+        expectedNumber += 1;
+        cursor += 1;
+        continue;
+      }
+
+      if (
+        explicitMatches >= 2 &&
+        detectedNumber === expectedNumber - 1 &&
+        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
+      ) {
+        pages.push(cursor);
+        cursor += 1;
+        continue;
+      }
+
+      if (
+        detectedNumber == null &&
+        explicitMatches >= 2 &&
+        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
+      ) {
+        pages.push(cursor);
+        cursor += 1;
+        continue;
+      }
+
+      break;
+    }
+
+    if (explicitMatches >= 2) {
+      groups.push({
+        pageIndices: pages,
+        label: `Document (pages ${pages.map((page) => page + 1).join(', ')})`
+      });
+      index = cursor;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return groups;
+}
+
+module.exports = {
+  getTempImageContentType,
+  parseGroupingState,
+  buildTranscriptPageSegments,
+  getAuthorizedCollectionIds,
+  spawnLocalPdfWorker,
+  stripPageMarkers,
+  buildGroupsFromAnnotations
+};

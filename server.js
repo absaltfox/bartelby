@@ -22,6 +22,10 @@ const startupDebugEnabled = /^(1|true|yes|on)$/i.test(String(process.env.STARTUP
 const routeLoadMetrics = [];
 const deferredRouteLoaders = [];
 
+function readEnvFlag(name) {
+  return /^(1|true|yes|on)$/i.test(String(process.env[name] || ''));
+}
+
 function formatBootElapsed(ms) {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
@@ -203,7 +207,13 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // When using S3 storage, serve /uploads/* by proxying from S3.
 // Auth is deferred until after Passport is initialized (see below).
 
-app.use(express.static(path.join(__dirname, 'public')));
+const publicStaticMiddleware = express.static(path.join(__dirname, 'public'));
+app.use((req, res, next) => {
+  if (req.path === '/uploads' || req.path.startsWith('/uploads/')) {
+    return next();
+  }
+  return publicStaticMiddleware(req, res, next);
+});
 app.use(logger.requestLoggingMiddleware());
 logBoot('Core middleware configured');
 
@@ -234,6 +244,39 @@ function getSessionOptions(store) {
       secure: process.env.NODE_ENV === 'production'
     }
   };
+}
+
+function validateProductionConfiguration() {
+  if (!isProduction) return;
+
+  const sessionStore = String(config.session.store || 'memory').toLowerCase();
+  const storageDriver = String(config.storage.driver || 'local').toLowerCase();
+  const allowMemorySessionStore = readEnvFlag('ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION');
+  const allowLocalStorage = readEnvFlag('ALLOW_LOCAL_STORAGE_IN_PRODUCTION');
+
+  if (sessionStore === 'memory') {
+    if (!allowMemorySessionStore) {
+      throw new Error(
+        'SESSION_STORE=memory is not allowed in production. Set SESSION_STORE=redis or ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1.'
+      );
+    }
+    void logger.warn('boot', 'Production override enabled: using in-memory session store.', {
+      sessionStore,
+      overrideEnv: 'ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION'
+    });
+  }
+
+  if (storageDriver === 'local') {
+    if (!allowLocalStorage) {
+      throw new Error(
+        'STORAGE_DRIVER=local is not allowed in production. Configure S3 storage or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1.'
+      );
+    }
+    void logger.warn('boot', 'Production override enabled: using local upload storage.', {
+      storageDriver,
+      overrideEnv: 'ALLOW_LOCAL_STORAGE_IN_PRODUCTION'
+    });
+  }
 }
 
 async function createSessionMiddleware() {
@@ -354,56 +397,65 @@ app.use(generalLimiter);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+function getUploadContentType(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  const mimeTypes = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf'
+  };
+  return mimeTypes[ext] || 'application/octet-stream';
+}
+
 // ── Authenticated upload proxy ──────────────────────────────────────────────
 const { requireAuth, requireAdmin, requireAuthApi } = require('./middleware/auth');
 logBootDebug('Authentication middleware loaded');
 
-if (config.storage.driver === 's3') {
-  const storage = require('./utils/storage');
-  app.get('/uploads/:filename', async (req, res) => {
-    try {
-      const safeFilename = path.basename(String(req.params.filename || ''));
-      const uploadUrl = `/uploads/${safeFilename}`;
-      const userId = req.user ? req.user.id : null;
-      const isAdmin = req.user ? req.user.role === 'admin' : false;
-      const accessAll = req.user ? !!req.user.access_all : false;
-      const matchingDocIds = await documentsAsync.getIdsByUploadUrl(uploadUrl);
-
-      if (matchingDocIds.length === 0) {
-        return res.status(404).end();
-      }
-
-      let canRead = false;
-      for (const docId of matchingDocIds) {
-        if (await documentsAsync.canAccess(docId, userId, isAdmin, accessAll)) {
-          canRead = true;
-          break;
-        }
-      }
-
-      if (!canRead) {
-        if (!req.isAuthenticated || !req.isAuthenticated()) {
-          req.session.returnTo = req.originalUrl;
-          return res.redirect('/login');
-        }
-        return res.status(403).end();
-      }
-
-      const buffer = await storage.readUploadByUrl(uploadUrl);
-      const ext = path.extname(req.params.filename).toLowerCase();
-      const mimeTypes = {
-        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-        '.png': 'image/png', '.gif': 'image/gif',
-        '.webp': 'image/webp', '.pdf': 'application/pdf'
-      };
-      res.set('Content-Type', mimeTypes[ext] || 'application/octet-stream');
-      res.set('Cache-Control', 'private, max-age=86400');
-      res.send(buffer);
-    } catch (err) {
-      res.status(404).end();
+const storage = require('./utils/storage');
+app.get('/uploads/:filename', async (req, res) => {
+  try {
+    const safeFilename = path.basename(String(req.params.filename || ''));
+    if (!safeFilename) {
+      return res.status(404).end();
     }
-  });
-}
+
+    const uploadUrl = `/uploads/${safeFilename}`;
+    const userId = req.user ? req.user.id : null;
+    const isAdmin = req.user ? req.user.role === 'admin' : false;
+    const accessAll = req.user ? !!req.user.access_all : false;
+    const matchingDocIds = await documentsAsync.getIdsByUploadUrl(uploadUrl);
+
+    if (matchingDocIds.length === 0) {
+      return res.status(404).end();
+    }
+
+    let canRead = false;
+    for (const docId of matchingDocIds) {
+      if (await documentsAsync.canAccess(docId, userId, isAdmin, accessAll)) {
+        canRead = true;
+        break;
+      }
+    }
+
+    if (!canRead) {
+      if (!req.isAuthenticated || !req.isAuthenticated()) {
+        req.session.returnTo = req.originalUrl;
+        return res.redirect('/login');
+      }
+      return res.status(403).end();
+    }
+
+    const buffer = await storage.readUploadByUrl(uploadUrl);
+    res.set('Content-Type', getUploadContentType(safeFilename));
+    res.set('Cache-Control', 'private, max-age=86400');
+    return res.send(buffer);
+  } catch (err) {
+    return res.status(404).end();
+  }
+});
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
@@ -477,6 +529,7 @@ process.on('uncaughtException', (err) => {
 // Prepares the DB schema and session middleware without binding a port.
 // Tests call this directly; start() calls it then listens.
 async function initApp() {
+  validateProductionConfiguration();
   logBoot('Schema initialization start');
   await initializeSchema();
   logBoot('Schema initialization complete');
@@ -564,4 +617,4 @@ if (require.main === module) {
   start();
 }
 
-module.exports = { app, initApp };
+module.exports = { app, initApp, validateProductionConfiguration };

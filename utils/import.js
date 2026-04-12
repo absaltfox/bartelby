@@ -140,7 +140,7 @@ function findImages(dir) {
 }
 
 /**
- * Copy image to public/uploads directory
+ * Copy image to the configured uploads directory
  */
 async function copyImageToUploads(sourcePath, filename) {
   const result = await storage.copyLocalFileToUpload(sourcePath, filename);

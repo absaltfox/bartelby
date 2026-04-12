@@ -13,6 +13,11 @@ const {
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
+const audit = require('../utils/audit-log');
+
+function getImportApiRouter() {
+  return require('./import-api');
+}
 
 router.use(requireAdminOrManager);
 
@@ -133,6 +138,14 @@ router.post('/collections/:collectionId/documents/move', express.json(), require
     await documentCollectionsAsync.remove(docId, fromCollectionId);
   }
 
+  audit.log('manager.documents_moved', {
+    ...audit.reqContext(req),
+    sourceCollectionId: fromCollectionId,
+    targetCollectionId,
+    documentIds: validDocIds,
+    movedCount: validDocIds.length
+  });
+
   res.json({ success: true, moved: validDocIds.length });
 });
 
@@ -156,6 +169,12 @@ router.post('/collections/:collectionId/documents/:docId/delete', requireCollect
   }
 
   await documentsAsync.delete(doc.id);
+  audit.log('manager.document_deleted', {
+    ...audit.reqContext(req),
+    collectionId,
+    documentId: doc.id,
+    imagePath: doc.image_path || null
+  });
   res.redirect(`/manage/collections/${collectionId}/documents?deleted=1`);
 });
 
@@ -308,11 +327,7 @@ router.post('/collections/:collectionId/users/:userId/revoke', requireCollection
 
 // ── Import document into a managed collection ────────────────────────────────
 router.get('/collections/:collectionId/import', requireCollectionRole('manager'), async (req, res) => {
-const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
-
-function getImportApiRouter() {
-  return require('./import-api');
-}
+  const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });

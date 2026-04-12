@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, adminJobsAsync } = require('../database/db');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -57,6 +58,11 @@ router.post('/api/bulk/retry', express.json(), async (req, res) => {
       count++;
     } catch (e) {}
   }
+  audit.log('admin.jobs_bulk_retried', {
+    ...audit.reqContext(req),
+    jobs: normalizedJobs.map(({ id, type }) => ({ id: parseInt(id), type: type || 'transcription' })),
+    retriedCount: count
+  });
   res.json({ success: true, count });
 });
 
@@ -77,6 +83,11 @@ router.post('/api/bulk/delete', express.json(), async (req, res) => {
       count++;
     } catch (e) {}
   }
+  audit.log('admin.jobs_bulk_deleted', {
+    ...audit.reqContext(req),
+    jobs: jobList.map(({ id, type }) => ({ id: parseInt(id), type: type || 'transcription' })),
+    deletedCount: count
+  });
   res.json({ success: true, count });
 });
 
@@ -110,31 +121,61 @@ router.get('/api/extraction/:id', async (req, res) => {
 
 // API: retry failed transcription job
 router.post('/api/:id/retry', async (req, res) => {
-  await transcriptionJobsAsync.retry(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await transcriptionJobsAsync.retry(jobId);
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'transcription'
+  });
   res.json({ success: true });
 });
 
 // API: retry failed extraction job
 router.post('/api/extraction/:id/retry', async (req, res) => {
-  await extractionJobsAsync.retry(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await extractionJobsAsync.retry(jobId);
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'extraction'
+  });
   res.json({ success: true });
 });
 
 // API: retry failed durable import submission job
 router.post('/api/import/:id/retry', async (req, res) => {
-  await importJobsAsync.retry(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await importJobsAsync.retry(jobId);
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'import'
+  });
   res.json({ success: true });
 });
 
 // API: delete transcription job record
 router.delete('/api/:id', express.json(), async (req, res) => {
-  await transcriptionJobsAsync.delete(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await transcriptionJobsAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'transcription'
+  });
   res.json({ success: true });
 });
 
 // API: delete extraction job record
 router.delete('/api/extraction/:id', express.json(), async (req, res) => {
-  await extractionJobsAsync.delete(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await extractionJobsAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'extraction'
+  });
   res.json({ success: true });
 });
 
@@ -147,7 +188,13 @@ router.get('/api/import/:id', async (req, res) => {
 
 // API: delete import job record
 router.delete('/api/import/:id', express.json(), async (req, res) => {
-  await importJobsAsync.delete(parseInt(req.params.id));
+  const jobId = parseInt(req.params.id);
+  await importJobsAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'import'
+  });
   res.json({ success: true });
 });
 

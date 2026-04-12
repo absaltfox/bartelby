@@ -3,7 +3,8 @@
 /**
  * Migrate local upload files to S3-compatible storage (Cloudflare R2, MinIO, AWS S3).
  *
- * Reads every file from public/uploads/ and uploads it to the configured S3 bucket
+ * Reads every file from data/uploads/ (with a legacy fallback to public/uploads/)
+ * and uploads it to the configured S3 bucket
  * under the "uploads/" prefix. File URLs in the database stay the same (/uploads/filename)
  * because the app's S3 storage driver already handles that mapping.
  *
@@ -28,7 +29,9 @@ const {
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const UPLOADS_DIR = path.join(__dirname, '..', 'public', 'uploads');
+const CURRENT_UPLOADS_DIR = path.join(__dirname, '..', 'data', 'uploads');
+const LEGACY_UPLOADS_DIR = path.join(__dirname, '..', 'public', 'uploads');
+const UPLOADS_DIRS = [CURRENT_UPLOADS_DIR, LEGACY_UPLOADS_DIR];
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
 
@@ -63,8 +66,9 @@ async function main() {
   }
 
   // Validate
-  if (!fs.existsSync(UPLOADS_DIR)) {
-    console.error(`Uploads directory not found: ${UPLOADS_DIR}`);
+  const existingUploadDirs = UPLOADS_DIRS.filter((dir) => fs.existsSync(dir));
+  if (existingUploadDirs.length === 0) {
+    console.error(`Uploads directory not found. Checked: ${UPLOADS_DIRS.join(', ')}`);
     process.exit(1);
   }
   if (!BUCKET) {
@@ -88,7 +92,7 @@ async function main() {
     }
   });
 
-  console.log(`Source: ${UPLOADS_DIR}`);
+  console.log(`Source directories: ${existingUploadDirs.join(', ')}`);
   console.log(`Destination: s3://${BUCKET}/${UPLOADS_PREFIX}`);
   if (ENDPOINT) {
     console.log(`Endpoint: ${ENDPOINT}`);
@@ -96,7 +100,7 @@ async function main() {
   console.log('');
 
   // Scan for files
-  const files = scanFiles(UPLOADS_DIR);
+  const files = scanFiles(existingUploadDirs);
   console.log(`Found ${files.length} file(s) to migrate\n`);
 
   if (files.length === 0) {
@@ -110,7 +114,7 @@ async function main() {
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const key = UPLOADS_PREFIX + file;
+    const key = UPLOADS_PREFIX + file.name;
 
     try {
       // Check if already exists in S3
@@ -118,7 +122,7 @@ async function main() {
       if (exists) {
         results.skipped++;
         if (VERBOSE) {
-          console.log(`  [${i + 1}/${files.length}] SKIP (exists): ${file}`);
+          console.log(`  [${i + 1}/${files.length}] SKIP (exists): ${file.name}`);
         }
         continue;
       }
@@ -126,15 +130,14 @@ async function main() {
       if (DRY_RUN) {
         results.uploaded++;
         if (VERBOSE) {
-          console.log(`  [${i + 1}/${files.length}] WOULD UPLOAD: ${file}`);
+          console.log(`  [${i + 1}/${files.length}] WOULD UPLOAD: ${file.name}`);
         }
         continue;
       }
 
       // Read and upload
-      const filePath = path.join(UPLOADS_DIR, file);
-      const buffer = fs.readFileSync(filePath);
-      const ext = path.extname(file).toLowerCase();
+      const buffer = fs.readFileSync(file.fullPath);
+      const ext = path.extname(file.name).toLowerCase();
       const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
       await s3.send(new PutObjectCommand({
@@ -147,14 +150,14 @@ async function main() {
       results.uploaded++;
 
       if (VERBOSE) {
-        console.log(`  [${i + 1}/${files.length}] OK: ${file} (${formatBytes(buffer.length)})`);
+        console.log(`  [${i + 1}/${files.length}] OK: ${file.name} (${formatBytes(buffer.length)})`);
       } else if (i % 50 === 0 || i === files.length - 1) {
         process.stdout.write(`\r  Progress: ${i + 1}/${files.length} files...`);
       }
     } catch (err) {
       results.failed++;
-      results.errors.push({ file, error: err.message });
-      console.error(`  [${i + 1}/${files.length}] FAIL: ${file} — ${err.message}`);
+      results.errors.push({ file: file.name, error: err.message });
+      console.error(`  [${i + 1}/${files.length}] FAIL: ${file.name} — ${err.message}`);
     }
   }
 
@@ -194,16 +197,19 @@ async function main() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function scanFiles(dir) {
-  const files = [];
-  for (const entry of fs.readdirSync(dir)) {
-    const fullPath = path.join(dir, entry);
-    const stat = fs.statSync(fullPath);
-    if (stat.isFile()) {
-      files.push(entry);
+function scanFiles(dirs) {
+  const files = new Map();
+  for (const dir of dirs) {
+    for (const entry of fs.readdirSync(dir)) {
+      const fullPath = path.join(dir, entry);
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile()) continue;
+      if (!files.has(entry)) {
+        files.set(entry, { name: entry, fullPath });
+      }
     }
   }
-  return files.sort();
+  return [...files.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function objectExists(s3, key) {

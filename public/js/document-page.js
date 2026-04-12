@@ -24,6 +24,20 @@
     return !!(activeTab && activeTab.dataset.tab === 'history');
   }
 
+  function canExitEditMode() {
+    if (currentMode !== 'edit') return true;
+    if (unsavedMetadata || unsavedTranscript) {
+      return window.confirm('You have unsaved changes. Discard them?');
+    }
+    return true;
+  }
+
+  function updateModeToggleVisibility(activeTabName) {
+    if (!modeToggle) return;
+    var showToggle = activeTabName === 'info';
+    modeToggle.classList.toggle('is-hidden', !showToggle);
+  }
+
   function invalidateHistory() {
     historyLoaded = false;
     historyPage = 1;
@@ -99,6 +113,10 @@
   tabs.forEach(function(tab) {
     tab.addEventListener('click', function() {
       var target = tab.dataset.tab;
+      if (target !== 'info' && !canExitEditMode()) return;
+      if (target !== 'info' && currentMode === 'edit') {
+        setMode('view');
+      }
       tabs.forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
       document.querySelectorAll('.doc-tab-content').forEach(function(c) {
@@ -110,6 +128,7 @@
         panel.classList.remove('is-hidden');
         panel.classList.add('active');
       }
+      updateModeToggleVisibility(target);
       if (target === 'history' && !historyLoaded) {
         loadHistory();
       }
@@ -124,9 +143,7 @@
         var mode = btn.dataset.mode;
         if (mode === currentMode) return;
 
-        if (currentMode === 'edit' && (unsavedMetadata || unsavedTranscript)) {
-          if (!confirm('You have unsaved changes. Discard them?')) return;
-        }
+        if (currentMode === 'edit' && !canExitEditMode()) return;
 
         setMode(mode);
       });
@@ -200,6 +217,7 @@
     updateComparisonView();
   }
 
+  updateModeToggleVisibility('info');
   initPendingJobPolling();
 
   // ── Unsaved changes tracking ───────────────────────────────────────────────

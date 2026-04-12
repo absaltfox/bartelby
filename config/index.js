@@ -15,7 +15,8 @@ const config = {
   app: {
     rootDir,
     publicDir: path.join(rootDir, 'public'),
-    uploadsDir: path.join(rootDir, 'public', 'uploads'),
+    uploadsDir: process.env.UPLOADS_DIR || path.join(rootDir, 'data', 'uploads'),
+    legacyUploadsDir: path.join(rootDir, 'public', 'uploads'),
     tempDir: path.join(rootDir, 'temp'),
     publicBaseUrl: process.env.PUBLIC_APP_URL || ''
   },

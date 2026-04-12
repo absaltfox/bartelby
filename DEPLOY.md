@@ -13,7 +13,7 @@ Estimated monthly cost for light usage: **$0–5** (all three services have gene
 ## Prerequisites
 
 - Node.js 20+ installed locally
-- A working local Bartelby instance with data in `data/transcriber.db` and files in `public/uploads/`
+- A working local Bartelby instance with data in `data/transcriber.db` and files in `data/uploads/`
 
 Install the CLIs:
 
@@ -97,7 +97,7 @@ node scripts/migrate-uploads-to-s3.js
 
 Run with `--dry-run` first to see what will be uploaded. Use `--verbose` for per-file output.
 
-The script uploads all 1,243 files from `public/uploads/` to the `uploads/` prefix in R2. It skips files that already exist, so it's safe to re-run.
+The script uploads files from `data/uploads/` and also falls back to legacy `public/uploads/` if present. It writes to the `uploads/` prefix in R2 and skips files that already exist, so it's safe to re-run.
 
 ---
 
@@ -172,6 +172,8 @@ fly secrets set \
 > **Important:** If you already have LLM provider keys configured in Bartelby's admin settings (stored encrypted in the database), those will carry over from the Turso migration. You don't need to set `OPENAI_API_KEY` etc. as Fly secrets unless you want fallback env-level keys.
 >
 > **Important:** `FLY_API_TOKEN` is required for the app to launch ephemeral Fly Machines for large PDF imports and BERTopic jobs. `FLY_APP_NAME` and `FLY_IMAGE_REF` are provided by Fly at runtime.
+>
+> **Important:** Production now fails closed for non-durable local defaults. `SESSION_STORE=memory` and `STORAGE_DRIVER=local` are rejected unless you set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` or `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1`. Those overrides are intended only for deliberate single-node deployments.
 
 ### Deploy
 

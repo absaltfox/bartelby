@@ -109,12 +109,13 @@
     return button;
   }
 
-  function renderEntityPills(entities, opts) {
+  function renderEntityTypeAccordions(entities, opts) {
     const collectionId = opts && opts.collectionId ? opts.collectionId : '';
     const selectable = !!(opts && opts.selectable);
     const activeEntityId = opts && opts.activeEntityId != null ? Number(opts.activeEntityId) : null;
+    const openFirst = opts && opts.openFirst !== false;
     if (!entities.length) {
-      return '<p class="graph-muted">No entities found for this document.</p>';
+      return '<div class="graph-empty-state">No approved entities were found for this document.</div>';
     }
 
     const groups = new Map();
@@ -125,34 +126,62 @@
     });
 
     const order = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'document'];
-    return order.filter((type) => groups.has(type)).map((type) => {
+    const orderedTypes = order.filter((type) => groups.has(type));
+    return orderedTypes.map((type, index) => {
       const items = groups.get(type);
       return `
-        <div class="kg-type-group">
-          <h5>${escHtml(entityTypeLabel(type))}</h5>
-          <ul class="kg-entity-list">
-            ${items.map((entity) => {
-              const citationCount = Number(entity.citationCount || entity.citation_count || 0);
-              const documentCount = Number(entity.documentCount || entity.document_count || 0);
-              const meta = [];
-              if (citationCount) meta.push(formatCount(citationCount, 'citation', 'citations'));
-              if (documentCount) meta.push(formatCount(documentCount, 'document', 'documents'));
-              const label = `
-                    <span class="kg-entity-pill-type">${escHtml(entityTypeLabel(entity.entity_type))}</span>
-                    <span class="kg-entity-pill-name">${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</span>
-                    ${meta.length ? `<span class="kg-entity-pill-meta">${escHtml(meta.join(' • '))}</span>` : ''}`;
-              return `
-                <li class="kg-entity-row">
-                  ${selectable
-                    ? `<button type="button" class="kg-entity-pill kg-entity-pill-button ${entityTypeClass(entity.entity_type)} ${activeEntityId === Number(entity.id) ? 'active' : ''}" data-kg-select-entity="${escHtml(entity.id)}">${label}</button>`
-                    : `<a class="kg-entity-pill ${entityTypeClass(entity.entity_type)}" href="${entityLinkHref(entity, collectionId)}" data-entity-id="${escHtml(entity.id)}">${label}</a>`}
-                </li>
-              `;
-            }).join('')}
+        <details class="graph-detail-row-card graph-detail-row-card--stacked graph-detail-accordion"${openFirst && index === 0 ? ' open' : ''}>
+          <summary class="graph-detail-accordion-summary">
+            <div class="graph-detail-row-card-header">
+              <strong>${escHtml(entityTypeLabel(type))}</strong>
+              <span>${escHtml(formatCount(items.length, 'entity', 'entities'))}</span>
+            </div>
+          </summary>
+          <ul class="graph-detail-entity-list">
+            ${renderCompactEntityListItems(items, {
+              selectable: selectable,
+              activeEntityId: activeEntityId,
+              collectionId: collectionId
+            })}
           </ul>
-        </div>
+        </details>
       `;
     }).join('');
+  }
+
+  function renderCompactEntityListItems(entities, opts) {
+    const collectionId = opts && opts.collectionId ? opts.collectionId : '';
+    const selectable = !!(opts && opts.selectable);
+    const activeEntityId = opts && opts.activeEntityId != null ? Number(opts.activeEntityId) : null;
+    return safeArray(entities).map((entity) => `
+      <li class="graph-detail-entity-item">
+        ${selectable
+          ? `<button type="button" class="graph-detail-entity-button ${entityTypeClass(entity.entity_type)} ${activeEntityId === Number(entity.id) ? 'active' : ''}" data-kg-select-entity="${escHtml(entity.id)}">
+              <span class="graph-detail-entity-type">${escHtml(entityTypeLabel(entity.entity_type))}</span>
+              <span class="graph-detail-entity-name">${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</span>
+            </button>`
+          : `<a class="graph-detail-entity-button ${entityTypeClass(entity.entity_type)}" href="${entityLinkHref(entity, collectionId)}" data-entity-id="${escHtml(entity.id)}">
+              <span class="graph-detail-entity-type">${escHtml(entityTypeLabel(entity.entity_type))}</span>
+              <span class="graph-detail-entity-name">${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</span>
+            </a>`}
+      </li>
+    `).join('');
+  }
+
+  function renderRelationshipTypeAccordions(groups) {
+    return safeArray(groups).map((group) => `
+      <details class="graph-detail-row-card graph-detail-row-card--stacked graph-detail-accordion">
+        <summary class="graph-detail-accordion-summary">
+          <div class="graph-detail-row-card-header">
+            <strong>${escHtml(group.type)}</strong>
+            <span>${escHtml(formatCount(group.connectionCount, 'connection', 'connections'))}</span>
+          </div>
+        </summary>
+        <ul class="graph-detail-entity-list">
+          ${renderCompactEntityListItems(group.linkedEntities, { selectable: true })}
+        </ul>
+      </details>
+    `).join('');
   }
 
   function renderRelationships(relationships) {
@@ -180,6 +209,82 @@
         </article>
       `;
     }).join('');
+  }
+
+  function renderRelatedDocumentsList(relatedDocuments, selectedEntity, linkedEntities) {
+    var docs = safeArray(relatedDocuments);
+    var focusEntityIds = new Set();
+    if (selectedEntity && selectedEntity.id != null) {
+      focusEntityIds.add(Number(selectedEntity.id));
+      safeArray(linkedEntities).forEach(function(entity) {
+        if (entity && entity.id != null) focusEntityIds.add(Number(entity.id));
+      });
+      docs = docs.filter(function(doc) {
+        return safeArray(doc.sharedEntities).some(function(shared) {
+          return focusEntityIds.has(Number(shared.id));
+        });
+      });
+    }
+
+    if (!docs.length) {
+      return selectedEntity
+        ? '<div class="graph-empty-state">No other documents share this entity or its linked entities.</div>'
+        : '<div class="graph-empty-state">No related documents share entities with this one.</div>';
+    }
+
+    return docs.map(function(doc) {
+      var badgesHtml = '';
+      if (doc.sharedEntities && doc.sharedEntities.length) {
+        var visibleShared = selectedEntity
+          ? doc.sharedEntities.filter(function(e) { return focusEntityIds.has(Number(e.id)); })
+          : doc.sharedEntities;
+        var badges = visibleShared.slice(0, 8).map(function(e) {
+          return '<span class="entity-type-badge ' + entityTypeClass(e.entity_type) + '" style="font-size:0.75rem;margin:0 2px 2px 0">' + escHtml(e.canonical_name || 'Entity') + '</span>';
+        }).join('');
+        if (visibleShared.length > 8) {
+          badges += '<span class="graph-muted">+' + (visibleShared.length - 8) + ' more</span>';
+        }
+        badgesHtml = badges ? '<div class="kg-relationship-meta">' + badges + '</div>' : '';
+      }
+      var sharedCount = selectedEntity ? safeArray(visibleShared).length : doc.sharedEntityCount;
+      return '<article class="kg-relationship-item">' +
+        '<div class="kg-relationship-item-header">' +
+          '<div class="kg-relationship-statement">' +
+            '<a href="' + documentLinkHref(doc.documentId) + '"><strong>' + escHtml(doc.documentTitle) + '</strong></a>' +
+            '<span class="kg-relationship-type">' + formatCount(sharedCount, 'shared entity', 'shared entities') + '</span>' +
+          '</div>' +
+        '</div>' +
+        badgesHtml +
+      '</article>';
+    }).join('');
+  }
+
+  function buildRelationshipTypeGroups(entity, entities, relationships) {
+    const entityId = Number(entity && entity.id);
+    const entityMap = createEntityMap(entities);
+    const groups = new Map();
+
+    safeArray(relationships).forEach((relationship) => {
+      const sourceId = Number(relationship.source_entity_id);
+      const targetId = Number(relationship.target_entity_id);
+      let linkedId = null;
+      if (sourceId === entityId) linkedId = targetId;
+      else if (targetId === entityId) linkedId = sourceId;
+      if (!linkedId || !entityMap.has(linkedId)) return;
+
+      const relationshipType = humaniseRelType(relationship.relationship_type || relationship.type || 'related_to');
+      if (!groups.has(relationshipType)) groups.set(relationshipType, new Map());
+      const relationshipGroup = groups.get(relationshipType);
+      if (!relationshipGroup.has(linkedId)) {
+        relationshipGroup.set(linkedId, {
+          ...entityMap.get(linkedId),
+          connectionCount: 0
+        });
+      }
+      relationshipGroup.get(linkedId).connectionCount += 1;
+    });
+
+    return groups;
   }
 
   function createEntityMap(entities) {
@@ -225,61 +330,20 @@
   }
 
   function renderDocumentGraphCanvas(container, centerEntity, neighbors, onSelect) {
-    const width = container.clientWidth || 780;
-    const height = Math.max(container.clientHeight || 360, 360);
-    const nodeLayer = document.createElement('div');
-    nodeLayer.className = 'graph-node-layer';
-
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    svg.setAttribute('aria-hidden', 'true');
-
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const radius = Math.min(width, height) * 0.34;
-    const count = neighbors.length || 0;
-
-    neighbors.forEach((neighbor, index) => {
-      const angle = (Math.PI * 2 * index) / Math.max(count, 1) - Math.PI / 2;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', centerX);
-      line.setAttribute('y1', centerY);
-      line.setAttribute('x2', x);
-      line.setAttribute('y2', y);
-      line.setAttribute('class', 'graph-edge');
-      svg.appendChild(line);
-
-      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', x);
-      label.setAttribute('y', y - 12);
-      label.setAttribute('text-anchor', 'middle');
-      label.setAttribute('class', 'graph-node-subtitle');
-      label.textContent = neighbor.relationship_type
-        ? neighbor.relationship_type.replace(/_/g, ' ')
-        : entityTypeLabel(neighbor.entity_type);
-      svg.appendChild(label);
+    renderInteractiveForceGraphCanvas(container, centerEntity, neighbors, onSelect, {
+      minHeight: 380,
+      minWorldWidth: 960,
+      minWorldHeight: 560,
+      baseHeight: 260,
+      rowHeight: 92,
+      worldVerticalPadding: 180,
+      worldRowHeight: 132,
+      edgeLabel: function(neighbor) {
+        return neighbor.relationship_type
+          ? neighbor.relationship_type.replace(/_/g, ' ')
+          : '';
+      }
     });
-
-    const centerButton = createNodeButton(centerEntity, 'center', centerX, centerY, true, onSelect);
-    centerButton.style.minWidth = '210px';
-    centerButton.style.zIndex = '2';
-
-    const targetCount = Math.max(neighbors.length, 1);
-    neighbors.forEach((neighbor, index) => {
-      const angle = (Math.PI * 2 * index) / targetCount - Math.PI / 2;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
-      const button = createNodeButton(neighbor, 'neighbor', x, y, false, onSelect);
-      button.style.minWidth = '160px';
-      nodeLayer.appendChild(button);
-    });
-
-    nodeLayer.appendChild(centerButton);
-    container.innerHTML = '';
-    container.appendChild(svg);
-    container.appendChild(nodeLayer);
   }
 
   function renderDocumentEntityDetail(entity, neighbors, relationships, container) {
@@ -291,28 +355,85 @@
     const relatedRelationships = safeArray(relationships).filter((relationship) =>
       Number(relationship.source_entity_id) === Number(entity.id) || Number(relationship.target_entity_id) === Number(entity.id)
     );
-    const relationTypes = Array.from(new Set(relatedRelationships.map((relationship) =>
-      String(relationship.relationship_type || relationship.type || 'related_to').replace(/_/g, ' ')
-    )));
+    const relationTypeGroups = Array.from(buildRelationshipTypeGroups(entity, neighbors, relatedRelationships).entries())
+      .map(([type, linkedEntities]) => ({
+        type,
+        connectionCount: Array.from(linkedEntities.values()).reduce((sum, linkedEntity) => sum + linkedEntity.connectionCount, 0),
+        linkedEntities: Array.from(linkedEntities.values()).sort((a, b) => {
+          if (b.connectionCount !== a.connectionCount) return b.connectionCount - a.connectionCount;
+          return String(a.canonical_name || a.name || '').localeCompare(String(b.canonical_name || b.name || ''));
+        })
+      }))
+      .sort((a, b) => {
+        if (b.connectionCount !== a.connectionCount) return b.connectionCount - a.connectionCount;
+        return a.type.localeCompare(b.type);
+      });
 
     container.innerHTML = `
-      <div class="graph-detail-card">
-        <div class="kg-document-detail-header">
-          <span class="entity-type-badge ${entityTypeClass(entity.entity_type)}">${escHtml(entityTypeLabel(entity.entity_type))}</span>
-          <a class="btn-secondary btn-sm" href="${entityLinkHref(entity)}">Open in graph</a>
+      <div class="graph-detail-card graph-detail-card--selected">
+        <div class="graph-detail-selected-topline">
+          <div class="graph-detail-selected-eyebrow">Selected entity</div>
+          <div class="kg-document-detail-actions graph-detail-actions-compact">
+            <button type="button" class="btn-secondary btn-sm" data-kg-select-document>Document overview</button>
+            <a class="btn-secondary btn-sm" href="${entityLinkHref(entity)}">Open in graph</a>
+          </div>
         </div>
-        <h3>${escHtml(entity.canonical_name || entity.name || 'Entity')}</h3>
-        ${entity.description ? `<p class="graph-detail-description">${escHtml(entity.description)}</p>` : ''}
+        <div class="graph-detail-selected-main">
+          <div class="graph-detail-selected-meta">${escHtml(entityTypeLabel(entity.entity_type))}</div>
+          <h3 class="graph-detail-selected-name">${escHtml(entity.canonical_name || entity.name || 'Entity')}</h3>
+          ${entity.description ? `<p class="graph-detail-selected-description">${escHtml(entity.description)}</p>` : ''}
+        </div>
+        <div class="graph-detail-tabs graph-detail-tabs--compact">
+          <span class="graph-detail-tab active">${formatCount(neighbors.length, 'neighbor', 'neighbors')}</span>
+          <span class="graph-detail-tab active">${formatCount(relatedRelationships.length, 'relationship', 'relationships')}</span>
+        </div>
       </div>
-      <div class="graph-detail-tabs">
-        <span class="graph-detail-tab active">${formatCount(neighbors.length, 'neighbor', 'neighbors')}</span>
-        <span class="graph-detail-tab active">${formatCount(relatedRelationships.length, 'relationship', 'relationships')}</span>
-      </div>
-      <section class="graph-detail-section">
-        <h4>Relationship types</h4>
-        ${relationTypes.length
-          ? `<div class="graph-detail-list">${relationTypes.map((type) => `<div class="graph-detail-card"><strong>${escHtml(type)}</strong></div>`).join('')}</div>`
+      <section class="graph-detail-section graph-detail-section--compact">
+        <div class="graph-detail-section-label">
+          <span>Relationship types</span>
+          <span class="graph-detail-section-count">${formatCount(relationTypeGroups.length, 'type', 'types')}</span>
+        </div>
+        ${relationTypeGroups.length
+          ? `<div class="graph-detail-row-list">${renderRelationshipTypeAccordions(relationTypeGroups)}</div>`
           : '<div class="graph-empty-state">No approved relationships were found for this entity in this document.</div>'}
+      </section>
+    `;
+  }
+
+  function renderDocumentOverviewDetail(documentEntity, entities, relationships, container) {
+    var typeCounts = safeArray(entities).reduce(function(acc, entity) {
+      var type = entity.entity_type || 'topic';
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {});
+    var orderedTypes = Object.keys(typeCounts).sort(function(a, b) {
+      if (typeCounts[b] !== typeCounts[a]) return typeCounts[b] - typeCounts[a];
+      return entityTypeLabel(a).localeCompare(entityTypeLabel(b));
+    });
+
+    container.innerHTML = `
+      <div class="graph-detail-card graph-detail-card--selected">
+        <div class="graph-detail-selected-topline">
+          <div class="graph-detail-selected-eyebrow">Document overview</div>
+        </div>
+        <div class="graph-detail-selected-main">
+          <div class="graph-detail-selected-meta">${escHtml(entityTypeLabel('document'))}</div>
+          <h3 class="graph-detail-selected-name">${escHtml(documentEntity.canonical_name || 'Document overview')}</h3>
+          <p class="graph-detail-selected-description">This view summarizes the approved entities and relationships extracted from this document. Select any entity to pivot into its neighborhood graph.</p>
+        </div>
+        <div class="graph-detail-tabs graph-detail-tabs--compact">
+          <span class="graph-detail-tab active">${formatCount(entities.length, 'entity', 'entities')}</span>
+          <span class="graph-detail-tab active">${formatCount(relationships.length, 'relationship', 'relationships')}</span>
+        </div>
+      </div>
+      <section class="graph-detail-section graph-detail-section--compact">
+        <div class="graph-detail-section-label">
+          <span>Entity types</span>
+          <span class="graph-detail-section-count">${formatCount(orderedTypes.length, 'type', 'types')}</span>
+        </div>
+        ${orderedTypes.length
+          ? `<div class="graph-detail-row-list">${renderEntityTypeAccordions(entities, { selectable: true, openFirst: false })}</div>`
+          : '<div class="graph-empty-state">No approved entities were found for this document.</div>'}
       </section>
     `;
   }
@@ -349,6 +470,8 @@
 
   async function initDocumentGraphPanel(panel) {
     const docId = panel.dataset.documentId;
+    const documentTitle = panel.dataset.documentTitle || `Document ${docId}`;
+    const DOCUMENT_OVERVIEW_ID = '__document_overview__';
     if (!docId) return;
 
     try {
@@ -365,7 +488,13 @@
       const nodeCount = qs('[data-kg-node-count]', panel);
       const edgeCount = qs('[data-kg-edge-count]', panel);
       const entityContainer = qs('[data-kg-entities]', panel);
+      const entityTitle = qs('[data-kg-entities-title]', panel);
+      const entitySection = qs('[data-kg-entities-section]', panel);
       const relationshipContainer = qs('[data-kg-relationships]', panel);
+      const relationshipTitle = qs('[data-kg-relationships-title]', panel);
+      const relatedContainer = qs('[data-kg-related-documents]', panel);
+      const relatedTitle = qs('[data-kg-related-title]', panel);
+      const relatedCopy = qs('[data-kg-related-copy]', panel);
       const pendingCount = Number(data.pendingCount || 0);
 
       if (!entities.length && !relationships.length) {
@@ -379,15 +508,20 @@
         return;
       }
 
-      const selectedDefault = relationships.length
-        ? Number(relationships[0].source_entity_id || relationships[0].target_entity_id || 0)
-        : (entities[0] ? Number(entities[0].id) : null);
-      let activeEntityId = Number.isFinite(selectedDefault) ? selectedDefault : null;
+      const documentEntity = {
+        id: DOCUMENT_OVERVIEW_ID,
+        entity_type: 'document',
+        canonical_name: documentTitle,
+        description: 'Document overview'
+      };
+      var relatedDocuments = [];
+      let activeEntityId = null;
 
       const renderDocumentGraphSelection = function(entityId) {
-        activeEntityId = Number(entityId);
+        const showDocumentOverview = entityId == null || String(entityId) === DOCUMENT_OVERVIEW_ID;
+        activeEntityId = showDocumentOverview ? null : Number(entityId);
         const entityMap = createEntityMap(entities);
-        const selectedEntity = entityMap.get(activeEntityId) || entities[0] || null;
+        const selectedEntity = showDocumentOverview ? null : (entityMap.get(activeEntityId) || entities[0] || null);
         const neighbors = selectedEntity ? getDocumentEntityNeighbors(selectedEntity.id, entities, relationships) : [];
         const filteredRelationships = selectedEntity
           ? relationships.filter((relationship) =>
@@ -397,17 +531,40 @@
 
         if (nodeCount) nodeCount.textContent = formatCount(entities.length, 'node', 'nodes');
         if (edgeCount) edgeCount.textContent = formatCount(filteredRelationships.length, 'relationship', 'relationships');
-        if (entityContainer) entityContainer.innerHTML = renderEntityPills(entities, { selectable: true, activeEntityId: selectedEntity && selectedEntity.id });
+        if (entitySection) {
+          entitySection.hidden = true;
+        }
+        if (relationshipTitle) {
+          relationshipTitle.textContent = selectedEntity ? 'Relationship evidence' : 'Evidence';
+        }
+        if (relatedTitle) {
+          relatedTitle.textContent = selectedEntity ? 'Related documents for this neighborhood' : 'Related documents';
+        }
+        if (relatedCopy) {
+          relatedCopy.textContent = selectedEntity
+            ? 'Other documents sharing this selected entity or its linked entities'
+            : 'Other documents sharing entities with this one';
+        }
+        if (entityContainer) {
+          entityContainer.innerHTML = '';
+        }
         if (relationshipContainer) relationshipContainer.innerHTML = renderRelationships(filteredRelationships);
-        if (detailContainer) renderDocumentEntityDetail(selectedEntity, neighbors, filteredRelationships, detailContainer);
+        if (relatedContainer) relatedContainer.innerHTML = renderRelatedDocumentsList(relatedDocuments, selectedEntity, neighbors);
+        if (detailContainer) {
+          if (selectedEntity) {
+            renderDocumentEntityDetail(selectedEntity, neighbors, filteredRelationships, detailContainer);
+          } else {
+            renderDocumentOverviewDetail(documentEntity, entities, relationships, detailContainer);
+          }
+        }
 
         if (networkCanvas) {
-          if (!selectedEntity) {
-            networkCanvas.innerHTML = '';
-            if (networkEmpty) networkEmpty.hidden = false;
-          } else {
+          if (selectedEntity) {
             if (networkEmpty) networkEmpty.hidden = true;
             renderDocumentGraphCanvas(networkCanvas, selectedEntity, neighbors, renderDocumentGraphSelection);
+          } else {
+            if (networkEmpty) networkEmpty.hidden = true;
+            renderDocumentGraphCanvas(networkCanvas, documentEntity, entities, renderDocumentGraphSelection);
           }
         }
       };
@@ -417,36 +574,11 @@
       attachPassageLinks(panel);
 
       // Fetch and render related documents
-      var relatedContainer = qs('[data-kg-related-documents]', panel);
       if (relatedContainer) {
         fetchJson('/graph/documents/' + encodeURIComponent(docId) + '/related?limit=10')
           .then(function(data) {
-            var related = safeArray(data.related);
-            if (!related.length) {
-              relatedContainer.innerHTML = '<div class="graph-empty-state">No related documents share entities with this one.</div>';
-              return;
-            }
-            relatedContainer.innerHTML = related.map(function(doc) {
-              var badgesHtml = '';
-              if (doc.sharedEntities && doc.sharedEntities.length) {
-                var badges = doc.sharedEntities.slice(0, 8).map(function(e) {
-                  return '<span class="entity-type-badge ' + entityTypeClass(e.entity_type) + '" style="font-size:0.75rem;margin:0 2px 2px 0">' + escHtml(e.canonical_name || 'Entity') + '</span>';
-                }).join('');
-                if (doc.sharedEntities.length > 8) {
-                  badges += '<span class="graph-muted">+' + (doc.sharedEntities.length - 8) + ' more</span>';
-                }
-                badgesHtml = '<div class="kg-relationship-meta">' + badges + '</div>';
-              }
-              return '<article class="kg-relationship-item">' +
-                '<div class="kg-relationship-item-header">' +
-                  '<div class="kg-relationship-statement">' +
-                    '<a href="' + documentLinkHref(doc.documentId) + '"><strong>' + escHtml(doc.documentTitle) + '</strong></a>' +
-                    '<span class="kg-relationship-type">' + formatCount(doc.sharedEntityCount, 'shared entity', 'shared entities') + '</span>' +
-                  '</div>' +
-                '</div>' +
-                badgesHtml +
-              '</article>';
-            }).join('');
+            relatedDocuments = safeArray(data.related);
+            relatedContainer.innerHTML = renderRelatedDocumentsList(relatedDocuments, null, null);
           })
           .catch(function() {
             relatedContainer.innerHTML = '<div class="graph-empty-state">Unable to load related documents.</div>';
@@ -454,12 +586,30 @@
       }
 
       panel.addEventListener('click', function(ev) {
+        const accordionSummary = ev.target.closest('.graph-detail-accordion-summary');
+        if (accordionSummary && detailContainer && detailContainer.contains(accordionSummary)) {
+          const accordion = accordionSummary.closest('.graph-detail-accordion');
+          if (accordion) {
+            window.requestAnimationFrame(function() {
+              if (!accordion.open) return;
+              qsa('.graph-detail-accordion', detailContainer).forEach(function(other) {
+                if (other !== accordion) other.open = false;
+              });
+            });
+          }
+        }
+        const overviewButton = ev.target.closest('[data-kg-select-document]');
+        if (overviewButton) {
+          ev.preventDefault();
+          renderDocumentGraphSelection(DOCUMENT_OVERVIEW_ID);
+          return;
+        }
         const button = ev.target.closest('[data-kg-select-entity]');
         if (!button) return;
         ev.preventDefault();
         renderDocumentGraphSelection(button.dataset.kgSelectEntity);
       });
-      renderDocumentGraphSelection(activeEntityId);
+      renderDocumentGraphSelection(DOCUMENT_OVERVIEW_ID);
     } catch (err) {
       panel.hidden = true;
     }
@@ -539,7 +689,14 @@
       <span class="entity-type-badge ${entityTypeClass(entity.entity_type)}">${escHtml(entityTypeLabel(entity.entity_type))}</span>
       <strong>${escHtml(entity.canonical_name || entity.name || 'Untitled entity')}</strong>
     `;
-    button.addEventListener('click', () => onSelect(entity.id));
+    button.addEventListener('click', function(ev) {
+      if (button.dataset.dragSuppressed === 'true') {
+        button.dataset.dragSuppressed = '';
+        ev.preventDefault();
+        return;
+      }
+      onSelect(entity.id);
+    });
     return button;
   }
 
@@ -567,22 +724,62 @@
     return rows;
   }
 
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function estimateNodeMetrics(entity, isCenter) {
+    var title = String(entity && (entity.canonical_name || entity.name) || 'Untitled entity').trim();
+    var titleLength = title.length || 12;
+    var minWidth = isCenter ? 210 : 156;
+    var maxWidth = isCenter ? 320 : 238;
+    var estimatedWidth = clamp(116 + titleLength * 4.35, minWidth, maxWidth);
+    var usableCharsPerLine = Math.max(12, Math.floor((estimatedWidth - 28) / 10));
+    var estimatedLines = clamp(Math.ceil(titleLength / usableCharsPerLine), 1, isCenter ? 4 : 3);
+    var estimatedHeight = (isCenter ? 58 : 52) + estimatedLines * 20;
+    return {
+      width: estimatedWidth,
+      height: estimatedHeight,
+      halfW: estimatedWidth / 2,
+      halfH: estimatedHeight / 2
+    };
+  }
+
   function forceLayout(centerEntity, neighbors, width, height) {
+    var centerMetrics = estimateNodeMetrics(centerEntity, true);
     var nodes = [
-      { id: centerEntity.id, entity: centerEntity, x: width / 2, y: height / 2, vx: 0, vy: 0, fixed: true }
+      {
+        id: centerEntity.id,
+        entity: centerEntity,
+        x: width / 2,
+        y: height / 2,
+        vx: 0,
+        vy: 0,
+        fixed: true,
+        metrics: centerMetrics
+      }
     ];
     var nodeMap = new Map();
     nodeMap.set(centerEntity.id, nodes[0]);
 
+    var initialRadius = Math.max(
+      Math.min(width, height) * 0.34,
+      centerMetrics.halfW + 120,
+      170 + neighbors.length * 8
+    );
+
     neighbors.forEach(function(n, i) {
       var angle = (Math.PI * 2 * i) / Math.max(neighbors.length, 1);
-      var r = Math.min(width, height) * 0.3;
+      var metrics = estimateNodeMetrics(n, false);
       var node = {
         id: n.id,
         entity: n,
-        x: width / 2 + Math.cos(angle) * r + (Math.random() - 0.5) * 20,
-        y: height / 2 + Math.sin(angle) * r + (Math.random() - 0.5) * 20,
-        vx: 0, vy: 0, fixed: false
+        x: width / 2 + Math.cos(angle) * initialRadius + (Math.random() - 0.5) * 24,
+        y: height / 2 + Math.sin(angle) * initialRadius + (Math.random() - 0.5) * 24,
+        vx: 0,
+        vy: 0,
+        fixed: false,
+        metrics: metrics
       };
       nodes.push(node);
       nodeMap.set(n.id, node);
@@ -596,12 +793,21 @@
       };
     });
 
-    var REPULSION = 8000;
-    var ATTRACTION = 0.005;
-    var CENTER_GRAVITY = 0.01;
-    var DAMPING = 0.85;
-    var ITERATIONS = 150;
-    var PADDING = 80;
+    var REPULSION = 18000;
+    var OVERLAP_PUSH = 1.2;
+    var ATTRACTION = 0.0035;
+    var CENTER_GRAVITY = 0.006;
+    var DAMPING = 0.84;
+    var ITERATIONS = 220;
+    var MARGIN = 26;
+    var maxHalfW = nodes.reduce(function(max, node) {
+      return Math.max(max, node.metrics ? node.metrics.halfW : 0);
+    }, 0);
+    var maxHalfH = nodes.reduce(function(max, node) {
+      return Math.max(max, node.metrics ? node.metrics.halfH : 0);
+    }, 0);
+    var PADDING_X = maxHalfW + MARGIN;
+    var PADDING_Y = maxHalfH + MARGIN;
 
     for (var iter = 0; iter < ITERATIONS; iter++) {
       for (var i = 0; i < nodes.length; i++) {
@@ -609,9 +815,22 @@
           var dx = nodes[j].x - nodes[i].x;
           var dy = nodes[j].y - nodes[i].y;
           var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          var safeDx = dx || ((Math.random() - 0.5) * 0.5);
+          var safeDy = dy || ((Math.random() - 0.5) * 0.5);
           var force = REPULSION / (dist * dist);
-          var fx = (dx / dist) * force;
-          var fy = (dy / dist) * force;
+          var fx = (safeDx / dist) * force;
+          var fy = (safeDy / dist) * force;
+          var requiredX = nodes[i].metrics.halfW + nodes[j].metrics.halfW + MARGIN;
+          var requiredY = nodes[i].metrics.halfH + nodes[j].metrics.halfH + MARGIN;
+          var overlapX = requiredX - Math.abs(dx);
+          var overlapY = requiredY - Math.abs(dy);
+          if (overlapX > 0 && overlapY > 0) {
+            if (overlapX < overlapY) {
+              fx += (dx >= 0 ? 1 : -1) * overlapX * OVERLAP_PUSH;
+            } else {
+              fy += (dy >= 0 ? 1 : -1) * overlapY * OVERLAP_PUSH;
+            }
+          }
           if (!nodes[i].fixed) { nodes[i].vx -= fx; nodes[i].vy -= fy; }
           if (!nodes[j].fixed) { nodes[j].vx += fx; nodes[j].vy += fy; }
         }
@@ -638,64 +857,703 @@
         node.vy *= DAMPING;
         node.x += node.vx;
         node.y += node.vy;
-        node.x = Math.max(PADDING, Math.min(width - PADDING, node.x));
-        node.y = Math.max(PADDING, Math.min(height - PADDING, node.y));
+        node.x = Math.max(PADDING_X, Math.min(width - PADDING_X, node.x));
+        node.y = Math.max(PADDING_Y, Math.min(height - PADDING_Y, node.y));
       }
     }
 
     return { nodes: nodes, edges: edges };
   }
 
-  function renderGraphCanvas(container, centerEntity, neighbors, onSelect) {
-    var width = container.clientWidth || 800;
-    var height = Math.max(container.clientHeight || 560, 560);
-    var nodeLayer = document.createElement('div');
-    nodeLayer.className = 'graph-node-layer';
+  function setNodeButtonPosition(button, node) {
+    button.style.left = node.x + 'px';
+    button.style.top = node.y + 'px';
+  }
 
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-    svg.setAttribute('aria-hidden', 'true');
+  function getNodeMetrics(node) {
+    if (node && node.button) {
+      var liveWidth = node.button.offsetWidth || 0;
+      var liveHeight = node.button.offsetHeight || 0;
+      if (liveWidth && liveHeight) {
+        return {
+          width: liveWidth,
+          height: liveHeight,
+          halfW: liveWidth / 2,
+          halfH: liveHeight / 2
+        };
+      }
+    }
+    return node.renderMetrics || node.metrics || estimateNodeMetrics(node.entity, !!node.fixed);
+  }
+
+  function clampNodeToBounds(node, width, height, margin) {
+    var metrics = getNodeMetrics(node);
+    node.x = clamp(node.x, metrics.halfW + margin, width - metrics.halfW - margin);
+    node.y = clamp(node.y, metrics.halfH + margin, height - metrics.halfH - margin);
+  }
+
+  function nodeBounds(node, padding) {
+    var metrics = getNodeMetrics(node);
+    var extra = padding || 0;
+    return {
+      left: node.x - metrics.halfW - extra,
+      right: node.x + metrics.halfW + extra,
+      top: node.y - metrics.halfH - extra,
+      bottom: node.y + metrics.halfH + extra
+    };
+  }
+
+  function rectsOverlap(a, b) {
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+  }
+
+  function rectOverlapArea(a, b) {
+    var width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+    var height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    return width * height;
+  }
+
+  function pickEdgeLabelPosition(edge, labelWidth, labelHeight, nodes, occupiedRects, worldBounds) {
+    var sourcePoint = getEdgeAnchorPoint(edge.source, edge.target);
+    var targetPoint = getEdgeAnchorPoint(edge.target, edge.source);
+    var dx = targetPoint.x - sourcePoint.x;
+    var dy = targetPoint.y - sourcePoint.y;
+    var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    var normalX = -dy / dist;
+    var normalY = dx / dist;
+    var tangentX = dx / dist;
+    var tangentY = dy / dist;
+    var hubNode = null;
+    var leafNode = null;
+    if (edge.source.fixed && !edge.target.fixed) {
+      hubNode = edge.source;
+      leafNode = edge.target;
+    } else if (edge.target.fixed && !edge.source.fixed) {
+      hubNode = edge.target;
+      leafNode = edge.source;
+    }
+    var candidateSpecs = [];
+    var branchBaseX = sourcePoint.x + dx * 0.5;
+    var branchBaseY = sourcePoint.y + dy * 0.5;
+    var branchNormalX = normalX;
+    var branchNormalY = normalY;
+    var branchTangentX = tangentX;
+    var branchTangentY = tangentY;
+    var fallbackPrimary = 56;
+    var fallbackSecondary = 0;
+
+    if (hubNode && leafNode) {
+      var hubPoint = hubNode === edge.source ? sourcePoint : targetPoint;
+      var leafPoint = hubNode === edge.source ? targetPoint : sourcePoint;
+      var radialDx = leafPoint.x - hubPoint.x;
+      var radialDy = leafPoint.y - hubPoint.y;
+      var radialDist = Math.sqrt(radialDx * radialDx + radialDy * radialDy) || 1;
+      var radialX = radialDx / radialDist;
+      var radialY = radialDy / radialDist;
+      var tangentSign = radialY <= 0 ? 1 : -1;
+      branchBaseX = hubPoint.x + radialX * (radialDist * 0.56);
+      branchBaseY = hubPoint.y + radialY * (radialDist * 0.56);
+      branchNormalX = radialX;
+      branchNormalY = radialY;
+      branchTangentX = -radialY;
+      branchTangentY = radialX;
+      fallbackPrimary = 34;
+      fallbackSecondary = 30 * tangentSign;
+      [24, 34, 46].forEach(function(outwardOffset) {
+        [0, 18, -18, 34, -34, 52, -52].forEach(function(sideOffset) {
+          candidateSpecs.push({ primary: outwardOffset, secondary: sideOffset * tangentSign });
+        });
+      });
+    } else {
+      [24, 34, 46, 60].forEach(function(normalOffset) {
+        [0, 16, -16, 32, -32, 48, -48].forEach(function(tangentOffset) {
+          candidateSpecs.push({ primary: normalOffset, secondary: tangentOffset });
+          candidateSpecs.push({ primary: -normalOffset, secondary: tangentOffset });
+        });
+      });
+    }
+    var avoidedBounds = nodes.map(function(node) {
+      return nodeBounds(node, node.fixed ? 34 : 18);
+    });
+    var labelBounds = (occupiedRects || []).slice();
+    var safeBounds = worldBounds || null;
+    var best = null;
+
+    for (var i = 0; i < candidateSpecs.length; i++) {
+      var spec = candidateSpecs[i];
+      var labelX = branchBaseX + branchNormalX * spec.primary + branchTangentX * spec.secondary;
+      var labelY = branchBaseY + branchNormalY * spec.primary + branchTangentY * spec.secondary;
+      var rect = {
+        left: labelX - labelWidth / 2,
+        right: labelX + labelWidth / 2,
+        top: labelY - labelHeight / 2,
+        bottom: labelY + labelHeight / 2
+      };
+      var nodePenalty = avoidedBounds.reduce(function(total, bounds) {
+        return total + rectOverlapArea(rect, bounds);
+      }, 0);
+      var labelPenalty = labelBounds.reduce(function(total, bounds) {
+        return total + rectOverlapArea(rect, bounds);
+      }, 0);
+      var boundaryPenalty = 0;
+      if (safeBounds) {
+        if (rect.left < safeBounds.left) boundaryPenalty += (safeBounds.left - rect.left) * labelHeight;
+        if (rect.right > safeBounds.right) boundaryPenalty += (rect.right - safeBounds.right) * labelHeight;
+        if (rect.top < safeBounds.top) boundaryPenalty += (safeBounds.top - rect.top) * labelWidth;
+        if (rect.bottom > safeBounds.bottom) boundaryPenalty += (rect.bottom - safeBounds.bottom) * labelWidth;
+      }
+      var hubPenalty = 0;
+      if (hubNode) {
+        var centerDx = labelX - hubNode.x;
+        var centerDy = labelY - hubNode.y;
+        var centerDist = Math.sqrt(centerDx * centerDx + centerDy * centerDy) || 1;
+        hubPenalty = Math.max(0, 190 - centerDist) * 4;
+      }
+      var score = nodePenalty * 20 + labelPenalty * 12 + boundaryPenalty + hubPenalty + Math.abs(spec.secondary) * 1.1 + Math.abs(spec.primary) * 0.9;
+      if (nodePenalty === 0 && labelPenalty === 0 && boundaryPenalty === 0) {
+        return { x: labelX, y: labelY, rect: rect, branchX: branchBaseX, branchY: branchBaseY, normal: spec.primary };
+      }
+      if (!best || score < best.score) {
+        best = { x: labelX, y: labelY, rect: rect, branchX: branchBaseX, branchY: branchBaseY, normal: spec.primary, score: score };
+      }
+    }
+
+    return best || {
+      x: branchBaseX + branchNormalX * fallbackPrimary + branchTangentX * fallbackSecondary,
+      y: branchBaseY + branchNormalY * fallbackPrimary + branchTangentY * fallbackSecondary,
+      branchX: branchBaseX,
+      branchY: branchBaseY,
+      normal: fallbackPrimary,
+      rect: {
+        left: branchBaseX + branchNormalX * fallbackPrimary + branchTangentX * fallbackSecondary - labelWidth / 2,
+        right: branchBaseX + branchNormalX * fallbackPrimary + branchTangentX * fallbackSecondary + labelWidth / 2,
+        top: branchBaseY + branchNormalY * fallbackPrimary + branchTangentY * fallbackSecondary - labelHeight / 2,
+        bottom: branchBaseY + branchNormalY * fallbackPrimary + branchTangentY * fallbackSecondary + labelHeight / 2
+      }
+    };
+  }
+
+  function renderGraphEdges(svg, edges, nodes, edgeLabelFn) {
     svg.innerHTML = '<defs>' +
       '<filter id="graph-shadow" x="-20%" y="-20%" width="140%" height="140%">' +
       '<feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#1e1610" flood-opacity="0.08"></feDropShadow>' +
       '</filter>' +
       '</defs>';
+    var occupiedLabelRects = [];
+    var safeBounds = {
+      left: 24,
+      top: 24,
+      right: (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width ? svg.viewBox.baseVal.width : 0) - 24,
+      bottom: (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height ? svg.viewBox.baseVal.height : 0) - 24
+    };
 
-    var layout = forceLayout(centerEntity, neighbors, width, height);
-
-    layout.edges.forEach(function(edge) {
+    edges.forEach(function(edge) {
+      var sourcePoint = getEdgeAnchorPoint(edge.source, edge.target);
+      var targetPoint = getEdgeAnchorPoint(edge.target, edge.source);
       var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', edge.source.x);
-      line.setAttribute('y1', edge.source.y);
-      line.setAttribute('x2', edge.target.x);
-      line.setAttribute('y2', edge.target.y);
+      line.setAttribute('x1', sourcePoint.x);
+      line.setAttribute('y1', sourcePoint.y);
+      line.setAttribute('x2', targetPoint.x);
+      line.setAttribute('y2', targetPoint.y);
       line.setAttribute('class', 'graph-edge');
       svg.appendChild(line);
 
-      var midX = (edge.source.x + edge.target.x) / 2;
-      var midY = (edge.source.y + edge.target.y) / 2;
+      var labelText = typeof edgeLabelFn === 'function' ? edgeLabelFn(edge.neighbor) : '';
+      if (!labelText) return;
+
+      var paddingX = 10;
+      var paddingY = 7;
+      var estimatedWidth = Math.max(56, labelText.length * 6.8 + paddingX * 2);
+      var estimatedHeight = 24;
+      var labelPosition = pickEdgeLabelPosition(edge, estimatedWidth, estimatedHeight, nodes || [], occupiedLabelRects, safeBounds);
+      var labelX = labelPosition.x;
+      var labelY = labelPosition.y;
+      occupiedLabelRects.push({
+        left: labelPosition.rect.left - 8,
+        right: labelPosition.rect.right + 8,
+        top: labelPosition.rect.top - 6,
+        bottom: labelPosition.rect.bottom + 6
+      });
+      var branchX = labelPosition.branchX;
+      var branchY = labelPosition.branchY;
+      var leaderDx = branchX - labelX;
+      var leaderDy = branchY - labelY;
+      var leaderLength = Math.sqrt(leaderDx * leaderDx + leaderDy * leaderDy) || 1;
+      var leaderInset = Math.max(8, Math.min(estimatedWidth, estimatedHeight) * 0.26);
+      var leaderStartX = labelX + (leaderDx / leaderLength) * leaderInset;
+      var leaderStartY = labelY + (leaderDy / leaderLength) * leaderInset;
+      var edgeDx = targetPoint.x - sourcePoint.x;
+      var edgeDy = targetPoint.y - sourcePoint.y;
+      var edgeLength = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy) || 1;
+      var normalX = -edgeDy / edgeLength;
+      var normalY = edgeDx / edgeLength;
+      var curveAmount = labelPosition.normal >= 0 ? 8 : -8;
+      var controlX = (branchX + leaderStartX) / 2 + normalX * curveAmount;
+      var controlY = (branchY + leaderStartY) / 2 + normalY * curveAmount;
+
+      var leader = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      leader.setAttribute('d', 'M ' + branchX + ' ' + branchY + ' Q ' + controlX + ' ' + controlY + ' ' + leaderStartX + ' ' + leaderStartY);
+      leader.setAttribute('class', 'graph-edge-label-leader');
+      svg.appendChild(leader);
+
+      var labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      labelGroup.setAttribute('class', 'graph-edge-label');
+
+      var background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      background.setAttribute('x', labelX - estimatedWidth / 2);
+      background.setAttribute('y', labelY - estimatedHeight / 2);
+      background.setAttribute('width', estimatedWidth);
+      background.setAttribute('height', estimatedHeight);
+      background.setAttribute('rx', '12');
+      background.setAttribute('ry', '12');
+      background.setAttribute('class', 'graph-edge-label-bg');
+      labelGroup.appendChild(background);
+
       var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', midX);
-      label.setAttribute('y', midY - 6);
+      label.setAttribute('x', labelX);
+      label.setAttribute('y', labelY + 4);
       label.setAttribute('text-anchor', 'middle');
-      label.setAttribute('class', 'graph-node-subtitle');
-      label.textContent = edge.neighbor.relationship_type
-        ? edge.neighbor.relationship_type.replace(/_/g, ' ')
-        : entityTypeLabel(edge.neighbor.entity_type);
-      svg.appendChild(label);
+      label.setAttribute('class', 'graph-edge-label-text');
+      label.textContent = labelText;
+      labelGroup.appendChild(label);
+
+      svg.appendChild(labelGroup);
     });
+  }
+
+  function getEdgeAnchorPoint(fromNode, toNode) {
+    var metrics = getNodeMetrics(fromNode);
+    var dx = (toNode.x - fromNode.x) || 0.0001;
+    var dy = (toNode.y - fromNode.y) || 0.0001;
+    var inset = 8;
+    var scaleX = Math.max(0, metrics.halfW - inset) / Math.abs(dx);
+    var scaleY = Math.max(0, metrics.halfH - inset) / Math.abs(dy);
+    var scale = Math.min(scaleX, scaleY);
+    return {
+      x: fromNode.x + dx * scale,
+      y: fromNode.y + dy * scale
+    };
+  }
+
+  function renderInteractiveForceGraphCanvas(container, centerEntity, neighbors, onSelect, options) {
+    var opts = options || {};
+    if (typeof container.__graphCleanup === 'function') {
+      container.__graphCleanup();
+      container.__graphCleanup = null;
+    }
+    var viewportWidth = container.clientWidth || container.offsetWidth || 800;
+    var estimatedRows = Math.max(2, Math.ceil(neighbors.length / 4));
+    var baseHeight = opts.baseHeight || 320;
+    var rowHeight = opts.rowHeight || 120;
+    var worldVerticalPadding = opts.worldVerticalPadding || 260;
+    var worldRowHeight = opts.worldRowHeight || 170;
+    var viewportHeight = Math.max(container.clientHeight || container.offsetHeight || 0, opts.minHeight || 560, baseHeight + estimatedRows * rowHeight);
+    var worldWidth = Math.max(viewportWidth + 320, opts.minWorldWidth || 960, 640 + neighbors.length * 95);
+    var worldHeight = Math.max(viewportHeight + worldVerticalPadding, opts.minWorldHeight || 720, 420 + estimatedRows * worldRowHeight);
+    var margin = 28;
+    var zoom = 1;
+    var minZoom = opts.minZoom || 0.55;
+    var maxZoom = opts.maxZoom || 1.45;
+    var fitPadding = opts.fitPadding || 42;
+
+    container.style.minHeight = viewportHeight + 'px';
+    container.classList.add('graph-canvas--interactive');
+
+    var viewport = document.createElement('div');
+    viewport.className = 'graph-canvas-viewport';
+    viewport.style.width = worldWidth + 'px';
+    viewport.style.height = worldHeight + 'px';
+
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + worldWidth + ' ' + worldHeight);
+    svg.setAttribute('aria-hidden', 'true');
+
+    var nodeLayer = document.createElement('div');
+    nodeLayer.className = 'graph-node-layer';
+    nodeLayer.style.width = worldWidth + 'px';
+    nodeLayer.style.height = worldHeight + 'px';
+
+    var layout = forceLayout(centerEntity, neighbors, worldWidth, worldHeight);
+    var buttons = [];
+    var destroyed = false;
+    var userAdjustedView = false;
+    var resizeObserver = null;
+    var resizeFrame = null;
+    var edgeLabelFn = opts.edgeLabel || function(neighbor) {
+      return neighbor.relationship_type
+        ? neighbor.relationship_type.replace(/_/g, ' ')
+        : entityTypeLabel(neighbor.entity_type);
+    };
+
+    function redraw() {
+      renderGraphEdges(svg, layout.edges, layout.nodes, edgeLabelFn);
+      buttons.forEach(function(entry) {
+        setNodeButtonPosition(entry.button, entry.node);
+      });
+    }
+
+    function measureRenderedNodeMetrics() {
+      var changed = false;
+      buttons.forEach(function(entry) {
+        var width = entry.button.offsetWidth || 0;
+        var height = entry.button.offsetHeight || 0;
+        if ((!width || !height) && typeof entry.button.getBoundingClientRect === 'function') {
+          var rect = entry.button.getBoundingClientRect();
+          width = rect.width / Math.max(zoom, 0.0001);
+          height = rect.height / Math.max(zoom, 0.0001);
+        }
+        if (!width || !height) return;
+        var metrics = entry.node.renderMetrics;
+        if (!metrics || Math.abs(metrics.width - width) > 0.5 || Math.abs(metrics.height - height) > 0.5) {
+          entry.node.renderMetrics = {
+            width: width,
+            height: height,
+            halfW: width / 2,
+            halfH: height / 2
+          };
+          changed = true;
+        }
+        clampNodeToBounds(entry.node, worldWidth, worldHeight, margin);
+      });
+      return changed;
+    }
+
+    function remeasureAndRedraw() {
+      if (destroyed) return;
+      if (measureRenderedNodeMetrics()) {
+        redraw();
+        if (!userAdjustedView) {
+          fitGraphToViewport();
+        }
+      }
+    }
+
+    function computeGraphBounds() {
+      if (!layout.nodes.length) {
+        return {
+          left: 0,
+          top: 0,
+          right: worldWidth,
+          bottom: worldHeight,
+          width: worldWidth,
+          height: worldHeight,
+          centerX: worldWidth / 2,
+          centerY: worldHeight / 2
+        };
+      }
+      var left = Infinity;
+      var top = Infinity;
+      var right = -Infinity;
+      var bottom = -Infinity;
+      layout.nodes.forEach(function(node) {
+        var bounds = nodeBounds(node, 20);
+        left = Math.min(left, bounds.left);
+        top = Math.min(top, bounds.top);
+        right = Math.max(right, bounds.right);
+        bottom = Math.max(bottom, bounds.bottom);
+      });
+      return {
+        left: left,
+        top: top,
+        right: right,
+        bottom: bottom,
+        width: Math.max(1, right - left),
+        height: Math.max(1, bottom - top),
+        centerX: (left + right) / 2,
+        centerY: (top + bottom) / 2
+      };
+    }
+
+    function clampPanX(value) {
+      var scaledWidth = worldWidth * zoom;
+      if (scaledWidth <= viewportWidth) {
+        return Math.round((viewportWidth - scaledWidth) / 2);
+      }
+      var minX = viewportWidth - scaledWidth - 40;
+      var maxX = 40;
+      return clamp(value, minX, maxX);
+    }
+
+    function clampPanY(value) {
+      var scaledHeight = worldHeight * zoom;
+      if (scaledHeight <= viewportHeight) {
+        return Math.round((viewportHeight - scaledHeight) / 2);
+      }
+      var minY = viewportHeight - scaledHeight - 40;
+      var maxY = 40;
+      return clamp(value, minY, maxY);
+    }
+
+    container.innerHTML = '';
+    viewport.appendChild(svg);
+    viewport.appendChild(nodeLayer);
+    container.appendChild(viewport);
 
     layout.nodes.forEach(function(node) {
-      var isCenter = node.fixed;
+      var isCenter = !!node.fixed;
       var button = createNodeButton(node.entity, isCenter ? 'center' : 'neighbor', node.x, node.y, isCenter, onSelect);
-      button.style.minWidth = isCenter ? '220px' : '180px';
+      button.style.minWidth = Math.ceil(node.metrics.width) + 'px';
       if (isCenter) button.style.zIndex = '2';
+      node.button = button;
+      buttons.push({ button: button, node: node });
       nodeLayer.appendChild(button);
     });
 
-    container.innerHTML = '';
-    container.appendChild(svg);
-    container.appendChild(nodeLayer);
+    measureRenderedNodeMetrics();
+
+    var panX = Math.round((viewportWidth - worldWidth) / 2);
+    var panY = Math.round((viewportHeight - worldHeight) / 2);
+
+    function applyViewportTransform() {
+      panX = clampPanX(panX);
+      panY = clampPanY(panY);
+      viewport.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoom + ')';
+      updateZoomControls();
+    }
+
+    function setZoom(nextZoom, focalX, focalY) {
+      var clampedZoom = clamp(nextZoom, minZoom, maxZoom);
+      if (Math.abs(clampedZoom - zoom) < 0.001) {
+        applyViewportTransform();
+        return;
+      }
+      var focusX = focalX != null ? focalX : viewportWidth / 2;
+      var focusY = focalY != null ? focalY : viewportHeight / 2;
+      var worldFocusX = (focusX - panX) / zoom;
+      var worldFocusY = (focusY - panY) / zoom;
+      zoom = clampedZoom;
+      panX = focusX - worldFocusX * zoom;
+      panY = focusY - worldFocusY * zoom;
+      applyViewportTransform();
+    }
+
+    function fitGraphToViewport() {
+      var bounds = computeGraphBounds();
+      var availableWidth = Math.max(180, viewportWidth - fitPadding * 2);
+      var availableHeight = Math.max(180, viewportHeight - fitPadding * 2);
+      var fittedZoom = Math.min(1, availableWidth / bounds.width, availableHeight / bounds.height);
+      zoom = clamp(fittedZoom, minZoom, maxZoom);
+      panX = viewportWidth / 2 - bounds.centerX * zoom;
+      panY = viewportHeight / 2 - bounds.centerY * zoom;
+      applyViewportTransform();
+    }
+
+    var controls = document.createElement('div');
+    controls.className = 'graph-canvas-controls';
+    controls.innerHTML = ''
+      + '<button type="button" class="btn-secondary btn-sm graph-canvas-control graph-canvas-control--icon" data-graph-zoom-out aria-label="Zoom out" title="Zoom out">'
+      +   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13 13"/><path d="M4.8 7h4.4"/></svg>'
+      + '</button>'
+      + '<button type="button" class="btn-secondary btn-sm graph-canvas-control graph-canvas-control--icon" data-graph-zoom-fit aria-label="Fit graph" title="Fit graph">'
+      +   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13 13"/><path d="M5.3 5.3h1.4v-1.4M8.7 5.3H7.3v-1.4M5.3 8.7h1.4v1.4M8.7 8.7H7.3v1.4"/></svg>'
+      + '</button>'
+      + '<button type="button" class="btn-secondary btn-sm graph-canvas-control graph-canvas-control--icon" data-graph-zoom-in aria-label="Zoom in" title="Zoom in">'
+      +   '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="7" cy="7" r="4.25"/><path d="M10.2 10.2 13 13"/><path d="M7 4.8v4.4M4.8 7h4.4"/></svg>'
+      + '</button>';
+    container.appendChild(controls);
+
+    var zoomOutButton = qs('[data-graph-zoom-out]', controls);
+    var zoomInButton = qs('[data-graph-zoom-in]', controls);
+    var zoomFitButton = qs('[data-graph-zoom-fit]', controls);
+
+    function updateZoomControls() {
+      if (zoomOutButton) zoomOutButton.disabled = zoom <= minZoom + 0.001;
+      if (zoomInButton) zoomInButton.disabled = zoom >= maxZoom - 0.001;
+    }
+
+    buttons.forEach(function(entry) {
+      var dragging = false;
+      var moved = false;
+      var dragThreshold = 6;
+      var pointerStartX = 0;
+      var pointerStartY = 0;
+      var lastPointerX = 0;
+      var lastPointerY = 0;
+
+      entry.button.addEventListener('pointerdown', function(ev) {
+        dragging = true;
+        moved = false;
+        pointerStartX = ev.clientX;
+        pointerStartY = ev.clientY;
+        lastPointerX = ev.clientX;
+        lastPointerY = ev.clientY;
+        entry.button.dataset.dragSuppressed = '';
+        entry.button.classList.add('graph-node-button--dragging');
+        entry.button.setPointerCapture(ev.pointerId);
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
+
+      entry.button.addEventListener('pointermove', function(ev) {
+        if (!dragging) return;
+        var dx = ev.clientX - lastPointerX;
+        var dy = ev.clientY - lastPointerY;
+        if (!moved) {
+          var totalDx = ev.clientX - pointerStartX;
+          var totalDy = ev.clientY - pointerStartY;
+          if (Math.sqrt(totalDx * totalDx + totalDy * totalDy) < dragThreshold) {
+            return;
+          }
+          moved = true;
+        }
+        lastPointerX = ev.clientX;
+        lastPointerY = ev.clientY;
+        entry.node.x += dx / Math.max(zoom, 0.0001);
+        entry.node.y += dy / Math.max(zoom, 0.0001);
+        clampNodeToBounds(entry.node, worldWidth, worldHeight, margin);
+        redraw();
+      });
+
+      function finishDrag(ev) {
+        if (!dragging) return;
+        dragging = false;
+        entry.button.classList.remove('graph-node-button--dragging');
+        if (typeof entry.button.releasePointerCapture === 'function') {
+          try {
+            entry.button.releasePointerCapture(ev.pointerId);
+          } catch (_) {
+            /* ignore release failures */
+          }
+        }
+        if (moved) {
+          entry.button.dataset.dragSuppressed = 'true';
+        } else if (ev && ev.type === 'pointerup') {
+          entry.button.dataset.dragSuppressed = 'true';
+          onSelect(entry.node.entity.id);
+        }
+      }
+
+      entry.button.addEventListener('pointerup', finishDrag);
+      entry.button.addEventListener('pointercancel', finishDrag);
+    });
+
+    var panning = false;
+    var panPointerX = 0;
+    var panPointerY = 0;
+
+    function handlePointerDown(ev) {
+      if (ev.target.closest('.graph-node-button')) return;
+      if (ev.target.closest('.graph-canvas-controls')) return;
+      panning = true;
+      userAdjustedView = true;
+      panPointerX = ev.clientX;
+      panPointerY = ev.clientY;
+      container.classList.add('graph-canvas--dragging');
+      if (typeof container.setPointerCapture === 'function') {
+        try {
+          container.setPointerCapture(ev.pointerId);
+        } catch (_) {
+          /* ignore capture failures */
+        }
+      }
+      ev.preventDefault();
+    }
+
+    function handlePointerMove(ev) {
+      if (!panning) return;
+      panX += ev.clientX - panPointerX;
+      panY += ev.clientY - panPointerY;
+      panPointerX = ev.clientX;
+      panPointerY = ev.clientY;
+      applyViewportTransform();
+    }
+
+    function finishPan(ev) {
+      if (!panning) return;
+      panning = false;
+      container.classList.remove('graph-canvas--dragging');
+      if (typeof container.releasePointerCapture === 'function') {
+        try {
+          container.releasePointerCapture(ev.pointerId);
+        } catch (_) {
+          /* ignore release failures */
+        }
+      }
+    }
+
+    container.addEventListener('pointerdown', handlePointerDown);
+    container.addEventListener('pointermove', handlePointerMove);
+    container.addEventListener('pointerup', finishPan);
+    container.addEventListener('pointercancel', finishPan);
+    container.addEventListener('pointerleave', finishPan);
+    if (zoomOutButton) {
+      zoomOutButton.addEventListener('click', function() {
+        userAdjustedView = true;
+        setZoom(zoom / 1.15);
+      });
+    }
+    if (zoomInButton) {
+      zoomInButton.addEventListener('click', function() {
+        userAdjustedView = true;
+        setZoom(zoom * 1.15);
+      });
+    }
+    if (zoomFitButton) {
+      zoomFitButton.addEventListener('click', function() {
+        userAdjustedView = false;
+        fitGraphToViewport();
+      });
+    }
+
+    redraw();
+    fitGraphToViewport();
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(function() {
+        remeasureAndRedraw();
+        window.requestAnimationFrame(function() {
+          remeasureAndRedraw();
+        });
+      });
+    }
+    if (document.fonts && typeof document.fonts.ready === 'object' && typeof document.fonts.ready.then === 'function') {
+      document.fonts.ready.then(function() {
+        remeasureAndRedraw();
+      }).catch(function() {
+        /* ignore font readiness failures */
+      });
+    }
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver(function(entries) {
+        if (destroyed || !entries || !entries.length) return;
+        var entry = entries[0];
+        var nextWidth = Math.round(entry.contentRect.width || 0);
+        var nextHeight = Math.round(entry.contentRect.height || 0);
+        if (!nextWidth || !nextHeight) return;
+        if (Math.abs(nextWidth - viewportWidth) < 6 && Math.abs(nextHeight - viewportHeight) < 6) return;
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(function() {
+          if (destroyed) return;
+          renderInteractiveForceGraphCanvas(container, centerEntity, neighbors, onSelect, opts);
+        });
+      });
+      resizeObserver.observe(container);
+    }
+
+    container.__graphCleanup = function() {
+      destroyed = true;
+      if (resizeFrame) {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = null;
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
+      container.classList.remove('graph-canvas--dragging');
+      container.removeEventListener('pointerdown', handlePointerDown);
+      container.removeEventListener('pointermove', handlePointerMove);
+      container.removeEventListener('pointerup', finishPan);
+      container.removeEventListener('pointercancel', finishPan);
+      container.removeEventListener('pointerleave', finishPan);
+    };
+  }
+
+  function renderGraphCanvas(container, centerEntity, neighbors, onSelect) {
+    renderInteractiveForceGraphCanvas(container, centerEntity, neighbors, onSelect, {
+      minHeight: 560,
+      minWorldWidth: 1100
+    });
   }
 
   function humaniseRelType(relType) {

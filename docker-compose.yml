@@ -15,6 +15,9 @@ services:
       TURSO_AUTH_TOKEN: ${TURSO_AUTH_TOKEN:-}
       # Storage — use 's3' for S3/MinIO, 'local' for local filesystem
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      # Single-node Docker is a deliberate local exception to the production
+      # fail-closed defaults for local storage and in-memory sessions.
+      ALLOW_LOCAL_STORAGE_IN_PRODUCTION: ${ALLOW_LOCAL_STORAGE_IN_PRODUCTION:-1}
       S3_BUCKET: ${S3_BUCKET:-bartelby}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
@@ -24,6 +27,7 @@ services:
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
       # Session store — use 'redis' for Redis, 'memory' for in-process
       SESSION_STORE: ${SESSION_STORE:-memory}
+      ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION: ${ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION:-1}
       REDIS_URL: ${REDIS_URL:-}
       # LLM providers
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -42,7 +46,7 @@ services:
       # Only needed for DATABASE_DRIVER=sqljs (local SQLite)
       - app-data:/app/data
       # Only needed for STORAGE_DRIVER=local
-      - app-uploads:/app/public/uploads
+      - app-uploads:/app/data/uploads
       - app-temp:/app/temp
     depends_on:
       minio:

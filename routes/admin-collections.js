@@ -5,6 +5,7 @@ const router = express.Router();
 const { collectionsAsync, usersAsync, userCollectionAccessAsync, documentCollectionsAsync, documentsAsync } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -99,6 +100,12 @@ router.post('/:id/access/grant', express.urlencoded({ extended: false }), async 
   const role = req.body.role || 'viewer';
   if (!isNaN(userId) && !isNaN(collectionId)) {
     await userCollectionAccessAsync.grant(userId, collectionId, role);
+    audit.log('admin.collection_access_granted', {
+      ...audit.reqContext(req),
+      collectionId,
+      targetUserId: userId,
+      role
+    });
   }
   res.redirect('/admin/collections?saved=1#collection-' + collectionId);
 });
@@ -119,6 +126,11 @@ router.post('/:id/preview', express.urlencoded({ extended: false }), async (req,
   const documentId = req.body.preview_document_id ? parseInt(req.body.preview_document_id, 10) : null;
   try {
     await collectionsAsync.setPreviewDocument(collectionId, documentId);
+    audit.log('admin.collection_preview_updated', {
+      ...audit.reqContext(req),
+      collectionId,
+      previewDocumentId: documentId
+    });
     res.redirect('/admin/collections?saved=1#collection-' + collectionId);
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
@@ -127,7 +139,12 @@ router.post('/:id/preview', express.urlencoded({ extended: false }), async (req,
 
 // Delete
 router.post('/:id/delete', async (req, res) => {
-  await collectionsAsync.delete(parseInt(req.params.id));
+  const collectionId = parseInt(req.params.id);
+  await collectionsAsync.delete(collectionId);
+  audit.log('admin.collection_deleted', {
+    ...audit.reqContext(req),
+    collectionId
+  });
   res.redirect('/admin/collections');
 });
 

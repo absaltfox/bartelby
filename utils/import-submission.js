@@ -1,88 +1,14 @@
 'use strict';
 
 const path = require('path');
-const storage = require('./storage');
 const { mimeTypeFromFilename } = require('./mime-types');
-
-function normalizeTempAssets(files) {
-  return (files || [])
-    .map((file) => {
-      if (typeof file === 'string') {
-        const filename = storage.sanitizeTempName(file);
-        return filename ? { filename, previewFilename: null } : null;
-      }
-
-      if (!file || typeof file !== 'object') return null;
-
-      const filename = storage.sanitizeTempName(file.filename || file.tempFile || file.name || file.file);
-      if (!filename) return null;
-
-      const previewFilename = storage.sanitizeTempName(
-        file.previewFilename || file.previewFileName || file.preview_file || ''
-      );
-
-      return {
-        filename,
-        previewFilename: previewFilename || null
-      };
-    })
-    .filter(Boolean);
-}
-
-function sanitizeTempFiles(files) {
-  return normalizeTempAssets(files).map((asset) => asset.filename);
-}
-
-function collectTempCleanupFiles(tempFiles, previewMap = new Map()) {
-  const files = new Set();
-  for (const asset of normalizeTempAssets(tempFiles)) {
-    if (asset.filename) files.add(asset.filename);
-    if (asset.previewFilename) files.add(asset.previewFilename);
-    const mappedPreview = previewMap.get(asset.filename);
-    if (mappedPreview) files.add(mappedPreview);
-  }
-  return [...files];
-}
-
-async function getImportJobPreviewMap(importJobId) {
-  if (!Number.isInteger(importJobId)) return new Map();
-
-  const { importJobsAsync } = require('../database/db');
-  const job = await importJobsAsync.getById(importJobId);
-  if (!job || !job.pages) return new Map();
-
-  try {
-    const pages = JSON.parse(job.pages);
-    const previewMap = new Map();
-    for (const page of pages || []) {
-      const filename = storage.sanitizeTempName(page && page.filename);
-      const previewFilename = storage.sanitizeTempName(
-        page && (page.previewFilename || page.previewFileName || page.preview_file)
-      );
-      if (filename && previewFilename) {
-        previewMap.set(filename, previewFilename);
-      }
-    }
-    return previewMap;
-  } catch (err) {
-    return new Map();
-  }
-}
-
-async function cleanupTempAssets(files) {
-  if (!files || files.length === 0) return;
-
-  storage.deleteTempFiles(files);
-
-  if (storage.deleteTempObjectsBatch) {
-    await storage.deleteTempObjectsBatch(files);
-    return;
-  }
-
-  if (storage.deleteTempObject) {
-    await Promise.all(files.map((file) => storage.deleteTempObject(file).catch(() => {})));
-  }
-}
+const {
+  sanitizeTempFiles,
+  collectTempCleanupFiles,
+  getImportJobPreviewMap,
+  copyTempAssetToUpload,
+  deleteTempAssets
+} = require('./temp-assets');
 
 function parseSubmissionPayload(job) {
   if (!job?.submit_payload) return null;
@@ -112,7 +38,6 @@ async function processImportSubmissionJob(job) {
   const previewMap = Number.isInteger(state.sourceImportJobId)
     ? await getImportJobPreviewMap(state.sourceImportJobId)
     : new Map();
-  const copyFn = storage.copyTempObjectToUpload || storage.copyTempFileToUpload;
 
   while (state.remainingGroups.length > 0) {
     const group = state.remainingGroups[0];
@@ -136,7 +61,7 @@ async function processImportSubmissionJob(job) {
       const targetName = i === 0
         ? `${baseStem}${ext}`
         : `${baseStem}_page${i + 1}${ext}`;
-      uploads.push(await copyFn(tempName, targetName, ext));
+      uploads.push(await copyTempAssetToUpload(tempName, targetName, ext));
     }
 
     const primaryUpload = uploads[0];
@@ -204,7 +129,7 @@ async function processImportSubmissionJob(job) {
     await saveDatabase();
 
     const cleanupFiles = collectTempCleanupFiles(group.tempFiles, previewMap);
-    await cleanupTempAssets(cleanupFiles);
+    await deleteTempAssets(cleanupFiles);
   }
 
   if (state.requestedBatchMode && !state.batchJobCreated && state.createdDocs.length > 0) {

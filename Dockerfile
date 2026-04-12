@@ -34,7 +34,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
 COPY . .
 
 # Create data and temp directories
-RUN mkdir -p /app/data /app/temp /app/public/uploads /app/.cache/numba /app/.cache/huggingface
+RUN mkdir -p /app/data /app/data/uploads /app/temp /app/.cache/numba /app/.cache/huggingface
 
 # Default environment
 ENV NODE_ENV=production

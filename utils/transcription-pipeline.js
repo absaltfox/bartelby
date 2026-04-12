@@ -206,7 +206,14 @@ async function persistDocumentTranscription({
     );
   }
 
-  const existingBest = await transcriptsAsync.getBestByDocumentId(documentId);
+  const existingTranscripts = await transcriptsAsync.getByDocumentId(documentId);
+  const existingBest = existingTranscripts.find((transcript) => !!transcript.is_best) || null;
+  const nextVersion = existingTranscripts.reduce((highest, transcript) => {
+    const version = Number.isInteger(transcript.version)
+      ? transcript.version
+      : parseInt(transcript.version, 10);
+    return Number.isInteger(version) && version > highest ? version : highest;
+  }, 0) + 1;
   const shouldBeBest = !existingBest;
 
   const transcriptId = await transcriptsAsync.create({
@@ -214,7 +221,7 @@ async function persistDocumentTranscription({
     content: combined.transcription,
     page_segments: combined.page_segments,
     transcriber: 'AI Transcription',
-    version: 1,
+    version: nextVersion,
     notes: combined.notes || null,
     provider: pd.provider || providerName,
     model: pd.model || job.model || null,

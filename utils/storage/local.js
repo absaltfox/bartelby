@@ -35,7 +35,15 @@ function resolveUploadPathFromUrl(url) {
   if (!url || typeof url !== 'string') return null;
   if (!url.startsWith('/uploads/')) return null;
   const filename = path.basename(url);
-  return path.join(config.app.uploadsDir, filename);
+  const primaryPath = path.join(config.app.uploadsDir, filename);
+  if (fs.existsSync(primaryPath)) {
+    return primaryPath;
+  }
+  const legacyPath = path.join(config.app.legacyUploadsDir, filename);
+  if (fs.existsSync(legacyPath)) {
+    return legacyPath;
+  }
+  return primaryPath;
 }
 
 function makeUniqueUploadFilename(originalName, extOverride) {
@@ -66,12 +74,20 @@ function tempFileExists(name) {
   return !!(fullPath && fs.existsSync(fullPath));
 }
 
+async function tempFileExistsAsync(name) {
+  return tempFileExists(name);
+}
+
 function readTempFile(name) {
   const fullPath = resolveTempPath(name);
   if (!fullPath || !fs.existsSync(fullPath)) {
     throw new Error('Temp file not found.');
   }
   return fs.readFileSync(fullPath);
+}
+
+async function readTempFileAsync(name) {
+  return readTempFile(name);
 }
 
 function writeTempFile(name, buffer) {
@@ -109,6 +125,10 @@ function deleteTempFiles(names) {
   }
 }
 
+async function deleteTempAssets(names) {
+  deleteTempFiles(names);
+}
+
 function copyTempFileToUpload(tempName, originalName, extOverride) {
   init();
 
@@ -125,6 +145,10 @@ function copyTempFileToUpload(tempName, originalName, extOverride) {
     url: toUploadsUrl(filename),
     fullPath: destPath
   };
+}
+
+async function copyTempAssetToUpload(tempName, originalName, extOverride) {
+  return copyTempFileToUpload(tempName, originalName, extOverride);
 }
 
 function copyLocalFileToUpload(localPath, originalName, extOverride) {
@@ -159,6 +183,14 @@ function readUploadByUrl(url) {
   return fs.readFileSync(fullPath);
 }
 
+async function getUploadSizeByUrl(url) {
+  const fullPath = resolveUploadPathFromUrl(url);
+  if (!fullPath || !fs.existsSync(fullPath)) {
+    throw new Error(`Image file not found: ${url}`);
+  }
+  return fs.statSync(fullPath).size;
+}
+
 function getTempFilePath(name) {
   return resolveTempPath(name);
 }
@@ -168,16 +200,21 @@ module.exports = {
   sanitizeTempName,
   getTempFilePath,
   tempFileExists,
+  tempFileExistsAsync,
   readTempFile,
+  readTempFileAsync,
   writeTempFile,
   copyLocalFileToTemp,
   deleteTempFile,
   deleteTempFiles,
+  deleteTempAssets,
   copyTempFileToUpload,
+  copyTempAssetToUpload,
   copyLocalFileToUpload,
   getTempPreviewUrl,
   deleteUploadByUrl,
   readUploadByUrl,
+  getUploadSizeByUrl,
   toUploadsUrl,
   resolveStoredUrl
 };

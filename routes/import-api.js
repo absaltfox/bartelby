@@ -8,7 +8,26 @@ const path = require('path');
 const config = require('../config');
 const storage = require('../utils/storage');
 const { extensionFromMimeType, mimeTypeFromFilename } = require('../utils/mime-types');
+const {
+  getTempImageContentType,
+  parseGroupingState,
+  buildTranscriptPageSegments,
+  getAuthorizedCollectionIds,
+  spawnLocalPdfWorker,
+  stripPageMarkers,
+  buildGroupsFromAnnotations
+} = require('../utils/import-workflow');
 const { supportsBatchProvider } = require('../utils/transcription-batches');
+const {
+  sanitizeTempFiles,
+  collectTempCleanupFiles,
+  attachTempPreview,
+  getImportJobPreviewMap,
+  tempAssetExists,
+  readTempAsset,
+  copyTempAssetToUpload,
+  deleteTempAssets
+} = require('../utils/temp-assets');
 const {
   documentsAsync, transcriptsAsync, settingsAsync, collectionsAsync,
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
@@ -17,191 +36,6 @@ const {
 
 // Initialize storage (temp dirs, etc.)
 storage.init();
-
-function sanitizeTempFiles(files) {
-  return normalizeTempAssets(files).map((asset) => asset.filename);
-}
-
-function sanitizeTempPreviewFiles(files) {
-  return normalizeTempAssets(files)
-    .map((asset) => asset.previewFilename)
-    .filter(Boolean);
-}
-
-function normalizeTempAssets(files) {
-  return (files || [])
-    .map((file) => {
-      if (typeof file === 'string') {
-        const filename = storage.sanitizeTempName(file);
-        return filename ? { filename, previewFilename: null } : null;
-      }
-
-      if (!file || typeof file !== 'object') return null;
-
-      const filename = storage.sanitizeTempName(file.filename || file.tempFile || file.name || file.file);
-      if (!filename) return null;
-
-      const previewFilename = storage.sanitizeTempName(
-        file.previewFilename || file.previewFileName || file.preview_file || ''
-      );
-
-      return {
-        filename,
-        previewFilename: previewFilename || null
-      };
-    })
-    .filter(Boolean);
-}
-
-function getTempImageContentType(filename) {
-  return mimeTypeFromFilename(filename, 'image/png');
-}
-
-async function getImportJobPreviewMap(importJobId) {
-  if (!Number.isInteger(importJobId)) return new Map();
-
-  const job = await importJobsAsync.getById(importJobId);
-  if (!job || !job.pages) return new Map();
-
-  try {
-    const pages = JSON.parse(job.pages);
-    const previewMap = new Map();
-    for (const page of pages || []) {
-      const filename = storage.sanitizeTempName(page && page.filename);
-      const previewFilename = storage.sanitizeTempName(
-        page && (page.previewFilename || page.previewFileName || page.preview_file)
-      );
-      if (filename && previewFilename) {
-        previewMap.set(filename, previewFilename);
-      }
-    }
-    return previewMap;
-  } catch (err) {
-    return new Map();
-  }
-}
-
-function collectTempCleanupFiles(tempFiles, previewMap = new Map()) {
-  const files = new Set();
-  for (const asset of normalizeTempAssets(tempFiles)) {
-    if (asset.filename) files.add(asset.filename);
-    if (asset.previewFilename) files.add(asset.previewFilename);
-    const mappedPreview = previewMap.get(asset.filename);
-    if (mappedPreview) files.add(mappedPreview);
-  }
-  return [...files];
-}
-
-function attachTempPreview(page) {
-  // Strip previewUrl so the client computes it using its context-aware apiBase.
-  // storage.getTempPreviewUrl() is hardcoded to /admin/api/... which breaks managers.
-  const { previewUrl: _, ...rest } = page;
-  return rest;
-}
-
-function parseGroupingState(raw) {
-  if (!raw) return null;
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!parsed || !Array.isArray(parsed.groups)) return null;
-    return {
-      collectionIds: Array.isArray(parsed.collectionIds)
-        ? parsed.collectionIds.map((id) => parseInt(id, 10)).filter(Number.isInteger)
-        : [],
-      groups: parsed.groups
-        .map((group) => ({
-          label: String(group.label || '').trim() || null,
-          source: group.source === 'ai' ? 'ai' : 'manual',
-          pages: Array.isArray(group.pages) ? sanitizeTempFiles(group.pages) : []
-        }))
-        .filter((group) => group.pages.length >= 2)
-    };
-  } catch (err) {
-    return null;
-  }
-}
-
-function buildTranscriptPageSegments(results) {
-  return results.map((result, index) => ({
-    pageNumber: index + 1,
-    charLength: String(result.transcription || '').trim().length
-  }));
-}
-
-function normalizeCollectionIds(collectionIds) {
-  if (!Array.isArray(collectionIds)) return [];
-  return [...new Set(collectionIds
-    .map((id) => parseInt(id, 10))
-    .filter(Number.isInteger))];
-}
-
-async function getAuthorizedCollectionIds(req, collectionIds) {
-  const normalized = normalizeCollectionIds(collectionIds);
-  if (normalized.length === 0) return [];
-
-  if (req.user?.role === 'admin') {
-    return normalized;
-  }
-
-  const managedIds = req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
-  if (!normalized.every((id) => managedIds.includes(id))) {
-    const err = new Error('You do not have permission to import into one or more selected collections.');
-    err.statusCode = 403;
-    throw err;
-  }
-
-  return normalized;
-}
-
-function spawnLocalPdfWorker({ pdfTempFile, jobRef, originalName, onProgress, onDone, onFailed }) {
-  const { fork } = require('child_process');
-  const child = fork(path.join(__dirname, '..', 'utils', 'pdf-worker.js'), [], {
-    stdio: ['pipe', 'inherit', 'inherit', 'ipc']
-  });
-
-  let childDone = false;
-
-  child.send({ pdfTempFile, dbJobId: jobRef, originalName });
-
-  child.on('message', (msg) => {
-    if (msg.type === 'progress') {
-      onProgress && onProgress(msg);
-      return;
-    }
-
-    if (msg.type === 'done') {
-      childDone = true;
-      onDone && onDone(msg);
-      return;
-    }
-
-    if (msg.type === 'failed') {
-      childDone = true;
-      onFailed && onFailed(msg.error || 'PDF processing failed');
-    }
-  });
-
-  child.on('error', (err) => {
-    if (childDone) return;
-    childDone = true;
-    onFailed && onFailed(err.message);
-  });
-
-  child.on('exit', (code) => {
-    if (childDone) return;
-    childDone = true;
-    onFailed && onFailed(`Worker process exited with code ${code}`);
-  });
-
-  return child;
-}
-
-function stripPageMarkers(text) {
-  return String(text || '')
-    .replace(/^\[Page\s+\d+\]\s*$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
 
 // Configure multer for temporary file uploads (images + PDFs)
 const upload = multer({
@@ -276,7 +110,7 @@ router.post('/upload', (req, res, next) => {
 
       if (useEphemeralMachine) {
         try {
-          const pdfBuffer = storage.readTempFile(pdfTempFile);
+          const pdfBuffer = await readTempAsset(pdfTempFile);
           try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
           await storage.putTempObject(s3TempKey, pdfBuffer);
 
@@ -400,18 +234,16 @@ router.get('/temp-image/:filename', async (req, res) => {
   const contentType = getTempImageContentType(filename);
 
   const filePath = storage.getTempFilePath(filename);
-  if (filePath && storage.tempFileExists(filename)) {
+  if (filePath && await tempAssetExists(filename)) {
     return res.type(contentType).sendFile(filePath);
   }
 
-  if (config.storage.driver === 's3' && storage.tempObjectExists) {
-    try {
-      const buffer = await storage.getTempObject(filename);
-      res.set('Cache-Control', 'private, max-age=3600');
-      return res.type(contentType).send(buffer);
-    } catch (err) {
-      // Not in S3 either
-    }
+  try {
+    const buffer = await readTempAsset(filename);
+    res.set('Cache-Control', 'private, max-age=3600');
+    return res.type(contentType).send(buffer);
+  } catch (err) {
+    // fall through
   }
 
   res.status(404).send('Not found');
@@ -423,14 +255,14 @@ router.post('/transcribe', express.json(), async (req, res) => {
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
   const safeTempFile = storage.sanitizeTempName(tempFile);
-  if (!storage.tempFileExists(safeTempFile)) return res.status(400).json({ error: 'Temp file not found' });
+  if (!(await tempAssetExists(safeTempFile))) return res.status(400).json({ error: 'Temp file not found' });
 
   try {
     const { resolveProviderSelectionAsync } = require('../utils/provider-access');
     const { createProvider } = require('../utils/llm');
     const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
     const provider = await createProvider(providerName, selection.runtimeConfig);
-    const imageBuffer = storage.readTempFile(safeTempFile);
+    const imageBuffer = await readTempAsset(safeTempFile);
     const mimeType = mimeTypeFromFilename(safeTempFile, req.body.mimeType || 'image/png');
     const opts = {
       temperature: temperature !== '' && temperature != null
@@ -478,8 +310,8 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
     for (let index = 0; index < tempFiles.length; index++) {
       const tf = tempFiles[index];
       const safeTempFile = storage.sanitizeTempName(tf);
-      if (!storage.tempFileExists(safeTempFile)) continue;
-      const imageBuffer = storage.readTempFile(safeTempFile);
+      if (!(await tempAssetExists(safeTempFile))) continue;
+      const imageBuffer = await readTempAsset(safeTempFile);
       const mimeType = Array.isArray(mimeTypes) ? mimeTypes[index] : null;
       const result = await provider.transcribeDocument(
         imageBuffer,
@@ -549,7 +381,7 @@ router.post('/save-document', express.json(), async (req, res) => {
       ? await getImportJobPreviewMap(parseInt(importJobId, 10))
       : new Map();
     const firstFile = files[0];
-    if (!storage.tempFileExists(firstFile)) {
+    if (!(await tempAssetExists(firstFile))) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
     }
 
@@ -557,13 +389,13 @@ router.post('/save-document', express.json(), async (req, res) => {
     const ext = path.extname(baseName) === '.pdf'
       ? '.png'
       : (path.extname(baseName) || path.extname(firstFile) || '.jpg');
-    const primaryUpload = await storage.copyTempFileToUpload(firstFile, baseName, ext);
+    const primaryUpload = await copyTempAssetToUpload(firstFile, baseName, ext);
 
     const additionalPages = [];
     if (files.length > 1) {
       for (let i = 1; i < files.length; i++) {
-        if (!storage.tempFileExists(files[i])) continue;
-        const pageUpload = await storage.copyTempFileToUpload(
+        if (!(await tempAssetExists(files[i]))) continue;
+        const pageUpload = await copyTempAssetToUpload(
           files[i],
           `${path.basename(baseName, path.extname(baseName))}_page${i + 1}${ext}`,
           ext
@@ -572,7 +404,7 @@ router.post('/save-document', express.json(), async (req, res) => {
       }
     }
 
-    storage.deleteTempFiles(collectTempCleanupFiles(files, importJobPreviewMap));
+    await deleteTempAssets(collectTempCleanupFiles(files, importJobPreviewMap));
 
     const docMetadata = { ...(metadata || {}) };
     if (additionalPages.length > 0) {
@@ -785,10 +617,8 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
         const safeName = storage.sanitizeTempName(batch[j]);
         let buffer;
         try {
-          if (storage.tempFileExists(safeName)) {
-            buffer = storage.readTempFile(safeName);
-          } else if (storage.getTempObject) {
-            buffer = await storage.getTempObject(safeName);
+          if (await tempAssetExists(safeName)) {
+            buffer = await readTempAsset(safeName);
           }
         } catch (e) { continue; }
         if (!buffer) continue;
@@ -834,95 +664,6 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   }
 });
 
-function buildGroupsFromAnnotations(annotations, tempFiles) {
-  if (!annotations || annotations.length === 0) return [];
-
-  const annotationMap = new Map();
-  annotations.forEach((annotation) => {
-    const page = parseInt(annotation.page, 10);
-    if (!Number.isInteger(page) || page < 1 || page > tempFiles.length) return;
-    const number = annotation.number != null ? parseInt(annotation.number, 10) : null;
-    annotationMap.set(page, Number.isInteger(number) && number > 0 ? number : null);
-  });
-
-  const groups = [];
-  let index = 0;
-
-  function hasUpcomingExpectedNumber(startCursor, expectedNumber) {
-    for (let lookahead = startCursor; lookahead < tempFiles.length; lookahead++) {
-      const upcomingNumber = annotationMap.get(lookahead + 1);
-      if (upcomingNumber === expectedNumber) return true;
-      if (upcomingNumber === 1) return false;
-    }
-    return false;
-  }
-
-  while (index < tempFiles.length) {
-    const startNumber = annotationMap.get(index + 1);
-    if (startNumber !== 1) {
-      index += 1;
-      continue;
-    }
-
-    const pages = [index];
-    let explicitMatches = 1;
-    let expectedNumber = 2;
-    let cursor = index + 1;
-
-    while (cursor < tempFiles.length) {
-      const detectedNumber = annotationMap.get(cursor + 1);
-
-      if (detectedNumber === expectedNumber) {
-        pages.push(cursor);
-        explicitMatches += 1;
-        expectedNumber += 1;
-        cursor += 1;
-        continue;
-      }
-
-      // Allow duplicate numbered pages within the same document run, such as
-      // 1, 2, 2, 3. The duplicate page belongs with the surrounding sequence,
-      // but it should not advance the expected next page number.
-      if (
-        explicitMatches >= 2 &&
-        detectedNumber === expectedNumber - 1 &&
-        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
-      ) {
-        pages.push(cursor);
-        cursor += 1;
-        continue;
-      }
-
-      // Once we've seen a credible numbered run, allow unlabeled trailing pages
-      // until the next explicit start-of-document marker.
-      if (
-        detectedNumber == null &&
-        explicitMatches >= 2 &&
-        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
-      ) {
-        pages.push(cursor);
-        cursor += 1;
-        continue;
-      }
-
-      break;
-    }
-
-    if (explicitMatches >= 2) {
-      groups.push({
-        pageIndices: pages,
-        label: `Document (pages ${pages.map(p => p + 1).join(', ')})`
-      });
-      index = cursor;
-      continue;
-    }
-
-    index += 1;
-  }
-
-  return groups;
-}
-
 // ── API: Cancel/cleanup temp files ─────────────────────────────────────────
 router.post('/cancel-import', express.json(), async (req, res) => {
   const { tempFile, tempFiles, importJobId } = req.body;
@@ -933,7 +674,7 @@ router.post('/cancel-import', express.json(), async (req, res) => {
     const previewMap = Number.isInteger(parsedImportJobId)
       ? await getImportJobPreviewMap(parsedImportJobId)
       : new Map();
-    storage.deleteTempFiles(collectTempCleanupFiles(files, previewMap));
+    await deleteTempAssets(collectTempCleanupFiles(files, previewMap));
     res.json({ success: true });
   } catch (err) {
     console.error('Failed to clean up temp files:', err);

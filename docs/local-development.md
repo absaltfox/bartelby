@@ -38,3 +38,13 @@ npm install
 npm run setup:python
 npm start
 ```
+
+## Local storage defaults
+
+- Local uploads are stored under `data/uploads/`.
+- The app still reads legacy files from `public/uploads/` when needed, but new
+  local uploads should not be written there.
+- `docker-compose.yml` runs the app with `NODE_ENV=production`, so it sets
+  `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` and
+  `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1` explicitly for that single-node Docker
+  workflow.

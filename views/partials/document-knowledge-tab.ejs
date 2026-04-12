@@ -3,12 +3,10 @@
   id="document-knowledge-graph"
   data-graph-document
   data-document-id="<%= document.id %>"
+  data-document-title="<%= document.title || `Document ${document.id}` %>"
   hidden>
   <div class="kg-panel-header">
-    <div>
-      <p class="kg-panel-eyebrow">Knowledge Graph</p>
-      <h3>Linked entities and relationships</h3>
-    </div>
+    <h2>Graph</h2>
     <p class="kg-panel-meta">From approved transcript evidence</p>
   </div>
   <div class="kg-panel-empty" data-kg-empty>
@@ -20,7 +18,7 @@
         <div class="kg-document-visual-header">
           <div>
             <h4>Relationship map</h4>
-            <p class="kg-document-visual-copy">Select an entity to inspect its neighboring entities and cited relationship evidence from this document.</p>
+            <p class="kg-document-visual-copy">Start with the document overview, then select an entity to inspect its neighborhood and cited relationship evidence.</p>
           </div>
           <div class="kg-document-stats">
             <span class="graph-detail-tab active" data-kg-node-count>0 nodes</span>
@@ -37,16 +35,16 @@
         </div>
       </section>
       <section class="kg-section">
-        <h4>Evidence</h4>
+        <h4 data-kg-relationships-title>Evidence</h4>
         <div class="kg-relationship-list" data-kg-relationships></div>
       </section>
-      <section class="kg-section">
-        <h4>Entity index</h4>
+      <section class="kg-section" data-kg-entities-section>
+        <h4 data-kg-entities-title>Entity index</h4>
         <div class="kg-entity-groups" data-kg-entities></div>
       </section>
       <section class="kg-section">
-        <h4>Related documents</h4>
-        <p class="kg-panel-meta">Other documents sharing entities with this one</p>
+        <h4 data-kg-related-title>Related documents</h4>
+        <p class="kg-panel-meta" data-kg-related-copy>Other documents sharing entities with this one</p>
         <div class="kg-related-documents" data-kg-related-documents></div>
       </section>
     </div>

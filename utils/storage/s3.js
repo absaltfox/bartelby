@@ -216,6 +216,14 @@ function readTempFile(name) {
   return fs.readFileSync(fullPath);
 }
 
+async function readTempFileAsync(name) {
+  const fullPath = resolveTempPath(name);
+  if (fullPath && fs.existsSync(fullPath)) {
+    return fs.readFileSync(fullPath);
+  }
+  return getTempObject(name);
+}
+
 function writeTempFile(name, buffer) {
   ensureLocalTempDir();
   const fullPath = resolveTempPath(name);
@@ -248,6 +256,11 @@ function deleteTempFiles(names) {
   for (const name of names || []) {
     try { deleteTempFile(name); } catch (err) {}
   }
+}
+
+async function deleteTempAssets(names) {
+  deleteTempFiles(names);
+  await deleteTempObjectsBatch(names);
 }
 
 function getTempPreviewUrl(name) {
@@ -362,6 +375,10 @@ async function copyLocalFileToUpload(localPath, originalName, extOverride) {
   };
 }
 
+async function copyTempAssetToUpload(tempName, originalName, extOverride) {
+  return copyTempObjectToUpload(tempName, originalName, extOverride);
+}
+
 async function deleteUploadByUrl(url) {
   if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) return;
   const filename = path.basename(url);
@@ -376,22 +393,38 @@ async function readUploadByUrl(url) {
   return getObject(UPLOADS_PREFIX + filename);
 }
 
+async function getUploadSizeByUrl(url) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw new Error(`Invalid upload URL: ${url}`);
+  }
+  const filename = path.basename(url);
+  const response = await s3.send(new HeadObjectCommand({
+    Bucket: BUCKET,
+    Key: UPLOADS_PREFIX + filename
+  }));
+  return response.ContentLength || 0;
+}
+
 module.exports = {
   init,
   sanitizeTempName,
   validateS3Endpoint,  // exported for testing
   getTempFilePath,
   tempFileExists,
+  readTempFileAsync,
   readTempFile,
   writeTempFile,
   copyLocalFileToTemp,
   deleteTempFile,
   deleteTempFiles,
+  deleteTempAssets,
   copyTempFileToUpload,
+  copyTempAssetToUpload,
   copyLocalFileToUpload,
   getTempPreviewUrl,
   deleteUploadByUrl,
   readUploadByUrl,
+  getUploadSizeByUrl,
   toUploadsUrl,
   resolveStoredUrl,
   putTempObject,
