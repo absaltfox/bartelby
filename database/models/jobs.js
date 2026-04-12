@@ -1,10 +1,6 @@
 'use strict';
 
-const crypto = require('crypto');
-const { hashOtpCode } = require('../../utils/mfa');
-const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
-
-module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
+module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave) => {
 const transcriptionJobs = {
   create({
     document_id,
@@ -72,27 +68,27 @@ const transcriptionJobs = {
   },
 
   markRunning(id) {
-    db.run("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
+    runWithoutSave("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
     saveDatabase();
   },
 
   appendLog(id, text) {
-    db.run("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
+    runWithoutSave("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
     saveDatabase();
   },
 
   markDone(id) {
-    db.run("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    runWithoutSave("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
     saveDatabase();
   },
 
   markFailed(id, error) {
-    db.run("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
+    runWithoutSave("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
     saveDatabase();
   },
 
   requeueForRetry(id) {
-    db.run(`
+    runWithoutSave(`
       UPDATE transcription_jobs
       SET status = 'queued',
           error = NULL,
@@ -136,7 +132,7 @@ const transcriptionJobs = {
   },
 
   retry(id) {
-    db.run(`
+    runWithoutSave(`
       UPDATE transcription_jobs
       SET status = 'queued',
           error = NULL,
@@ -228,7 +224,7 @@ const transcriptionJobsAsync = {
     batch_manifest = null,
     linked_document_ids = null
   }) {
-    const result = await runAsync(`
+    const result = await runAsyncWithoutSave(`
       INSERT INTO transcription_jobs
         (
           document_id, provider, model, temperature, initiated_by,
@@ -279,14 +275,13 @@ const transcriptionJobsAsync = {
     const job = await this.getNextQueued();
     if (!job) return null;
 
-    const result = await db.run(`
+    const result = await runAsync(`
       UPDATE transcription_jobs
       SET status = 'running',
           started_at = CURRENT_TIMESTAMP,
           attempts = attempts + 1
       WHERE id = ? AND status = 'queued'
     `, [job.id]);
-    await saveDatabase();
 
     if (!result || !result.changes) {
       return null;
@@ -296,27 +291,27 @@ const transcriptionJobsAsync = {
   },
 
   async markRunning(id) {
-    await db.run("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
+    await runAsyncWithoutSave("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
     await saveDatabase();
   },
 
   async appendLog(id, text) {
-    await db.run("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
+    await runAsyncWithoutSave("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
     await saveDatabase();
   },
 
   async markDone(id) {
-    await db.run("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    await runAsyncWithoutSave("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
     await saveDatabase();
   },
 
   async markFailed(id, error) {
-    await db.run("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
+    await runAsyncWithoutSave("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
     await saveDatabase();
   },
 
   async requeueForRetry(id) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE transcription_jobs
       SET status = 'queued',
           error = NULL,
@@ -407,7 +402,7 @@ const transcriptionJobsAsync = {
   },
 
   async updateBatchRemote(id, { remoteId, remoteStatus }) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE transcription_jobs
       SET batch_remote_id = COALESCE(?, batch_remote_id),
           batch_remote_status = COALESCE(?, batch_remote_status)
@@ -417,7 +412,7 @@ const transcriptionJobsAsync = {
   },
 
   async updateBatchProgress(id, { completedCount, failedCount, remoteStatus }) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE transcription_jobs
       SET batch_completed_count = COALESCE(?, batch_completed_count),
           batch_failed_count = COALESCE(?, batch_failed_count),
@@ -433,7 +428,7 @@ const transcriptionJobsAsync = {
   },
 
   async savePartialResults(id, results) {
-    await db.run('UPDATE transcription_jobs SET partial_results = ? WHERE id = ?', [JSON.stringify(results), id]);
+    await runAsyncWithoutSave('UPDATE transcription_jobs SET partial_results = ? WHERE id = ?', [JSON.stringify(results), id]);
   },
 
   async getPartialResults(id) {
@@ -443,11 +438,11 @@ const transcriptionJobsAsync = {
   },
 
   async clearPartialResults(id) {
-    await db.run('UPDATE transcription_jobs SET partial_results = NULL WHERE id = ?', [id]);
+    await runAsyncWithoutSave('UPDATE transcription_jobs SET partial_results = NULL WHERE id = ?', [id]);
   },
 
   async retry(id) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE transcription_jobs
       SET status = 'queued',
           error = NULL,
@@ -478,23 +473,23 @@ const importJobs = {
 
   updateProgress(id, { page_count, pages_rendered }) {
     if (page_count != null) {
-      db.run("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
+      runWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
     }
     if (pages_rendered != null) {
-      db.run("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
+      runWithoutSave("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
     }
     // Don't call saveDatabase() on every progress tick — it's expensive for sql.js.
     // The in-memory DB is already updated; it'll be persisted on markDone/markFailed.
   },
 
   markDone(id, pages) {
-    db.run("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+    runWithoutSave("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
       [JSON.stringify(pages), id]);
     saveDatabase();
   },
 
   markFailed(id, error) {
-    db.run("UPDATE import_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+    runWithoutSave("UPDATE import_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
       [error || 'Unknown error', id]);
     saveDatabase();
   },
@@ -518,16 +513,16 @@ const importJobs = {
   },
 
   updateMachineId(id, machineId) {
-    db.run("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
+    runWithoutSave("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },
 
   markSubmitted(id) {
-    db.run("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
+    runWithoutSave("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
     saveDatabase();
   },
 
   updateGroupingState(id, groupingState) {
-    db.run("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
+    runWithoutSave("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
       groupingState ? JSON.stringify(groupingState) : null,
       id
     ]);
@@ -566,21 +561,21 @@ const importJobsAsync = {
 
   async updateProgress(id, { page_count, pages_rendered }) {
     if (page_count != null) {
-      await db.run("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
+      await runAsyncWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
     }
     if (pages_rendered != null) {
-      await db.run("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
+      await runAsyncWithoutSave("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
     }
   },
 
   async markDone(id, pages) {
-    await db.run("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+    await runAsyncWithoutSave("UPDATE import_jobs SET status = 'done', pages = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
       [pages == null ? null : JSON.stringify(pages), id]);
     await saveDatabase();
   },
 
   async markFailed(id, error) {
-    await db.run("UPDATE import_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+    await runAsyncWithoutSave("UPDATE import_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?",
       [error || 'Unknown error', id]);
     await saveDatabase();
   },
@@ -606,7 +601,7 @@ const importJobsAsync = {
     `);
     if (!job) return null;
 
-    const result = await db.run(`
+    const result = await runAsyncWithoutSave(`
       UPDATE import_jobs
       SET status = 'running',
           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
@@ -629,7 +624,7 @@ const importJobsAsync = {
     `);
     if (!job) return null;
 
-    const result = await db.run(`
+    const result = await runAsyncWithoutSave(`
       UPDATE import_jobs
       SET status = 'processing',
           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
@@ -652,7 +647,7 @@ const importJobsAsync = {
     `);
     if (!job) return null;
 
-    const result = await db.run(`
+    const result = await runAsyncWithoutSave(`
       UPDATE import_jobs
       SET status = 'processing',
           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
@@ -667,11 +662,11 @@ const importJobsAsync = {
   },
 
   async updateMachineId(id, machineId) {
-    await db.run("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
+    await runAsyncWithoutSave("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },
 
   async updateSubmissionState(id, payload, { processedCount } = {}) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE import_jobs
       SET submit_payload = ?,
           pages_rendered = COALESCE(?, pages_rendered)
@@ -685,12 +680,12 @@ const importJobsAsync = {
   },
 
   async markSubmitted(id) {
-    await db.run("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
+    await runAsyncWithoutSave("UPDATE import_jobs SET submitted = 1 WHERE id = ?", [id]);
     await saveDatabase();
   },
 
   async retry(id) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE import_jobs
       SET status = 'queued',
           error = NULL,
@@ -704,7 +699,7 @@ const importJobsAsync = {
   },
 
   async updateGroupingState(id, groupingState) {
-    await db.run("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
+    await runAsyncWithoutSave("UPDATE import_jobs SET grouping_state = ? WHERE id = ?", [
       groupingState ? JSON.stringify(groupingState) : null,
       id
     ]);
@@ -962,7 +957,7 @@ const extractionJobs = {
     `);
     if (!job) return null;
 
-    const result = await db.run(`
+    const result = await runAsync(`
       UPDATE extraction_jobs
       SET status = 'running',
           started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
@@ -971,7 +966,6 @@ const extractionJobs = {
           attempts = attempts + 1
       WHERE id = ? AND status = 'queued'
     `, [job.id]);
-    await saveDatabase();
     if (!result || !result.changes) return null;
     return await this.getById(job.id);
   },
@@ -986,12 +980,12 @@ const extractionJobs = {
   },
 
   async appendLog(id, text) {
-    await db.run('UPDATE extraction_jobs SET log = log || ? WHERE id = ?', [text, id]);
+    await runAsyncWithoutSave('UPDATE extraction_jobs SET log = log || ? WHERE id = ?', [text, id]);
     await saveDatabase();
   },
 
   async markDone(id, { entity_count, relationship_count } = {}) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'done',
           entity_count = COALESCE(?, entity_count),
@@ -1007,7 +1001,7 @@ const extractionJobs = {
   },
 
   async markFailed(id, error) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'failed',
           error = ?,
@@ -1018,7 +1012,7 @@ const extractionJobs = {
   },
 
   async requeueForRetry(id) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'queued',
           error = NULL,
@@ -1034,7 +1028,7 @@ const extractionJobs = {
   },
 
   async retry(id) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'queued',
           error = NULL,
@@ -1096,7 +1090,7 @@ const extractionJobs = {
   },
 
   async updateBatchRemote(id, { remoteId, remoteStatus }) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET batch_remote_id = COALESCE(?, batch_remote_id),
           batch_remote_status = COALESCE(?, batch_remote_status)
@@ -1106,7 +1100,7 @@ const extractionJobs = {
   },
 
   async updateBatchProgress(id, { completedCount, failedCount, remoteStatus }) {
-    await db.run(`
+    await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET batch_completed_count = COALESCE(?, batch_completed_count),
           batch_failed_count = COALESCE(?, batch_failed_count),

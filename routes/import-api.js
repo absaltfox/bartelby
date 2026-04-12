@@ -35,6 +35,9 @@ const {
 } = require('../database/db');
 const { withCsrf } = require('../middleware/upload');
 
+const MAX_SYNC_TRANSCRIBE_GROUP_PAGES = 20;
+const MAX_TEMP_FILE_INPUTS = 5000;
+
 // Initialize storage (temp dirs, etc.)
 storage.init();
 
@@ -201,8 +204,8 @@ router.post('/transcribe-group', express.json(), async (req, res) => {
   if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
     return res.status(400).json({ error: 'No files specified' });
   }
-  if (tempFiles.length > 20) {
-    return res.status(400).json({ error: 'Too many pages for synchronous transcription (max 20)' });
+  if (tempFiles.length > MAX_SYNC_TRANSCRIBE_GROUP_PAGES) {
+    return res.status(400).json({ error: `Too many pages for synchronous transcription (max ${MAX_SYNC_TRANSCRIBE_GROUP_PAGES})` });
   }
 
   try {
@@ -276,8 +279,8 @@ router.post('/save-document', express.json(), async (req, res) => {
   } = req.body;
 
   const isAiMode = transcriptionMode === 'ai';
-  const rawFiles = tempFiles || (tempFile ? [tempFile] : []);
-  const files = sanitizeTempFiles(rawFiles).slice(0, 5000);
+  const rawFiles = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
+  const files = sanitizeTempFiles(rawFiles);
   if (files.length === 0) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -511,7 +514,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
 
     const dbJobId = await importJobsAsync.create({
-      original_name: \`Auto Grouping \${tempFiles.length} pages\`,
+      original_name: `Auto Grouping ${tempFiles.length} pages`,
       job_kind: 'grouping',
       user_id: req.user?.id || null,
       payload: {
@@ -532,7 +535,7 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
 router.post('/cancel-import', express.json(), async (req, res) => {
   const { tempFile, tempFiles, importJobId } = req.body;
   const parsedImportJobId = parseInt(importJobId, 10);
-  const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, 5000);
+  const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
 
   try {
     const previewMap = Number.isInteger(parsedImportJobId)

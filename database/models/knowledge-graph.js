@@ -1,7 +1,4 @@
 'use strict';
-
-const crypto = require('crypto');
-const { hashOtpCode } = require('../../utils/mfa');
 const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {

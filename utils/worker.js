@@ -182,7 +182,7 @@ async function tickImportRenderJobs() {
     
     if (useEphemeralMachine) {
       try {
-        const s3TempKey = \`import_\${Date.now()}_\${job.id}.pdf\`;
+        const s3TempKey = `import_${Date.now()}_${job.id}.pdf`;
         const pdfBuffer = await readTempAsset(pdfTempFile);
         try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
         await storage.putTempObject(s3TempKey, pdfBuffer);
@@ -192,7 +192,7 @@ async function tickImportRenderJobs() {
         await importJobsAsync.updateMachineId(job.id, machineId);
         // We do not mark the job complete here; the ephemeral worker does it.
       } catch (err) {
-        throw new Error(\`Failed to launch worker: \${err.message}\`);
+        throw new Error(`Failed to launch worker: ${err.message}`);
       }
     } else {
       spawnLocalPdfWorker({
@@ -207,7 +207,7 @@ async function tickImportRenderJobs() {
         },
         onDone: (msg) => {
           importJobsAsync.markDone(job.id, msg.pages).catch(() => {});
-          console.log(\`[worker] PDF render "\${job.original_name}" job \${job.id} completed.\`);
+          console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
         },
         onFailed: (error) => {
           importJobsAsync.markFailed(job.id, error).catch(() => {});
@@ -234,7 +234,7 @@ async function tickGroupingJobs() {
     job = await importJobsAsync.claimNextQueuedGrouping();
     if (!job) return;
 
-    console.log(\`[worker] grouping job \${job.id}: starting\`);
+    console.log(`[worker] grouping job ${job.id}: starting`);
     const payload = JSON.parse(job.submit_payload || '{}');
     const { runDocumentGrouping } = require('./grouping-llm');
     
@@ -246,7 +246,7 @@ async function tickGroupingJobs() {
 
     // Save as done with the resulting groups mapped into pages
     await importJobsAsync.markDone(job.id, groupingResult.groups);
-    console.log(\`[worker] grouping job \${job.id}: complete (\${groupingResult.groups.length} groups)\`);
+    console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
 
   } catch (err) {
     console.error('[worker] grouping job failed:', err.message);

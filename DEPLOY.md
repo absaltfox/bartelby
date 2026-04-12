@@ -174,6 +174,8 @@ fly secrets set \
 > **Important:** `FLY_API_TOKEN` is required for the app to launch ephemeral Fly Machines for large PDF imports and BERTopic jobs. `FLY_APP_NAME` and `FLY_IMAGE_REF` are provided by Fly at runtime.
 >
 > **Important:** Production now fails closed for non-durable local defaults. `SESSION_STORE=memory` and `STORAGE_DRIVER=local` are rejected unless you set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` or `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1`. Those overrides are intended only for deliberate single-node deployments.
+>
+> **Important:** `TRUST_PROXY` is optional. When unset, Bartelby defaults to trusting one proxy hop, which matches the standard Fly/ingress setup. If you need to override it, use an integer hop count, `true`/`false`, or standard proxy-addr values like `loopback` or a CIDR list.
 
 ### Deploy
 

@@ -10,6 +10,7 @@ const { loadEnv } = require('./utils/secrets');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
 const { resolveApplicationSettings } = require('./utils/application-settings');
+const { parseProxyTrust } = require('./utils/proxy-trust');
 const logger = require('./utils/logger');
 
 loadEnv();
@@ -41,6 +42,13 @@ function logBoot(message) {
 function logBootDebug(message) {
   if (!startupDebugEnabled) return;
   logBoot(message);
+}
+
+function logBootWarn(message) {
+  const elapsedMs = Date.now() - bootStartedAt;
+  const rendered = `[boot +${formatBootElapsed(elapsedMs)}] ${message}`;
+  console.warn(rendered);
+  void logger.warn('boot', message, { elapsedMs }, { console: false });
 }
 
 function loadRouteModule(routePath, label, options = {}) {
@@ -175,9 +183,9 @@ app.use(helmet({
 // Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies and rate
 // limiting work correctly behind TLS termination. Must be set before
 // rate limiters, which validate X-Forwarded-For against this setting.
-const proxyTrust = process.env.TRUST_PROXY ? 
-  (isNaN(parseInt(process.env.TRUST_PROXY, 10)) ? process.env.TRUST_PROXY : parseInt(process.env.TRUST_PROXY, 10)) 
-  : 1;
+const proxyTrust = parseProxyTrust(process.env.TRUST_PROXY, {
+  onWarning: (message) => logBootWarn(message)
+});
 app.set('trust proxy', proxyTrust);
 
 // ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
@@ -492,9 +500,6 @@ app.use('/admin/entities', registerDeferredRoute('./routes/admin-entities', 'adm
 app.use('/admin', registerDeferredRoute('./routes/admin-review', 'admin review routes', { tier: 'admin' })); // has its own requireAdmin
 logRouteLoadSummary('boot');
 logBoot('Routes mounted');
-
-// Export CSRF validator for routes that need it
-app.locals.validateCsrf = validateCsrf;
 
 // ── Health check (used by fly.io and Docker) ─────────────────────────────
 app.get('/healthz', (req, res) => res.status(200).send('ok'));

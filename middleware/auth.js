@@ -5,12 +5,27 @@ const LocalStrategy = require('passport-local').Strategy;
 const { usersAsync, userCollectionAccessAsync, roleAtLeast } = require('../database/db');
 
 let bcryptModule = null;
+const SQLITE_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
 
 function getBcrypt() {
   if (!bcryptModule) {
     bcryptModule = require('bcryptjs');
   }
   return bcryptModule;
+}
+
+function parsePasswordChangedTimestamp(value) {
+  if (value == null) return NaN;
+
+  const raw = String(value).trim();
+  if (!raw) return NaN;
+
+  const candidate = SQLITE_UTC_TIMESTAMP_RE.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw;
+
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? NaN : parsed;
 }
 
 // ── Passport strategy ──────────────────────────────────────────────────────
@@ -56,14 +71,13 @@ passport.deserializeUser(async (id, done) => {
 /** Make req.user available in all EJS templates as `currentUser` */
 function locals(req, res, next) {
   // Invalidate session if password was changed after authentication.
-  // SQLite CURRENT_TIMESTAMP is UTC but lacks a timezone suffix, so we must
-  // append 'Z' before parsing — otherwise JS treats it as local time.
+  // Normalize only naive SQLite UTC timestamps; keep ISO timestamps with an
+  // explicit timezone untouched so we do not corrupt valid offsets.
   if (req.isAuthenticated() && req.user.password_changed_at && req.session.authenticatedAt) {
-    let rawTs = String(req.user.password_changed_at);
-    if (!rawTs.includes('T') && rawTs.includes(' ')) rawTs = rawTs.replace(' ', 'T');
-    if (!rawTs.endsWith('Z')) rawTs += 'Z';
-    const changedAt = Date.parse(rawTs);
-    if (!isNaN(changedAt) && changedAt > req.session.authenticatedAt) {
+    const changedAt = parsePasswordChangedTimestamp(req.user.password_changed_at);
+    if (Number.isNaN(changedAt)) {
+      console.warn(`[auth] Could not parse password_changed_at for user ${req.user.id}.`);
+    } else if (changedAt > req.session.authenticatedAt) {
       return req.logout((err) => {
         if (err) return next(err);
         req.session.authError = 'Your password was changed. Please sign in again.';
@@ -199,4 +213,15 @@ async function requireAdminOrManager(req, res, next) {
   res.status(403).render('error', { message: 'Admin or collection manager access required.', error: {} });
 }
 
-module.exports = { passport, locals, requireAuth, optionalAuth, requireAuthApi, requireAdmin, requireCollectionRole, requireDocumentRole, requireAdminOrManager };
+module.exports = {
+  passport,
+  locals,
+  parsePasswordChangedTimestamp,
+  requireAuth,
+  optionalAuth,
+  requireAuthApi,
+  requireAdmin,
+  requireCollectionRole,
+  requireDocumentRole,
+  requireAdminOrManager
+};
