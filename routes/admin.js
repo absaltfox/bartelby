@@ -199,8 +199,8 @@ async function saveLlmSettings(req, res) {
 }
 
 // Save LLM settings
-router.post('/settings', express.urlencoded({ extended: false }), saveLlmSettings);
-router.post('/llm-settings', express.urlencoded({ extended: false }), saveLlmSettings);
+router.post('/settings', express.urlencoded({ extended: false }), asyncHandler(saveLlmSettings));
+router.post('/llm-settings', express.urlencoded({ extended: false }), asyncHandler(saveLlmSettings));
 
 router.post('/application-settings', withCsrf(svgUpload.fields([
   { name: 'app_logo_svg_file', maxCount: 1 },
