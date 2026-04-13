@@ -344,6 +344,13 @@ const usersAsync = {
     `);
   },
 
+  async countActiveAdmins() {
+    const row = await getAsync(
+      "SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'"
+    );
+    return row ? row.count : 0;
+  },
+
   async getPending() {
     return await allAsync("SELECT id, username, email, created_at FROM users WHERE status = 'pending' ORDER BY created_at");
   },
@@ -657,6 +664,10 @@ const mfaRememberTokensAsync = {
 
   async deleteForUser(userId) {
     await runAsync(`DELETE FROM mfa_remember_tokens WHERE user_id = ?`, [userId]);
+  },
+
+  async deleteToken(userId, tokenHash) {
+    await runAsync(`DELETE FROM mfa_remember_tokens WHERE user_id = ? AND token_hash = ?`, [userId, tokenHash]);
   },
 
   async deleteExpired() {
