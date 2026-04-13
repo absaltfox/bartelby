@@ -29,6 +29,14 @@ function startWorker() {
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
   setInterval(checkStaleImportJobs, 60000);
+  setInterval(async () => {
+    try {
+      const { importJobsAsync } = require('../database/db');
+      await importJobsAsync.requeueStaleJobs();
+    } catch (err) {
+      // Non-fatal
+    }
+  }, 60000);
   setInterval(cleanExpiredMfaTokens, 60 * 60 * 1000);
 
   const { runScheduledAnalytics } = require('./analytics');
@@ -191,36 +199,46 @@ async function tickImportRenderJobs() {
         throw new Error(`Failed to launch worker: ${err.message}`);
       }
     } else {
-      await new Promise((resolve, reject) => {
-        spawnLocalPdfWorker({
-          pdfTempFile,
-          jobRef: job.id,
-          originalName: job.original_name,
-          onProgress: (msg) => {
-            importJobsAsync.updateProgress(job.id, {
-              page_count: msg.pageCount,
-              pages_rendered: msg.pagesRendered
-            }).catch(() => {});
-          },
-          onDone: (msg) => {
-            importJobsAsync.markDone(job.id, msg.pages)
-              .then(() => {
-                localRenderHandled = true;
-                console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
-                resolve();
-              })
-              .catch(reject);
-          },
-          onFailed: (error) => {
-            importJobsAsync.markFailed(job.id, error)
-              .then(() => {
-                localRenderHandled = true;
-                resolve();
-              })
-              .catch(reject);
-          }
+      // Local path: send heartbeats while processing
+      let heartbeatInterval = null;
+      try {
+        heartbeatInterval = setInterval(() => {
+          importJobsAsync.updateHeartbeat(job.id).catch(() => {});
+        }, 30000);
+
+        await new Promise((resolve, reject) => {
+          spawnLocalPdfWorker({
+            pdfTempFile,
+            jobRef: job.id,
+            originalName: job.original_name,
+            onProgress: (msg) => {
+              importJobsAsync.updateProgress(job.id, {
+                page_count: msg.pageCount,
+                pages_rendered: msg.pagesRendered
+              }).catch(() => {});
+            },
+            onDone: (msg) => {
+              importJobsAsync.markDone(job.id, msg.pages)
+                .then(() => {
+                  localRenderHandled = true;
+                  console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
+                  resolve();
+                })
+                .catch(reject);
+            },
+            onFailed: (error) => {
+              importJobsAsync.markFailed(job.id, error)
+                .then(() => {
+                  localRenderHandled = true;
+                  resolve();
+                })
+                .catch(reject);
+            }
+          });
         });
-      });
+      } finally {
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+      }
     }
   } catch (err) {
     console.error('[worker] PDF render job failed:', err.message);

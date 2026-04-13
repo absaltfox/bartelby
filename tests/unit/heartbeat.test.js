@@ -126,3 +126,23 @@ describe('requeueStaleJobs — integration', () => {
     expect(after.status).toBe('processing'); // still running
   });
 });
+
+describe('worker heartbeat wiring', () => {
+  it('tickImportRenderJobs contains setInterval for heartbeat', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../utils/worker.js'),
+      'utf8'
+    );
+    expect(src).toContain('updateHeartbeat');
+    expect(src).toContain('setInterval');
+    expect(src).toContain('clearInterval');
+  });
+
+  it('startWorker contains requeueStaleJobs watchdog', () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, '../../utils/worker.js'),
+      'utf8'
+    );
+    expect(src).toContain('requeueStaleJobs');
+  });
+});
