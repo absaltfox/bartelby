@@ -38,7 +38,7 @@ function validateCsrf(req, res, next) {
       return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
     }
     req.session.authError = 'Your session expired. Please try again.';
-    return res.redirect(req.get('Referrer') || '/login');
+    return res.redirect('/');
   }
 
   req._csrfValidated = true;
