@@ -177,7 +177,10 @@ fly secrets set \
 >
 > **Important:** Set `PUBLIC_APP_URL` in production. Invite links, password-reset links, and other absolute URLs now fail fast at boot if this value is missing.
 >
-> **Important:** `TRUST_PROXY` now defaults to `0` when unset. That is the safe choice for direct listeners such as `docker-compose`. On Fly or behind another trusted ingress, set `TRUST_PROXY=1` (or a more specific proxy-addr value) explicitly.
+> **Important:** Production now assumes Bartelby is running behind a trusted
+> proxy or TLS-terminating ingress. Set `TRUST_PROXY=1` on Fly (or a more
+> specific non-zero proxy-addr value if your topology requires it). `0` is a
+> local direct-listener setting, not a supported production value.
 
 ### Deploy
 

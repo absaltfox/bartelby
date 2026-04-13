@@ -46,6 +46,18 @@ function resolveUploadPathFromUrl(url) {
   return primaryPath;
 }
 
+function invalidUploadUrlError(url) {
+  const err = new Error(`Invalid upload URL: ${url}`);
+  err.code = 'INVALID_UPLOAD_URL';
+  return err;
+}
+
+function missingUploadError(url) {
+  const err = new Error(`Image file not found: ${url}`);
+  err.code = 'UPLOAD_NOT_FOUND';
+  return err;
+}
+
 function makeUniqueUploadFilename(originalName, extOverride) {
   const baseName = originalName || 'document';
   const ext = extOverride || (path.extname(baseName) || '.jpg');
@@ -176,17 +188,34 @@ function deleteUploadByUrl(url) {
 }
 
 function readUploadByUrl(url) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw invalidUploadUrlError(url);
+  }
   const fullPath = resolveUploadPathFromUrl(url);
   if (!fullPath || !fs.existsSync(fullPath)) {
-    throw new Error(`Image file not found: ${url}`);
+    throw missingUploadError(url);
   }
   return fs.readFileSync(fullPath);
 }
 
-async function getUploadSizeByUrl(url) {
+async function streamUploadByUrl(url) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw invalidUploadUrlError(url);
+  }
   const fullPath = resolveUploadPathFromUrl(url);
   if (!fullPath || !fs.existsSync(fullPath)) {
-    throw new Error(`Image file not found: ${url}`);
+    throw missingUploadError(url);
+  }
+  return fs.createReadStream(fullPath);
+}
+
+async function getUploadSizeByUrl(url) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw invalidUploadUrlError(url);
+  }
+  const fullPath = resolveUploadPathFromUrl(url);
+  if (!fullPath || !fs.existsSync(fullPath)) {
+    throw missingUploadError(url);
   }
   return fs.statSync(fullPath).size;
 }
@@ -214,6 +243,7 @@ module.exports = {
   getTempPreviewUrl,
   deleteUploadByUrl,
   readUploadByUrl,
+  streamUploadByUrl,
   getUploadSizeByUrl,
   toUploadsUrl,
   resolveStoredUrl

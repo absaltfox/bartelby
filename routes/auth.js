@@ -263,13 +263,17 @@ router.post('/login/mfa/resend', asyncHandler(async (req, res) => {
 
 // ── Logout ─────────────────────────────────────────────────────────────────
 
-router.post('/logout', (req, res, next) => {
+router.post('/logout', asyncHandler(async (req, res, next) => {
+  if (req.user && req.signedCookies?.mfa_remember) {
+    const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
+    await mfaRememberTokensAsync.deleteToken(req.user.id, tokenHash);
+  }
   res.clearCookie('mfa_remember');
   req.logout((err) => {
     if (err) return next(err);
     res.redirect('/login');
   });
-});
+}));
 
 // ── Register ───────────────────────────────────────────────────────────────
 

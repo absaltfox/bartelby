@@ -123,6 +123,36 @@ Important behavior:
 - Upload URLs are treated as application data and are served through the app
   with access control when needed
 
+Storage adapters in `utils/storage/` are a documented extension point and must
+implement the same interface. The required methods are:
+
+- `init`
+- `sanitizeTempName`
+- `getTempFilePath`
+- `tempFileExists`
+- `tempFileExistsAsync`
+- `readTempFile`
+- `readTempFileAsync`
+- `writeTempFile`
+- `copyLocalFileToTemp`
+- `deleteTempFile`
+- `deleteTempFiles`
+- `deleteTempAssets`
+- `copyTempFileToUpload`
+- `copyTempAssetToUpload`
+- `copyLocalFileToUpload`
+- `getTempPreviewUrl`
+- `deleteUploadByUrl`
+- `readUploadByUrl`
+- `streamUploadByUrl`
+- `getUploadSizeByUrl`
+- `toUploadsUrl`
+- `resolveStoredUrl`
+
+The app validates this contract at startup and fails fast if the configured
+driver is incomplete. `streamUploadByUrl` is required for protected upload
+delivery so adapters and mocks do not silently fall back to full-buffer reads.
+
 ### Python Runtime
 
 - BERTopic uses a project-local Python virtualenv when available

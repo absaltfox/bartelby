@@ -43,6 +43,33 @@ function parseCollectionIds(raw) {
     : (raw ? [Number(raw)].filter(Number.isInteger) : []);
 }
 
+async function blockLastActiveAdminRemoval(req, {
+  targetUserId,
+  nextRole = null,
+  deleting = false
+}) {
+  const target = await usersAsync.findById(targetUserId);
+  if (!target || target.role !== 'admin' || target.status !== 'active') {
+    return false;
+  }
+
+  if (!deleting && nextRole === 'admin') {
+    return false;
+  }
+
+  const adminCount = await usersAsync.countActiveAdmins();
+  if (adminCount > 1) {
+    return false;
+  }
+
+  req.session.adminUsersFlash = {
+    error: deleting
+      ? 'Cannot delete the last active administrator.'
+      : 'Cannot demote the last active administrator.'
+  };
+  return true;
+}
+
 // List all users (pending + active + rejected)
 router.get('/', asyncHandler(async (req, res) => {
   const allUsers = await usersAsync.getAll();
@@ -184,15 +211,11 @@ router.post('/:id/role', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
   const role = req.body.role === 'admin' ? 'admin' : 'user';
-  if (role !== 'admin') {
-    const target = await usersAsync.findById(id);
-    if (target && target.role === 'admin' && target.status === 'active') {
-      const adminCount = await usersAsync.countActiveAdmins();
-      if (adminCount <= 1) {
-        req.session.adminUsersFlash = { error: 'Cannot demote the last active administrator.' };
-        return res.redirect('/admin/users');
-      }
-    }
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    nextRole: role
+  })) {
+    return res.redirect('/admin/users');
   }
   await usersAsync.setRole(id, role);
   audit.log('user.role_changed', { ...audit.reqContext(req), targetUserId: id, role });
@@ -228,6 +251,13 @@ router.post('/:id/access', asyncHandler(async (req, res) => {
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const canUseSystemApiKeys = req.body.can_use_system_api_keys === '1' || role === 'admin';
   const collectionIds = parseCollectionIds(req.body.collections);
+
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    nextRole: role
+  })) {
+    return res.redirect('/admin/users');
+  }
 
   await usersAsync.setRole(id, role);
   await usersAsync.setAccessAll(id, accessAll);
@@ -303,13 +333,11 @@ router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res
 router.post('/:id/delete', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
-  const target = await usersAsync.findById(id);
-  if (target && target.role === 'admin' && target.status === 'active') {
-    const adminCount = await usersAsync.countActiveAdmins();
-    if (adminCount <= 1) {
-      req.session.adminUsersFlash = { error: 'Cannot delete the last active administrator.' };
-      return res.redirect('/admin/users');
-    }
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    deleting: true
+  })) {
+    return res.redirect('/admin/users');
   }
   try {
     await usersAsync.delete(id);

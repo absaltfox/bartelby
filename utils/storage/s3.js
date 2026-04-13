@@ -86,6 +86,18 @@ function makeUniqueFilename(originalName, extOverride) {
   return `${stem}_${unique}${ext}`;
 }
 
+function invalidUploadUrlError(url) {
+  const err = new Error(`Invalid upload URL: ${url}`);
+  err.code = 'INVALID_UPLOAD_URL';
+  return err;
+}
+
+function missingUploadError(url) {
+  const err = new Error(`Image file not found: ${url}`);
+  err.code = 'UPLOAD_NOT_FOUND';
+  return err;
+}
+
 async function streamToBuffer(stream) {
   const chunks = [];
   for await (const chunk of stream) {
@@ -387,15 +399,41 @@ async function deleteUploadByUrl(url) {
 
 async function readUploadByUrl(url) {
   if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
-    throw new Error(`Invalid upload URL: ${url}`);
+    throw invalidUploadUrlError(url);
   }
   const filename = path.basename(url);
-  return getObject(UPLOADS_PREFIX + filename);
+  try {
+    return await getObject(UPLOADS_PREFIX + filename);
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.Code === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+      throw missingUploadError(url);
+    }
+    throw err;
+  }
+}
+
+async function streamUploadByUrl(url) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw invalidUploadUrlError(url);
+  }
+  const filename = path.basename(url);
+  try {
+    const response = await s3.send(new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: UPLOADS_PREFIX + filename
+    }));
+    return response.Body;
+  } catch (err) {
+    if (err?.name === 'NoSuchKey' || err?.Code === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+      throw missingUploadError(url);
+    }
+    throw err;
+  }
 }
 
 async function getUploadSizeByUrl(url) {
   if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
-    throw new Error(`Invalid upload URL: ${url}`);
+    throw invalidUploadUrlError(url);
   }
   const filename = path.basename(url);
   const response = await s3.send(new HeadObjectCommand({
@@ -424,6 +462,7 @@ module.exports = {
   getTempPreviewUrl,
   deleteUploadByUrl,
   readUploadByUrl,
+  streamUploadByUrl,
   getUploadSizeByUrl,
   toUploadsUrl,
   resolveStoredUrl,

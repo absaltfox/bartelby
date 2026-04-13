@@ -22,14 +22,23 @@ async function login(agent, username, password) {
 }
 
 describe('last-admin guard', () => {
-  let app, db, adminId, agent;
+  let app, db, actorAdminId, targetAdminId, agent;
 
   beforeAll(async () => {
     ({ app, db } = await bootApp());
     const hash = await bcrypt.hash('Password1!', 10);
-    adminId = await db.usersAsync.create({
-      username: 'soloadmin',
-      email: 'solo@example.com',
+    actorAdminId = await db.usersAsync.create({
+      username: 'actoradmin',
+      email: 'actor@example.com',
+      passwordHash: hash,
+      role: 'admin',
+      status: 'active',
+      accessAll: true,
+      canUseSystemApiKeys: false
+    });
+    targetAdminId = await db.usersAsync.create({
+      username: 'targetadmin',
+      email: 'target@example.com',
       passwordHash: hash,
       role: 'admin',
       status: 'active',
@@ -37,31 +46,58 @@ describe('last-admin guard', () => {
       canUseSystemApiKeys: false
     });
     agent = request.agent(app);
-    await login(agent, 'soloadmin', 'Password1!');
+    await login(agent, 'actoradmin', 'Password1!');
   });
 
-  it('blocks demotion of the last active admin', async () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('blocks demotion of the last active admin via the role endpoint', async () => {
+    jest.spyOn(db.usersAsync, 'countActiveAdmins').mockResolvedValue(1);
+
     const page = await agent.get('/admin/users');
     const csrf = page.text.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
     const res = await agent
-      .post(`/admin/users/${adminId}/role`)
+      .post(`/admin/users/${targetAdminId}/role`)
       .type('form')
       .send({ role: 'user', _csrf: csrf });
-    // Should redirect back (not apply the change)
     expect(res.status).toBe(302);
-    const user = await db.usersAsync.findById(adminId);
+    const user = await db.usersAsync.findById(targetAdminId);
+    expect(user.role).toBe('admin');
+  });
+
+  it('blocks demotion of the last active admin via the access update endpoint', async () => {
+    jest.spyOn(db.usersAsync, 'countActiveAdmins').mockResolvedValue(1);
+
+    const page = await agent.get('/admin/users');
+    const csrf = page.text.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
+    const before = await db.usersAsync.findById(targetAdminId);
+    const res = await agent
+      .post(`/admin/users/${targetAdminId}/access`)
+      .type('form')
+      .send({
+        role: 'user',
+        access_all: before.access_all ? '1' : '0',
+        _csrf: csrf
+      });
+
+    expect(res.status).toBe(302);
+    const user = await db.usersAsync.findById(targetAdminId);
     expect(user.role).toBe('admin');
   });
 
   it('blocks deletion of the last active admin', async () => {
+    jest.spyOn(db.usersAsync, 'countActiveAdmins').mockResolvedValue(1);
+
     const page = await agent.get('/admin/users');
     const csrf = page.text.match(/name="_csrf"\s+value="([^"]+)"/)?.[1];
     const res = await agent
-      .post(`/admin/users/${adminId}/delete`)
+      .post(`/admin/users/${targetAdminId}/delete`)
       .type('form')
       .send({ _csrf: csrf });
     expect(res.status).toBe(302);
-    const user = await db.usersAsync.findById(adminId);
+    const user = await db.usersAsync.findById(targetAdminId);
     expect(user).not.toBeNull();
   });
 });
