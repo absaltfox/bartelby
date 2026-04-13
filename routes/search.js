@@ -25,7 +25,7 @@ async function getAccessibleCollections(req, opts) {
   const all = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
   if (opts.isAdmin || opts.accessAll) return all;
   const accessIds = await userCollectionAccessAsync.getIdsByUserId(req.user.id);
-  return all.filter(collection => collection.is_public || accessIds.includes(collection.id));
+  return all.filter(c => c.is_public || c.is_world_public || accessIds.includes(c.id));
 }
 
 router.get('/', asyncHandler(async (req, res) => {
@@ -51,7 +51,7 @@ router.get('/', asyncHandler(async (req, res) => {
         );
         entityResults = await Promise.all((matched || []).map(async (entity) => {
           const citeRows = citations && citations.getByEntityId
-            ? await citations.getByEntityId(entity.id)
+            ? await citations.getByEntityId(entity.id, getSearchOpts(req))
             : [];
           const documentIds = new Set((citeRows || []).map((row) => row.document_id).filter(Boolean));
           return {
