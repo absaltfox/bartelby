@@ -195,11 +195,17 @@ const documentCollections = {
   },
 
   setForDocument(documentId, collectionIds) {
-    run('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
-    for (const cid of (collectionIds || [])) {
-      try {
+    const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
+    run('BEGIN EXCLUSIVE');
+    try {
+      run('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
+      for (const cid of ids) {
         run('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
-      } catch (e) {}
+      }
+      run('COMMIT');
+    } catch (err) {
+      try { run('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
     }
   }
 };
@@ -222,11 +228,18 @@ const documentCollectionsAsync = {
   },
 
   async setForDocument(documentId, collectionIds) {
-    await runAsync('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
-    for (const cid of (collectionIds || [])) {
-      try {
+    const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      await runAsync('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
+      for (const cid of ids) {
         await runAsync('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
-      } catch (e) {}
+      }
+      await runAsync('COMMIT');
+      await saveDatabase();
+    } catch (err) {
+      await runAsync('ROLLBACK').catch(() => {});
+      throw err;
     }
   },
 
@@ -275,11 +288,17 @@ const userCollectionAccess = {
   },
 
   setForUser(userId, collectionIds) {
-    run('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
-    for (const cid of (collectionIds || [])) {
-      try {
+    const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
+    run('BEGIN EXCLUSIVE');
+    try {
+      run('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
+      for (const cid of ids) {
         run('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, cid]);
-      } catch (e) {}
+      }
+      run('COMMIT');
+    } catch (err) {
+      try { run('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
     }
   }
 };
@@ -310,21 +329,37 @@ const userCollectionAccessAsync = {
   },
 
   async setForUser(userId, collectionIds) {
-    await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
-    for (const cid of (collectionIds || [])) {
-      try {
+    const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
+      for (const cid of ids) {
         await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, cid, 'viewer']);
-      } catch (e) {}
+      }
+      await runAsync('COMMIT');
+      await saveDatabase();
+    } catch (err) {
+      await runAsync('ROLLBACK').catch(() => {});
+      throw err;
     }
   },
 
   async setForUserWithRoles(userId, collectionRoles) {
-    await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
-    for (const [cid, role] of Object.entries(collectionRoles || {})) {
-      const safeRole = ROLE_HIERARCHY[role] ? role : 'viewer';
-      try {
-        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, parseInt(cid), safeRole]);
-      } catch (e) {}
+    const entries = Object.entries(collectionRoles || {}).map(([cid, role]) => [
+      parseInt(cid),
+      ROLE_HIERARCHY[role] ? role : 'viewer'
+    ]).filter(([cid]) => Number.isInteger(cid));
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
+      for (const [cid, role] of entries) {
+        await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, cid, role]);
+      }
+      await runAsync('COMMIT');
+      await saveDatabase();
+    } catch (err) {
+      await runAsync('ROLLBACK').catch(() => {});
+      throw err;
     }
   },
 
