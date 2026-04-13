@@ -272,22 +272,29 @@ const transcriptionJobsAsync = {
   },
 
   async claimNextQueued() {
-    const job = await this.getNextQueued();
-    if (!job) return null;
-
-    const result = await runAsync(`
-      UPDATE transcription_jobs
-      SET status = 'running',
-          started_at = CURRENT_TIMESTAMP,
-          attempts = attempts + 1
-      WHERE id = ? AND status = 'queued'
-    `, [job.id]);
-
-    if (!result || !result.changes) {
-      return null;
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const job = await getAsync(
+        "SELECT * FROM transcription_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+      );
+      if (!job) {
+        await runAsync('COMMIT');
+        return null;
+      }
+      const result = await runAsync(`
+        UPDATE transcription_jobs
+        SET status = 'running',
+            started_at = CURRENT_TIMESTAMP,
+            attempts = attempts + 1
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      await runAsync('COMMIT');
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
     }
-
-    return await this.getById(job.id);
   },
 
   async markRunning(id) {
@@ -621,72 +628,96 @@ const importJobsAsync = {
   },
 
   async claimNextQueuedSubmission() {
-    const job = await getAsync(`
-      SELECT * FROM import_jobs
-      WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'submit'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `);
-    if (!job) return null;
-
-    const result = await runAsyncWithoutSave(`
-      UPDATE import_jobs
-      SET status = 'running',
-          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-          completed_at = NULL,
-          error = NULL
-      WHERE id = ? AND status = 'queued'
-    `, [job.id]);
-    await saveDatabase();
-
-    if (!result || !result.changes) return null;
-    return await this.getById(job.id);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const job = await getAsync(`
+        SELECT * FROM import_jobs
+        WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'submit'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) {
+        await runAsync('COMMIT');
+        return null;
+      }
+      const result = await runAsyncWithoutSave(`
+        UPDATE import_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      await runAsync('COMMIT');
+      await saveDatabase();
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
+    }
   },
 
   async claimNextQueuedRender() {
-    const job = await getAsync(`
-      SELECT * FROM import_jobs
-      WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'render'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `);
-    if (!job) return null;
-
-    const result = await runAsyncWithoutSave(`
-      UPDATE import_jobs
-      SET status = 'processing',
-          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-          completed_at = NULL,
-          error = NULL
-      WHERE id = ? AND status = 'queued'
-    `, [job.id]);
-    await saveDatabase();
-
-    if (!result || !result.changes) return null;
-    return await this.getById(job.id);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const job = await getAsync(`
+        SELECT * FROM import_jobs
+        WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'render'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) {
+        await runAsync('COMMIT');
+        return null;
+      }
+      const result = await runAsyncWithoutSave(`
+        UPDATE import_jobs
+        SET status = 'processing',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      await runAsync('COMMIT');
+      await saveDatabase();
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
+    }
   },
 
   async claimNextQueuedGrouping() {
-    const job = await getAsync(`
-      SELECT * FROM import_jobs
-      WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'grouping'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `);
-    if (!job) return null;
-
-    const result = await runAsyncWithoutSave(`
-      UPDATE import_jobs
-      SET status = 'processing',
-          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-          completed_at = NULL,
-          error = NULL
-      WHERE id = ? AND status = 'queued'
-    `, [job.id]);
-    await saveDatabase();
-
-    if (!result || !result.changes) return null;
-    return await this.getById(job.id);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const job = await getAsync(`
+        SELECT * FROM import_jobs
+        WHERE status = 'queued' AND COALESCE(job_kind, 'render') = 'grouping'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) {
+        await runAsync('COMMIT');
+        return null;
+      }
+      const result = await runAsyncWithoutSave(`
+        UPDATE import_jobs
+        SET status = 'processing',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      await runAsync('COMMIT');
+      await saveDatabase();
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
+    }
   },
 
   async updateMachineId(id, machineId) {
@@ -977,25 +1008,34 @@ const extractionJobs = {
   },
 
   async claimNextQueued() {
-    const job = await getAsync(`
-      SELECT * FROM extraction_jobs
-      WHERE status = 'queued'
-      ORDER BY created_at ASC
-      LIMIT 1
-    `);
-    if (!job) return null;
-
-    const result = await runAsync(`
-      UPDATE extraction_jobs
-      SET status = 'running',
-          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-          completed_at = NULL,
-          error = NULL,
-          attempts = attempts + 1
-      WHERE id = ? AND status = 'queued'
-    `, [job.id]);
-    if (!result || !result.changes) return null;
-    return await this.getById(job.id);
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const job = await getAsync(`
+        SELECT * FROM extraction_jobs
+        WHERE status = 'queued'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) {
+        await runAsync('COMMIT');
+        return null;
+      }
+      const result = await runAsync(`
+        UPDATE extraction_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL,
+            attempts = attempts + 1
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      await runAsync('COMMIT');
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
+      throw err;
+    }
   },
 
   async getById(id) {
