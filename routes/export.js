@@ -111,15 +111,19 @@ router.post('/documents/bulk', express.json(), asyncHandler(async (req, res) => 
     if (!data) continue;
     const basename = sanitizeFilename(data.doc.title) + '_' + docId;
 
-    if (format === 'pdf' || format === 'both') {
-      const { generatePDF } = require('../utils/export-document');
-      const pdfBytes = await generatePDF(data.doc, data.transcript);
-      zipfile.addBuffer(Buffer.from(pdfBytes), basename + '.pdf');
-    }
-    if (format === 'tei' || format === 'both') {
-      const { generateTEI } = require('../utils/export-document');
-      const xml = generateTEI(data.doc, data.transcript);
-      zipfile.addBuffer(Buffer.from(xml, 'utf8'), basename + '.xml');
+    try {
+      if (format === 'pdf' || format === 'both') {
+        const { generatePDF } = require('../utils/export-document');
+        const pdfBytes = await generatePDF(data.doc, data.transcript);
+        zipfile.addBuffer(Buffer.from(pdfBytes), basename + '.pdf');
+      }
+      if (format === 'tei' || format === 'both') {
+        const { generateTEI } = require('../utils/export-document');
+        const xml = generateTEI(data.doc, data.transcript);
+        zipfile.addBuffer(Buffer.from(xml, 'utf8'), basename + '.xml');
+      }
+    } catch (err) {
+      console.error(`[export] Failed to generate ${format} for document ${docId}:`, err.message);
     }
   }
 
