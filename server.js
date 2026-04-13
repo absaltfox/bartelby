@@ -1,5 +1,7 @@
 const express = require('express');
 const path = require('path');
+const { finished } = require('stream/promises');
+const { Transform } = require('stream');
 const crypto = require('crypto');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
@@ -12,6 +14,7 @@ const { passport, locals } = require('./middleware/auth');
 const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
 const { resolveApplicationSettings } = require('./utils/application-settings');
 const { parseProxyTrust } = require('./utils/proxy-trust');
+const { userOrIpRateLimitKey } = require('./utils/rate-limit');
 const logger = require('./utils/logger');
 
 loadEnv();
@@ -50,6 +53,44 @@ function logBootWarn(message) {
   const rendered = `[boot +${formatBootElapsed(elapsedMs)}] ${message}`;
   console.warn(rendered);
   void logger.warn('boot', message, { elapsedMs }, { console: false });
+}
+
+function isMissingUploadError(err) {
+  return err?.code === 'UPLOAD_NOT_FOUND' || err?.code === 'INVALID_UPLOAD_URL';
+}
+
+async function streamUploadToResponse(stream, res) {
+  let started = false;
+  const marker = new Transform({
+    transform(chunk, encoding, callback) {
+      started = true;
+      callback(null, chunk);
+    }
+  });
+
+  const streamError = new Promise((resolve, reject) => {
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+    const cleanup = () => {
+      stream.off('error', onError);
+      marker.off('error', onError);
+    };
+    stream.once('error', onError);
+    marker.once('error', onError);
+  });
+
+  stream.pipe(marker).pipe(res);
+
+  try {
+    await Promise.race([finished(res), streamError]);
+  } catch (err) {
+    if ((started || res.headersSent) && !res.destroyed) {
+      res.destroy(err);
+    }
+    throw err;
+  }
 }
 
 function loadRouteModule(routePath, label, options = {}) {
@@ -298,6 +339,14 @@ function validateProductionConfiguration() {
       'PUBLIC_APP_URL must be configured in production so invite and password-reset links resolve correctly.'
     );
   }
+
+  const trustProxy = String(process.env.TRUST_PROXY || '').trim();
+  if (!trustProxy || trustProxy === '0') {
+    throw new Error(
+      'TRUST_PROXY must be set to a non-zero value in production. ' +
+      'Set TRUST_PROXY=1 when running behind Fly.io, nginx, or another TLS-terminating proxy.'
+    );
+  }
 }
 
 async function createSessionMiddleware() {
@@ -379,6 +428,19 @@ const generalLimiter = rateLimit({
 });
 app.use(generalLimiter);
 
+const authenticatedApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => userOrIpRateLimitKey(req, {
+    userPrefix: 'auth-api-user',
+    ipPrefix: 'auth-api-ip'
+  }),
+  skip: (req) => process.env.NODE_ENV !== 'production',
+  message: { error: 'Too many requests. Please try again later.' }
+});
+
 // ── View engine ────────────────────────────────────────────────────────────
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -434,12 +496,24 @@ app.get('/uploads/:filename', async (req, res) => {
       return res.status(403).end();
     }
 
-    const buffer = await storage.readUploadByUrl(uploadUrl);
+    const stream = await storage.streamUploadByUrl(uploadUrl);
     res.set('Content-Type', getUploadContentType(safeFilename));
     res.set('Cache-Control', 'private, max-age=86400');
-    return res.send(buffer);
+    await streamUploadToResponse(stream, res);
+    return;
   } catch (err) {
-    return res.status(404).end();
+    void logger.error('uploads', 'Protected upload streaming failed.', {
+      path: req.originalUrl,
+      userId: req.user ? req.user.id : null,
+      error: err?.stack || err?.message || String(err)
+    });
+    if (res.headersSent) {
+      return;
+    }
+    if (isMissingUploadError(err)) {
+      return res.status(404).end();
+    }
+    return res.status(500).end();
   }
 });
 
@@ -449,11 +523,11 @@ app.get('/uploads/:filename', async (req, res) => {
 app.use('/', loadRoute('./routes/auth', 'auth routes', { tier: 'core' }));
 app.use('/account', loadRoute('./routes/account', 'account routes', { tier: 'core' }));
 app.use('/', loadRoute('./routes/documents', 'document routes', { tier: 'core' }));
-app.use('/transcripts', loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
-app.use('/api/annotations', requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));
+app.use('/transcripts', authenticatedApiLimiter, loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
+app.use('/api/annotations', authenticatedApiLimiter, requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));
 app.use('/export', loadRoute('./routes/export', 'export routes', { tier: 'core' }));
 app.use('/search', loadRoute('./routes/search', 'search routes', { tier: 'core' }));
-app.use('/graph', loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
+app.use('/graph', authenticatedApiLimiter, loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
 app.use('/manage', registerDeferredRoute('./routes/manage', 'manage routes', { tier: 'management' })); // has its own requireAdminOrManager
 app.use('/admin', requireAdmin, registerDeferredRoute('./routes/admin', 'admin routes', { tier: 'admin' }));
 app.use('/admin/documents', registerDeferredRoute('./routes/admin-documents', 'admin document routes', { tier: 'admin' })); // has its own requireAdmin
