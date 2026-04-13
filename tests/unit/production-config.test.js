@@ -104,6 +104,9 @@ describe('validateProductionConfiguration', () => {
     process.env.NODE_ENV = 'test';
     delete process.env.TRUST_PROXY;
     delete process.env.PUBLIC_APP_URL;
+    delete process.env.SESSION_SECRET;
+    delete process.env.SESSION_STORE;
+    delete process.env.STORAGE_DRIVER;
     delete process.env.ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION;
     delete process.env.ALLOW_LOCAL_STORAGE_IN_PRODUCTION;
   });
