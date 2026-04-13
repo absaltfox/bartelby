@@ -205,7 +205,7 @@ router.post('/llm-settings', express.urlencoded({ extended: false }), saveLlmSet
 router.post('/application-settings', withCsrf(svgUpload.fields([
   { name: 'app_logo_svg_file', maxCount: 1 },
   { name: 'app_favicon_svg_file', maxCount: 1 }
-])), async (req, res) => {
+])), asyncHandler(async (req, res) => {
   try {
     const fields = [
       'app_name',
@@ -240,7 +240,7 @@ router.post('/application-settings', withCsrf(svgUpload.fields([
   } catch (err) {
     res.redirect('/admin/application-settings?error=' + encodeURIComponent(err.message));
   }
-});
+}));
 
 // Import page
 router.get('/import', asyncHandler(async (req, res) => {
