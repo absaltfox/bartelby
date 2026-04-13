@@ -767,6 +767,37 @@ const importJobsAsync = {
 
   async delete(id) {
     return await runAsync("DELETE FROM import_jobs WHERE id = ?", [id]);
+  },
+
+  async updateHeartbeat(id) {
+    await runAsyncWithoutSave(
+      'UPDATE import_jobs SET last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [id]
+    );
+    await saveDatabase();
+  },
+
+  async requeueStaleJobs() {
+    const thresholdMs = parseInt(process.env.WORKER_HEARTBEAT_TIMEOUT_MS, 10) || 300000;
+    const thresholdSeconds = Math.floor(thresholdMs / 1000);
+    const result = await runAsync(`
+      UPDATE import_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          last_heartbeat_at = NULL,
+          machine_id = NULL
+      WHERE status = 'processing'
+        AND machine_id IS NOT NULL
+        AND last_heartbeat_at IS NOT NULL
+        AND last_heartbeat_at < datetime('now', '-${thresholdSeconds} seconds')
+    `);
+    const count = result?.changes || 0;
+    if (count > 0) {
+      console.log(`[db] Requeued ${count} stale import job(s) with stale heartbeat`);
+    }
+    return count;
   }
 };
 

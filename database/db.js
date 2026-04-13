@@ -129,6 +129,11 @@ MIGRATIONS.push(`
   CREATE INDEX IF NOT EXISTS idx_citations_document_approval ON citations(document_id, approval_status);
 `);
 
+// v52 — heartbeat tracking for import jobs on ephemeral Fly machines
+MIGRATIONS.push(`
+  ALTER TABLE import_jobs ADD COLUMN last_heartbeat_at DATETIME
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -225,9 +230,6 @@ function saveDatabase() {
       resolve(); // resolve so fire-and-forget callers don't get unhandled rejections
     }
   }, 300);
-  if (typeof _saveTimer.unref === 'function') {
-    _saveTimer.unref();
-  }
   return _savePending;
 }
 
@@ -354,6 +356,36 @@ async function initializeSchema() {
   }
 
   if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0 || staleExtractionCount > 0) {
+    await saveDatabase();
+  }
+
+  // Recover stale Fly machine import jobs (heartbeat-based)
+  const thresholdMs = parseInt(process.env.WORKER_HEARTBEAT_TIMEOUT_MS, 10) || 300000;
+  const thresholdSeconds = Math.floor(thresholdMs / 1000);
+  const staleHeartbeatImports = await get(`
+    SELECT COUNT(*) as count
+    FROM import_jobs
+    WHERE status = 'processing'
+      AND machine_id IS NOT NULL
+      AND last_heartbeat_at IS NOT NULL
+      AND last_heartbeat_at < datetime('now', '-${thresholdSeconds} seconds')
+  `);
+  const staleHeartbeatCount = staleHeartbeatImports?.count || 0;
+  if (staleHeartbeatCount > 0) {
+    await db.run(`
+      UPDATE import_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          last_heartbeat_at = NULL,
+          machine_id = NULL
+      WHERE status = 'processing'
+        AND machine_id IS NOT NULL
+        AND last_heartbeat_at IS NOT NULL
+        AND last_heartbeat_at < datetime('now', '-${thresholdSeconds} seconds')
+    `);
+    console.log(`[db] Requeued ${staleHeartbeatCount} stale Fly import job(s) via heartbeat timeout`);
     await saveDatabase();
   }
 
