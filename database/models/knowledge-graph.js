@@ -1048,6 +1048,15 @@ function buildCitationQueryConditions(opts = {}, alias = 'c') {
   const clauses = [];
   const params = [];
 
+  // Document access filter — only applied when caller passes access opts
+  if (opts.userId !== undefined || opts.isAdmin || opts.accessAll) {
+    const access = buildAccessibleDocumentFilter(opts, `${alias}.document_id`);
+    if (access.clause !== '1=1') {
+      clauses.push(access.clause);
+      params.push(...access.params);
+    }
+  }
+
   if (opts.approvalStatus) {
     clauses.push(`${alias}.approval_status = ?`);
     params.push(opts.approvalStatus);

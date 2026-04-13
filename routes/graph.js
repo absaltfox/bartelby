@@ -147,7 +147,7 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
     stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
     stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
     stores.citations && stores.citations.getByEntityId
-      ? stores.citations.getByEntityId(id, { approvalStatus: 'approved', collectionId })
+      ? stores.citations.getByEntityId(id, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
       : []
   ]);
 
@@ -193,7 +193,7 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
     accessible.map((n) => n.relationship_id).filter((value) => Number.isInteger(value))
   ));
   const relationshipCitations = relationshipIds.length && stores.citations && stores.citations.getByRelationshipIds
-    ? await stores.citations.getByRelationshipIds(relationshipIds, { approvalStatus: 'approved', collectionId })
+    ? await stores.citations.getByRelationshipIds(relationshipIds, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
     : [];
   const firstExcerptByRelationship = new Map();
   for (const citation of relationshipCitations) {
@@ -231,7 +231,7 @@ router.get('/relationships/:id', asyncHandler(async (req, res) => {
     stores.entities && stores.entities.getById ? stores.entities.getById(relationship.source_entity_id) : null,
     stores.entities && stores.entities.getById ? stores.entities.getById(relationship.target_entity_id) : null,
     stores.citations && stores.citations.getByRelationshipId
-      ? stores.citations.getByRelationshipId(id, { approvalStatus: 'approved', collectionId: collectionFilterId(req) })
+      ? stores.citations.getByRelationshipId(id, { ...accessOpts(req), approvalStatus: 'approved', collectionId: collectionFilterId(req) })
       : []
   ]);
 
@@ -267,7 +267,7 @@ router.get('/search', asyncHandler(async (req, res) => {
 
   const entityIds = results.map(e => e.id);
   const allCitations = stores.citations && stores.citations.getByEntityIds
-    ? await stores.citations.getByEntityIds(entityIds, { approvalStatus: 'approved', collectionId })
+    ? await stores.citations.getByEntityIds(entityIds, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
     : [];
 
   const citationsByEntity = new Map();
@@ -317,7 +317,7 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
   const documentOverlap = new Map();
   for (const entityId of sourceEntityIds) {
     const entityCitations = stores.citations && typeof stores.citations.getByEntityId === 'function'
-      ? await stores.citations.getByEntityId(entityId, { approvalStatus: 'approved', collectionId })
+      ? await stores.citations.getByEntityId(entityId, { ...opts, approvalStatus: 'approved', collectionId })
       : [];
     for (const citation of entityCitations) {
       if (!citation.document_id || citation.document_id === docId) continue;
@@ -381,7 +381,7 @@ router.get('/entities/:id/documents', asyncHandler(async (req, res) => {
 
   const collectionId = req.query.collectionId ? parseInt(req.query.collectionId, 10) : null;
   const citations = stores.citations && typeof stores.citations.getByEntityId === 'function'
-    ? await stores.citations.getByEntityId(entityId, { approvalStatus: 'approved', collectionId })
+    ? await stores.citations.getByEntityId(entityId, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
     : [];
 
   const documentMap = new Map();
