@@ -5,11 +5,12 @@ const storage = require('../utils/storage');
 const { normalizeDocumentAssets, parseMetadata } = require('../utils/document-assets');
 const { documentsAsync, collectionsAsync, documentCollectionsAsync } = require('../database/db');
 const audit = require('../utils/audit-log');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
 // List all documents
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const collectionFilter = req.query.collection ? parseInt(req.query.collection) : null;
   const allowedPerPage = [25, 50, 75, 100];
@@ -55,12 +56,12 @@ router.get('/', async (req, res) => {
     queryError: req.query.error || null,
     queuedDocumentTitle: req.query.queuedDocumentTitle || null
   });
-});
+}));
 
 // ── Bulk routes (MUST be before /:id routes) ────────────────────────────────
 
 // Bulk delete documents (JSON API)
-router.post('/bulk/delete', express.json(), async (req, res) => {
+router.post('/bulk/delete', express.json(), asyncHandler(async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
   if (ids.length === 0) return res.status(400).json({ error: 'No document IDs provided' });
 
@@ -90,10 +91,10 @@ router.post('/bulk/delete', express.json(), async (req, res) => {
     deletedCount: deleted
   });
   res.json({ success: true, deleted });
-});
+}));
 
 // Bulk update collections (JSON API)
-router.post('/bulk/collections', express.json(), async (req, res) => {
+router.post('/bulk/collections', express.json(), asyncHandler(async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
   const collectionIds = Array.isArray(req.body.collectionIds)
     ? req.body.collectionIds.map(Number).filter(n => !isNaN(n))
@@ -115,12 +116,12 @@ router.post('/bulk/collections', express.json(), async (req, res) => {
     }
   }
   res.json({ success: true, updated: ids.length });
-});
+}));
 
 // ── Per-document routes ─────────────────────────────────────────────────────
 
 // Update document collections (JSON API)
-router.post('/:id/collections', express.json(), async (req, res) => {
+router.post('/:id/collections', express.json(), asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id);
   const doc = await documentsAsync.getById(docId);
   if (!doc) return res.status(404).json({ error: 'Not found' });
@@ -133,10 +134,10 @@ router.post('/:id/collections', express.json(), async (req, res) => {
 
   const updated = await documentCollectionsAsync.getByDocumentId(docId);
   res.json({ success: true, collections: updated });
-});
+}));
 
 // Delete document
-router.post('/:id/delete', async (req, res) => {
+router.post('/:id/delete', asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(parseInt(req.params.id));
   if (!doc) return res.redirect('/admin/documents?error=not_found');
 
@@ -157,6 +158,6 @@ router.post('/:id/delete', async (req, res) => {
     imagePath: doc.image_path || null
   });
   res.redirect('/admin/documents?deleted=1');
-});
+}));
 
 module.exports = router;

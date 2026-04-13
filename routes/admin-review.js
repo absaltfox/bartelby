@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -55,7 +56,7 @@ function appendQuery(params = {}) {
   return url.search;
 }
 
-router.get('/review-extractions', async (req, res) => {
+router.get('/review-extractions', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -113,9 +114,9 @@ router.get('/review-extractions', async (req, res) => {
     rejected: req.query.rejected || null,
     deleted: req.query.deleted || null
   });
-});
+}));
 
-router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
@@ -145,9 +146,9 @@ router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: fa
       error: err.message
     }));
   }
-});
+}));
 
-router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
@@ -177,9 +178,9 @@ router.post('/review-extractions/:id/reject', express.urlencoded({ extended: fal
       error: err.message
     }));
   }
-});
+}));
 
-router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
@@ -209,6 +210,6 @@ router.post('/review-extractions/:id/delete', express.urlencoded({ extended: fal
       error: err.message
     }));
   }
-});
+}));
 
 module.exports = router;

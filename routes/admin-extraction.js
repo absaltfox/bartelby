@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -72,13 +73,13 @@ async function loadExtractionJobs({ statusFilter, page }) {
   };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const query = new URLSearchParams(req.query || {});
   query.set('type', 'extraction');
   return res.redirect('/admin/jobs?' + query.toString());
-});
+}));
 
-router.post('/:id/retry', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/retry', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const store = extractionStore();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
@@ -95,9 +96,9 @@ router.post('/:id/retry', express.urlencoded({ extended: false }), async (req, r
   } catch (err) {
     return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent(err.message)));
   }
-});
+}));
 
-router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const store = extractionStore();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
@@ -114,6 +115,6 @@ router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, 
   } catch (err) {
     return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent(err.message)));
   }
-});
+}));
 
 module.exports = router;

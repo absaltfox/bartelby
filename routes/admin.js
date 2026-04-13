@@ -6,6 +6,7 @@ const { canEncryptSecrets } = require('../utils/secrets');
 const { documentsAsync, settingsAsync, collectionsAsync, usersAsync, importJobsAsync, saveDatabase, collectionAnalyticsAsync } = require('../database/db');
 const { resolveApplicationSettings, sanitizeSvgMarkup } = require('../utils/application-settings');
 const { withCsrf } = require('../middleware/upload');
+const { asyncHandler } = require('../utils/async-handler');
 
 const svgUpload = multer({
   storage: multer.memoryStorage(),
@@ -116,7 +117,7 @@ function getTopicsStatus(row) {
 }
 
 // Admin dashboard
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const docCount        = await documentsAsync.getCount({ isAdmin: true });
   const pendingCount    = (await usersAsync.getPending()).length;
   const collectionCount = (await collectionsAsync.getAll()).length;
@@ -130,14 +131,14 @@ router.get('/', async (req, res) => {
     collectionCount,
     userCount
   });
-});
+}));
 
 router.get('/settings', (req, res) => {
   res.redirect('/admin/llm-settings');
 });
 
 // LLM settings page
-router.get('/llm-settings', async (req, res) => {
+router.get('/llm-settings', asyncHandler(async (req, res) => {
   res.render('admin/settings', {
     pageTitle: 'LLM Settings',
     cfg: await settingsAsync.getAll(),
@@ -146,9 +147,9 @@ router.get('/llm-settings', async (req, res) => {
     error: req.query.error || null,
     hasEncryptionKey: canEncryptSecrets()
   });
-});
+}));
 
-router.get('/application-settings', async (req, res) => {
+router.get('/application-settings', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
   res.render('admin/application-settings', {
     pageTitle: 'Application Settings',
@@ -157,7 +158,7 @@ router.get('/application-settings', async (req, res) => {
     saved: req.query.saved === '1',
     error: req.query.error || null
   });
-});
+}));
 
 async function saveLlmSettings(req, res) {
   try {
@@ -242,7 +243,7 @@ router.post('/application-settings', withCsrf(svgUpload.fields([
 });
 
 // Import page
-router.get('/import', async (req, res) => {
+router.get('/import', asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
 
@@ -280,12 +281,12 @@ router.get('/import', async (req, res) => {
       autoGroupPages: false
     }
   });
-});
+}));
 
 // Mount shared import API routes
 router.use('/api', (req, res, next) => getImportApiRouter()(req, res, next));
 
-router.get('/analytics-settings', async (req, res) => {
+router.get('/analytics-settings', asyncHandler(async (req, res) => {
   const settings = await settingsAsync.getAll();
   const schedule = normalizeAnalyticsSchedule(settings);
   const [collections, latestStats] = await Promise.all([
@@ -322,9 +323,9 @@ router.get('/analytics-settings', async (req, res) => {
     flashMessage: req.session.flashMessage || null
   });
   delete req.session.flashMessage;
-});
+}));
 
-router.post('/analytics-settings', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/analytics-settings', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const { analytics_enabled, analytics_schedule_interval, analytics_schedule_day_of_week, analytics_schedule_time, analytics_change_threshold } = req.body;
   const normalized = normalizeAnalyticsSchedule({
     analytics_schedule_interval,
@@ -339,9 +340,9 @@ router.post('/analytics-settings', express.urlencoded({ extended: false }), asyn
   await saveDatabase();
   req.session.flashMessage = { type: 'success', text: 'Analytics settings saved.' };
   res.redirect('/admin/analytics-settings');
-});
+}));
 
-router.post('/analytics-settings/run/:collectionId', async (req, res) => {
+router.post('/analytics-settings/run/:collectionId', asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId, 10);
   if (isNaN(collectionId)) {
     req.session.flashMessage = { type: 'error', text: 'Invalid collection ID.' };
@@ -357,13 +358,13 @@ router.post('/analytics-settings/run/:collectionId', async (req, res) => {
     req.session.flashMessage = { type: 'error', text: `Analytics failed: ${err.message}` };
   }
   res.redirect('/admin/analytics-settings');
-});
+}));
 
-router.post('/analytics-settings/run-all', async (req, res) => {
+router.post('/analytics-settings/run-all', asyncHandler(async (req, res) => {
   const { runScheduledAnalytics } = require('../utils/analytics');
   runScheduledAnalytics().catch(err => console.error('[admin] run-all analytics error:', err));
   req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections. Topic analysis will continue in the background.' };
   res.redirect('/admin/analytics-settings');
-});
+}));
 
 module.exports = router;

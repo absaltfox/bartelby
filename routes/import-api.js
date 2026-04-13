@@ -34,6 +34,7 @@ const {
   saveDatabase, userApiKeysAsync, userCollectionAccessAsync
 } = require('../database/db');
 const { withCsrf } = require('../middleware/upload');
+const { asyncHandler } = require('../utils/async-handler');
 
 const MAX_TEMP_FILE_INPUTS = 5000;
 
@@ -67,7 +68,7 @@ const uploadFileMiddleware = (req, res, next) => {
   });
 };
 
-router.post('/upload', withCsrf(uploadFileMiddleware), async (req, res) => {
+router.post('/upload', withCsrf(uploadFileMiddleware), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   try {
@@ -116,10 +117,10 @@ router.post('/upload', withCsrf(uploadFileMiddleware), async (req, res) => {
     console.error('Upload queueing error:', err);
     res.status(err.statusCode || 500).json({ error: err.message || 'Upload failed' });
   }
-});
+}));
 
 // ── API: Poll import job status (DB-backed) ──────────────────────────────
-router.get('/import-job/:id', async (req, res) => {
+router.get('/import-job/:id', asyncHandler(async (req, res) => {
   const job = await importJobsAsync.getById(parseInt(req.params.id, 10));
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (req.user?.role !== 'admin' && job.user_id !== req.user?.id) {
@@ -140,10 +141,10 @@ router.get('/import-job/:id', async (req, res) => {
     pages,
     error: job.error || null
   });
-});
+}));
 
 // ── API: Serve temp page image ─────────────────────────────────────────────
-router.get('/temp-image/:filename', async (req, res) => {
+router.get('/temp-image/:filename', asyncHandler(async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
   const contentType = getTempImageContentType(filename);
 
@@ -161,10 +162,10 @@ router.get('/temp-image/:filename', async (req, res) => {
   }
 
   res.status(404).send('Not found');
-});
+}));
 
 // ── API: Transcribe a single image ─────────────────────────────────────────
-router.post('/transcribe', express.json(), async (req, res) => {
+router.post('/transcribe', express.json(), asyncHandler(async (req, res) => {
   const { tempFile, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
@@ -200,10 +201,10 @@ router.post('/transcribe', express.json(), async (req, res) => {
     console.error('Transcription error:', err);
     res.status(500).json({ error: 'Transcription failed' });
   }
-});
+}));
 
 // ── API: Save document ─────────────────────────────────────────────────────
-router.post('/save-document', express.json(), async (req, res) => {
+router.post('/save-document', express.json(), asyncHandler(async (req, res) => {
   const {
     tempFile, tempFiles, originalName, mimeType,
     title, dateCreated, description, metadata,
@@ -331,13 +332,13 @@ router.post('/save-document', express.json(), async (req, res) => {
     console.error('Save document error:', err);
     res.status(err.statusCode || 500).json({ error: err.message });
   }
-});
+}));
 
 // ── API: Bulk submit pages ─────────────────────────────────────────────────
 // Submit grouped pages as a durable background import job. The HTTP request
 // returns immediately, but the actual document creation/transcription queueing
 // is handled by the worker so it survives restarts and deploys.
-router.post('/submit-pages', express.json(), async (req, res) => {
+router.post('/submit-pages', express.json(), asyncHandler(async (req, res) => {
   const {
     groups,
     originalName,
@@ -406,10 +407,10 @@ router.post('/submit-pages', express.json(), async (req, res) => {
     console.error('Bulk submit error:', err);
     res.status(err.statusCode || 500).json({ error: err.message });
   }
-});
+}));
 
 // ── API: Persist current grouping state for a resumable import job ─────────
-router.post('/groupings', express.json(), async (req, res) => {
+router.post('/groupings', express.json(), asyncHandler(async (req, res) => {
   const importJobId = parseInt(req.body.importJobId, 10);
   if (!Number.isInteger(importJobId)) {
     return res.status(400).json({ error: 'Missing import job ID.' });
@@ -433,14 +434,14 @@ router.post('/groupings', express.json(), async (req, res) => {
     console.error('Persist grouping state error:', err);
     res.status(500).json({ error: 'Failed to save grouping state' });
   }
-});
+}));
 
 // ── API: AI-suggested page groupings ──────────────────────────────────────
 // Crops the top ~15% of each page image (where archival numbers typically
 // appear), then sends the tiny strips to the cheapest available vision model
 // in batches. This keeps cost minimal — a 600-page PDF produces ~12 API calls
 // with small image payloads instead of 600 full-image calls.
-router.post('/suggest-groups', express.json(), async (req, res) => {
+router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => {
   const { tempFiles } = req.body;
   if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
     return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
@@ -470,10 +471,10 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
     console.error('Suggest groups queueing error:', err);
     res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to queue grouping suggestions' });
   }
-});
+}));
 
 // ── API: Cancel/cleanup temp files ─────────────────────────────────────────
-router.post('/cancel-import', express.json(), async (req, res) => {
+router.post('/cancel-import', express.json(), asyncHandler(async (req, res) => {
   const { tempFile, tempFiles, importJobId } = req.body;
   const parsedImportJobId = parseInt(importJobId, 10);
   const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
@@ -488,7 +489,7 @@ router.post('/cancel-import', express.json(), async (req, res) => {
     console.error('Failed to clean up temp files:', err);
     res.status(500).json({ error: 'Failed to clean up temporary files' });
   }
-});
+}));
 
 // Export router and the attachTempPreview helper (used by import page routes)
 router.attachTempPreview = attachTempPreview;

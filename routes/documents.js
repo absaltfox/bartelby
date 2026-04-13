@@ -4,6 +4,7 @@ const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
+const { asyncHandler } = require('../utils/async-handler');
 
 // Allow unauthenticated visitors for world-public collections
 router.use(optionalAuth);
@@ -87,7 +88,7 @@ function parseMultiValueFilter(value) {
 }
 
 // ── Collections landing page ────────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const user = req.user;
   const opts = {
     userId: user ? user.id : null,
@@ -125,10 +126,10 @@ router.get('/', async (req, res) => {
     uncollectedCount,
     isAdmin: opts.isAdmin
   });
-});
+}));
 
 // ── Document list for a specific collection ──────────────────────────────────
-router.get('/collections/:id', async (req, res) => {
+router.get('/collections/:id', asyncHandler(async (req, res) => {
   const collectionId = req.params.id;
 
   // Special routes
@@ -257,10 +258,10 @@ router.get('/collections/:id', async (req, res) => {
     currentListUrl: req.originalUrl,
     allowExport: collection && collection.allow_export ? true : false
   });
-});
+}));
 
 // ── Collection analytics view ─────────────────────────────────────────────────
-router.get('/collections/:id/analytics', async (req, res) => {
+router.get('/collections/:id/analytics', asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', error: {} });
 
@@ -300,10 +301,10 @@ router.get('/collections/:id/analytics', async (req, res) => {
     currentUser: req.user || null,
     csrfToken: req.csrfToken ? req.csrfToken() : ''
   });
-});
+}));
 
 // ── Collection graph view ───────────────────────────────────────────────────
-router.get('/collections/:id/graph', async (req, res) => {
+router.get('/collections/:id/graph', asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   if (isNaN(collectionId)) return res.status(404).render('error', { message: 'Not found', error: {} });
 
@@ -338,10 +339,10 @@ router.get('/collections/:id/graph', async (req, res) => {
     entityId: req.query.entity || '',
     currentUser: req.user || null
   });
-});
+}));
 
 // ── Document detail view ─────────────────────────────────────────────────────
-router.get('/documents/:id', async (req, res) => {
+router.get('/documents/:id', asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);
 
   if (!doc) {
@@ -438,10 +439,10 @@ router.get('/documents/:id', async (req, res) => {
     exportEnabledCollections,
     comparisonPages
   });
-});
+}));
 
 // ── Document metadata editing ─────────────────────────────────────────────────
-router.post('/documents/:id/metadata', requireDocumentRole('editor'), async (req, res) => {
+router.post('/documents/:id/metadata', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 
@@ -511,10 +512,10 @@ router.post('/documents/:id/metadata', requireDocumentRole('editor'), async (req
     ? requestedBack
     : `/documents/${doc.id}`;
   res.redirect(back);
-});
+}));
 
 // ── Transcript management ─────────────────────────────────────────────────────
-router.post('/documents/:id/transcripts', requireDocumentRole('editor'), async (req, res) => {
+router.post('/documents/:id/transcripts', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 
@@ -547,9 +548,9 @@ router.post('/documents/:id/transcripts', requireDocumentRole('editor'), async (
   });
 
   res.redirect(`/documents/${doc.id}?transcript=${newId}`);
-});
+}));
 
-router.post('/documents/:id/transcripts/:transcriptId/content', requireDocumentRole('editor'), async (req, res) => {
+router.post('/documents/:id/transcripts/:transcriptId/content', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const transcript = await transcriptsAsync.getById(req.params.transcriptId);
   if (!transcript || transcript.document_id !== parseInt(req.params.id)) {
     return res.status(404).json({ error: 'Transcript not found' });
@@ -579,9 +580,9 @@ router.post('/documents/:id/transcripts/:transcriptId/content', requireDocumentR
   });
 
   res.json({ ok: true });
-});
+}));
 
-router.post('/documents/:id/transcripts/:transcriptId/notes', requireDocumentRole('editor'), async (req, res) => {
+router.post('/documents/:id/transcripts/:transcriptId/notes', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const transcript = await transcriptsAsync.getById(req.params.transcriptId);
   if (!transcript || transcript.document_id !== parseInt(req.params.id)) {
     return res.status(404).json({ error: 'Transcript not found' });
@@ -592,9 +593,9 @@ router.post('/documents/:id/transcripts/:transcriptId/notes', requireDocumentRol
   }
   await transcriptsAsync.updateNotes(transcript.id, req.body.notes || '');
   res.json({ ok: true });
-});
+}));
 
-router.post('/documents/:id/transcripts/:transcriptId/best', requireDocumentRole('manager'), async (req, res) => {
+router.post('/documents/:id/transcripts/:transcriptId/best', requireDocumentRole('manager'), asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id);
   const transcriptId = parseInt(req.params.transcriptId);
   const transcript = await transcriptsAsync.getById(transcriptId);
@@ -609,9 +610,9 @@ router.post('/documents/:id/transcripts/:transcriptId/best', requireDocumentRole
   });
 
   res.redirect(`/documents/${docId}?transcript=${transcriptId}`);
-});
+}));
 
-router.post('/documents/:id/transcripts/:transcriptId/delete', requireDocumentRole('manager'), async (req, res) => {
+router.post('/documents/:id/transcripts/:transcriptId/delete', requireDocumentRole('manager'), asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id);
   const transcript = await transcriptsAsync.getById(req.params.transcriptId);
   if (!transcript || transcript.document_id !== docId) {
@@ -634,17 +635,17 @@ router.post('/documents/:id/transcripts/:transcriptId/delete', requireDocumentRo
 
   await transcriptsAsync.delete(transcript.id);
   res.redirect(`/documents/${docId}`);
-});
+}));
 
 // ── AI transcription for existing document ───────────────────────────────────
-router.get('/documents/:id/transcription-options', requireDocumentRole('editor'), async (req, res) => {
+router.get('/documents/:id/transcription-options', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
   const defaultProvider = await settingsAsync.get('default_provider');
   res.json({ providerOptions, defaultProvider: defaultProvider || 'openai' });
-});
+}));
 
-router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), async (req, res) => {
+router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 
@@ -704,10 +705,10 @@ router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), asyn
     console.error('Error queuing AI transcription:', err);
     res.status(400).json({ error: err.message || 'Failed to queue transcription' });
   }
-});
+}));
 
 // ── Document history (API) ───────────────────────────────────────────────────
-router.get('/documents/:id/history', async (req, res) => {
+router.get('/documents/:id/history', asyncHandler(async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ error: 'Authentication required' });
 
   const doc = await documentsAsync.getById(req.params.id);
@@ -735,6 +736,6 @@ router.get('/documents/:id/history', async (req, res) => {
     page,
     totalPages: Math.ceil(totalCount / limit)
   });
-});
+}));
 
 module.exports = router;

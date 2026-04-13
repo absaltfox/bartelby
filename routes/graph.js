@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAuth, requireAuthApi } = require('../middleware/auth');
 const db = require('../database/db');
 const { documentsAsync, userCollectionAccessAsync, citationsAsync } = require('../database/db');
+const { asyncHandler } = require('../utils/async-handler');
 
 function graphStores() {
   return {
@@ -63,7 +64,7 @@ router.get('/', requireAuth, (req, res) => {
 
 router.use(requireAuthApi);
 
-router.get('/entities', async (req, res) => {
+router.get('/entities', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || !stores.graphAccess) {
     return graphNotReady(res);
@@ -123,9 +124,9 @@ router.get('/entities', async (req, res) => {
   }
 
   return res.json({ entities: rows, limit, offset });
-});
+}));
 
-router.get('/entities/:id', async (req, res) => {
+router.get('/entities/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || !stores.graphAccess) {
     return graphNotReady(res);
@@ -151,9 +152,9 @@ router.get('/entities/:id', async (req, res) => {
   ]);
 
   return res.json({ entity, aliases: aliases || [], dates: dates || [], citations: citations || [] });
-});
+}));
 
-router.get('/entities/:id/neighbors', async (req, res) => {
+router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || !stores.graphAccess) {
     return graphNotReady(res);
@@ -207,9 +208,9 @@ router.get('/entities/:id/neighbors', async (req, res) => {
   }));
 
   return res.json({ entity, neighbors: enrichedNeighbors, depth });
-});
+}));
 
-router.get('/relationships/:id', async (req, res) => {
+router.get('/relationships/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.relationships || !stores.graphAccess) {
     return graphNotReady(res);
@@ -244,9 +245,9 @@ router.get('/relationships/:id', async (req, res) => {
     targetEntity,
     citations: citations || []
   });
-});
+}));
 
-router.get('/search', async (req, res) => {
+router.get('/search', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.graphAccess) {
     return graphNotReady(res);
@@ -286,9 +287,9 @@ router.get('/search', async (req, res) => {
   });
 
   return res.json({ query: q, results: enriched });
-});
+}));
 
-router.get('/documents/:id/related', async (req, res) => {
+router.get('/documents/:id/related', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.citations) return graphNotReady(res);
 
@@ -367,9 +368,9 @@ router.get('/documents/:id/related', async (req, res) => {
   }));
 
   return res.json({ documentId: docId, related: enriched });
-});
+}));
 
-router.get('/entities/:id/documents', async (req, res) => {
+router.get('/entities/:id/documents', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.citations || !stores.entities) return graphNotReady(res);
 
@@ -407,9 +408,9 @@ router.get('/entities/:id/documents', async (req, res) => {
 
   const documents = Array.from(documentMap.values()).sort((a, b) => b.citationCount - a.citationCount);
   return res.json({ entityId, documents });
-});
+}));
 
-router.get('/documents/:id/entities', async (req, res) => {
+router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || !stores.graphAccess) {
     return graphNotReady(res);
@@ -473,9 +474,9 @@ router.get('/documents/:id/entities', async (req, res) => {
     relationships: enrichedRelationships,
     pendingCount
   });
-});
+}));
 
-router.post('/documents/:id/entities/:entityId/reject', async (req, res) => {
+router.post('/documents/:id/entities/:entityId/reject', asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id, 10);
   const entityId = parseInt(req.params.entityId, 10);
   if (!Number.isInteger(docId) || !Number.isInteger(entityId)) {
@@ -488,9 +489,9 @@ router.post('/documents/:id/entities/:entityId/reject', async (req, res) => {
 
   const count = await citationsAsync.rejectByDocumentEntity(docId, entityId, req.user.id);
   return res.json({ ok: true, updated: count });
-});
+}));
 
-router.post('/documents/:id/relationships/:relationshipId/reject', async (req, res) => {
+router.post('/documents/:id/relationships/:relationshipId/reject', asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id, 10);
   const relationshipId = parseInt(req.params.relationshipId, 10);
   if (!Number.isInteger(docId) || !Number.isInteger(relationshipId)) {
@@ -503,9 +504,9 @@ router.post('/documents/:id/relationships/:relationshipId/reject', async (req, r
 
   const count = await citationsAsync.rejectByDocumentRelationship(docId, relationshipId, req.user.id);
   return res.json({ ok: true, updated: count });
-});
+}));
 
-router.get('/timeline', async (req, res) => {
+router.get('/timeline', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.dateExpressions || !stores.graphAccess) {
     return graphNotReady(res);
@@ -531,6 +532,6 @@ router.get('/timeline', async (req, res) => {
   }
 
   return res.json({ from, to, results: ordered, userId, isAdmin, accessAll });
-});
+}));
 
 module.exports = router;

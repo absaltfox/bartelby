@@ -10,6 +10,7 @@ const {
 } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeDocumentAssets } = require('../utils/document-assets');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAuth);
 
@@ -41,7 +42,7 @@ function sanitizeFilename(title) {
 }
 
 // ── Single document PDF export ──────────────────────────────────────────────
-router.get('/documents/:id/pdf', async (req, res) => {
+router.get('/documents/:id/pdf', asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id);
   if (!(await canExport(docId, req.user.id, req.user))) {
     return res.status(403).render('error', { message: 'Export is not enabled for this document.', error: {} });
@@ -60,10 +61,10 @@ router.get('/documents/:id/pdf', async (req, res) => {
     'Content-Length': pdfBytes.length
   });
   res.send(Buffer.from(pdfBytes));
-});
+}));
 
 // ── Single document TEI export ──────────────────────────────────────────────
-router.get('/documents/:id/tei', async (req, res) => {
+router.get('/documents/:id/tei', asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id);
   if (!(await canExport(docId, req.user.id, req.user))) {
     return res.status(403).render('error', { message: 'Export is not enabled for this document.', error: {} });
@@ -82,10 +83,10 @@ router.get('/documents/:id/tei', async (req, res) => {
     'Content-Length': Buffer.byteLength(xml, 'utf8')
   });
   res.send(xml);
-});
+}));
 
 // ── Bulk export (ZIP containing PDFs and/or TEIs) ───────────────────────────
-router.post('/documents/bulk', express.json(), async (req, res) => {
+router.post('/documents/bulk', express.json(), asyncHandler(async (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
   const format = req.body.format || 'pdf'; // 'pdf', 'tei', or 'both'
 
@@ -129,6 +130,6 @@ router.post('/documents/bulk', express.json(), async (req, res) => {
     'Content-Disposition': 'attachment; filename="export.zip"'
   });
   zipfile.outputStream.pipe(res);
-});
+}));
 
 module.exports = router;

@@ -3,6 +3,7 @@ const router = express.Router();
 const { transcriptsAsync, documentsAsync, collectionsAsync, userCollectionAccessAsync, graphAccess, citations } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAuth);
 
@@ -27,7 +28,7 @@ async function getAccessibleCollections(req, opts) {
   return all.filter(collection => collection.is_public || accessIds.includes(collection.id));
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const query = req.query.q || '';
   let results = [];
   let entityResults = [];
@@ -66,9 +67,9 @@ router.get('/', async (req, res) => {
   }
 
   res.render('search', { query, results, resultCount: results.length, entityResults });
-});
+}));
 
-router.get('/advanced', async (req, res) => {
+router.get('/advanced', asyncHandler(async (req, res) => {
   const opts = getSearchOpts(req);
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = 25;
@@ -134,6 +135,6 @@ router.get('/advanced', async (req, res) => {
     authors: normalizeFacetValues(rawAuthors),
     dateRange
   });
-});
+}));
 
 module.exports = router;
