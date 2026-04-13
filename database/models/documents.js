@@ -955,8 +955,10 @@ const transcriptsAsync = {
   },
 
   async setBest(transcriptId, documentId) {
-    await runAsync('UPDATE transcripts SET is_best = 0 WHERE document_id = ?', [documentId]);
-    await runAsync('UPDATE transcripts SET is_best = 1 WHERE id = ? AND document_id = ?', [transcriptId, documentId]);
+    await runAsync(
+      'UPDATE transcripts SET is_best = (id = ?) WHERE document_id = ?',
+      [transcriptId, documentId]
+    );
   },
 
   async updateContent(id, content) {
