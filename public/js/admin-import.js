@@ -435,10 +435,14 @@ document.addEventListener('DOMContentLoaded', function() {
     if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
   });
 
-  uploadArea.addEventListener('click', () => fileInput.click());
+  uploadArea.addEventListener('click', (e) => {
+    if (e.target === fileInput) return; // ignore the bubbled synthetic click from fileInput.click()
+    fileInput.click();
+  });
 
   uploadArea.addEventListener('dragover', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     uploadArea.classList.add('drag-over');
   });
 
@@ -448,6 +452,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   uploadArea.addEventListener('drop', (e) => {
     e.preventDefault();
+    e.stopPropagation(); // prevent document-level handler from also calling handleFile
     uploadArea.classList.remove('drag-over');
     if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
   });
