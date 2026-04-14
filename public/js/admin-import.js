@@ -1182,16 +1182,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // ── Error Handling ────────────────────────────────────────────────
 
-  window.showError = function(message) {
+  function showError(message) {
     const errorBanner = document.getElementById('error-message');
     const errorText   = document.getElementById('error-text');
     errorText.textContent = message;
     errorBanner.classList.remove('is-hidden');
-  };
+  }
 
-  window.hideError = function() {
+  function hideError() {
     document.getElementById('error-message').classList.add('is-hidden');
-  };
+  }
+
+  // Expose for external callers (e.g. inline event handlers in templates).
+  window.showError = showError;
+  window.hideError = hideError;
 
   // ── Resume from Import Job ───────────────────────────────────────
   // If we arrived via "Continue" from Jobs tab, load pages directly into the page manager
