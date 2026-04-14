@@ -91,7 +91,10 @@ router.post('/:id/retry', express.urlencoded({ extended: false }), asyncHandler(
   }
 
   try {
-    await store.retry(id);
+    const result = await store.retry(id);
+    if (!result?.changes) {
+      return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent('Job is not in a failed state and cannot be retried.')));
+    }
     return res.redirect(knowledgePath('/extraction-jobs?retried=1'));
   } catch (err) {
     return res.redirect(knowledgePath('/extraction-jobs?error=' + encodeURIComponent(err.message)));

@@ -100,14 +100,13 @@ async function materializeExtractionResult({
   relationshipTypes,
   graphMaintenance
 }) {
+  // Staged reset: collect pre-existing citation IDs BEFORE writing new data so
+  // the transcript always has graph coverage. After the write loop succeeds,
+  // the old citations are removed. A crash between write and cleanup is safe —
+  // the next retry (with reset_existing) will find and remove the stale IDs.
+  let preExistingCitationIds = [];
   if (resetExisting) {
-    const resetSummary = await graphMaintenance.resetTranscriptExtraction(transcript.id);
-    await logLine(
-      `Cleared prior extraction artifacts for transcript ${transcript.id}: `
-        + `${resetSummary.deletedCitations} citations, `
-        + `${resetSummary.deletedRelationships} relationships, `
-        + `${resetSummary.deletedEntities} orphaned entities`
-    );
+    preExistingCitationIds = await graphMaintenance.getPreExistingCitationIds(transcript.id);
   }
 
   const { resolveEntity } = require('./entity-resolution');
@@ -274,6 +273,20 @@ async function materializeExtractionResult({
     }
   }
 
+  // Post-write cleanup: now that new extraction data has been committed,
+  // remove the pre-existing citations that were staged for deletion.
+  if (resetExisting && preExistingCitationIds.length > 0) {
+    const resetSummary = await graphMaintenance.resetCitationsById(preExistingCitationIds);
+    await logLine(
+      `Replaced prior extraction artifacts for transcript ${transcript.id}: `
+        + `${resetSummary.deletedCitations} citations, `
+        + `${resetSummary.deletedRelationships} relationships, `
+        + `${resetSummary.deletedEntities} orphaned entities`
+    );
+  } else if (resetExisting) {
+    await logLine(`No prior extraction artifacts found for transcript ${transcript.id}.`);
+  }
+
   if (job.job_kind !== 'batch') {
     await extractionJobs.markDone(job.id, {
       entity_count: entityCount,
@@ -289,6 +302,15 @@ async function processExtractionBatchSubmission(job, logLine) {
   const { runtimeConfig } = await resolveRuntimeConfig(job, logLine);
   const { submitExtractionBatch } = require('./extraction-batches');
   await logLine(`Submitting extraction batch for ${job.batch_document_count || 0} document(s)`);
+
+  // Persist submission intent BEFORE calling the provider. If the process
+  // crashes after the provider call but before the real remote ID is written,
+  // the 'pending' sentinel signals the batch may already exist remotely.
+  await extractionJobs.updateBatchRemote(job.id, {
+    remoteId: 'pending',
+    remoteStatus: 'submitting'
+  });
+
   const submission = await submitExtractionBatch(job, runtimeConfig);
   await extractionJobs.updateBatchRemote(job.id, {
     remoteId: submission.remoteId,
@@ -393,7 +415,7 @@ async function pollRunningExtractionBatches() {
   const jobs = await extractionJobs.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id) continue;
+    if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
     const logLine = makeExtractionLogger(job, extractionJobs);
 
     try {

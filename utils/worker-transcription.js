@@ -100,6 +100,16 @@ async function processBatchSubmission(job, logLine) {
   const { submitTranscriptionBatch } = require('./transcription-batches');
 
   await logLine(`Submitting provider batch for ${job.batch_document_count || 0} document(s) / ${job.batch_page_count || 0} page request(s)`);
+
+  // Persist submission intent BEFORE calling the provider. If the process
+  // crashes after the provider call but before the real remote ID is written,
+  // the 'pending' sentinel signals that the batch may already exist remotely
+  // and must be reconciled rather than re-submitted blindly.
+  await transcriptionJobsAsync.updateBatchRemote(job.id, {
+    remoteId: 'pending',
+    remoteStatus: 'submitting'
+  });
+
   const submission = await submitTranscriptionBatch(job, runtimeConfig);
   await transcriptionJobsAsync.updateBatchRemote(job.id, {
     remoteId: submission.remoteId,
@@ -254,7 +264,7 @@ async function pollRunningTranscriptionBatches() {
   const jobs = await transcriptionJobsAsync.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id) continue;
+    if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
     const logLine = makeJobLogger(job, transcriptionJobsAsync);
 
     try {

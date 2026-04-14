@@ -650,7 +650,7 @@ async function start() {
     });
 
     // ── Graceful shutdown (fly.io sends SIGTERM on deploy) ──────────────
-    const { saveDatabase } = require('./database/db');
+    const { saveDatabase, flushDatabase } = require('./database/db');
 
     async function shutdown(signal) {
       void logger.warn('shutdown', `${signal} received — shutting down gracefully.`);
@@ -658,7 +658,11 @@ async function start() {
       server.close(async () => {
         try {
           if (redisClient) await redisClient.quit().catch(() => {});
-          await saveDatabase();
+          // Use flushDatabase() (not saveDatabase()) so the persist is immediate
+          // and bypasses the 300 ms debounce.  Any writes still in-flight when
+          // server.close() fires are already committed to the DB driver; this
+          // call ensures they reach disk before process.exit(0).
+          await flushDatabase();
         } catch (err) {
           void logger.error('shutdown', 'Shutdown cleanup error.', { error: err.message });
         }

@@ -4,6 +4,36 @@ const path = require('path');
 const fs = require('fs');
 
 /**
+ * Analytics orchestration module.
+ *
+ * ## Architecture overview
+ *
+ * A full analytics run is two-phased:
+ *
+ *   1. Stats snapshot — synchronous DB queries compute per-collection document
+ *      counts, storage bytes, confidence averages, etc. and write a row to
+ *      `collection_analytics`.  This is fast and runs inline.
+ *
+ *   2. BERTopic dispatch — if the collection has >= 5 transcribed documents,
+ *      topic modelling is dispatched.  On Fly.io with S3 storage the work is
+ *      offloaded to an ephemeral Fly Machine (high RAM, isolated).  Locally it
+ *      spawns a detached Node child that in turn runs the Python BERTopic
+ *      script via a temp JSON file exchange.  Either way the main process
+ *      returns immediately after dispatching.
+ *
+ * ## Concurrency lock
+ *
+ * `_analyticsRunning` is a module-level flag that serialises full scheduled
+ * runs (`runScheduledAnalytics`).  It is intentionally *not* applied to
+ * `runAnalyticsForCollection`, which the admin UI calls per-collection and
+ * which is already serialised by the single admin acting in the browser.
+ *
+ * Both the background worker (`utils/worker.js`) and the admin "run-all"
+ * route import `isAnalyticsRunning()` / `runScheduledAnalytics()` from here
+ * so the lock is always shared from one authoritative location.
+ */
+
+/**
  * Count [illegible] and [unclear: ...] markers in a transcript.
  * These represent words the model could not confidently read.
  */
@@ -223,9 +253,30 @@ async function shouldRunAnalytics(collectionId) {
   return lastRun.getTime() < boundary.getTime();
 }
 
+// ── Module-level concurrency lock ──────────────────────────────────────────
+//
+// Prevents overlapping full-collection scheduled analytics runs.  The lock is
+// exported so external callers (admin route, worker) can inspect it without
+// owning it.
+
+let _analyticsRunning = false;
+
+/** Returns true if a full scheduled analytics run is currently in progress. */
+function isAnalyticsRunning() {
+  return _analyticsRunning;
+}
+
+// ── BERTopic dispatch helpers ────────────────────────────────────────────────
+
 const { spawn } = require('child_process');
 const os = require('os');
 
+/**
+ * Spawn a detached local Node child process that runs the BERTopic worker
+ * script (`utils/bertopic-worker.js`).  The child is fully detached so it
+ * survives a main-process restart.  Communication is via environment variables
+ * and a pair of temp JSON files written by the parent and read by the child.
+ */
 function queueLocalBertopicWorker(collectionId, analyticsRowId) {
   const workerPath = path.join(__dirname, 'bertopic-worker.js');
   const child = spawn(process.execPath, [workerPath], {
@@ -242,6 +293,23 @@ function queueLocalBertopicWorker(collectionId, analyticsRowId) {
   child.unref();
 }
 
+/**
+ * Run BERTopic topic-modelling for a collection synchronously (blocking until
+ * the Python process exits and results are written to the DB).
+ *
+ * Decision logic:
+ *   - Fly Machines enabled AND S3 storage -> dispatch to ephemeral machine.
+ *   - Otherwise -> spawn Python directly in the current environment.
+ *
+ * Embeddings reuse: existing document embeddings are read from the DB and
+ * passed to the Python script as `existing_embeddings`.  The script only
+ * recomputes embeddings for documents missing from the map, saving
+ * significant API/compute cost on incremental runs.
+ *
+ * @returns {Promise<boolean|'dispatched'>} true if topics were computed,
+ *   false if skipped (< 5 docs), or 'dispatched' when offloaded to a
+ *   Fly Machine (results arrive asynchronously).
+ */
 async function runBertopicAnalysis(collectionId) {
   const cfg = require('../config');
   const { canLaunchEphemeralBertopicWorker } = require('./fly-machines');
@@ -390,14 +458,36 @@ async function runAnalyticsForCollection(collectionId) {
   return { ...stats, id: analyticsRowId, topics_computed: false };
 }
 
+/**
+ * Run analytics for every collection that needs it, honouring the global
+ * concurrency lock so only one full sweep runs at a time.
+ *
+ * Call sites:
+ *   - `utils/worker.js` scheduled interval (every 15 min)
+ *   - `routes/admin.js` POST /analytics-settings/run-all (manual admin trigger)
+ *
+ * Both call sites must import this function from here so the shared
+ * `_analyticsRunning` flag is always authoritative.
+ */
 async function runScheduledAnalytics() {
-  const collections = await allAsync(`SELECT id FROM collections`);
-  for (const col of collections) {
-    if (await shouldRunAnalytics(col.id)) {
-      await runAnalyticsForCollection(col.id).catch(err => {
-        console.error(`[analytics] error for collection ${col.id}:`, err.message);
-      });
+  // Enforce global concurrency: refuse a second sweep if one is already running.
+  // This prevents double-click or concurrent admin triggers from stacking up.
+  if (_analyticsRunning) {
+    console.log('[analytics] runScheduledAnalytics: already running, skipping duplicate invocation');
+    return;
+  }
+  _analyticsRunning = true;
+  try {
+    const collections = await allAsync(`SELECT id FROM collections`);
+    for (const col of collections) {
+      if (await shouldRunAnalytics(col.id)) {
+        await runAnalyticsForCollection(col.id).catch(err => {
+          console.error(`[analytics] error for collection ${col.id}:`, err.message);
+        });
+      }
     }
+  } finally {
+    _analyticsRunning = false;
   }
 }
 
@@ -411,5 +501,6 @@ module.exports = {
   getScheduleIntervalMs,
   runBertopicAnalysis,
   runAnalyticsForCollection,
-  runScheduledAnalytics
+  runScheduledAnalytics,
+  isAnalyticsRunning
 };

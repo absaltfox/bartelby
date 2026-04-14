@@ -20,6 +20,8 @@ Then read the subsystem-specific docs that match the task:
   [docs/ui-template-standards.md](./docs/ui-template-standards.md)
 - Knowledge graph extraction, approval, review, entities, and graph explorer:
   [docs/knowledge-graph-design.md](./docs/knowledge-graph-design.md)
+- Background jobs, worker loop, analytics scheduler, SQLite queue model:
+  [docs/background-jobs.md](./docs/background-jobs.md)
 - Deployment, Docker, Fly, Turso, and S3 expectations:
   [DEPLOY.md](./DEPLOY.md)
 
@@ -69,6 +71,27 @@ you must follow
 [docs/knowledge-graph-design.md](./docs/knowledge-graph-design.md) and ensure
 that any workflow changes remain consistent with
 [docs/development-principles.md](./docs/development-principles.md).
+
+## Background Job Work
+
+If a task touches:
+
+- `utils/worker.js`
+- `utils/worker-transcription.js` or `utils/worker-extraction.js`
+- `utils/analytics.js`
+- `utils/bertopic-worker.js`
+- any `database/models/*.js` job table (transcription_jobs, extraction_jobs,
+  import_jobs, collection_analytics)
+
+you must follow [docs/background-jobs.md](./docs/background-jobs.md).
+
+In particular:
+
+- always use a module-level concurrency guard (busy flag) on new ticks
+- persist the analytics concurrency lock in `utils/analytics.js`, never locally
+  in call sites
+- add stale-job recovery to `initializeSchema()` for any new job table
+- register new job families in this document
 
 ## Documentation Rule
 

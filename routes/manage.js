@@ -387,12 +387,16 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
       try {
         groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;
       } catch (err) {}
-      resumeJob = {
-        id: job.id,
-        originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(getImportApiRouter().attachTempPreview),
-        groupingState
-      };
+      let parsedPages = null;
+      try { parsedPages = JSON.parse(job.pages); } catch (err) {}
+      if (Array.isArray(parsedPages)) {
+        resumeJob = {
+          id: job.id,
+          originalName: job.original_name,
+          pages: parsedPages.map(getImportApiRouter().attachTempPreview),
+          groupingState
+        };
+      }
     }
   }
 

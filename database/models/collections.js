@@ -46,7 +46,7 @@ const collections = {
       LEFT JOIN user_collection_access uca
         ON c.id = uca.collection_id AND uca.user_id = ?
       WHERE c.id = ?
-        AND (c.is_public = 1 OR uca.user_id IS NOT NULL)
+        AND (c.is_public = 1 OR c.is_world_public = 1 OR uca.user_id IS NOT NULL)
     `, [userId, collectionId]);
 
     return !!result;
@@ -130,7 +130,7 @@ const collectionsAsync = {
       LEFT JOIN user_collection_access uca
         ON c.id = uca.collection_id AND uca.user_id = ?
       WHERE c.id = ?
-        AND (c.is_public = 1 OR uca.user_id IS NOT NULL)
+        AND (c.is_public = 1 OR c.is_world_public = 1 OR uca.user_id IS NOT NULL)
     `, [userId, collectionId]);
 
     return !!result;

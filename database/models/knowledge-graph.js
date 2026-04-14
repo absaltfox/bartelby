@@ -825,6 +825,84 @@ const graphMaintenance = {
       deletedRelationships,
       deletedEntities
     };
+  },
+
+  /**
+   * Collect the IDs of all citations currently linked to a transcript.
+   * Call this BEFORE writing new extraction data, then pass the IDs to
+   * resetCitationsById AFTER the new data is committed. This ensures the
+   * transcript always has graph coverage — old data is only removed once
+   * the new data is safely written.
+   */
+  async getPreExistingCitationIds(transcriptId) {
+    const rows = await allAsync(
+      'SELECT id FROM citations WHERE transcript_id = ?',
+      [transcriptId]
+    );
+    return rows.map((r) => r.id).filter((v) => Number.isInteger(v));
+  },
+
+  /**
+   * Delete a specific set of citations by ID, then clean up any orphaned
+   * relationships and entities that are no longer referenced. Used as the
+   * post-write cleanup step in staged reruns.
+   */
+  async resetCitationsById(citationIds) {
+    if (!citationIds || citationIds.length === 0) {
+      return { deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 };
+    }
+
+    const placeholders = citationIds.map(() => '?').join(',');
+    const affectedCitations = await allAsync(
+      `SELECT entity_id, relationship_id FROM citations WHERE id IN (${placeholders})`,
+      citationIds
+    );
+
+    const entityIds = [...new Set(
+      affectedCitations.map((r) => r.entity_id).filter((v) => Number.isInteger(v))
+    )];
+    const relationshipIds = [...new Set(
+      affectedCitations.map((r) => r.relationship_id).filter((v) => Number.isInteger(v))
+    )];
+
+    await runAsync(`DELETE FROM citations WHERE id IN (${placeholders})`, citationIds);
+
+    let deletedRelationships = 0;
+    for (const relationshipId of relationshipIds) {
+      const stillReferenced = await getAsync(`
+        SELECT 1 FROM citations WHERE relationship_id = ? LIMIT 1
+      `, [relationshipId]);
+      if (!stillReferenced) {
+        await runAsync('DELETE FROM relationships WHERE id = ?', [relationshipId]);
+        deletedRelationships += 1;
+      }
+    }
+
+    let deletedEntities = 0;
+    for (const entityId of entityIds) {
+      const hasCitations = await getAsync(
+        'SELECT 1 FROM citations WHERE entity_id = ? LIMIT 1',
+        [entityId]
+      );
+      const hasRelationships = await getAsync(`
+        SELECT 1 FROM relationships
+        WHERE source_entity_id = ? OR target_entity_id = ?
+        LIMIT 1
+      `, [entityId, entityId]);
+
+      if (!hasCitations && !hasRelationships) {
+        await runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [entityId]);
+        await runAsync('DELETE FROM date_expressions WHERE entity_id = ?', [entityId]);
+        await runAsync('DELETE FROM entities WHERE id = ?', [entityId]);
+        deletedEntities += 1;
+      }
+    }
+
+    return {
+      deletedCitations: citationIds.length,
+      deletedRelationships,
+      deletedEntities
+    };
   }
 };
 
@@ -1014,7 +1092,7 @@ function buildAccessibleDocumentFilter(opts = {}, column = 'c.document_id') {
       INNER JOIN collections col ON dc.collection_id = col.id
       LEFT JOIN user_collection_access uca
         ON dc.collection_id = uca.collection_id AND uca.user_id = ?
-      WHERE col.is_public = 1 OR uca.user_id IS NOT NULL
+      WHERE col.is_public = 1 OR col.is_world_public = 1 OR uca.user_id IS NOT NULL
     )`,
     params: [userId]
   };

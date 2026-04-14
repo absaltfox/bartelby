@@ -1115,6 +1115,7 @@ const extractionJobs = {
       UPDATE extraction_jobs
       SET status = 'queued',
           error = NULL,
+          reset_existing = 1,
           started_at = NULL,
           completed_at = NULL,
           batch_remote_id = NULL,
@@ -1127,7 +1128,7 @@ const extractionJobs = {
   },
 
   async retry(id) {
-    await runAsyncWithoutSave(`
+    const result = await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'queued',
           error = NULL,
@@ -1138,9 +1139,10 @@ const extractionJobs = {
           batch_remote_status = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0
-      WHERE id = ?
+      WHERE id = ? AND status = 'failed'
     `, [id]);
     await saveDatabase();
+    return result;
   },
 
   async getAll() {

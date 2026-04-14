@@ -70,49 +70,44 @@ passport.deserializeUser(async (id, done) => {
 // ── Middleware helpers ─────────────────────────────────────────────────────
 
 /** Make req.user available in all EJS templates as `currentUser` */
-function locals(req, res, next) {
-  // Invalidate session if password was changed after authentication.
-  // Normalize only naive SQLite UTC timestamps; keep ISO timestamps with an
-  // explicit timezone untouched so we do not corrupt valid offsets.
-  if (req.isAuthenticated() && req.user.password_changed_at && req.session.authenticatedAt) {
-    const changedAt = parsePasswordChangedTimestamp(req.user.password_changed_at);
-    if (Number.isNaN(changedAt)) {
-      console.warn(`[auth] Could not parse password_changed_at for user ${req.user.id}.`);
-    } else if (changedAt > req.session.authenticatedAt) {
-      return req.logout((err) => {
-        if (err) return next(err);
-        req.session.authError = 'Your password was changed. Please sign in again.';
-        return res.redirect('/login');
-      });
+async function locals(req, res, next) {
+  try {
+    // Invalidate session if password was changed after authentication.
+    // Normalize only naive SQLite UTC timestamps; keep ISO timestamps with an
+    // explicit timezone untouched so we do not corrupt valid offsets.
+    if (req.isAuthenticated() && req.user.password_changed_at && req.session.authenticatedAt) {
+      const changedAt = parsePasswordChangedTimestamp(req.user.password_changed_at);
+      if (Number.isNaN(changedAt)) {
+        console.warn(`[auth] Could not parse password_changed_at for user ${req.user.id}.`);
+      } else if (changedAt > req.session.authenticatedAt) {
+        return req.logout((err) => {
+          if (err) return next(err);
+          req.session.authError = 'Your password was changed. Please sign in again.';
+          return res.redirect('/login');
+        });
+      }
     }
+    res.locals.currentUser = req.user || null;
+    res.locals.isAdmin = req.user?.role === 'admin';
+    // Resolve manager status synchronously before next() so templates always
+    // see a stable boolean value — never undefined from a late-firing promise.
+    if (req.user && req.user.role !== 'admin') {
+      try {
+        const ids = await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
+        res.locals.managedCollectionIds = ids;
+        res.locals.isManager = ids.length > 0;
+      } catch {
+        res.locals.managedCollectionIds = [];
+        res.locals.isManager = false;
+      }
+    } else {
+      res.locals.isManager = false;
+      res.locals.managedCollectionIds = [];
+    }
+    next();
+  } catch (err) {
+    next(err);
   }
-  res.locals.currentUser = req.user || null;
-  res.locals.isAdmin = req.user?.role === 'admin';
-  // Lazy-load manager status (set on first access via getter)
-  if (req.user && req.user.role !== 'admin') {
-    let _isManager = undefined;
-    let _managedIds = undefined;
-    Object.defineProperty(res.locals, 'isManager', {
-      get: () => _isManager,
-      enumerable: true
-    });
-    Object.defineProperty(res.locals, 'managedCollectionIds', {
-      get: () => _managedIds,
-      enumerable: true
-    });
-    // Pre-load for templates
-    userCollectionAccessAsync.getManagerCollectionIds(req.user.id).then(ids => {
-      _managedIds = ids;
-      _isManager = ids.length > 0;
-    }).catch(() => {
-      _managedIds = [];
-      _isManager = false;
-    });
-  } else {
-    res.locals.isManager = false;
-    res.locals.managedCollectionIds = [];
-  }
-  next();
 }
 
 /** Allow unauthenticated visitors through (for world-public content) */

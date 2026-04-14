@@ -17,7 +17,7 @@ const documents = {
           UNION
           SELECT dc.document_id FROM document_collections dc
           INNER JOIN collections col ON dc.collection_id = col.id
-          WHERE col.is_public = 1
+          WHERE col.is_public = 1 OR col.is_world_public = 1
         )`);
         params.push(userId);
       } else {
@@ -154,6 +154,7 @@ const documents = {
       INNER JOIN collections col ON dc.collection_id = col.id
       WHERE dc.document_id = ? AND (
         col.is_public = 1
+        OR col.is_world_public = 1
         OR dc.collection_id IN (
           SELECT collection_id FROM user_collection_access WHERE user_id = ?
         )
@@ -410,6 +411,7 @@ const documentsAsync = {
       INNER JOIN collections col ON dc.collection_id = col.id
       WHERE dc.document_id = ? AND (
         col.is_public = 1
+        OR col.is_world_public = 1
         OR dc.collection_id IN (
           SELECT collection_id FROM user_collection_access WHERE user_id = ?
         )
@@ -459,7 +461,7 @@ const documentsAsync = {
         UNION
         SELECT dc.document_id FROM document_collections dc
         INNER JOIN collections col ON dc.collection_id = col.id
-        WHERE col.is_public = 1
+        WHERE col.is_public = 1 OR col.is_world_public = 1
       )
       ORDER BY d.created_at DESC
       LIMIT ? OFFSET ?
@@ -511,7 +513,7 @@ const documentsAsync = {
         UNION
         SELECT dc.document_id FROM document_collections dc
         INNER JOIN collections col ON dc.collection_id = col.id
-        WHERE col.is_public = 1
+        WHERE col.is_public = 1 OR col.is_world_public = 1
       )
     `, [userId]);
     return result ? result.count : 0;
