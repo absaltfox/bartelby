@@ -9,18 +9,39 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all,
 // UPDATE): whichever worker wins the UPDATE gets changes=1; the other gets 0.
 // On local SQLite (sqljs / better-sqlite3) we use BEGIN EXCLUSIVE so the
 // SELECT+UPDATE pair is truly atomic.
+//
+// Multiple setInterval worker ticks fire concurrently (they're all async), so
+// we need a module-level mutex to ensure only one BEGIN EXCLUSIVE is in flight
+// at a time on the same connection.
+let _exclusiveLockBusy = false;
+const _exclusiveLockQueue = [];
+
 async function withExclusiveLock(fn) {
   if (process.env.DATABASE_DRIVER === 'turso') {
     return await fn();
   }
-  await runAsync('BEGIN EXCLUSIVE');
+
+  if (_exclusiveLockBusy) {
+    await new Promise(resolve => _exclusiveLockQueue.push(resolve));
+  }
+  _exclusiveLockBusy = true;
+
   try {
-    const result = await fn();
-    await runAsync('COMMIT');
-    return result;
-  } catch (err) {
-    try { await runAsync('ROLLBACK'); } catch (e) { void e; }
-    throw err;
+    await runAsync('BEGIN EXCLUSIVE');
+    try {
+      const result = await fn();
+      await runAsync('COMMIT');
+      return result;
+    } catch (err) {
+      try { await runAsync('ROLLBACK'); } catch (e) { void e; }
+      throw err;
+    }
+  } finally {
+    if (_exclusiveLockQueue.length > 0) {
+      _exclusiveLockQueue.shift()();
+    } else {
+      _exclusiveLockBusy = false;
+    }
   }
 }
 
