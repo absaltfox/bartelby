@@ -11,6 +11,9 @@ const {
   runExtractionWorkerCycle,
   pollRunningExtractionBatches
 } = require('./worker-extraction');
+// runScheduledAnalytics holds its own module-level concurrency lock;
+// importing it here keeps the worker thin and avoids duplicating lock state.
+const { runScheduledAnalytics } = require('./analytics');
 
 let busy = false;
 let batchPollBusy = false;
@@ -39,19 +42,15 @@ function startWorker() {
   }, 60000);
   setInterval(cleanExpiredMfaTokens, 60 * 60 * 1000);
 
-  const { runScheduledAnalytics } = require('./analytics');
   const ANALYTICS_INTERVAL_MS = 15 * 60 * 1000;
-  let analyticsRunning = false;
 
   setInterval(async () => {
-    if (analyticsRunning) return;
-    analyticsRunning = true;
     try {
+      // runScheduledAnalytics() is guarded by its own module-level concurrency
+      // lock (_analyticsRunning in utils/analytics.js).  No local flag needed here.
       await runScheduledAnalytics();
     } catch (err) {
       void logger.error('worker', 'Scheduled analytics run failed.', { error: err.message });
-    } finally {
-      analyticsRunning = false;
     }
   }, ANALYTICS_INTERVAL_MS);
 

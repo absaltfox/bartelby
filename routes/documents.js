@@ -5,6 +5,32 @@ const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsA
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
+const { aiTranscriptionLimiter } = require('../utils/rate-limiters');
+
+// ── Metadata safety constants ───────────────────────────────────────────────
+//
+// Only these keys may be written via the metadata form endpoint.  To add a new
+// user-facing field, extend this set and update the relevant UI templates.
+// Keys NOT in this set are silently ignored (not treated as errors) so that
+// future UI additions don't break older server versions in reverse.
+//
+// METADATA_RESERVED_KEYS are system-managed fields.  Attempts to overwrite
+// these via the form endpoint are rejected with a 400 so attackers cannot
+// inject array values (e.g. additional_pages) that feed into filesystem paths.
+const METADATA_FIELD_ALLOW_LIST = new Set([
+  'author',
+  'location',
+  'document_type',
+  'language',
+  'source'
+]);
+
+const METADATA_RESERVED_KEYS = new Set([
+  'additional_pages'
+]);
+
+// Maximum character length for any single metadata field value.
+const METADATA_VALUE_MAX_LENGTH = 2000;
 
 // Allow unauthenticated visitors for world-public collections
 router.use(optionalAuth);
@@ -451,7 +477,9 @@ router.post('/documents/:id/metadata', requireDocumentRole('editor'), asyncHandl
   if (req.body.date_created !== undefined) updates.date_created = req.body.date_created.trim() || null;
   if (req.body.description !== undefined) updates.description = req.body.description.trim() || null;
 
-  // Custom metadata fields (from metadata_field_* form params)
+  // Custom metadata fields from metadata_field_* form params.
+  // Only allow-listed field names are accepted; reserved system keys are
+  // explicitly blocked.  Values must be plain strings within the length limit.
   let existing = doc.metadata;
   if (typeof existing === 'string') {
     try { existing = JSON.parse(existing); } catch (e) { existing = {}; }
@@ -459,11 +487,30 @@ router.post('/documents/:id/metadata', requireDocumentRole('editor'), asyncHandl
   existing = existing || {};
   let metadataChanged = false;
   for (const [key, value] of Object.entries(req.body)) {
-    if (key.startsWith('metadata_field_')) {
-      const fieldName = key.replace('metadata_field_', '');
-      existing[fieldName] = value.trim() || null;
-      metadataChanged = true;
+    if (!key.startsWith('metadata_field_')) continue;
+
+    const fieldName = key.replace('metadata_field_', '');
+
+    // Block system-reserved keys that feed into filesystem or structural logic.
+    if (METADATA_RESERVED_KEYS.has(fieldName)) {
+      return res.status(400).json({ error: `Field '${fieldName}' is reserved and cannot be set via this endpoint.` });
     }
+
+    // Only accept fields on the explicit allow-list.
+    if (!METADATA_FIELD_ALLOW_LIST.has(fieldName)) continue;
+
+    // Values must be strings (not injected arrays or objects).
+    if (typeof value !== 'string') {
+      return res.status(400).json({ error: `Field '${fieldName}' must be a plain string value.` });
+    }
+
+    // Enforce a reasonable per-field length cap.
+    if (value.length > METADATA_VALUE_MAX_LENGTH) {
+      return res.status(400).json({ error: `Field '${fieldName}' exceeds the maximum allowed length of ${METADATA_VALUE_MAX_LENGTH} characters.` });
+    }
+
+    existing[fieldName] = value.trim() || null;
+    metadataChanged = true;
   }
   if (metadataChanged) {
     updates.metadata = existing;
@@ -638,6 +685,10 @@ router.post('/documents/:id/transcripts/:transcriptId/delete', requireDocumentRo
 }));
 
 // ── AI transcription for existing document ───────────────────────────────────
+// Rate-limited separately from general API calls because each request queues
+// a job that consumes LLM provider budget.  10 requests / 15 min per
+// authenticated user is generous for normal use but caps blast radius from
+// a hijacked editor account or errant automation script.
 router.get('/documents/:id/transcription-options', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
@@ -645,7 +696,7 @@ router.get('/documents/:id/transcription-options', requireDocumentRole('editor')
   res.json({ providerOptions, defaultProvider: defaultProvider || 'openai' });
 }));
 
-router.post('/documents/:id/transcripts/ai', requireDocumentRole('editor'), asyncHandler(async (req, res) => {
+router.post('/documents/:id/transcripts/ai', aiTranscriptionLimiter, requireDocumentRole('editor'), asyncHandler(async (req, res) => {
   const doc = await documentsAsync.getById(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Document not found' });
 

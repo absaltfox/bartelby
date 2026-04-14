@@ -233,6 +233,37 @@ function saveDatabase() {
   return _savePending;
 }
 
+/**
+ * Flush the database to disk immediately, bypassing the debounce timer.
+ *
+ * Use this ONLY during graceful shutdown (SIGTERM / SIGINT), where the normal
+ * 300 ms debounce would create a window between process.exit() and the actual
+ * persist call.  For all other write paths, use saveDatabase() so bursts are
+ * collapsed into a single write.
+ *
+ * Cancels any pending debounce timer and resolves any callers currently
+ * awaiting saveDatabase() to avoid dangling promises.
+ */
+async function flushDatabase() {
+  if (!db) return;
+  if (db.persistent === false) return;
+  // Cancel the pending debounce so it doesn't fire after we flush.
+  clearTimeout(_saveTimer);
+  _saveTimer = null;
+  // Resolve any pending saveDatabase() waiters before we flush.
+  const resolve = _saveResolve;
+  _savePending = null;
+  _saveResolve = null;
+  _saveReject = null;
+  try {
+    await db.persist();
+    if (resolve) resolve();
+  } catch (e) {
+    console.error('[db] flushDatabase failed:', e.message);
+    if (resolve) resolve(); // don't leave waiters hanging
+  }
+}
+
 async function initializeSchema() {
   await initDatabase();
 
@@ -342,6 +373,7 @@ async function initializeSchema() {
     SELECT COUNT(*) as count
     FROM extraction_jobs
     WHERE status = 'running'
+      AND (job_kind IS NULL OR job_kind != 'batch' OR batch_remote_id IS NULL)
   `);
   const staleExtractionCount = staleExtractions?.count || 0;
   if (staleExtractionCount > 0) {
@@ -351,6 +383,7 @@ async function initializeSchema() {
           error = 'Server restarted during processing',
           completed_at = CURRENT_TIMESTAMP
       WHERE status = 'running'
+        AND (job_kind IS NULL OR job_kind != 'batch' OR batch_remote_id IS NULL)
     `);
     console.log(`[db] Marked ${staleExtractionCount} stale extraction job(s) as failed`);
   }
@@ -649,6 +682,7 @@ module.exports = {
   initDatabase,
   initializeSchema,
   saveDatabase,
+  flushDatabase,
   getDb,
   documents,
   transcripts,

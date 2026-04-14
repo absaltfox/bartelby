@@ -256,12 +256,16 @@ router.get('/import', asyncHandler(async (req, res) => {
       try {
         groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;
       } catch (err) {}
-      resumeJob = {
-        id: job.id,
-        originalName: job.original_name,
-        pages: JSON.parse(job.pages).map(getImportApiRouter().attachTempPreview),
-        groupingState
-      };
+      let parsedPages = null;
+      try { parsedPages = JSON.parse(job.pages); } catch (err) {}
+      if (Array.isArray(parsedPages)) {
+        resumeJob = {
+          id: job.id,
+          originalName: job.original_name,
+          pages: parsedPages.map(getImportApiRouter().attachTempPreview),
+          groupingState
+        };
+      }
     }
   }
 
@@ -361,7 +365,20 @@ router.post('/analytics-settings/run/:collectionId', asyncHandler(async (req, re
 }));
 
 router.post('/analytics-settings/run-all', asyncHandler(async (req, res) => {
-  const { runScheduledAnalytics } = require('../utils/analytics');
+  const { runScheduledAnalytics, isAnalyticsRunning } = require('../utils/analytics');
+
+  // Refuse a duplicate run if one is already in progress.  This protects against
+  // double-click, concurrent admin sessions, or rapid re-submissions causing
+  // overlapping BERTopic processes or SQLITE_BUSY locking errors.
+  if (isAnalyticsRunning()) {
+    req.session.flashMessage = { type: 'info', text: 'An analytics run is already in progress. Please wait for it to complete before starting another.' };
+    return res.redirect('/admin/analytics-settings');
+  }
+
+  // Fire-and-forget is acceptable here: the admin gets an immediate redirect
+  // while the sweep continues in the background.  runScheduledAnalytics() owns
+  // its own concurrency lock so a second trigger via the worker interval is
+  // also safe during the time the request-initiated run is active.
   runScheduledAnalytics().catch(err => console.error('[admin] run-all analytics error:', err));
   req.session.flashMessage = { type: 'success', text: 'Analytics run started for all collections. Topic analysis will continue in the background.' };
   res.redirect('/admin/analytics-settings');

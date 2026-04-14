@@ -113,7 +113,62 @@
     });
   }
 
-  function updateJobRow(row, job) {
+  /** Show an inline error message next to the originating button. */
+  function showJobActionError(btn, message) {
+    var container = btn.closest('td') || btn.parentElement;
+    if (!container) return;
+    var existing = container.querySelector('.job-action-error');
+    if (existing) existing.remove();
+    var el = document.createElement('span');
+    el.className = 'job-action-error muted';
+    el.style.marginLeft = '0.5em';
+    el.style.color = 'var(--color-danger, #c0392b)';
+    el.textContent = message;
+    container.appendChild(el);
+    // Auto-remove after 8s so stale errors don't accumulate
+    window.setTimeout(function() { el.remove(); }, 8000);
+  }
+
+  /** Rebuild the actions cell for a row based on current job state. */
+  function updateRowActions(row, job, config) {
+    var actionsCell = row.querySelector('[data-job-cell="actions"]');
+    if (!actionsCell) return;
+
+    var canDelete = job.status === 'done' || job.status === 'failed';
+    var canRetry = job.status === 'failed' && (job.job_type !== 'import' || job.job_kind === 'submit');
+    var isAdmin = config && config.mode === 'admin';
+
+    var html = '';
+    if (job.log !== undefined) {
+      html += '<button class="btn btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) + '">Log</button> ';
+    }
+    if (canRetry) {
+      html += '<button class="btn btn-sm retry-btn" data-id="' + escapeHtml(String(job.id)) + '">Retry</button> ';
+    }
+    if (canDelete && isAdmin) {
+      html += '<button class="btn btn-sm btn-danger delete-job-btn" data-id="' + escapeHtml(String(job.id)) +
+              '" data-type="' + escapeHtml(job.job_type || 'transcription') + '">Delete</button>';
+    }
+    actionsCell.innerHTML = html;
+
+    // Re-attach event listeners for newly created buttons
+    actionsCell.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var logRow = document.getElementById('log-row-' + btn.dataset.id);
+        if (logRow) logRow.classList.toggle('is-hidden');
+      });
+    });
+    if (config) {
+      actionsCell.querySelectorAll('.retry-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { handleRetryClick(btn, row, config); });
+      });
+      actionsCell.querySelectorAll('.delete-job-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { handleDeleteClick(btn, config); });
+      });
+    }
+  }
+
+  function updateJobRow(row, job, config) {
     var statusBadge = row.querySelector('.status-badge');
     if (statusBadge && statusBadge.textContent !== job.status) {
       statusBadge.className = 'status-badge status-' + job.status;
@@ -147,6 +202,9 @@
       rowCheckbox.dataset.canDelete = String(canDelete);
       rowCheckbox.dataset.canRetry = String(canRetry);
     }
+
+    // Rebuild the actions cell so Retry/Delete buttons reflect live state
+    updateRowActions(row, job, config);
   }
 
   function initToggleLogs() {
@@ -160,21 +218,53 @@
     });
   }
 
+  async function handleRetryClick(btn, row, config) {
+    btn.disabled = true;
+    try {
+      var type = row ? row.dataset.type : 'transcription';
+      var url = getJobApiBase(config, type) + btn.dataset.id + '/retry';
+      var r = await fetch(url, { method: 'POST', headers: { 'X-CSRF-Token': getCsrfToken() } });
+      if (!r.ok) {
+        var body = await r.json().catch(function() { return {}; });
+        showJobActionError(btn, body.error || 'Retry failed (' + r.status + ')');
+        btn.disabled = false;
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      btn.disabled = false;
+    }
+  }
+
   function initRetryButtons(config) {
     document.querySelectorAll('.retry-btn').forEach(function(btn) {
       btn.addEventListener('click', async function() {
-        btn.disabled = true;
-        try {
-          var row = btn.closest('.job-row');
-          var type = row ? row.dataset.type : 'transcription';
-          var url = getJobApiBase(config, type) + btn.dataset.id + '/retry';
-          await fetch(url, { method: 'POST', headers: { 'X-CSRF-Token': getCsrfToken() } });
-          window.location.reload();
-        } catch (err) {
-          btn.disabled = false;
-        }
+        var row = btn.closest('.job-row');
+        await handleRetryClick(btn, row, config);
       });
     });
+  }
+
+  async function handleDeleteClick(btn, config) {
+    if (!window.confirm('Delete this job record?')) return;
+    btn.disabled = true;
+    var type = btn.dataset.type;
+    var apiBase = getJobApiBase(config, type);
+    try {
+      var r = await fetch(apiBase + btn.dataset.id, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': getCsrfToken() }
+      });
+      if (!r.ok) {
+        var body = await r.json().catch(function() { return {}; });
+        showJobActionError(btn, body.error || 'Delete failed (' + r.status + ')');
+        btn.disabled = false;
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      btn.disabled = false;
+    }
   }
 
   function initDeleteButtons(config) {
@@ -182,19 +272,7 @@
 
     document.querySelectorAll('.delete-job-btn').forEach(function(btn) {
       btn.addEventListener('click', async function() {
-        if (!window.confirm('Delete this job record?')) return;
-        btn.disabled = true;
-        var type = btn.dataset.type;
-        var apiBase = getJobApiBase(config, type);
-        try {
-          await fetch(apiBase + btn.dataset.id, {
-            method: 'DELETE',
-            headers: { 'X-CSRF-Token': getCsrfToken() }
-          });
-          window.location.reload();
-        } catch (err) {
-          btn.disabled = false;
-        }
+        await handleDeleteClick(btn, config);
       });
     });
   }
@@ -251,7 +329,7 @@
       bulkRetryBtn.disabled = true;
       bulkRetryBtn.textContent = 'Retrying...';
       try {
-        await fetch(config.bulkRetryUrl, {
+        var r = await fetch(config.bulkRetryUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
@@ -260,6 +338,13 @@
             })
           })
         });
+        if (!r.ok) {
+          var body = await r.json().catch(function() { return {}; });
+          showJobActionError(bulkRetryBtn, body.error || 'Bulk retry failed (' + r.status + ')');
+          bulkRetryBtn.disabled = false;
+          bulkRetryBtn.textContent = 'Retry Selected';
+          return;
+        }
         window.location.reload();
       } catch (err) {
         bulkRetryBtn.disabled = false;
@@ -274,7 +359,7 @@
       bulkDeleteBtn.disabled = true;
       bulkDeleteBtn.textContent = 'Deleting...';
       try {
-        await fetch(config.bulkDeleteUrl, {
+        var r = await fetch(config.bulkDeleteUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
           body: JSON.stringify({
@@ -283,6 +368,13 @@
             })
           })
         });
+        if (!r.ok) {
+          var body = await r.json().catch(function() { return {}; });
+          showJobActionError(bulkDeleteBtn, body.error || 'Bulk delete failed (' + r.status + ')');
+          bulkDeleteBtn.disabled = false;
+          bulkDeleteBtn.textContent = 'Delete Selected';
+          return;
+        }
         window.location.reload();
       } catch (err) {
         bulkDeleteBtn.disabled = false;
@@ -344,7 +436,7 @@
           jobs.forEach(function(job) {
             var row = tbody.querySelector('tr.job-row[data-id="' + job.id + '"][data-type="' + job.job_type + '"]');
             if (!row) return;
-            updateJobRow(row, job);
+            updateJobRow(row, job, config);
           });
 
           document.querySelectorAll('.import-progress-bar[data-progress]').forEach(function(bar) {

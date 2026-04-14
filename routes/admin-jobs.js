@@ -165,7 +165,10 @@ router.post('/api/:id/retry', asyncHandler(async (req, res) => {
 // API: retry failed extraction job
 router.post('/api/extraction/:id/retry', asyncHandler(async (req, res) => {
   const jobId = parseInt(req.params.id);
-  await extractionJobsAsync.retry(jobId);
+  const result = await extractionJobsAsync.retry(jobId);
+  if (!result?.changes) {
+    return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  }
   audit.log('admin.job_retried', {
     ...audit.reqContext(req),
     jobId,
