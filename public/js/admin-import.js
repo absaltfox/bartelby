@@ -68,6 +68,25 @@ document.addEventListener('DOMContentLoaded', function() {
   const providerOptions = getProviderOptions();
   const batchProviders = new Set(['openai', 'claude', 'gemini']);
 
+  // State variables declared here so they're initialized before any function calls below.
+  let allTempFiles = [];
+  let tempPreviewAssets = {};
+  let originalName = '';
+  let imageDataUrl = null;
+  let importJobId  = null;
+  let pageGroups = [];
+  let groupIdCounter = 0;
+  const GROUP_COLORS = 8;
+
+  let documentQueue    = [];
+  let currentQueueIndex = -1;
+  let savedDocIds      = [];
+  let anyAiQueued      = false;
+  let autoGroupingRequested = false;
+  let autoGroupingCompleted = false;
+  let groupingStateSaveTimer = null;
+  let isSyncingCollectionSelection = false;
+
   function refreshCredentialOptions() {
     if (!providerSelect || !credentialSelect) return;
     const selectedProvider = providerSelect.value;
@@ -133,24 +152,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const groupingResetCancel = document.getElementById('grouping-reset-cancel');
   const groupingResetConfirm = document.getElementById('grouping-reset-confirm');
 
-  let allTempFiles = [];
-  let tempPreviewAssets = {};
-  let originalName = '';
-  let imageDataUrl = null;
-  let importJobId  = null;
-  let pageGroups = [];
-  let groupIdCounter = 0;
-  const GROUP_COLORS = 8; // number of color slots in CSS
-
   // Multi-document queue (PDF groups)
-  let documentQueue    = [];
-  let currentQueueIndex = -1;
-  let savedDocIds      = [];
-  let anyAiQueued      = false;
-  let autoGroupingRequested = false;
-  let autoGroupingCompleted = false;
-  let groupingStateSaveTimer = null;
-  let isSyncingCollectionSelection = false;
   let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
 
   if (errorCloseBtn) {
