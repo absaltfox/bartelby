@@ -1088,6 +1088,21 @@ const extractionJobs = {
     `, [id]);
   },
 
+  async savePartialResults(id, results) {
+    await runAsyncWithoutSave('UPDATE extraction_jobs SET partial_results = ? WHERE id = ?', [JSON.stringify(results), id]);
+    await saveDatabase();
+  },
+
+  async getPartialResults(id) {
+    const row = await getAsync('SELECT partial_results FROM extraction_jobs WHERE id = ?', [id]);
+    if (!row || !row.partial_results) return [];
+    try {
+      return JSON.parse(row.partial_results);
+    } catch {
+      return [];
+    }
+  },
+
   async appendLog(id, text) {
     await runAsyncWithoutSave('UPDATE extraction_jobs SET log = log || ? WHERE id = ?', [text, id]);
     await saveDatabase();
@@ -1099,7 +1114,8 @@ const extractionJobs = {
       SET status = 'done',
           entity_count = COALESCE(?, entity_count),
           relationship_count = COALESCE(?, relationship_count),
-          completed_at = CURRENT_TIMESTAMP
+          completed_at = CURRENT_TIMESTAMP,
+          partial_results = NULL
       WHERE id = ?
     `, [
       Number.isInteger(entity_count) ? entity_count : null,
@@ -1131,7 +1147,8 @@ const extractionJobs = {
           batch_remote_id = NULL,
           batch_remote_status = NULL,
           batch_completed_count = 0,
-          batch_failed_count = 0
+          batch_failed_count = 0,
+          partial_results = NULL
       WHERE id = ?
     `, [id]);
     await saveDatabase();
@@ -1148,7 +1165,8 @@ const extractionJobs = {
           batch_remote_id = NULL,
           batch_remote_status = NULL,
           batch_completed_count = 0,
-          batch_failed_count = 0
+          batch_failed_count = 0,
+          partial_results = NULL
       WHERE id = ? AND status = 'failed'
     `, [id]);
     await saveDatabase();

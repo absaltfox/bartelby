@@ -267,11 +267,25 @@ async function pollRunningTranscriptionBatches() {
     if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
     const logLine = makeJobLogger(job, transcriptionJobsAsync);
 
+    // Poll the remote provider for batch status.  Transient poll errors
+    // (network blips, rate limits) are safe to retry — no side effects yet.
+    let pollResult;
     try {
       const { runtimeConfig } = await resolveRuntimeConfig(job, async () => {});
       const { pollTranscriptionBatch } = require('./transcription-batches');
-      const pollResult = await pollTranscriptionBatch(job, runtimeConfig);
+      pollResult = await pollTranscriptionBatch(job, runtimeConfig);
+    } catch (pollErr) {
+      if (isTransientError(pollErr)) {
+        console.warn(`[worker] batch poll transient error for job ${job.id}: ${pollErr.message}`);
+        continue;
+      }
+      console.error(`[worker] batch poll failed for job ${job.id}:`, pollErr.message);
+      await logLine(`ERROR: ${pollErr.message}`);
+      await transcriptionJobsAsync.markFailed(job.id, pollErr.message);
+      continue;
+    }
 
+    try {
       if (pollResult.remoteStatus && pollResult.remoteStatus !== job.batch_remote_status) {
         await logLine(`Remote batch status: ${pollResult.remoteStatus}`);
       }
@@ -295,11 +309,10 @@ async function pollRunningTranscriptionBatches() {
 
       await finalizeBatchJob(job, pollResult, logLine);
     } catch (err) {
-      if (isTransientError(err)) {
-        console.warn(`[worker] batch poll transient error for job ${job.id}: ${err.message}`);
-        continue;
-      }
-      console.error(`[worker] batch poll failed for job ${job.id}:`, err.message);
+      // Finalization errors are NOT safe to retry — transcriptions
+      // persisted before the error are already committed.  Re-running
+      // would duplicate them.  Always mark failed to break the loop.
+      console.error(`[worker] batch finalization failed for job ${job.id}:`, err.message);
       await logLine(`ERROR: ${err.message}`);
       await transcriptionJobsAsync.markFailed(job.id, err.message);
     }

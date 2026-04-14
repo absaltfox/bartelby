@@ -341,18 +341,29 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine) {
   const manifest = require('./extraction-batches').parseBatchManifest(job);
   const manifestByCustomId = new Map(manifest.map((entry) => [entry.customId, entry]));
 
-  let completedDocs = 0;
-  let failedDocs = 0;
-  let totalEntityCount = 0;
-  let totalRelationshipCount = 0;
+  const processedIdsArray = await extractionJobs.getPartialResults(job.id);
+  const processedIds = new Set(processedIdsArray || []);
+
+  let completedDocs = job.batch_completed_count || 0;
+  let failedDocs = job.batch_failed_count || 0;
+  let totalEntityCount = job.entity_count || 0;
+  let totalRelationshipCount = job.relationship_count || 0;
+
+  let checkpointCounter = 0;
+  const silentLogger = async () => {};
 
   for (const itemResult of pollResult.itemResults || []) {
+    if (processedIds.has(itemResult.customId)) {
+      continue;
+    }
     const manifestEntry = manifestByCustomId.get(itemResult.customId);
     if (!manifestEntry) continue;
 
     if (!itemResult.ok) {
       failedDocs += 1;
       await logLine(`Document ${manifestEntry.documentId} extraction failed: ${itemResult.error || 'Unknown batch item error'}`);
+      processedIds.add(itemResult.customId);
+      await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
       continue;
     }
 
@@ -363,6 +374,8 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine) {
     if (!transcript || !doc) {
       failedDocs += 1;
       await logLine(`Document ${manifestEntry.documentId} could not be materialized because the source transcript/document no longer exists.`);
+      processedIds.add(itemResult.customId);
+      await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
       continue;
     }
 
@@ -372,7 +385,7 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine) {
       doc,
       extractionResult: itemResult.result,
       providerName,
-      logLine,
+      logLine: silentLogger,
       resetExisting: !!job.reset_existing,
       extractionJobs,
       entities,
@@ -387,7 +400,22 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine) {
     completedDocs += 1;
     totalEntityCount += counts.entityCount;
     totalRelationshipCount += counts.relationshipCount;
-    await logLine(`Document ${doc.id} knowledge graph materialized from batch.`);
+    
+    processedIds.add(itemResult.customId);
+    checkpointCounter += 1;
+    
+    // Save checkpoint after every document to avoid double-processing on OOM/timeout
+    await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
+    // Also periodically update progress
+    if (checkpointCounter % 10 === 0) {
+      await extractionJobs.updateBatchProgress(job.id, {
+        completedCount: completedDocs,
+        failedCount: failedDocs,
+        remoteStatus: pollResult.remoteStatus
+      });
+      // Do not call markDone here, as that sets status to 'done'
+    }
+    console.log(`[extraction-worker] job ${job.id}: Document ${doc.id} knowledge graph materialized from batch.`);
   }
 
   await extractionJobs.updateBatchProgress(job.id, {
@@ -418,11 +446,25 @@ async function pollRunningExtractionBatches() {
     if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
     const logLine = makeExtractionLogger(job, extractionJobs);
 
+    // Poll the remote provider for batch status.  Transient poll errors
+    // (network blips, rate limits) are safe to retry — no side effects yet.
+    let pollResult;
     try {
       const { runtimeConfig } = await resolveRuntimeConfig(job, async () => {});
       const { pollExtractionBatch } = require('./extraction-batches');
-      const pollResult = await pollExtractionBatch(job, runtimeConfig);
+      pollResult = await pollExtractionBatch(job, runtimeConfig);
+    } catch (pollErr) {
+      if (isTransientError(pollErr)) {
+        console.warn(`[worker] extraction batch poll transient error for job ${job.id}: ${pollErr.message}`);
+        continue;
+      }
+      console.error(`[worker] extraction batch poll failed for job ${job.id}:`, pollErr.message);
+      await logLine(`ERROR: ${pollErr.message}`);
+      await extractionJobs.markFailed(job.id, pollErr.message);
+      continue;
+    }
 
+    try {
       if (pollResult.remoteStatus && pollResult.remoteStatus !== job.batch_remote_status) {
         await logLine(`Remote batch status: ${pollResult.remoteStatus}`);
       }
@@ -446,11 +488,10 @@ async function pollRunningExtractionBatches() {
 
       await finalizeExtractionBatchJob(job, pollResult, logLine);
     } catch (err) {
-      if (isTransientError(err)) {
-        console.warn(`[worker] extraction batch poll transient error for job ${job.id}: ${err.message}`);
-        continue;
-      }
-      console.error(`[worker] extraction batch poll failed for job ${job.id}:`, err.message);
+      // Finalization errors are NOT safe to retry — entities/relationships
+      // created before the error are already committed.  Re-running would
+      // duplicate them.  Always mark failed to break the loop.
+      console.error(`[worker] extraction batch finalization failed for job ${job.id}:`, err.message);
       await logLine(`ERROR: ${err.message}`);
       await extractionJobs.markFailed(job.id, err.message);
     }

@@ -134,6 +134,11 @@ MIGRATIONS.push(`
   ALTER TABLE import_jobs ADD COLUMN last_heartbeat_at DATETIME
 `);
 
+// v53 — checkpoint partial page results for extraction batch retries
+MIGRATIONS.push(`
+  ALTER TABLE extraction_jobs ADD COLUMN partial_results TEXT
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -369,6 +374,33 @@ async function initializeSchema() {
     console.log(`[db] Marked ${staleTranscriptionCount} stale transcription job(s) as failed`);
   }
 
+  // Transcription batch jobs whose remote provider already returned results
+  // but were never marked done (transient finalization error).
+  // Terminal status varies by provider: Anthropic='ended', OpenAI='completed'.
+  const staleCompletedTxBatches = await get(`
+    SELECT COUNT(*) as count
+    FROM transcription_jobs
+    WHERE status = 'running'
+      AND job_kind = 'batch'
+      AND batch_remote_id IS NOT NULL
+      AND (batch_remote_status IN ('ended', 'completed', 'JOB_STATE_SUCCEEDED')
+             OR batch_remote_status LIKE 'completed (%')
+  `);
+  const staleCompletedTxBatchCount = staleCompletedTxBatches?.count || 0;
+  if (staleCompletedTxBatchCount > 0) {
+    await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'done',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+        AND job_kind = 'batch'
+        AND batch_remote_id IS NOT NULL
+        AND (batch_remote_status IN ('ended', 'completed', 'JOB_STATE_SUCCEEDED')
+             OR batch_remote_status LIKE 'completed (%')
+    `);
+    console.log(`[db] Marked ${staleCompletedTxBatchCount} already-completed transcription batch job(s) as done`);
+  }
+
   const staleExtractions = await getAsync(`
     SELECT COUNT(*) as count
     FROM extraction_jobs
@@ -388,7 +420,36 @@ async function initializeSchema() {
     console.log(`[db] Marked ${staleExtractionCount} stale extraction job(s) as failed`);
   }
 
-  if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0 || staleExtractionCount > 0) {
+  // Extraction batch jobs whose remote provider already returned results
+  // but were never marked done — typically caused by a transient error
+  // during finalization.  Mark them done to prevent re-finalization
+  // (which would duplicate entities).
+  // Terminal status varies by provider: Anthropic='ended', OpenAI='completed'.
+  const staleCompletedBatches = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM extraction_jobs
+    WHERE status = 'running'
+      AND job_kind = 'batch'
+      AND batch_remote_id IS NOT NULL
+      AND (batch_remote_status IN ('ended', 'completed', 'JOB_STATE_SUCCEEDED')
+             OR batch_remote_status LIKE 'completed (%')
+  `);
+  const staleCompletedBatchCount = staleCompletedBatches?.count || 0;
+  if (staleCompletedBatchCount > 0) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'done',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+        AND job_kind = 'batch'
+        AND batch_remote_id IS NOT NULL
+        AND (batch_remote_status IN ('ended', 'completed', 'JOB_STATE_SUCCEEDED')
+             OR batch_remote_status LIKE 'completed (%')
+    `);
+    console.log(`[db] Marked ${staleCompletedBatchCount} already-completed extraction batch job(s) as done`);
+  }
+
+  if (staleRenderImportCount > 0 || staleSubmitImportCount > 0 || staleTranscriptionCount > 0 || staleExtractionCount > 0 || staleCompletedTxBatchCount > 0 || staleCompletedBatchCount > 0) {
     await saveDatabase();
   }
 
