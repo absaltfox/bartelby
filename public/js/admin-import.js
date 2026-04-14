@@ -428,6 +428,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // ── Drag & Drop ──────────────────────────────────────────────────
 
+  // Prevent the browser from opening dropped files anywhere on the page.
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+  });
+
   uploadArea.addEventListener('click', () => fileInput.click());
 
   uploadArea.addEventListener('dragover', (e) => {
