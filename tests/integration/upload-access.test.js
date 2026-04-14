@@ -6,8 +6,10 @@ process.env.DATABASE_DRIVER = 'sqljs';
 
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
 const bcrypt = require('bcryptjs');
 const request = require('supertest');
+const { createStorageMock } = require('../helpers/storage-mock');
 
 function extractCsrfToken(html) {
   const match = html.match(/name="_csrf"\s+value="([^"]+)"/);
@@ -26,21 +28,18 @@ async function login(agent, username, password) {
   return res;
 }
 
-async function bootApp(storageDriver) {
+async function bootApp(storageDriver, storageFactory = null) {
   jest.resetModules();
 
   process.env.NODE_ENV = 'test';
   process.env.STORAGE_DRIVER = storageDriver;
 
   if (storageDriver === 's3') {
-    jest.doMock('../../utils/storage', () => {
-      const local = jest.requireActual('../../utils/storage/local');
-      return {
-        ...local,
-        readUploadByUrl: jest.fn(async (url) => Buffer.from(`mock:${url}`)),
-        getUploadSizeByUrl: jest.fn(async () => 17)
-      };
-    });
+    jest.doMock('../../utils/storage', () => (
+      storageFactory
+        ? storageFactory()
+        : createStorageMock()
+    ));
   }
 
   const server = require('../../server');
@@ -146,5 +145,35 @@ describe.each(['local', 's3'])('Protected upload access (%s)', (storageDriver) =
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/image\/png/);
     expect(Buffer.compare(res.body, expectedBody)).toBe(0);
+  });
+});
+
+describe('Protected upload access stream failures', () => {
+  let app;
+  let db;
+  let seeded;
+
+  beforeAll(async () => {
+    ({ app, db } = await bootApp('s3', () => {
+      return createStorageMock({
+        streamUploadByUrl: jest.fn(async () => {
+          const stream = new Readable({
+            read() {
+              this.destroy(new Error('simulated stream failure'));
+            }
+          });
+          return stream;
+        })
+      });
+    }));
+    seeded = await seedProtectedDocument(db, 's3-stream-failure.png');
+  }, 30_000);
+
+  it('returns 500 when the upload stream fails before a response is sent', async () => {
+    const agent = request.agent(app);
+    await login(agent, seeded.authorizedUsername, 'password123!');
+
+    const res = await agent.get(seeded.uploadUrl);
+    expect(res.status).toBe(500);
   });
 });

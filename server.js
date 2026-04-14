@@ -1,5 +1,7 @@
 const express = require('express');
 const path = require('path');
+const { finished } = require('stream/promises');
+const { Transform } = require('stream');
 const crypto = require('crypto');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
@@ -9,7 +11,10 @@ const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
+const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
 const { resolveApplicationSettings } = require('./utils/application-settings');
+const { parseProxyTrust } = require('./utils/proxy-trust');
+const { userOrIpRateLimitKey } = require('./utils/rate-limit');
 const logger = require('./utils/logger');
 
 loadEnv();
@@ -41,6 +46,51 @@ function logBoot(message) {
 function logBootDebug(message) {
   if (!startupDebugEnabled) return;
   logBoot(message);
+}
+
+function logBootWarn(message) {
+  const elapsedMs = Date.now() - bootStartedAt;
+  const rendered = `[boot +${formatBootElapsed(elapsedMs)}] ${message}`;
+  console.warn(rendered);
+  void logger.warn('boot', message, { elapsedMs }, { console: false });
+}
+
+function isMissingUploadError(err) {
+  return err?.code === 'UPLOAD_NOT_FOUND' || err?.code === 'INVALID_UPLOAD_URL';
+}
+
+async function streamUploadToResponse(stream, res) {
+  let started = false;
+  const marker = new Transform({
+    transform(chunk, encoding, callback) {
+      started = true;
+      callback(null, chunk);
+    }
+  });
+
+  const streamError = new Promise((resolve, reject) => {
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+    const cleanup = () => {
+      stream.off('error', onError);
+      marker.off('error', onError);
+    };
+    stream.once('error', onError);
+    marker.once('error', onError);
+  });
+
+  stream.pipe(marker).pipe(res);
+
+  try {
+    await Promise.race([finished(res), streamError]);
+  } catch (err) {
+    if ((started || res.headersSent) && !res.destroyed) {
+      res.destroy(err);
+    }
+    throw err;
+  }
 }
 
 function loadRouteModule(routePath, label, options = {}) {
@@ -175,7 +225,12 @@ app.use(helmet({
 // Trust reverse proxy (Fly.io, nginx, etc.) so secure cookies and rate
 // limiting work correctly behind TLS termination. Must be set before
 // rate limiters, which validate X-Forwarded-For against this setting.
-app.set('trust proxy', 1);
+// The parser now defaults to 0 so direct listeners do not trust spoofed
+// forwarded headers unless the deployment opts in explicitly.
+const proxyTrust = parseProxyTrust(process.env.TRUST_PROXY, {
+  onWarning: (message) => logBootWarn(message)
+});
+app.set('trust proxy', proxyTrust);
 
 // ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
 const authLimiter = rateLimit({
@@ -251,6 +306,7 @@ function validateProductionConfiguration() {
 
   const sessionStore = String(config.session.store || 'memory').toLowerCase();
   const storageDriver = String(config.storage.driver || 'local').toLowerCase();
+  const publicAppUrl = String(process.env.PUBLIC_APP_URL || '').trim();
   const allowMemorySessionStore = readEnvFlag('ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION');
   const allowLocalStorage = readEnvFlag('ALLOW_LOCAL_STORAGE_IN_PRODUCTION');
 
@@ -276,6 +332,20 @@ function validateProductionConfiguration() {
       storageDriver,
       overrideEnv: 'ALLOW_LOCAL_STORAGE_IN_PRODUCTION'
     });
+  }
+
+  if (!publicAppUrl) {
+    throw new Error(
+      'PUBLIC_APP_URL must be configured in production so invite and password-reset links resolve correctly.'
+    );
+  }
+
+  const trustProxy = String(process.env.TRUST_PROXY || '').trim();
+  if (!trustProxy || trustProxy === '0') {
+    throw new Error(
+      'TRUST_PROXY must be set to a non-zero value in production. ' +
+      'Set TRUST_PROXY=1 when running behind Fly.io, nginx, or another TLS-terminating proxy.'
+    );
   }
 }
 
@@ -329,42 +399,7 @@ app.use(cookieParser(sessionSecret));
 // ── CSRF protection ─────────────────────────────────────────────────────
 // Simple double-submit token approach for all state-changing requests.
 // Generate a CSRF token per session and validate on POST/PUT/DELETE.
-app.use((req, res, next) => {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
-  }
-  res.locals.csrfToken = req.session.csrfToken;
-  next();
-});
-
-function validateCsrf(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-
-  // Skip for multipart/form-data — body hasn't been parsed yet.
-  // These routes must call validateCsrf manually after multer runs.
-  const ct = req.headers['content-type'] || '';
-  if (ct.startsWith('multipart/form-data')) return next();
-
-  const token = req.body?._csrf || req.headers['x-csrf-token'];
-  const valid = token && req.session.csrfToken &&
-    (() => {
-      const tokenBuf = Buffer.from(String(token));
-      const expectedBuf = Buffer.from(req.session.csrfToken);
-      return tokenBuf.length === expectedBuf.length &&
-        crypto.timingSafeEqual(tokenBuf, expectedBuf);
-    })();
-
-  if (!valid) {
-    // API requests get JSON error
-    if (req.path.startsWith('/api/')) {
-      return res.status(403).json({ error: 'Invalid or missing CSRF token.' });
-    }
-    // Form submissions: redirect back so the user gets a fresh token
-    req.session.authError = 'Your session expired. Please try again.';
-    return res.redirect(req.get('Referrer') || '/login');
-  }
-  next();
-}
+app.use(ensureCsrfToken);
 
 // Apply CSRF validation to all state-changing requests
 app.use(validateCsrf);
@@ -392,6 +427,19 @@ const generalLimiter = rateLimit({
   skip: (req) => process.env.NODE_ENV !== 'production' || (req.isAuthenticated && req.isAuthenticated())
 });
 app.use(generalLimiter);
+
+const authenticatedApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => userOrIpRateLimitKey(req, {
+    userPrefix: 'auth-api-user',
+    ipPrefix: 'auth-api-ip'
+  }),
+  skip: (req) => process.env.NODE_ENV !== 'production',
+  message: { error: 'Too many requests. Please try again later.' }
+});
 
 // ── View engine ────────────────────────────────────────────────────────────
 app.set('view engine', 'ejs');
@@ -448,12 +496,24 @@ app.get('/uploads/:filename', async (req, res) => {
       return res.status(403).end();
     }
 
-    const buffer = await storage.readUploadByUrl(uploadUrl);
+    const stream = await storage.streamUploadByUrl(uploadUrl);
     res.set('Content-Type', getUploadContentType(safeFilename));
     res.set('Cache-Control', 'private, max-age=86400');
-    return res.send(buffer);
+    await streamUploadToResponse(stream, res);
+    return;
   } catch (err) {
-    return res.status(404).end();
+    void logger.error('uploads', 'Protected upload streaming failed.', {
+      path: req.originalUrl,
+      userId: req.user ? req.user.id : null,
+      error: err?.stack || err?.message || String(err)
+    });
+    if (res.headersSent) {
+      return;
+    }
+    if (isMissingUploadError(err)) {
+      return res.status(404).end();
+    }
+    return res.status(500).end();
   }
 });
 
@@ -463,11 +523,11 @@ app.get('/uploads/:filename', async (req, res) => {
 app.use('/', loadRoute('./routes/auth', 'auth routes', { tier: 'core' }));
 app.use('/account', loadRoute('./routes/account', 'account routes', { tier: 'core' }));
 app.use('/', loadRoute('./routes/documents', 'document routes', { tier: 'core' }));
-app.use('/transcripts', loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
-app.use('/api/annotations', requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));
+app.use('/transcripts', authenticatedApiLimiter, loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
+app.use('/api/annotations', authenticatedApiLimiter, requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));
 app.use('/export', loadRoute('./routes/export', 'export routes', { tier: 'core' }));
 app.use('/search', loadRoute('./routes/search', 'search routes', { tier: 'core' }));
-app.use('/graph', loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
+app.use('/graph', authenticatedApiLimiter, loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
 app.use('/manage', registerDeferredRoute('./routes/manage', 'manage routes', { tier: 'management' })); // has its own requireAdminOrManager
 app.use('/admin', requireAdmin, registerDeferredRoute('./routes/admin', 'admin routes', { tier: 'admin' }));
 app.use('/admin/documents', registerDeferredRoute('./routes/admin-documents', 'admin document routes', { tier: 'admin' })); // has its own requireAdmin
@@ -485,24 +545,34 @@ app.use('/admin', registerDeferredRoute('./routes/admin-review', 'admin review r
 logRouteLoadSummary('boot');
 logBoot('Routes mounted');
 
-// Export CSRF validator for routes that need it
-app.locals.validateCsrf = validateCsrf;
-
 // ── Health check (used by fly.io and Docker) ─────────────────────────────
 app.get('/healthz', (req, res) => res.status(200).send('ok'));
 
 // ── Error handling ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
+  const statusCode = Number.isInteger(err?.statusCode)
+    ? err.statusCode
+    : Number.isInteger(err?.status)
+      ? err.status
+      : 500;
+  const message = statusCode === 500
+    ? 'Something went wrong!'
+    : (err.message || 'Request failed.');
   void logger.error('http', 'Unhandled Express error.', {
     requestId: req.requestId || null,
     method: req.method,
     path: req.originalUrl,
-    statusCode: 500,
+    statusCode,
     userId: req.user ? req.user.id : null,
     error: err.stack || err.message
   });
-  res.status(500).render('error', {
-    message: 'Something went wrong!',
+  if ((req.originalUrl || '').includes('/api/')) {
+    return res.status(statusCode).json({
+      error: message
+    });
+  }
+  res.status(statusCode).render('error', {
+    message,
     error: process.env.NODE_ENV === 'development' ? err : {}
   });
 });

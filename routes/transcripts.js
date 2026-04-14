@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { transcriptsAsync, annotationsAsync, documentsAsync } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
+const { asyncHandler } = require('../utils/async-handler');
 
 // All transcript routes require authentication
 router.use(requireAuth);
 
 // Get transcript with annotations (for AJAX loading)
-router.get('/:id', async (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   const transcript = await transcriptsAsync.getById(req.params.id);
 
   if (!transcript) {
@@ -27,6 +28,6 @@ router.get('/:id', async (req, res) => {
     transcript,
     annotations: transcriptAnnotations
   });
-});
+}));
 
 module.exports = router;

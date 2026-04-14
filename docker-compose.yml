@@ -42,6 +42,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_SECURE: ${SMTP_SECURE:-}
       SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
     volumes:
       # Only needed for DATABASE_DRIVER=sqljs (local SQLite)
       - app-data:/app/data

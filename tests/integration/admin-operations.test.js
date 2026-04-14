@@ -113,6 +113,13 @@ describe('admin destructive operations', () => {
     expect(retryRes.status).toBe(200);
     expect(retryRes.body.success).toBe(true);
 
+    const blockedDeleteRes = await agent
+      .delete(`/admin/jobs/api/${jobId}`)
+      .set('x-csrf-token', csrf);
+    expect(blockedDeleteRes.status).toBe(409);
+
+    await db.transcriptionJobsAsync.markFailed(jobId, 'failed again for deletion');
+
     const deleteRes = await agent
       .delete(`/admin/jobs/api/${jobId}`)
       .set('x-csrf-token', csrf);

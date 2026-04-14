@@ -9,8 +9,8 @@
     activePage: 'documents'
   }) %>
 
-  <% if (deleted) { %>
-    <div class="alert alert-success">Document deleted successfully.</div>
+  <% if (removed) { %>
+    <div class="alert alert-success">Document removed from this collection.</div>
   <% } %>
   <% if (error) { %>
     <div class="alert alert-error"><%= error %></div>
@@ -105,7 +105,7 @@
                 <td class="user-date-cell"><%= doc.date_created || '—' %></td>
                 <td class="user-actions-cell">
                   <a href="/documents/<%= doc.id %>" class="btn-action btn-sm">View</a>
-                  <form method="POST" action="/manage/collections/<%= collection.id %>/documents/<%= doc.id %>/delete" class="inline-form manage-doc-actions-form" data-confirm="Delete this document permanently? This cannot be undone.">
+                  <form method="POST" action="/manage/collections/<%= collection.id %>/documents/<%= doc.id %>/delete" class="inline-form manage-doc-actions-form" data-confirm="Remove this document from this collection? This will not delete the underlying document.">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <button type="submit" class="btn-action btn-delete btn-sm">Delete</button>
                   </form>

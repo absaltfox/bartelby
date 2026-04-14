@@ -11,6 +11,7 @@ primary_region = 'iad'
   STORAGE_DRIVER = "s3"
   S3_REGION = "auto"
   S3_FORCE_PATH_STYLE = "false"
+  TRUST_PROXY = "1"
   FLY_MACHINES_ENABLED = "true"
 
 [http_service]

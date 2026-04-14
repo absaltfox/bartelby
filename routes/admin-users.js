@@ -9,12 +9,14 @@ const {
   collectionsAsync,
   userCollectionAccessAsync,
   userInvitesAsync,
-  passwordResetTokensAsync
+  passwordResetTokensAsync,
+  mfaRememberTokensAsync
 } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
 const { isSmtpConfigured, sendInviteEmail, sendPasswordResetEmail } = require('../utils/email');
 const { absoluteAppUrl } = require('../utils/app-url');
 const audit = require('../utils/audit-log');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -41,8 +43,35 @@ function parseCollectionIds(raw) {
     : (raw ? [Number(raw)].filter(Number.isInteger) : []);
 }
 
+async function blockLastActiveAdminRemoval(req, {
+  targetUserId,
+  nextRole = null,
+  deleting = false
+}) {
+  const target = await usersAsync.findById(targetUserId);
+  if (!target || target.role !== 'admin' || target.status !== 'active') {
+    return false;
+  }
+
+  if (!deleting && nextRole === 'admin') {
+    return false;
+  }
+
+  const adminCount = await usersAsync.countActiveAdmins();
+  if (adminCount > 1) {
+    return false;
+  }
+
+  req.session.adminUsersFlash = {
+    error: deleting
+      ? 'Cannot delete the last active administrator.'
+      : 'Cannot demote the last active administrator.'
+  };
+  return true;
+}
+
 // List all users (pending + active + rejected)
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const allUsers = await usersAsync.getAll();
   const pending  = allUsers.filter(u => u.status === 'pending');
   const active   = allUsers.filter(u => u.status === 'active');
@@ -58,9 +87,9 @@ router.get('/', async (req, res) => {
     flash: consumeFlash(req),
     smtpConfigured: isSmtpConfigured()
   });
-});
+}));
 
-router.get('/invite', async (req, res) => {
+router.get('/invite', asyncHandler(async (req, res) => {
   res.render('admin/invite-user', {
     pageTitle: 'Invite User',
     allCollections: await collectionsAsync.getAll(),
@@ -68,9 +97,9 @@ router.get('/invite', async (req, res) => {
     error: req.session.authError || null
   });
   delete req.session.authError;
-});
+}));
 
-router.post('/invite', tokenGenLimiter, async (req, res) => {
+router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const accessAll = req.body.access_all === '1';
@@ -130,10 +159,10 @@ router.post('/invite', tokenGenLimiter, async (req, res) => {
     inviteUrl
   };
   res.redirect('/admin/users');
-});
+}));
 
 // Approval form
-router.get('/:id/approve', async (req, res) => {
+router.get('/:id/approve', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const user = await usersAsync.findById(id);
   if (!user) return res.redirect('/admin/users');
@@ -147,10 +176,10 @@ router.get('/:id/approve', async (req, res) => {
     grantedRoles: {},
     editMode: false
   });
-});
+}));
 
 // Process approval
-router.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const role      = req.body.role === 'admin' ? 'admin' : 'user';
   const accessAll = req.body.access_all === '1';
@@ -167,28 +196,34 @@ router.post('/:id/approve', async (req, res) => {
   }
   audit.log('user.approved', { ...audit.reqContext(req), targetUserId: id, role, accessAll });
   res.redirect('/admin/users');
-});
+}));
 
 // Reject
-router.post('/:id/reject', async (req, res) => {
+router.post('/:id/reject', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   await usersAsync.reject(id);
   audit.log('user.rejected', { ...audit.reqContext(req), targetUserId: id });
   res.redirect('/admin/users');
-});
+}));
 
 // Change role (for active users)
-router.post('/:id/role', async (req, res) => {
+router.post('/:id/role', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
   const role = req.body.role === 'admin' ? 'admin' : 'user';
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    nextRole: role
+  })) {
+    return res.redirect('/admin/users');
+  }
   await usersAsync.setRole(id, role);
   audit.log('user.role_changed', { ...audit.reqContext(req), targetUserId: id, role });
   res.redirect('/admin/users');
-});
+}));
 
 // Edit access for active user
-router.get('/:id/access', async (req, res) => {
+router.get('/:id/access', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const user = await usersAsync.findById(id);
   if (!user || id === req.user.id) return res.redirect('/admin/users');
@@ -206,9 +241,9 @@ router.get('/:id/access', async (req, res) => {
     grantedRoles,
     editMode: true
   });
-});
+}));
 
-router.post('/:id/access', async (req, res) => {
+router.post('/:id/access', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
 
@@ -216,6 +251,13 @@ router.post('/:id/access', async (req, res) => {
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const canUseSystemApiKeys = req.body.can_use_system_api_keys === '1' || role === 'admin';
   const collectionIds = parseCollectionIds(req.body.collections);
+
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    nextRole: role
+  })) {
+    return res.redirect('/admin/users');
+  }
 
   await usersAsync.setRole(id, role);
   await usersAsync.setAccessAll(id, accessAll);
@@ -230,14 +272,14 @@ router.post('/:id/access', async (req, res) => {
   }
   audit.log('user.access_updated', { ...audit.reqContext(req), targetUserId: id, role, accessAll });
   res.redirect('/admin/users');
-});
+}));
 
-router.post('/invites/:id/revoke', async (req, res) => {
+router.post('/invites/:id/revoke', asyncHandler(async (req, res) => {
   await userInvitesAsync.revoke(parseInt(req.params.id, 10));
   res.redirect('/admin/users');
-});
+}));
 
-router.post('/:id/password-reset', tokenGenLimiter, async (req, res) => {
+router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.redirect('/admin/users');
 
@@ -253,6 +295,7 @@ router.post('/:id/password-reset', tokenGenLimiter, async (req, res) => {
 
   const token = crypto.randomBytes(24).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  await mfaRememberTokensAsync.deleteForUser(user.id);
   await passwordResetTokensAsync.create({
     userId: user.id,
     tokenHash,
@@ -284,12 +327,18 @@ router.post('/:id/password-reset', tokenGenLimiter, async (req, res) => {
     resetUrl
   };
   res.redirect('/admin/users');
-});
+}));
 
 // Delete
-router.post('/:id/delete', async (req, res) => {
+router.post('/:id/delete', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   if (id === req.user.id) return res.redirect('/admin/users');
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    deleting: true
+  })) {
+    return res.redirect('/admin/users');
+  }
   try {
     await usersAsync.delete(id);
     audit.log('user.deleted', { ...audit.reqContext(req), targetUserId: id });
@@ -298,6 +347,6 @@ router.post('/:id/delete', async (req, res) => {
     req.session.adminUsersFlash = { error: 'Failed to delete user. They may have associated records.' };
   }
   res.redirect('/admin/users');
-});
+}));
 
 module.exports = router;

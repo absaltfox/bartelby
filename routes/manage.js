@@ -13,6 +13,7 @@ const {
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
+const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 
 function getImportApiRouter() {
@@ -27,8 +28,44 @@ async function getManagedIds(req) {
   return req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
 }
 
+function parseImportJobPayload(job) {
+  if (!job?.submit_payload) return null;
+  try {
+    return typeof job.submit_payload === 'string'
+      ? JSON.parse(job.submit_payload)
+      : job.submit_payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+function decorateManageImportJob(job, collectionId) {
+  const payload = parseImportJobPayload(job);
+  const authorizedCollectionIds = Array.isArray(payload?.authorizedCollectionIds)
+    ? payload.authorizedCollectionIds.map(Number).filter(Number.isInteger)
+    : [];
+
+  if (authorizedCollectionIds.length > 0 && !authorizedCollectionIds.includes(collectionId)) {
+    return null;
+  }
+
+  return {
+    ...job,
+    job_type: 'import',
+    scope: authorizedCollectionIds.includes(collectionId) ? 'collection' : 'user',
+    scope_label: authorizedCollectionIds.includes(collectionId) ? null : 'Your import job'
+  };
+}
+
+async function getVisibleManageImportJobs(userId, collectionId) {
+  const jobs = await importJobsAsync.getByUserId(userId);
+  return jobs
+    .map((job) => decorateManageImportJob(job, collectionId))
+    .filter(Boolean);
+}
+
 // ── Dashboard ────────────────────────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const managedIds = await getManagedIds(req);
 
   let collections;
@@ -44,10 +81,10 @@ router.get('/', async (req, res) => {
     collections,
     managedIds
   });
-});
+}));
 
 // ── Documents in a managed collection ─────────────────────────────────────────
-router.get('/collections/:collectionId/documents', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/documents', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
@@ -82,30 +119,30 @@ router.get('/collections/:collectionId/documents', requireCollectionRole('manage
     currentPage: page,
     totalPages,
     totalCount,
-    deleted: req.query.deleted === '1',
+    removed: req.query.removed === '1' || req.query.deleted === '1',
     error: req.query.error || null,
     allowExport: !!collection.allow_export
   });
-});
+}));
 
 // ── Toggle export setting for a managed collection ───────────────────────────
-router.post('/collections/:collectionId/settings/export', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/settings/export', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const allow = req.body.allow_export === '1' ? 1 : 0;
   await collectionsAsync.setAllowExport(collectionId, allow);
   res.redirect(`/manage/collections/${collectionId}/documents`);
-});
+}));
 
 // ── Toggle auto-group pages setting for a managed collection ─────────────────
-router.post('/collections/:collectionId/settings/auto-group', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/settings/auto-group', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const enabled = req.body.auto_group_pages === '1' ? 1 : 0;
   await collectionsAsync.setAutoGroupPages(collectionId, enabled);
   res.redirect(`/manage/collections/${collectionId}/documents`);
-});
+}));
 
 // ── Move documents between collections ────────────────────────────────────────
-router.post('/collections/:collectionId/documents/move', express.json(), requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/documents/move', express.json(), requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const fromCollectionId = parseInt(req.params.collectionId);
   const targetCollectionId = parseInt(req.body.targetCollectionId);
   const docIds = Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(n => !isNaN(n)) : [];
@@ -147,39 +184,31 @@ router.post('/collections/:collectionId/documents/move', express.json(), require
   });
 
   res.json({ success: true, moved: validDocIds.length });
-});
+}));
 
 // ── Delete document from collection (manager) ────────────────────────────────
-router.post('/collections/:collectionId/documents/:docId/delete', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/documents/:docId/delete', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const docId = parseInt(req.params.docId);
   const doc = await documentsAsync.getById(docId);
   if (!doc) return res.redirect(`/manage/collections/${collectionId}/documents?error=not_found`);
 
-  const storage = require('../utils/storage');
-  const { parseMetadata } = require('../utils/document-assets');
-  if (doc.image_path) {
-    try { await storage.deleteUploadByUrl(doc.image_path); } catch (e) {}
-  }
-  const metadata = parseMetadata(doc.metadata);
-  if (metadata && Array.isArray(metadata.additional_pages)) {
-    for (const pagePath of metadata.additional_pages) {
-      try { await storage.deleteUploadByUrl(pagePath); } catch (e) {}
-    }
+  const collectionEntries = await documentCollectionsAsync.getByCollectionId(collectionId);
+  if (!collectionEntries.some((entry) => entry.document_id === docId)) {
+    return res.redirect(`/manage/collections/${collectionId}/documents?error=not_found`);
   }
 
-  await documentsAsync.delete(doc.id);
-  audit.log('manager.document_deleted', {
+  await documentCollectionsAsync.remove(doc.id, collectionId);
+  audit.log('manager.document_removed_from_collection', {
     ...audit.reqContext(req),
     collectionId,
-    documentId: doc.id,
-    imagePath: doc.image_path || null
+    documentId: doc.id
   });
-  res.redirect(`/manage/collections/${collectionId}/documents?deleted=1`);
-});
+  res.redirect(`/manage/collections/${collectionId}/documents?removed=1`);
+}));
 
 // ── Jobs for a managed collection ─────────────────────────────────────────────
-router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
@@ -191,10 +220,10 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
 
   const [tJobsRaw, iJobs] = await Promise.all([
     transcriptionJobsAsync.getByDocumentIds(docIds),
-    importJobsAsync.getByUserId(req.user.id)
+    getVisibleManageImportJobs(req.user.id, collectionId)
   ]);
   const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobsTagged = iJobs.map(j => ({ ...j, job_type: 'import' }));
+  const iJobsTagged = iJobs;
 
   let jobs = [...iJobsTagged, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
@@ -231,37 +260,39 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
     counts,
     typeCounts
   });
-});
+}));
 
 // ── Jobs API: single transcription job (log viewing + polling) ─────────────────
-router.get('/collections/:collectionId/jobs/api/:id', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/jobs/api/:id', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
   const job = await transcriptionJobsAsync.getById(parseInt(req.params.id));
   if (!job || !docIds.includes(job.document_id)) return res.status(404).json({ error: 'Not found' });
   res.json(job);
-});
+}));
 
-router.post('/collections/:collectionId/jobs/api/import/:id/retry', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/jobs/api/import/:id/retry', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.collectionId);
   const job = await importJobsAsync.getById(parseInt(req.params.id));
-  if (!job || (req.user.role !== 'admin' && job.user_id !== req.user.id)) {
+  const visibleJob = decorateManageImportJob(job, collectionId);
+  if (!job || !visibleJob || (req.user.role !== 'admin' && job.user_id !== req.user.id)) {
     return res.status(404).json({ error: 'Not found' });
   }
   await importJobsAsync.retry(parseInt(req.params.id));
   res.json({ success: true });
-});
+}));
 
 // ── Jobs API: collection-scoped job list (for AJAX polling) ────────────────────
-router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
 
   const [tJobsRaw, iJobsRaw] = await Promise.all([
     transcriptionJobsAsync.getByDocumentIds(docIds),
-    importJobsAsync.getByUserId(req.user.id)
+    getVisibleManageImportJobs(req.user.id, collectionId)
   ]);
   const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobs = iJobsRaw.map(j => ({ ...j, job_type: 'import' }));
+  const iJobs = iJobsRaw;
   const jobs = [...iJobs, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   const counts = {
@@ -273,10 +304,10 @@ router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager
   };
 
   res.json({ jobs, counts });
-});
+}));
 
 // ── User access management for a managed collection ───────────────────────────
-router.get('/collections/:collectionId/users', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/users', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
@@ -296,10 +327,10 @@ router.get('/collections/:collectionId/users', requireCollectionRole('manager'),
     eligible,
     saved: req.query.saved === '1'
   });
-});
+}));
 
 // Grant access (viewer or editor only — managers cannot grant manager role or modify themselves)
-router.post('/collections/:collectionId/users/grant', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/users/grant', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const userId = parseInt(req.body.user_id);
   if (userId === req.user.id) return res.redirect(`/manage/collections/${collectionId}/users`);
@@ -312,10 +343,10 @@ router.post('/collections/:collectionId/users/grant', requireCollectionRole('man
     await userCollectionAccessAsync.grant(userId, collectionId, role);
   }
   res.redirect(`/manage/collections/${collectionId}/users?saved=1`);
-});
+}));
 
 // Revoke access (prevent self-revocation)
-router.post('/collections/:collectionId/users/:userId/revoke', requireCollectionRole('manager'), async (req, res) => {
+router.post('/collections/:collectionId/users/:userId/revoke', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
   const userId = parseInt(req.params.userId);
   if (userId === req.user.id) return res.redirect(`/manage/collections/${collectionId}/users`);
@@ -323,10 +354,10 @@ router.post('/collections/:collectionId/users/:userId/revoke', requireCollection
     await userCollectionAccessAsync.revoke(userId, collectionId);
   }
   res.redirect(`/manage/collections/${collectionId}/users?saved=1`);
-});
+}));
 
 // ── Import document into a managed collection ────────────────────────────────
-router.get('/collections/:collectionId/import', requireCollectionRole('manager'), async (req, res) => {
+router.get('/collections/:collectionId/import', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
@@ -380,7 +411,7 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
       autoGroupPages: !!collection.auto_group_pages
     }
   });
-});
+}));
 
 // Mount shared import API routes for managers
 router.use('/api', (req, res, next) => getImportApiRouter()(req, res, next));

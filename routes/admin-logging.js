@@ -3,6 +3,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const { appLogsAsync, settingsAsync } = require('../database/db');
 const { LEVEL_NAMES, invalidateConfigCache, info } = require('../utils/logger');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -13,7 +14,7 @@ function normalizeLevelFilter(value) {
   return candidate === 'all' || LEVEL_NAMES.includes(candidate) ? candidate : 'all';
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const level = normalizeLevelFilter(req.query.level);
   const category = String(req.query.category || 'all').trim() || 'all';
   const query = String(req.query.q || '').trim();
@@ -45,9 +46,9 @@ router.get('/', async (req, res) => {
     error: req.query.error || null,
     levelOptions: LEVEL_NAMES
   });
-});
+}));
 
-router.get('/settings', async (req, res) => {
+router.get('/settings', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
 
   res.render('admin/logging-settings', {
@@ -58,9 +59,9 @@ router.get('/settings', async (req, res) => {
     error: req.query.error || null,
     levelOptions: LEVEL_NAMES
   });
-});
+}));
 
-router.post('/settings', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/settings', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   try {
     const fields = [
       'log_level',
@@ -85,9 +86,9 @@ router.post('/settings', express.urlencoded({ extended: false }), async (req, re
   } catch (err) {
     res.redirect('/admin/logging/settings?error=' + encodeURIComponent(err.message));
   }
-});
+}));
 
-router.post('/cleanup', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/cleanup', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   try {
     const retentionDays = parseInt(await settingsAsync.get('log_retention_days'), 10) || 14;
     await appLogsAsync.deleteOlderThanDays(retentionDays);
@@ -100,6 +101,6 @@ router.post('/cleanup', express.urlencoded({ extended: false }), async (req, res
   } catch (err) {
     res.redirect('/admin/logging/settings?error=' + encodeURIComponent(err.message));
   }
-});
+}));
 
 module.exports = router;

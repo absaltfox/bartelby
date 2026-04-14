@@ -11,7 +11,6 @@ const { extensionFromMimeType, mimeTypeFromFilename } = require('../utils/mime-t
 const {
   getTempImageContentType,
   parseGroupingState,
-  buildTranscriptPageSegments,
   getAuthorizedCollectionIds,
   spawnLocalPdfWorker,
   stripPageMarkers,
@@ -26,6 +25,7 @@ const {
   tempAssetExists,
   readTempAsset,
   copyTempAssetToUpload,
+  promoteQueuedTempAssets,
   deleteTempAssets
 } = require('../utils/temp-assets');
 const {
@@ -33,6 +33,10 @@ const {
   documentCollectionsAsync, transcriptionJobsAsync, importJobsAsync,
   saveDatabase, userApiKeysAsync, userCollectionAccessAsync
 } = require('../database/db');
+const { withCsrf } = require('../middleware/upload');
+const { asyncHandler } = require('../utils/async-handler');
+
+const MAX_TEMP_FILE_INPUTS = 5000;
 
 // Initialize storage (temp dirs, etc.)
 storage.init();
@@ -52,7 +56,7 @@ const upload = multer({
 });
 
 // ── API: Upload file (image or PDF) ────────────────────────────────────────
-router.post('/upload', (req, res, next) => {
+const uploadFileMiddleware = (req, res, next) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
@@ -62,137 +66,45 @@ router.post('/upload', (req, res, next) => {
     }
     next();
   });
-}, (req, res, next) => {
-  // CSRF deferred for multipart — validate now that multer has parsed req.body
-  req.app.locals.validateCsrf(req, res, next);
-}, async (req, res) => {
+};
+
+router.post('/upload', withCsrf(uploadFileMiddleware), asyncHandler(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
-  const tempName = storage.sanitizeTempName(req.file.filename);
-  const tempPath = storage.getTempFilePath(tempName);
-  const extFromName = path.extname(req.file.originalname || '').toLowerCase();
-  const extFromMime = extensionFromMimeType(req.file.mimetype, '');
-  const uploadExt = extFromName || extFromMime || (req.file.mimetype === 'application/pdf' ? '.pdf' : '');
+  try {
+    const tempName = storage.sanitizeTempName(req.file.filename);
+    const tempPath = storage.getTempFilePath(tempName);
+    const extFromName = path.extname(req.file.originalname || '').toLowerCase();
+    const extFromMime = extensionFromMimeType(req.file.mimetype, '');
+    const uploadExt = extFromName || extFromMime || (req.file.mimetype === 'application/pdf' ? '.pdf' : '');
 
-  if (tempPath && uploadExt && !tempName.toLowerCase().endsWith(uploadExt)) {
-    // Keep the temp filename extension aligned with the source MIME so later
-    // transcribe/save paths can infer the real type without extra schema state.
-    const renamed = `${tempName}${uploadExt}`;
-    fs.renameSync(tempPath, storage.getTempFilePath(renamed));
-    req.file.filename = renamed;
-    if (req.file.path) req.file.path = storage.getTempFilePath(renamed);
-  }
+    if (tempPath && uploadExt && !tempName.toLowerCase().endsWith(uploadExt)) {
+      // Keep the temp filename extension aligned with the source MIME so later
+      // transcribe/save paths can infer the real type without extra schema state.
+      const renamed = `${tempName}${uploadExt}`;
+      fs.renameSync(tempPath, storage.getTempFilePath(renamed));
+      req.file.filename = renamed;
+      if (req.file.path) req.file.path = storage.getTempFilePath(renamed);
+    }
 
-  if (req.file.mimetype === 'application/pdf') {
-    const pdfTempFile = storage.sanitizeTempName(req.file.filename);
-    const fileSize = req.file.size || 0;
+    if (req.file.mimetype === 'application/pdf') {
+      const [pdfTempFile] = await promoteQueuedTempAssets([req.file.filename]);
 
-    const FILE_SIZE_THRESHOLD = 5 * 1024 * 1024;
-    const isLargePdf = fileSize >= FILE_SIZE_THRESHOLD;
-
-    if (isLargePdf) {
-      const useEphemeralMachine = config.flyMachines.enabled && config.storage.driver === 's3';
-      const s3TempKey = useEphemeralMachine ? `import_${Date.now()}.pdf` : null;
-
-      const dbJobId = await importJobsAsync.create({
-        original_name: req.file.originalname,
-        file_path: useEphemeralMachine ? s3TempKey : pdfTempFile,
-        user_id: req.user?.id || null
-      });
-
-      res.json({
-        success: true,
-        type: 'pdf_queued',
-        importJobId: dbJobId,
-        pageCount: null,
-        originalName: req.file.originalname
-      });
-
-      if (useEphemeralMachine) {
-        try {
-          const pdfBuffer = await readTempAsset(pdfTempFile);
-          try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
-          await storage.putTempObject(s3TempKey, pdfBuffer);
-
-          const flyMachines = require('../utils/fly-machines');
-          const machineId = await flyMachines.runEphemeralWorker(dbJobId);
-          await importJobsAsync.updateMachineId(dbJobId, machineId);
-        } catch (err) {
-          console.error('[import] Failed to launch ephemeral worker:', err);
-          importJobsAsync.markFailed(dbJobId, `Failed to launch worker: ${err.message}`).catch(() => {});
-        }
-      } else {
-        spawnLocalPdfWorker({
-          pdfTempFile,
-          jobRef: dbJobId,
-          originalName: req.file.originalname,
-          onProgress: (msg) => {
-            importJobsAsync.updateProgress(dbJobId, {
-              page_count: msg.pageCount,
-              pages_rendered: msg.pagesRendered
-            }).catch(err => {
-              console.error('Failed to update import job progress:', err);
-            });
-          },
-          onDone: (msg) => {
-            importJobsAsync.markDone(dbJobId, msg.pages).catch(err => {
-              console.error('Failed to mark import job done:', err);
-            });
-            console.log(`[import] PDF "${req.file.originalname}" processed: ${msg.pages.length} pages`);
-          },
-          onFailed: (error) => {
-            console.error('PDF worker process error:', error);
-            importJobsAsync.markFailed(dbJobId, error).catch(err => {
-              console.error('Failed to persist import worker error:', err);
-            });
-          }
-        });
-      }
-
-    } else {
-      // Small PDF: process in a forked worker, track via DB job
       const dbJobId = await importJobsAsync.create({
         original_name: req.file.originalname,
         file_path: pdfTempFile,
         user_id: req.user?.id || null
       });
 
-      res.json({
+      return res.json({
         success: true,
         type: 'pdf_queued',
         importJobId: dbJobId,
         pageCount: null,
         originalName: req.file.originalname
       });
-
-      spawnLocalPdfWorker({
-        pdfTempFile,
-        jobRef: dbJobId,
-        originalName: req.file.originalname,
-        onProgress: (msg) => {
-          importJobsAsync.updateProgress(dbJobId, {
-            page_count: msg.pageCount,
-            pages_rendered: msg.pagesRendered
-          }).catch((err) => {
-            console.error('Failed to update import job progress:', err);
-          });
-        },
-        onDone: (msg) => {
-          importJobsAsync.markDone(dbJobId, msg.pages).catch((err) => {
-            console.error('Failed to mark import job done:', err);
-          });
-          console.log(`[import] PDF "${req.file.originalname}" processed: ${(msg.pages || []).length} pages`);
-        },
-        onFailed: (error) => {
-          console.error('PDF background processing error:', error);
-          importJobsAsync.markFailed(dbJobId, error).catch((err) => {
-            console.error('Failed to mark import job failed:', err);
-          });
-        }
-      });
     }
 
-  } else {
     // Image: return temp file info immediately
     res.json({
       success: true,
@@ -201,11 +113,14 @@ router.post('/upload', (req, res, next) => {
       originalName: req.file.originalname,
       mimeType: req.file.mimetype
     });
+  } catch (err) {
+    console.error('Upload queueing error:', err);
+    res.status(err.statusCode || 500).json({ error: err.message || 'Upload failed' });
   }
-});
+}));
 
 // ── API: Poll import job status (DB-backed) ──────────────────────────────
-router.get('/import-job/:id', async (req, res) => {
+router.get('/import-job/:id', asyncHandler(async (req, res) => {
   const job = await importJobsAsync.getById(parseInt(req.params.id, 10));
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (req.user?.role !== 'admin' && job.user_id !== req.user?.id) {
@@ -226,10 +141,10 @@ router.get('/import-job/:id', async (req, res) => {
     pages,
     error: job.error || null
   });
-});
+}));
 
 // ── API: Serve temp page image ─────────────────────────────────────────────
-router.get('/temp-image/:filename', async (req, res) => {
+router.get('/temp-image/:filename', asyncHandler(async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
   const contentType = getTempImageContentType(filename);
 
@@ -247,10 +162,10 @@ router.get('/temp-image/:filename', async (req, res) => {
   }
 
   res.status(404).send('Not found');
-});
+}));
 
 // ── API: Transcribe a single image ─────────────────────────────────────────
-router.post('/transcribe', express.json(), async (req, res) => {
+router.post('/transcribe', express.json(), asyncHandler(async (req, res) => {
   const { tempFile, provider: providerName = 'openai', credentialSource = 'system', temperature } = req.body;
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
@@ -286,71 +201,10 @@ router.post('/transcribe', express.json(), async (req, res) => {
     console.error('Transcription error:', err);
     res.status(500).json({ error: 'Transcription failed' });
   }
-});
-
-// ── API: Transcribe a group of pages ───────────────────────────────────────
-router.post('/transcribe-group', express.json(), async (req, res) => {
-  const { tempFiles, provider: providerName = 'openai', credentialSource = 'system', temperature, mimeTypes } = req.body;
-  if (!Array.isArray(tempFiles) || tempFiles.length === 0) {
-    return res.status(400).json({ error: 'No files specified' });
-  }
-
-  try {
-    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
-    const { createProvider } = require('../utils/llm');
-    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
-    const provider = await createProvider(providerName, selection.runtimeConfig);
-    const opts = {
-      temperature: temperature !== '' && temperature != null
-        ? parseFloat(temperature)
-        : null
-    };
-
-    const results = [];
-    for (let index = 0; index < tempFiles.length; index++) {
-      const tf = tempFiles[index];
-      const safeTempFile = storage.sanitizeTempName(tf);
-      if (!(await tempAssetExists(safeTempFile))) continue;
-      const imageBuffer = await readTempAsset(safeTempFile);
-      const mimeType = Array.isArray(mimeTypes) ? mimeTypes[index] : null;
-      const result = await provider.transcribeDocument(
-        imageBuffer,
-        mimeTypeFromFilename(safeTempFile, mimeType || 'image/png'),
-        opts
-      );
-      results.push(result);
-    }
-
-    if (results.length === 0) {
-      return res.status(400).json({ error: 'No valid pages found' });
-    }
-
-    const combined = {
-      transcription: results.map(r => String(r.transcription || '').trim()).join('\n\n'),
-      pageSegments: results.length > 1 ? buildTranscriptPageSegments(results) : null,
-      metadata: results[0].metadata,
-      notes: results.map(r => r.notes).filter(Boolean).join(' | ') || null,
-      paradata: results[0].paradata
-    };
-
-    if (combined.paradata) {
-      combined.paradata.run_duration_ms = results.reduce(
-        (sum, r) => sum + (r.paradata?.run_duration_ms || 0), 0
-      );
-    }
-
-    res.json({ success: true, ...combined });
-    if (selection.providerKeyScope === 'user' && selection.userApiKeyId) {
-      await userApiKeysAsync.markUsed(selection.userApiKeyId, req.user.id);
-    }
-  } catch (err) {
-    console.error('Group transcription error:', err);
-    res.status(500).json({ error: 'Group transcription failed' });
-  }
-});
+}));
 
 // ── API: Save document ─────────────────────────────────────────────────────
-router.post('/save-document', express.json(), async (req, res) => {
+router.post('/save-document', express.json(), asyncHandler(async (req, res) => {
   const {
     tempFile, tempFiles, originalName, mimeType,
     title, dateCreated, description, metadata,
@@ -366,7 +220,7 @@ router.post('/save-document', express.json(), async (req, res) => {
   } = req.body;
 
   const isAiMode = transcriptionMode === 'ai';
-  const rawFiles = tempFiles || (tempFile ? [tempFile] : []);
+  const rawFiles = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
   const files = sanitizeTempFiles(rawFiles);
   if (files.length === 0) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -478,13 +332,13 @@ router.post('/save-document', express.json(), async (req, res) => {
     console.error('Save document error:', err);
     res.status(err.statusCode || 500).json({ error: err.message });
   }
-});
+}));
 
 // ── API: Bulk submit pages ─────────────────────────────────────────────────
 // Submit grouped pages as a durable background import job. The HTTP request
 // returns immediately, but the actual document creation/transcription queueing
 // is handled by the worker so it survives restarts and deploys.
-router.post('/submit-pages', express.json(), async (req, res) => {
+router.post('/submit-pages', express.json(), asyncHandler(async (req, res) => {
   const {
     groups,
     originalName,
@@ -553,10 +407,10 @@ router.post('/submit-pages', express.json(), async (req, res) => {
     console.error('Bulk submit error:', err);
     res.status(err.statusCode || 500).json({ error: err.message });
   }
-});
+}));
 
 // ── API: Persist current grouping state for a resumable import job ─────────
-router.post('/groupings', express.json(), async (req, res) => {
+router.post('/groupings', express.json(), asyncHandler(async (req, res) => {
   const importJobId = parseInt(req.body.importJobId, 10);
   if (!Number.isInteger(importJobId)) {
     return res.status(400).json({ error: 'Missing import job ID.' });
@@ -580,14 +434,14 @@ router.post('/groupings', express.json(), async (req, res) => {
     console.error('Persist grouping state error:', err);
     res.status(500).json({ error: 'Failed to save grouping state' });
   }
-});
+}));
 
 // ── API: AI-suggested page groupings ──────────────────────────────────────
 // Crops the top ~15% of each page image (where archival numbers typically
 // appear), then sends the tiny strips to the cheapest available vision model
 // in batches. This keeps cost minimal — a 600-page PDF produces ~12 API calls
 // with small image payloads instead of 600 full-image calls.
-router.post('/suggest-groups', express.json(), async (req, res) => {
+router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => {
   const { tempFiles } = req.body;
   if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
     return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
@@ -599,76 +453,31 @@ router.post('/suggest-groups', express.json(), async (req, res) => {
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
-    const { resolveProviderSelectionAsync } = require('../utils/provider-access');
-    const { createProvider } = require('../utils/llm');
-    const selection = await resolveProviderSelectionAsync(req.user, providerName, credentialSource);
-    const provider = await createProvider(providerName, selection.runtimeConfig);
+    const durableTempFiles = await promoteQueuedTempAssets(tempFiles);
 
-    const { createCanvas, loadImage } = require('canvas');
-    const CROP_RATIO = 0.15; // top 15% of page
-    const BATCH_SIZE = 50;   // small strips → more per batch
-    const pageAnnotations = [];
-
-    for (let i = 0; i < tempFiles.length; i += BATCH_SIZE) {
-      const batch = tempFiles.slice(i, i + BATCH_SIZE);
-      const imageContents = [];
-
-      for (let j = 0; j < batch.length; j++) {
-        const safeName = storage.sanitizeTempName(batch[j]);
-        let buffer;
-        try {
-          if (await tempAssetExists(safeName)) {
-            buffer = await readTempAsset(safeName);
-          }
-        } catch (e) { continue; }
-        if (!buffer) continue;
-
-        // Crop the top strip of the page
-        try {
-          const img = await loadImage(buffer);
-          const cropHeight = Math.round(img.height * CROP_RATIO);
-          // Anthropic's many-image API limit: each dimension must be ≤ 1999px
-          const MAX_DIM = 1999;
-          const scale = Math.min(1, MAX_DIM / img.width, MAX_DIM / cropHeight);
-          const outW = Math.round(img.width * scale);
-          const outH = Math.round(cropHeight * scale);
-          const canvas = createCanvas(outW, outH);
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, img.width, cropHeight, 0, 0, outW, outH);
-          buffer = canvas.toBuffer('image/png');
-        } catch (e) {
-          // If cropping fails, skip this page rather than sending the full image
-          continue;
-        }
-
-        imageContents.push(
-          { type: 'text', text: `Image ${i + j + 1}:` },
-          { type: 'image', image: buffer, mimeType: mimeTypeFromFilename(safeName, 'image/png') }
-        );
+    const dbJobId = await importJobsAsync.create({
+      original_name: `Auto Grouping ${durableTempFiles.length} pages`,
+      job_kind: 'grouping',
+      user_id: req.user?.id || null,
+      payload: {
+        tempFiles: durableTempFiles,
+        provider: providerName,
+        credentialSource
       }
+    });
 
-      if (imageContents.length === 0) continue;
-
-      const result = await provider.generateGroupingSuggestion(imageContents, i, batch.length);
-      if (Array.isArray(result)) {
-        pageAnnotations.push(...result);
-      }
-    }
-
-    const groups = buildGroupsFromAnnotations(pageAnnotations, tempFiles);
-
-    res.json({ success: true, groups });
+    res.json({ success: true, importJobId: dbJobId });
   } catch (err) {
-    console.error('Suggest groups error:', err);
-    res.status(500).json({ error: 'Failed to generate grouping suggestions' });
+    console.error('Suggest groups queueing error:', err);
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to queue grouping suggestions' });
   }
-});
+}));
 
 // ── API: Cancel/cleanup temp files ─────────────────────────────────────────
-router.post('/cancel-import', express.json(), async (req, res) => {
+router.post('/cancel-import', express.json(), asyncHandler(async (req, res) => {
   const { tempFile, tempFiles, importJobId } = req.body;
   const parsedImportJobId = parseInt(importJobId, 10);
-  const files = tempFiles || (tempFile ? [tempFile] : []);
+  const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
 
   try {
     const previewMap = Number.isInteger(parsedImportJobId)
@@ -680,7 +489,7 @@ router.post('/cancel-import', express.json(), async (req, res) => {
     console.error('Failed to clean up temp files:', err);
     res.status(500).json({ error: 'Failed to clean up temporary files' });
   }
-});
+}));
 
 // Export router and the attachTempPreview helper (used by import page routes)
 router.attachTempPreview = attachTempPreview;

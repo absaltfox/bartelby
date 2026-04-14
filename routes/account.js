@@ -5,7 +5,13 @@ const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { isSmtpConfigured } = require('../utils/email');
-const { userApiKeysAsync, usersAsync, settingsAsync } = require('../database/db');
+const {
+  userApiKeysAsync,
+  usersAsync,
+  settingsAsync,
+  mfaRememberTokensAsync
+} = require('../database/db');
+const { asyncHandler } = require('../utils/async-handler');
 const {
   buildOtpAuthUrl,
   generateTotpSecret,
@@ -19,7 +25,12 @@ function normalizeProvider(provider) {
   return ['openai', 'claude', 'gemini'].includes(provider) ? provider : null;
 }
 
-router.get('/', async (req, res) => {
+async function revokeRememberedDevices(req) {
+  await mfaRememberTokensAsync.deleteForUser(req.user.id);
+  req.res.clearCookie('mfa_remember');
+}
+
+router.get('/', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
   const applicationSettings = resolveApplicationSettings(cfg);
   const pendingTotpSecret = req.session.pendingTotpSecret || null;
@@ -49,9 +60,9 @@ router.get('/', async (req, res) => {
     pendingTotpUri,
     pendingTotpQrCode
   });
-});
+}));
 
-router.post('/profile', async (req, res) => {
+router.post('/profile', asyncHandler(async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase() || null;
   const existing = email ? await usersAsync.findByEmail(email) : null;
   if (existing && existing.id !== req.user.id) {
@@ -60,9 +71,9 @@ router.post('/profile', async (req, res) => {
 
   await usersAsync.updateEmail(req.user.id, email);
   res.redirect('/account?saved=1');
-});
+}));
 
-router.post('/api-keys', async (req, res) => {
+router.post('/api-keys', asyncHandler(async (req, res) => {
   if (!canEncryptSecrets()) {
     return res.redirect('/account?error=' + encodeURIComponent('DATA_ENCRYPTION_KEY must be configured before saving personal API keys.'));
   }
@@ -111,22 +122,23 @@ router.post('/api-keys', async (req, res) => {
     utilityOutputCostPerMtok
   });
   res.redirect('/account?saved=1');
-});
+}));
 
-router.post('/api-keys/:id/delete', async (req, res) => {
+router.post('/api-keys/:id/delete', asyncHandler(async (req, res) => {
   await userApiKeysAsync.delete(parseInt(req.params.id, 10), req.user.id);
   res.redirect('/account?saved=1');
-});
+}));
 
-router.post('/mfa/disable', async (req, res) => {
+router.post('/mfa/disable', asyncHandler(async (req, res) => {
   await usersAsync.setMfaMethod(req.user.id, 'none');
   await usersAsync.setTotpSecret(req.user.id, null);
   await usersAsync.clearEmailOtp(req.user.id);
+  await revokeRememberedDevices(req);
   delete req.session.pendingTotpSecret;
   res.redirect('/account?saved=1');
-});
+}));
 
-router.post('/mfa/email/enable', async (req, res) => {
+router.post('/mfa/email/enable', asyncHandler(async (req, res) => {
   if (!req.user.email) {
     return res.redirect('/account?error=' + encodeURIComponent('Add an email address before enabling email MFA.'));
   }
@@ -136,7 +148,7 @@ router.post('/mfa/email/enable', async (req, res) => {
 
   await usersAsync.setMfaMethod(req.user.id, 'email');
   res.redirect('/account?saved=1');
-});
+}));
 
 router.post('/mfa/totp/setup', (req, res) => {
   if (!canEncryptSecrets()) {
@@ -147,7 +159,7 @@ router.post('/mfa/totp/setup', (req, res) => {
   res.redirect('/account');
 });
 
-router.post('/mfa/totp/confirm', async (req, res) => {
+router.post('/mfa/totp/confirm', asyncHandler(async (req, res) => {
   const secret = req.session.pendingTotpSecret;
   const code = (req.body.code || '').trim();
 
@@ -161,9 +173,10 @@ router.post('/mfa/totp/confirm', async (req, res) => {
   await usersAsync.setTotpSecret(req.user.id, secret);
   await usersAsync.setMfaMethod(req.user.id, 'totp');
   await usersAsync.clearEmailOtp(req.user.id);
+  await revokeRememberedDevices(req);
   delete req.session.pendingTotpSecret;
   res.redirect('/account?saved=1');
-});
+}));
 
 router.post('/mfa/totp/cancel', (req, res) => {
   delete req.session.pendingTotpSecret;

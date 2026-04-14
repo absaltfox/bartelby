@@ -9,6 +9,7 @@ const {
   extractionJobsAsync
 } = require('../database/db');
 const { queueDocumentRerun, queueCollectionRerun } = require('../utils/knowledge-rerun');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -45,7 +46,7 @@ async function buildKnowledgePageState() {
   };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const state = await buildKnowledgePageState();
   res.render('admin/knowledge', {
     pageTitle: 'Knowledge',
@@ -60,9 +61,9 @@ router.get('/', async (req, res) => {
     skippedPending: parseInt(req.query.skippedPending, 10) || 0,
     skippedNoTranscript: parseInt(req.query.skippedNoTranscript, 10) || 0
   });
-});
+}));
 
-router.get('/api/documents/search', async (req, res) => {
+router.get('/api/documents/search', asyncHandler(async (req, res) => {
   const query = String(req.query.q || '').trim();
 
   if (query.length < 2) {
@@ -84,9 +85,9 @@ router.get('/api/documents/search', async (req, res) => {
     }));
 
   return res.json({ results });
-});
+}));
 
-router.post('/documents/reextract', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/documents/reextract', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const documentId = parseInt(req.body.document_id, 10);
   const returnTo = normalizeReturnTo(req.body.returnTo, '/admin/knowledge');
   if (!Number.isInteger(documentId)) {
@@ -114,9 +115,9 @@ router.post('/documents/reextract', express.urlencoded({ extended: false }), asy
       error: err.message
     }));
   }
-});
+}));
 
-router.post('/collections/reextract', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/collections/reextract', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.body.collection_id, 10);
   const returnTo = normalizeReturnTo(req.body.returnTo, '/admin/knowledge');
   if (!Number.isInteger(collectionId)) {
@@ -139,6 +140,6 @@ router.post('/collections/reextract', express.urlencoded({ extended: false }), a
       error: err.message
     }));
   }
-});
+}));
 
 module.exports = router;

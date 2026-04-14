@@ -3,6 +3,7 @@ const router = express.Router();
 const { transcriptsAsync, documentsAsync, collectionsAsync, userCollectionAccessAsync, graphAccess, citations } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAuth);
 
@@ -24,10 +25,10 @@ async function getAccessibleCollections(req, opts) {
   const all = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
   if (opts.isAdmin || opts.accessAll) return all;
   const accessIds = await userCollectionAccessAsync.getIdsByUserId(req.user.id);
-  return all.filter(collection => collection.is_public || accessIds.includes(collection.id));
+  return all.filter(c => c.is_public || c.is_world_public || accessIds.includes(c.id));
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const query = req.query.q || '';
   let results = [];
   let entityResults = [];
@@ -50,7 +51,7 @@ router.get('/', async (req, res) => {
         );
         entityResults = await Promise.all((matched || []).map(async (entity) => {
           const citeRows = citations && citations.getByEntityId
-            ? await citations.getByEntityId(entity.id)
+            ? await citations.getByEntityId(entity.id, getSearchOpts(req))
             : [];
           const documentIds = new Set((citeRows || []).map((row) => row.document_id).filter(Boolean));
           return {
@@ -66,9 +67,9 @@ router.get('/', async (req, res) => {
   }
 
   res.render('search', { query, results, resultCount: results.length, entityResults });
-});
+}));
 
-router.get('/advanced', async (req, res) => {
+router.get('/advanced', asyncHandler(async (req, res) => {
   const opts = getSearchOpts(req);
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = 25;
@@ -134,6 +135,6 @@ router.get('/advanced', async (req, res) => {
     authors: normalizeFacetValues(rawAuthors),
     dateRange
   });
-});
+}));
 
 module.exports = router;

@@ -1,5 +1,8 @@
 'use strict';
 
+const path = require('path');
+const fs = require('fs');
+
 /**
  * Count [illegible] and [unclear: ...] markers in a transcript.
  * These represent words the model could not confidently read.

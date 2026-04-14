@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
@@ -184,7 +185,7 @@ async function buildEntityPreview(entityId) {
   };
 }
 
-router.get('/api/search', async (req, res) => {
+router.get('/api/search', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || typeof stores.entities.search !== 'function') {
     return res.json({ results: [] });
@@ -218,9 +219,9 @@ router.get('/api/search', async (req, res) => {
   }));
 
   return res.json({ results: enriched });
-});
+}));
 
-router.get('/api/browse', async (req, res) => {
+router.get('/api/browse', asyncHandler(async (req, res) => {
   const typeFilter = String(req.query.type || 'all').trim();
   const q = String(req.query.q || '').trim();
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -235,9 +236,9 @@ router.get('/api/browse', async (req, res) => {
     typeFilter,
     query: q
   });
-});
+}));
 
-router.get('/api/:id/preview', async (req, res) => {
+router.get('/api/:id/preview', asyncHandler(async (req, res) => {
   const entityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(entityId)) {
     return res.status(400).json({ error: 'Invalid entity id.' });
@@ -249,9 +250,9 @@ router.get('/api/:id/preview', async (req, res) => {
   }
 
   return res.json({ entity: preview });
-});
+}));
 
-router.get('/merge', async (req, res) => {
+router.get('/merge', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -276,9 +277,9 @@ router.get('/merge', async (req, res) => {
     graphNotice: hasGraphStores() ? null : 'Knowledge graph entity helpers are not wired yet.',
     activeKnowledgePage: 'merge-entities'
   });
-});
+}));
 
-router.post('/merge', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const sourceId = parseInt(req.body.source_entity_id, 10);
   const targetId = parseInt(req.body.target_entity_id, 10);
@@ -298,9 +299,9 @@ router.post('/merge', express.urlencoded({ extended: false }), async (req, res) 
   } catch (err) {
     return res.redirect(knowledgePath('/entities/merge?error=' + encodeURIComponent(err.message)));
   }
-});
+}));
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -329,9 +330,9 @@ router.get('/', async (req, res) => {
     graphNotice: graphState.graphNotice,
     activeKnowledgePage: 'entities'
   });
-});
+}));
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     return res.redirect(knowledgePath(`/entities/${req.params.id}`));
   }
@@ -380,9 +381,9 @@ router.get('/:id', async (req, res) => {
     rejected: req.query.rejected || null,
     deleted: req.query.deleted || null
   });
-});
+}));
 
-router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -400,9 +401,9 @@ router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended:
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
   }
-});
+}));
 
-router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -420,9 +421,9 @@ router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: 
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
   }
-});
+}));
 
-router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -440,9 +441,9 @@ router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: 
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
   }
-});
+}));
 
-router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {
@@ -459,6 +460,6 @@ router.post('/:id/delete', express.urlencoded({ extended: false }), async (req, 
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${id}?error=` + encodeURIComponent(err.message)));
   }
-});
+}));
 
 module.exports = router;

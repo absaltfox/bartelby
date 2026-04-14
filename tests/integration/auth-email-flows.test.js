@@ -134,6 +134,12 @@ describe('auth and email-driven flows', () => {
       accessAll: false,
       canUseSystemApiKeys: false
     });
+    const rememberTokenHash = crypto.createHash('sha256').update('admin-reset-remembered-device').digest('hex');
+    await db.mfaRememberTokensAsync.create(
+      resetUserId,
+      rememberTokenHash,
+      new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    );
 
     const adminAgent = request.agent(app);
     await login(adminAgent, 'testadmin', 'testpassword99!');
@@ -150,6 +156,7 @@ describe('auth and email-driven flows', () => {
       email: 'reset@example.com',
       username: 'reset-user'
     }));
+    await expect(db.mfaRememberTokensAsync.verify(resetUserId, rememberTokenHash)).resolves.toBe(false);
   });
 
   it('accepts admin-generated password reset tokens and updates the password', async () => {
@@ -162,6 +169,12 @@ describe('auth and email-driven flows', () => {
       accessAll: false,
       canUseSystemApiKeys: false
     });
+    const rememberTokenHash = crypto.createHash('sha256').update('self-reset-remembered-device').digest('hex');
+    await db.mfaRememberTokensAsync.create(
+      resetUserId,
+      rememberTokenHash,
+      new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    );
 
     const rawToken = 'manual-reset-token';
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -187,8 +200,58 @@ describe('auth and email-driven flows', () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/login');
+    expect(res.headers['set-cookie'] || []).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^mfa_remember=/)])
+    );
+    await expect(db.mfaRememberTokensAsync.verify(resetUserId, rememberTokenHash)).resolves.toBe(false);
 
     const loginRes = await login(agent, 'token-reset-user', 'newpassword123!');
     expect(loginRes.headers.location).toBe('/');
+  });
+
+  it('revokes remembered MFA devices when MFA is disabled from the account page', async () => {
+    const userId = await db.usersAsync.create({
+      username: 'disable-mfa-user',
+      email: 'disable-mfa@example.com',
+      passwordHash: bcrypt.hashSync('password123!', 10),
+      role: 'user',
+      status: 'active',
+      accessAll: false,
+      canUseSystemApiKeys: false
+    });
+    await db.usersAsync.setMfaMethod(userId, 'email');
+    const rememberTokenHash = crypto.createHash('sha256').update('disable-mfa-remembered-device').digest('hex');
+    await db.mfaRememberTokensAsync.create(
+      userId,
+      rememberTokenHash,
+      new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    );
+
+    const agent = request.agent(app);
+    const loginRes = await login(agent, 'disable-mfa-user', 'password123!');
+    expect(loginRes.headers.location).toBe('/login/mfa');
+
+    const mfaPage = await agent.get('/login/mfa');
+    const mfaCsrf = extractCsrfToken(mfaPage.text);
+    const issuedCode = email.sendEmailOtp.mock.calls[email.sendEmailOtp.mock.calls.length - 1][1];
+    const verifyRes = await agent
+      .post('/login/mfa')
+      .type('form')
+      .send({ code: issuedCode, _csrf: mfaCsrf });
+    expect(verifyRes.status).toBe(302);
+    expect(verifyRes.headers.location).toBe('/');
+
+    const accountPage = await agent.get('/account');
+    const csrf = extractCsrfToken(accountPage.text);
+    const disableRes = await agent
+      .post('/account/mfa/disable')
+      .type('form')
+      .send({ _csrf: csrf });
+
+    expect(disableRes.status).toBe(302);
+    expect(disableRes.headers['set-cookie'] || []).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^mfa_remember=/)])
+    );
+    await expect(db.mfaRememberTokensAsync.verify(userId, rememberTokenHash)).resolves.toBe(false);
   });
 });

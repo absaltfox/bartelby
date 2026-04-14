@@ -33,6 +33,7 @@ async function createDriver() {
 
   return {
     kind: 'sqljs',
+    persistent: !isInMemory,
     exec(sql) {
       return db.exec(sql);
     },

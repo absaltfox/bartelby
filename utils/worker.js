@@ -22,11 +22,21 @@ const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout 
 
 function startWorker() {
   setInterval(tick, 5000);
-  setInterval(tickImportJobs, 5000);
+  setInterval(tickImportSubmissionJobs, 5000);
+  setInterval(tickImportRenderJobs, 5000);
+  setInterval(tickGroupingJobs, 5000);
   setInterval(tickExtractionJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
   setInterval(checkStaleImportJobs, 60000);
+  setInterval(async () => {
+    try {
+      const { importJobsAsync } = require('../database/db');
+      await importJobsAsync.requeueStaleJobs();
+    } catch (err) {
+      // Non-fatal
+    }
+  }, 60000);
   setInterval(cleanExpiredMfaTokens, 60 * 60 * 1000);
 
   const { runScheduledAnalytics } = require('./analytics');
@@ -132,7 +142,7 @@ async function tickExtractionJobs() {
   }
 }
 
-async function tickImportJobs() {
+async function tickImportSubmissionJobs() {
   if (importBusy) return;
   importBusy = true;
 
@@ -157,4 +167,126 @@ async function tickImportJobs() {
   }
 }
 
-module.exports = { startWorker };
+let importRenderBusy = false;
+async function tickImportRenderJobs() {
+  if (importRenderBusy) return;
+  importRenderBusy = true;
+
+  const { importJobsAsync } = require('../database/db');
+  const config = require('../config');
+  const storage = require('../utils/storage');
+  const { spawnLocalPdfWorker } = require('../utils/import-workflow');
+
+  let job = null;
+  let localRenderHandled = false;
+  try {
+    job = await importJobsAsync.claimNextQueuedRender();
+    if (!job) return;
+
+    console.log(`[worker] import job ${job.id}: starting PDF render processing`);
+    const pdfTempFile = job.file_path; // As stored, without path context
+
+    const useEphemeralMachine = config.flyMachines.enabled && config.storage.driver === 's3';
+    
+    if (useEphemeralMachine) {
+      try {
+        const flyMachines = require('./fly-machines');
+        const machineId = await flyMachines.runEphemeralWorker(job.id);
+        await importJobsAsync.updateMachineId(job.id, machineId);
+        try { storage.deleteTempFile(pdfTempFile); } catch (e) {}
+        // We do not mark the job complete here; the ephemeral worker does it.
+      } catch (err) {
+        throw new Error(`Failed to launch worker: ${err.message}`);
+      }
+    } else {
+      // Local path: send heartbeats while processing
+      let heartbeatInterval = null;
+      try {
+        heartbeatInterval = setInterval(() => {
+          importJobsAsync.updateHeartbeat(job.id).catch(() => {});
+        }, 30000);
+
+        await new Promise((resolve, reject) => {
+          spawnLocalPdfWorker({
+            pdfTempFile,
+            jobRef: job.id,
+            originalName: job.original_name,
+            onProgress: (msg) => {
+              importJobsAsync.updateProgress(job.id, {
+                page_count: msg.pageCount,
+                pages_rendered: msg.pagesRendered
+              }).catch(() => {});
+            },
+            onDone: (msg) => {
+              importJobsAsync.markDone(job.id, msg.pages)
+                .then(() => {
+                  localRenderHandled = true;
+                  console.log(`[worker] PDF render "${job.original_name}" job ${job.id} completed.`);
+                  resolve();
+                })
+                .catch(reject);
+            },
+            onFailed: (error) => {
+              importJobsAsync.markFailed(job.id, error)
+                .then(() => {
+                  localRenderHandled = true;
+                  resolve();
+                })
+                .catch(reject);
+            }
+          });
+        });
+      } finally {
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+      }
+    }
+  } catch (err) {
+    console.error('[worker] PDF render job failed:', err.message);
+    if (job && !localRenderHandled) await importJobsAsync.markFailed(job.id, err.message);
+  } finally {
+    importRenderBusy = false;
+  }
+}
+
+let groupingBusy = false;
+async function tickGroupingJobs() {
+  if (groupingBusy) return;
+  groupingBusy = true;
+
+  const { importJobsAsync } = require('../database/db');
+  let job = null;
+
+  try {
+    job = await importJobsAsync.claimNextQueuedGrouping();
+    if (!job) return;
+
+    console.log(`[worker] grouping job ${job.id}: starting`);
+    const payload = JSON.parse(job.submit_payload || '{}');
+    const { runDocumentGrouping } = require('./grouping-llm');
+    
+    const groupingResult = await runDocumentGrouping(
+      payload.provider,
+      payload.tempFiles,
+      payload.credentialSource,
+      job.user_id
+    );
+
+    // Save as done with the resulting groups mapped into pages
+    await importJobsAsync.markDone(job.id, groupingResult.groups);
+    console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
+
+  } catch (err) {
+    console.error('[worker] grouping job failed:', err.message);
+    if (job) await importJobsAsync.markFailed(job.id, err.message);
+  } finally {
+    groupingBusy = false;
+  }
+}
+
+module.exports = {
+  startWorker,
+  __testables: {
+    tickGroupingJobs,
+    tickImportRenderJobs
+  }
+};

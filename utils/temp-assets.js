@@ -1,5 +1,6 @@
 'use strict';
 
+const config = require('../config');
 const storage = require('./storage');
 
 function normalizeTempAssets(files) {
@@ -121,6 +122,43 @@ async function copyTempAssetToUpload(tempName, originalName, extOverride) {
   return storage.copyTempFileToUpload(safeName, originalName, extOverride);
 }
 
+async function promoteQueuedTempAssets(tempNames) {
+  const files = sanitizeTempFiles(Array.isArray(tempNames) ? tempNames : [tempNames]);
+  if (files.length === 0) {
+    const err = new Error('Temporary file not found. Please upload again.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  for (const file of files) {
+    if (!(await tempAssetExists(file))) {
+      const err = new Error('Temporary file not found. Please upload again.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (config.storage.driver !== 's3' || typeof storage.putTempObject !== 'function') {
+      continue;
+    }
+
+    const localExists = typeof storage.tempFileExists === 'function'
+      ? storage.tempFileExists(file)
+      : false;
+
+    if (!localExists) {
+      continue;
+    }
+
+    const buffer = typeof storage.readTempFileAsync === 'function'
+      ? await storage.readTempFileAsync(file)
+      : storage.readTempFile(file);
+
+    await storage.putTempObject(file, buffer);
+  }
+
+  return files;
+}
+
 async function deleteTempAssets(names) {
   if (!names || names.length === 0) return;
 
@@ -144,5 +182,6 @@ module.exports = {
   tempAssetExists,
   readTempAsset,
   copyTempAssetToUpload,
+  promoteQueuedTempAssets,
   deleteTempAssets
 };

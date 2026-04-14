@@ -15,6 +15,7 @@ const {
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 const { resolveApplicationSettings } = require('../utils/application-settings');
+const { asyncHandler } = require('../utils/async-handler');
 
 let bcryptModule = null;
 
@@ -76,6 +77,11 @@ function completeLogin(req, res, next, user, returnTo) {
   });
 }
 
+async function revokeRememberedDevicesForUser(res, userId) {
+  await mfaRememberTokensAsync.deleteForUser(userId);
+  res.clearCookie('mfa_remember');
+}
+
 async function beginEmailMfa(req, user, returnTo) {
   const code = generateOtpCode();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -86,7 +92,7 @@ async function beginEmailMfa(req, user, returnTo) {
 
 // ── Login ──────────────────────────────────────────────────────────────────
 
-router.get('/login', async (req, res) => {
+router.get('/login', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const bootstrap = await getBootstrapStatus();
   res.render('auth/login', {
@@ -94,49 +100,50 @@ router.get('/login', async (req, res) => {
     error: consumeAuthError(req),
     bootstrap
   });
-});
+}));
 
 router.post('/login',
   (req, res, next) => {
-    passport.authenticate('local', async (err, user, info) => {
-      if (err) return next(err);
-      if (!user) {
-        // Special case: pending account — redirect to /pending page
-        if (info?.message === 'pending') {
-          return res.redirect('/pending');
+    passport.authenticate('local', (err, user, info) => {
+      void Promise.resolve().then(async () => {
+        if (err) throw err;
+        if (!user) {
+          if (info?.message === 'pending') {
+            return res.redirect('/pending');
+          }
+          req.session.authError = info?.message || 'Invalid credentials.';
+          return res.redirect('/login');
         }
-        req.session.authError = info?.message || 'Invalid credentials.';
+
+        const returnTo = safeReturnTo(req);
+
+        if (user.mfa_method && req.signedCookies?.mfa_remember) {
+          const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
+          const remembered = await mfaRememberTokensAsync.verify(user.id, tokenHash);
+          if (remembered) {
+            return completeLogin(req, res, next, user, returnTo);
+          }
+        }
+
+        if (user.mfa_method === 'email') {
+          await beginEmailMfa(req, user, returnTo);
+          return res.redirect('/login/mfa');
+        }
+        if (user.mfa_method === 'totp') {
+          req.session.pendingLogin = { userId: user.id, returnTo, method: 'totp' };
+          return res.redirect('/login/mfa');
+        }
+        return completeLogin(req, res, next, user, returnTo);
+      }).catch((mfaErr) => {
+        if (err) return next(mfaErr);
+        req.session.authError = mfaErr.message || 'Could not send email verification code.';
         return res.redirect('/login');
-      }
-      const returnTo = safeReturnTo(req);
-
-      // Check "remember this computer" cookie to skip MFA
-      if (user.mfa_method && req.signedCookies?.mfa_remember) {
-        const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
-        const remembered = await mfaRememberTokensAsync.verify(user.id, tokenHash);
-        if (remembered) {
-          return completeLogin(req, res, next, user, returnTo);
-        }
-      }
-
-      if (user.mfa_method === 'email') {
-        return beginEmailMfa(req, user, returnTo)
-          .then(() => res.redirect('/login/mfa'))
-          .catch((mfaErr) => {
-            req.session.authError = mfaErr.message || 'Could not send email verification code.';
-            res.redirect('/login');
-          });
-      }
-      if (user.mfa_method === 'totp') {
-        req.session.pendingLogin = { userId: user.id, returnTo, method: 'totp' };
-        return res.redirect('/login/mfa');
-      }
-      completeLogin(req, res, next, user, returnTo);
+      });
     })(req, res, next);
   }
 );
 
-router.get('/login/mfa', async (req, res) => {
+router.get('/login/mfa', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const pending = req.session.pendingLogin;
   if (!pending?.userId) return res.redirect('/login');
@@ -166,9 +173,9 @@ router.get('/login/mfa', async (req, res) => {
     method: pending.method,
     maskedEmail
   });
-});
+}));
 
-router.post('/login/mfa', async (req, res, next) => {
+router.post('/login/mfa', asyncHandler(async (req, res, next) => {
   const pending = req.session.pendingLogin;
   if (!pending?.userId) {
     req.session.authError = 'Your sign-in session expired. Please try again.';
@@ -231,9 +238,9 @@ router.post('/login/mfa', async (req, res, next) => {
   const returnTo = pending.returnTo || '/';
   delete req.session.pendingLogin;
   completeLogin(req, res, next, user, returnTo);
-});
+}));
 
-router.post('/login/mfa/resend', async (req, res) => {
+router.post('/login/mfa/resend', asyncHandler(async (req, res) => {
   const pending = req.session.pendingLogin;
   if (!pending?.userId || pending.method !== 'email') {
     return res.redirect('/login');
@@ -252,21 +259,25 @@ router.post('/login/mfa/resend', async (req, res) => {
     req.session.authError = err.message || 'Could not resend the email verification code.';
   }
   res.redirect('/login/mfa');
-});
+}));
 
 // ── Logout ─────────────────────────────────────────────────────────────────
 
-router.post('/logout', (req, res, next) => {
+router.post('/logout', asyncHandler(async (req, res, next) => {
+  if (req.user && req.signedCookies?.mfa_remember) {
+    const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
+    await mfaRememberTokensAsync.deleteToken(req.user.id, tokenHash);
+  }
   res.clearCookie('mfa_remember');
   req.logout((err) => {
     if (err) return next(err);
     res.redirect('/login');
   });
-});
+}));
 
 // ── Register ───────────────────────────────────────────────────────────────
 
-router.get('/register', async (req, res) => {
+router.get('/register', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const bootstrap = await getBootstrapStatus();
   if (bootstrap.needsSetup) {
@@ -280,9 +291,9 @@ router.get('/register', async (req, res) => {
     error: consumeAuthError(req),
     bootstrap
   });
-});
+}));
 
-router.get('/setup', async (req, res) => {
+router.get('/setup', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const bootstrap = await getBootstrapStatus();
 
@@ -296,9 +307,9 @@ router.get('/setup', async (req, res) => {
     error: consumeAuthError(req),
     bootstrap
   });
-});
+}));
 
-router.get('/terms', async (req, res) => {
+router.get('/terms', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
@@ -307,9 +318,9 @@ router.get('/terms', async (req, res) => {
     subtitle: 'The terms governing use of this site.',
     content: applicationSettings.termsOfService
   });
-});
+}));
 
-router.get('/privacy', async (req, res) => {
+router.get('/privacy', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
@@ -318,9 +329,9 @@ router.get('/privacy', async (req, res) => {
     subtitle: 'How this application handles the information stored in it.',
     content: applicationSettings.privacyPolicy
   });
-});
+}));
 
-router.get('/data-security', async (req, res) => {
+router.get('/data-security', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAll();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
@@ -329,9 +340,9 @@ router.get('/data-security', async (req, res) => {
     subtitle: 'How this application approaches access control and system protection.',
     content: applicationSettings.dataSecurityInfo
   });
-});
+}));
 
-router.post('/setup', async (req, res, next) => {
+router.post('/setup', asyncHandler(async (req, res, next) => {
   const username = (req.body.username || '').trim().toLowerCase();
   const email = (req.body.email || '').trim().toLowerCase() || null;
   const password = req.body.password || '';
@@ -398,14 +409,11 @@ router.post('/setup', async (req, res, next) => {
     return next(err);
   }
 
-  const user = await usersAsync.findById(id);
-  completeLogin(req, res, () => {
-    req.session.authError = 'Initial administrator created. Please sign in.';
-    return res.redirect('/login');
-  }, user, '/');
-});
+  req.session.authError = 'Initial administrator created. Please sign in.';
+  res.redirect('/login');
+}));
 
-router.post('/register', async (req, res, next) => {
+router.post('/register', asyncHandler(async (req, res, next) => {
   const username = (req.body.username || '').trim().toLowerCase();
   const email    = (req.body.email    || '').trim().toLowerCase() || null;
   const password =  req.body.password || '';
@@ -466,7 +474,7 @@ router.post('/register', async (req, res, next) => {
 
   // Show pending page — do not auto-login
   return res.redirect('/pending');
-});
+}));
 
 // ── Pending approval ───────────────────────────────────────────────────────
 
@@ -478,7 +486,7 @@ router.get('/pending', (req, res) => {
   res.render('auth/pending', { pageTitle: 'Account Pending' });
 });
 
-router.get('/invite/:token', async (req, res) => {
+router.get('/invite/:token', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
 
   const token = String(req.params.token || '');
@@ -495,9 +503,9 @@ router.get('/invite/:token', async (req, res) => {
     token,
     error: consumeAuthError(req)
   });
-});
+}));
 
-router.post('/invite/:token', async (req, res, next) => {
+router.post('/invite/:token', asyncHandler(async (req, res, next) => {
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const invite = await userInvitesAsync.findByTokenHash(tokenHash);
@@ -566,14 +574,11 @@ router.post('/invite/:token', async (req, res, next) => {
     return next(err);
   }
 
-  const user = await usersAsync.findById(userId);
-  completeLogin(req, res, () => {
-    req.session.authError = 'Account created — please sign in.';
-    return res.redirect('/login');
-  }, user, '/');
-});
+  req.session.authError = 'Account created. Please sign in.';
+  res.redirect('/login');
+}));
 
-router.get('/reset-password/:token', async (req, res) => {
+router.get('/reset-password/:token', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
 
   const token = String(req.params.token || '');
@@ -590,9 +595,9 @@ router.get('/reset-password/:token', async (req, res) => {
     username: reset.username,
     error: consumeAuthError(req)
   });
-});
+}));
 
-router.post('/reset-password/:token', async (req, res) => {
+router.post('/reset-password/:token', asyncHandler(async (req, res) => {
   const token = String(req.params.token || '');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const reset = await passwordResetTokensAsync.findByTokenHash(tokenHash);
@@ -616,11 +621,12 @@ router.post('/reset-password/:token', async (req, res) => {
   const passwordHash = getBcrypt().hashSync(password, 12);
   await usersAsync.updatePassword(reset.user_id, passwordHash);
   await usersAsync.updatePasswordChangedAt(reset.user_id);
+  await revokeRememberedDevicesForUser(res, reset.user_id);
   await passwordResetTokensAsync.markUsed(reset.id);
   await passwordResetTokensAsync.revokeForUser(reset.user_id);
 
   req.session.authError = 'Your password has been reset. Please sign in.';
   res.redirect('/login');
-});
+}));
 
 module.exports = router;

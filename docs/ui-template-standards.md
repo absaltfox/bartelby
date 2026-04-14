@@ -43,9 +43,12 @@ explicit, documented exception.
 These issues should be treated as the first cleanup tranche because they affect
 either correctness or system-wide maintainability:
 
-1. Remove duplicate shared script loading.
-   Example: `views/document.ejs` currently loads `/js/app.js` even though it is
-   already loaded by `views/partials/footer.ejs`.
+1. Keep shared jobs and filter contracts explicit.
+   Jobs pages must mark the subject cell with `data-job-cell="subject"` and
+   pass mode-aware endpoint config (`apiBasesByType`, `pollUrl`) into
+   `jobs-page.js`. Filter sidebars must normalize multiselect values in the
+   submit handler and use `requestSubmit()` for autosubmit so the same
+   normalization path still runs.
 
 2. Remove hardcoded admin-only polling paths from shared pages.
    Example: the document page should not poll `/admin/jobs/api/:id` unless the
@@ -143,6 +146,8 @@ Examples:
 - modal open/close primitives
 - shared filter dropdown behavior
 - shared jobs polling behavior
+- mode-aware jobs table row refreshes using named cell hooks
+- filter sidebar autosubmit/normalization flow
 
 Do not keep these as inline `<script>` blocks inside partials.
 

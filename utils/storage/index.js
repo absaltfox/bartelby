@@ -2,6 +2,7 @@
 
 const config = require('../../config');
 const localStorage = require('./local');
+const { validateStorageAdapter } = require('./contract');
 
 function getStorage() {
   switch (config.storage.driver) {
@@ -13,4 +14,6 @@ function getStorage() {
   }
 }
 
-module.exports = getStorage();
+const storage = getStorage();
+
+module.exports = validateStorageAdapter(storage, config.storage.driver || 'local');

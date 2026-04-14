@@ -6,11 +6,12 @@ const { collectionsAsync, usersAsync, userCollectionAccessAsync, documentCollect
 const { requireAdmin } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
 const audit = require('../utils/audit-log');
+const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
 // List collections
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
 
   // Attach per-collection user access list + documents for preview picker
@@ -44,10 +45,10 @@ router.get('/', async (req, res) => {
     skippedPending: parseInt(req.query.skippedPending, 10) || 0,
     skippedNoTranscript: parseInt(req.query.skippedNoTranscript, 10) || 0
   });
-});
+}));
 
 // Create
-router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
   const visibility = req.body.visibility || 'private';
@@ -68,10 +69,10 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
       res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));
     }
   }
-});
+}));
 
 // Update
-router.post('/:id/edit', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/edit', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
   const name = (req.body.name || '').trim();
   const description = (req.body.description || '').trim() || null;
@@ -91,10 +92,10 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), async (req, re
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));
   }
-});
+}));
 
 // Grant access to a user (with role)
-router.post('/:id/access/grant', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/access/grant', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id);
   const userId = parseInt(req.body.user_id);
   const role = req.body.role || 'viewer';
@@ -108,20 +109,20 @@ router.post('/:id/access/grant', express.urlencoded({ extended: false }), async 
     });
   }
   res.redirect('/admin/collections?saved=1#collection-' + collectionId);
-});
+}));
 
 // Revoke access from a user
-router.post('/:id/access/revoke/:userId', async (req, res) => {
+router.post('/:id/access/revoke/:userId', asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id);
   const userId = parseInt(req.params.userId);
   if (!isNaN(userId) && !isNaN(collectionId)) {
     await userCollectionAccessAsync.revoke(userId, collectionId);
   }
   res.redirect('/admin/collections#collection-' + collectionId);
-});
+}));
 
 // Set preview image
-router.post('/:id/preview', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/:id/preview', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   const documentId = req.body.preview_document_id ? parseInt(req.body.preview_document_id, 10) : null;
   try {
@@ -135,10 +136,10 @@ router.post('/:id/preview', express.urlencoded({ extended: false }), async (req,
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
   }
-});
+}));
 
 // Delete
-router.post('/:id/delete', async (req, res) => {
+router.post('/:id/delete', asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id);
   await collectionsAsync.delete(collectionId);
   audit.log('admin.collection_deleted', {
@@ -146,6 +147,6 @@ router.post('/:id/delete', async (req, res) => {
     collectionId
   });
   res.redirect('/admin/collections');
-});
+}));
 
 module.exports = router;
