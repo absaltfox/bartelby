@@ -10,7 +10,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all,
 // On local SQLite (sqljs / better-sqlite3) we use BEGIN EXCLUSIVE so the
 // SELECT+UPDATE pair is truly atomic.
 async function withExclusiveLock(fn) {
-  if (db.kind === 'turso') {
+  if (process.env.DATABASE_DRIVER === 'turso') {
     return await fn();
   }
   await runAsync('BEGIN EXCLUSIVE');

@@ -15,7 +15,7 @@ describe('job claim functions use withExclusiveLock', () => {
   it('withExclusiveLock helper is defined and uses BEGIN EXCLUSIVE', () => {
     expect(src).toContain('withExclusiveLock');
     expect(src).toContain('BEGIN EXCLUSIVE');
-    expect(src).toContain("db.kind === 'turso'");
+    expect(src).toContain("DATABASE_DRIVER === 'turso'");
   });
 
   it('withExclusiveLock uses ROLLBACK on error', () => {
