@@ -94,9 +94,14 @@ async function persistDocumentTranscription({
 
     if (combined.transcription) {
       const currentTitle = (doc.title || '').trim();
+      const uploadFilename = existing?._upload_filename || '';
+      const uploadStem = uploadFilename
+        ? uploadFilename.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim()
+        : '';
       const looksGeneric = !currentTitle
         || /^(untitled|document|page\s*\d*|pdf)/i.test(currentTitle)
-        || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle);
+        || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle)
+        || (uploadStem && currentTitle === uploadStem);
 
       if (looksGeneric) {
         const extractedTitle = (llmMeta.title || '').trim() || null;

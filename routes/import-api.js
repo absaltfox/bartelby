@@ -267,6 +267,9 @@ router.post('/save-document', express.json(), asyncHandler(async (req, res) => {
     if (additionalPages.length > 0) {
       docMetadata.additional_pages = additionalPages;
     }
+    if (originalName) {
+      docMetadata._upload_filename = originalName;
+    }
 
     const docId = await documentsAsync.create({
       title: title || 'Untitled Document',
