@@ -8085,23 +8085,44 @@ main { flex: 1; padding: 32px 0; }
   max-height: 400px;
 }
 
-.topic-hierarchy-chart {
-  width: 100%;
-  overflow-x: auto;
+.topic-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.topic-hierarchy-svg {
-  display: block;
-  width: 100%;
-  min-width: 880px;
-  height: auto;
+.topic-group {
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-.topic-hierarchy-leaf-label {
-  fill: #334b72;
-  font-family: var(--ui-font);
-  font-size: 0.98rem;
+.topic-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  background: var(--surface-muted, #f3f4f6);
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  gap: 0.75rem;
+}
+
+.topic-group-name {
   font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.topic-group-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.topic-group-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  padding: 0.75rem;
+  gap: 0.75rem;
 }
 
 @media (max-width: 760px) {
@@ -8123,9 +8144,6 @@ main { flex: 1; padding: 32px 0; }
     white-space: normal;
   }
 
-  .topic-hierarchy-svg {
-    min-width: 760px;
-  }
 }
 
 /* Topic hierarchy card grid */

@@ -55,13 +55,24 @@
   }
 
   function initCharts() {
-    if (typeof Chart === 'undefined') return;
-
     var data = getAnalyticsData();
     var assignments = data.assignments || [];
     var topics = data.topics || [];
     var evolution = data.evolution || [];
-    var hierarchyPlot = data.hierarchyPlot || null;
+    var hierarchyData = data.hierarchyData || [];
+
+    var topicMap = new Map(topics.map(function(t) { return [t.topic_id, t]; }));
+    var hierarchyContainer = document.getElementById('topic-hierarchy-tree');
+    if (hierarchyContainer) {
+      if (hierarchyData.length >= 1 && topics.length >= 2) {
+        var groups = buildTopicGroups(hierarchyData, topicMap);
+        renderTopicGroups(hierarchyContainer, groups || [], topicMap);
+      } else {
+        renderFlatTopics(hierarchyContainer, topics);
+      }
+    }
+
+    if (typeof Chart === 'undefined') return;
 
     var clusterContainer = document.getElementById('cluster-chart');
     if (clusterContainer && assignments.length) {
@@ -155,102 +166,143 @@
       });
     }
 
-    var hierarchyContainer = document.getElementById('topic-hierarchy-chart');
-    if (!hierarchyContainer || !hierarchyPlot || !Array.isArray(hierarchyPlot.leaf_topic_ids) || hierarchyPlot.leaf_topic_ids.length < 2) {
+  }
+
+  function buildTopicGroups(hierarchyData, topicMap) {
+    var nodeMap = new Map();
+    for (var i = 0; i < hierarchyData.length; i++) {
+      nodeMap.set(hierarchyData[i].parent_id, hierarchyData[i]);
+    }
+
+    // Find root: the parent_id that is not a child of any other node
+    var childIds = new Set();
+    hierarchyData.forEach(function(row) {
+      childIds.add(row.child_left_id);
+      childIds.add(row.child_right_id);
+    });
+    var root = null;
+    for (var j = 0; j < hierarchyData.length; j++) {
+      if (!childIds.has(hierarchyData[j].parent_id)) {
+        root = hierarchyData[j];
+        break;
+      }
+    }
+    if (!root) root = hierarchyData[hierarchyData.length - 1];
+
+    var threshold = root.distance * 0.6;
+
+    function collectLeaves(id) {
+      var node = nodeMap.get(id);
+      if (!node) {
+        var topic = topicMap.get(id);
+        return topic ? [topic] : [];
+      }
+      return collectLeaves(node.child_left_id).concat(collectLeaves(node.child_right_id));
+    }
+
+    function getGroups(id, name) {
+      var node = nodeMap.get(id);
+      if (!node) {
+        var topic = topicMap.get(id);
+        return topic ? [{ name: topic.topic_label, topics: [topic] }] : [];
+      }
+      if (node.distance <= threshold) {
+        var leaves = collectLeaves(id);
+        if (leaves.length === 0) return [];
+        return [{ name: name || node.parent_name, topics: leaves }];
+      }
+      return getGroups(node.child_left_id, node.child_left_name)
+        .concat(getGroups(node.child_right_id, node.child_right_name));
+    }
+
+    return getGroups(root.parent_id, null);
+  }
+
+  function makeTopicCard(topic) {
+    var card = document.createElement('div');
+    card.className = 'topic-card';
+    var label = topic.topic_label || ('Topic ' + topic.topic_id);
+    var count = topic.document_count || 0;
+    var words = Array.isArray(topic.topic_words) ? topic.topic_words.slice(0, 6) : [];
+    var maxWeight = words.length > 0 && words[0].weight ? words[0].weight : 1;
+
+    var header = document.createElement('div');
+    header.className = 'topic-card-header';
+    var labelSpan = document.createElement('span');
+    labelSpan.className = 'topic-card-label';
+    labelSpan.textContent = label;
+    var countSpan = document.createElement('span');
+    countSpan.className = 'topic-card-count';
+    countSpan.textContent = count + ' doc' + (count !== 1 ? 's' : '');
+    header.appendChild(labelSpan);
+    header.appendChild(countSpan);
+
+    var wordsEl = document.createElement('div');
+    wordsEl.className = 'topic-card-words';
+    words.forEach(function(w) {
+      var span = document.createElement('span');
+      span.className = 'topic-word';
+      span.style.opacity = (w.weight && maxWeight) ? (0.5 + 0.5 * (w.weight / maxWeight)).toFixed(3) : '1';
+      span.textContent = w.word;
+      wordsEl.appendChild(span);
+    });
+
+    card.appendChild(header);
+    card.appendChild(wordsEl);
+    return card;
+  }
+
+  function renderTopicGroups(container, groups, topicMap) {
+    if (!groups.length) {
+      renderFlatTopics(container, Array.from(topicMap.values()));
       return;
     }
+    container.innerHTML = '';
+    var tree = document.createElement('div');
+    tree.className = 'topic-tree';
 
-    var topicMap = new Map(topics.map(function(topic) { return [topic.topic_id, topic]; }));
-    var leaves = hierarchyPlot.leaf_topic_ids;
-    var icoord = hierarchyPlot.icoord || [];
-    var dcoord = hierarchyPlot.dcoord || [];
-    var colours = hierarchyPlot.color_list || [];
-    var maxDistance = Math.max(Number(hierarchyPlot.max_distance) || 0, 1);
+    groups.forEach(function(group) {
+      var groupEl = document.createElement('div');
+      groupEl.className = 'topic-group';
 
-    var labelWidth = 280;
-    var chartWidth = 720;
-    var headerHeight = 28;
-    var footerHeight = 24;
-    var leafSpacing = 28;
-    var height = Math.max(260, headerHeight + footerHeight + leaves.length * leafSpacing + 10);
-    var totalWidth = labelWidth + chartWidth;
-    var plotHeight = height - headerHeight - footerHeight;
+      var totalDocs = group.topics.reduce(function(sum, t) { return sum + (t.document_count || 0); }, 0);
+      var name = group.name || 'Topic Group';
+      if (name.length > 70) name = name.slice(0, 67) + '\u2026';
 
-    var yMax = Math.max.apply(Math, icoord.flat().concat([leaves.length * 10 + 5, 10]));
-    var xScale = function(value) {
-      return labelWidth + (Number(value) / maxDistance) * (chartWidth - 18);
-    };
-    var yScale = function(value) {
-      return headerHeight + ((Number(value) - 5) / Math.max(yMax - 5, 1)) * plotHeight;
-    };
+      var header = document.createElement('div');
+      header.className = 'topic-group-header';
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'topic-group-name';
+      nameSpan.textContent = name;
+      var metaSpan = document.createElement('span');
+      metaSpan.className = 'topic-group-meta';
+      metaSpan.textContent = group.topics.length + '\u00a0topic' + (group.topics.length !== 1 ? 's' : '') +
+        '\u00a0\u00b7\u00a0' + totalDocs + '\u00a0doc' + (totalDocs !== 1 ? 's' : '');
+      header.appendChild(nameSpan);
+      header.appendChild(metaSpan);
 
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 ' + totalWidth + ' ' + height);
-    svg.setAttribute('class', 'topic-hierarchy-svg');
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Hierarchical clustering of topics');
+      var body = document.createElement('div');
+      body.className = 'topic-group-body';
+      group.topics.forEach(function(topic) {
+        body.appendChild(makeTopicCard(topic));
+      });
 
-    var bg = document.createElementNS(ns, 'rect');
-    bg.setAttribute('x', labelWidth - 8);
-    bg.setAttribute('y', headerHeight - 8);
-    bg.setAttribute('width', chartWidth + 8);
-    bg.setAttribute('height', plotHeight + 16);
-    bg.setAttribute('rx', '10');
-    bg.setAttribute('fill', '#e8edf1');
-    svg.appendChild(bg);
-
-    var tickCount = 5;
-    for (var i = 0; i < tickCount; i += 1) {
-      var ratio = tickCount === 1 ? 0 : i / (tickCount - 1);
-      var x = labelWidth + ratio * (chartWidth - 18);
-      var grid = document.createElementNS(ns, 'line');
-      grid.setAttribute('x1', x);
-      grid.setAttribute('x2', x);
-      grid.setAttribute('y1', headerHeight - 10);
-      grid.setAttribute('y2', headerHeight - 2);
-      grid.setAttribute('stroke', '#313131');
-      grid.setAttribute('stroke-width', '1');
-      svg.appendChild(grid);
-    }
-
-    leaves.forEach(function(topicId, index) {
-      var y = yScale(5 + index * 10);
-      var topic = topicMap.get(topicId);
-      var label = topic ? topic.topic_label : ('Topic ' + topicId);
-      var text = document.createElementNS(ns, 'text');
-      text.setAttribute('x', labelWidth - 14);
-      text.setAttribute('y', y + 5);
-      text.setAttribute('text-anchor', 'end');
-      text.setAttribute('class', 'topic-hierarchy-leaf-label');
-      text.textContent = label.length > 34 ? label.slice(0, 31) + '...' : label;
-      svg.appendChild(text);
+      groupEl.appendChild(header);
+      groupEl.appendChild(body);
+      tree.appendChild(groupEl);
     });
 
-    icoord.forEach(function(coords, index) {
-      var distances = dcoord[index] || [0, 0, 0, 0];
-      var points = coords.map(function(coord, coordIndex) {
-        return xScale(distances[coordIndex]) + ',' + yScale(coord);
-      }).join(' ');
-      var line = document.createElementNS(ns, 'polyline');
-      line.setAttribute('points', points);
-      line.setAttribute('fill', 'none');
-      line.setAttribute('stroke', colours[index] || '#1f6fd6');
-      line.setAttribute('stroke-width', '2');
-      line.setAttribute('stroke-linecap', 'round');
-      line.setAttribute('stroke-linejoin', 'round');
-      svg.appendChild(line);
+    container.appendChild(tree);
+  }
 
-      var dot = document.createElementNS(ns, 'circle');
-      dot.setAttribute('cx', xScale(distances[1]));
-      dot.setAttribute('cy', yScale((coords[1] + coords[2]) / 2));
-      dot.setAttribute('r', '3.8');
-      dot.setAttribute('fill', '#111');
-      svg.appendChild(dot);
+  function renderFlatTopics(container, topicsList) {
+    container.innerHTML = '';
+    var grid = document.createElement('div');
+    grid.className = 'topic-hierarchy-container';
+    topicsList.forEach(function(topic) {
+      grid.appendChild(makeTopicCard(topic));
     });
-
-    hierarchyContainer.innerHTML = '';
-    hierarchyContainer.appendChild(svg);
+    container.appendChild(grid);
   }
 
   initOpacity();

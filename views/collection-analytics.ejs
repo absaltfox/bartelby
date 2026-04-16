@@ -102,27 +102,9 @@ function formatBytes(bytes) {
 
       <!-- Topic Hierarchy -->
       <section class="analytics-section">
-        <h2>Topic Hierarchy</h2>
-        <p class="analytics-section-subtitle">Hierarchical clustering of collection topics based on topical similarity.</p>
-        <% if (hierarchyPlot && hierarchyPlot.leaf_topic_ids && hierarchyPlot.leaf_topic_ids.length > 1) { %>
-          <div id="topic-hierarchy-chart" class="topic-hierarchy-chart"></div>
-        <% } else { %>
-          <div class="topic-hierarchy-container">
-            <% topics.forEach(function(topic) { %>
-              <div class="topic-card">
-                <div class="topic-card-header">
-                  <span class="topic-card-label"><%= topic.topic_label %></span>
-                  <span class="topic-card-count"><%= topic.document_count %> docs</span>
-                </div>
-                <div class="topic-card-words">
-                  <% topic.topic_words.slice(0, 6).forEach(function(w) { %>
-                    <span class="topic-word" data-topic-word-opacity="<%= topic.topic_words[0].weight ? (0.5 + 0.5 * (w.weight / topic.topic_words[0].weight)).toFixed(3) : 1 %>"><%= w.word %></span>
-                  <% }); %>
-                </div>
-              </div>
-            <% }); %>
-          </div>
-        <% } %>
+        <h2>Topic Groups</h2>
+        <p class="analytics-section-subtitle">Topics grouped by similarity — related topics are shown together.</p>
+        <div id="topic-hierarchy-tree"></div>
       </section>
 
       <!-- Topic Evolution -->
@@ -144,7 +126,7 @@ function formatBytes(bytes) {
 <script id="analytics-data" type="application/json"><%- JSON.stringify({
   assignments: assignments,
   topics: topics,
-  hierarchyPlot: hierarchyPlot || null,
+  hierarchyData: hierarchyData || [],
   evolution: evolution
 }).replace(/</g, '\\u003c') %></script>
 <script src="/chart.umd.min.js"></script>
