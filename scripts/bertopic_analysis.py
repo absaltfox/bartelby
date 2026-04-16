@@ -24,6 +24,7 @@ from umap import UMAP
 from hdbscan import HDBSCAN
 from scipy.cluster import hierarchy as sch
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
 
 
 def load_input(path):
@@ -69,9 +70,11 @@ def run_bertopic(all_doc_ids, all_embeddings_list, all_texts, dates=None):
         prediction_data=True
     )
 
+    vectorizer_model = CountVectorizer(stop_words='english', min_df=1)
     topic_model = BERTopic(
         umap_model=umap_model,
         hdbscan_model=hdbscan_model,
+        vectorizer_model=vectorizer_model,
         calculate_probabilities=True,
         verbose=False
     )

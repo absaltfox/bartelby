@@ -253,7 +253,7 @@
   }
 
   function renderTopicGroups(container, groups, topicMap) {
-    if (!groups.length) {
+    if (!groups.length || groups.every(function(g) { return g.topics.length <= 1; })) {
       renderFlatTopics(container, Array.from(topicMap.values()));
       return;
     }
@@ -266,8 +266,16 @@
       groupEl.className = 'topic-group';
 
       var totalDocs = group.topics.reduce(function(sum, t) { return sum + (t.document_count || 0); }, 0);
-      var name = group.name || 'Topic Group';
-      if (name.length > 70) name = name.slice(0, 67) + '\u2026';
+      var name;
+      if (group.topics.length === 1) {
+        name = group.topics[0].topic_label || 'Topic Group';
+      } else if (group.topics.length === 2) {
+        name = (group.topics[0].topic_label || 'Topic') + ' \u00b7 ' + (group.topics[1].topic_label || 'Topic');
+      } else {
+        name = group.topics.slice(0, 2).map(function(t) { return t.topic_label || 'Topic'; }).join(' \u00b7 ') +
+          ' \u00b7 \u2026';
+      }
+      if (name.length > 80) name = name.slice(0, 77) + '\u2026';
 
       var header = document.createElement('div');
       header.className = 'topic-group-header';
