@@ -105,11 +105,14 @@ router.post('/upload', withCsrf(uploadFileMiddleware), asyncHandler(async (req, 
       });
     }
 
-    // Image: return temp file info immediately
+    // Image: promote to S3 so submit requests hitting a different Fly machine
+    // can still find the file. On local/non-S3 storage this is a no-op.
+    const [promotedFile] = await promoteQueuedTempAssets([req.file.filename]);
+
     res.json({
       success: true,
       type: 'image',
-      tempFile: req.file.filename,
+      tempFile: promotedFile,
       originalName: req.file.originalname,
       mimeType: req.file.mimetype
     });
