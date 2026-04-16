@@ -1,6 +1,37 @@
 'use strict';
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
+// Turso (libsql over HTTP) auto-commits every statement and does not support
+// BEGIN EXCLUSIVE across separate HTTP calls.  On Turso we execute statements
+// directly; on local SQLite we wrap in an exclusive transaction for atomicity.
+async function withExclusiveLock(fn) {
+  if (process.env.DATABASE_DRIVER === 'turso') {
+    return await fn();
+  }
+  await runAsync('BEGIN EXCLUSIVE');
+  try {
+    const result = await fn();
+    await runAsync('COMMIT');
+    return result;
+  } catch (err) {
+    await runAsync('ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+function withExclusiveLockSync(fn) {
+  if (process.env.DATABASE_DRIVER === 'turso') {
+    return fn();
+  }
+  run('BEGIN EXCLUSIVE');
+  try {
+    const result = fn();
+    run('COMMIT');
+    return result;
+  } catch (err) {
+    try { run('ROLLBACK'); } catch (e) { void e; }
+    throw err;
+  }
+}
 const collections = {
   getAll() {
     return all(`
@@ -196,17 +227,12 @@ const documentCollections = {
 
   setForDocument(documentId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
-    run('BEGIN EXCLUSIVE');
-    try {
+    withExclusiveLockSync(() => {
       run('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
       for (const cid of ids) {
         run('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
       }
-      run('COMMIT');
-    } catch (err) {
-      try { run('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
-      throw err;
-    }
+    });
   }
 };
 
@@ -229,18 +255,13 @@ const documentCollectionsAsync = {
 
   async setForDocument(documentId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
-    await runAsync('BEGIN EXCLUSIVE');
-    try {
+    await withExclusiveLock(async () => {
       await runAsync('DELETE FROM document_collections WHERE document_id = ?', [documentId]);
       for (const cid of ids) {
         await runAsync('INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (?, ?)', [documentId, cid]);
       }
-      await runAsync('COMMIT');
-      await saveDatabase();
-    } catch (err) {
-      await runAsync('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    });
+    await saveDatabase();
   },
 
   async add(documentId, collectionId) {
@@ -289,17 +310,12 @@ const userCollectionAccess = {
 
   setForUser(userId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
-    run('BEGIN EXCLUSIVE');
-    try {
+    withExclusiveLockSync(() => {
       run('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
       for (const cid of ids) {
         run('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id) VALUES (?, ?)', [userId, cid]);
       }
-      run('COMMIT');
-    } catch (err) {
-      try { run('ROLLBACK'); } catch (rollbackErr) { void rollbackErr; }
-      throw err;
-    }
+    });
   }
 };
 
@@ -330,18 +346,13 @@ const userCollectionAccessAsync = {
 
   async setForUser(userId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
-    await runAsync('BEGIN EXCLUSIVE');
-    try {
+    await withExclusiveLock(async () => {
       await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
       for (const cid of ids) {
         await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, cid, 'viewer']);
       }
-      await runAsync('COMMIT');
-      await saveDatabase();
-    } catch (err) {
-      await runAsync('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    });
+    await saveDatabase();
   },
 
   async setForUserWithRoles(userId, collectionRoles) {
@@ -349,18 +360,13 @@ const userCollectionAccessAsync = {
       parseInt(cid),
       ROLE_HIERARCHY[role] ? role : 'viewer'
     ]).filter(([cid]) => Number.isInteger(cid));
-    await runAsync('BEGIN EXCLUSIVE');
-    try {
+    await withExclusiveLock(async () => {
       await runAsync('DELETE FROM user_collection_access WHERE user_id = ?', [userId]);
       for (const [cid, role] of entries) {
         await runAsync('INSERT OR IGNORE INTO user_collection_access (user_id, collection_id, role) VALUES (?, ?, ?)', [userId, cid, role]);
       }
-      await runAsync('COMMIT');
-      await saveDatabase();
-    } catch (err) {
-      await runAsync('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    });
+    await saveDatabase();
   },
 
   async grant(userId, collectionId, role) {
