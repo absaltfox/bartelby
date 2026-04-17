@@ -1,5 +1,9 @@
 'use strict';
 
+function safeJsonParse(value, fallback = null) {
+  try { return JSON.parse(value); } catch { return fallback; }
+}
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
 const appLogsAsync = {
   async create({
