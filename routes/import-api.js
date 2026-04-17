@@ -151,8 +151,10 @@ router.get('/temp-image/:filename', asyncHandler(async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
   const contentType = getTempImageContentType(filename);
 
+  // Only use sendFile for files that actually exist locally; on S3-backed
+  // deployments the file may exist only in S3, so fall through to readTempAsset.
   const filePath = storage.getTempFilePath(filename);
-  if (filePath && await tempAssetExists(filename)) {
+  if (filePath && fs.existsSync(filePath)) {
     return res.type(contentType).sendFile(filePath);
   }
 
