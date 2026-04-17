@@ -13,7 +13,7 @@ async function runDocumentGrouping(providerNameInput, tempFiles, credentialSourc
   const providerName = providerNameInput || defaultProvider || 'openai';
 
   // We need the user object for provider resolution (to check custom API keys, etc)
-  const user = userId ? await usersAsync.getById(userId) : null;
+  const user = userId ? await usersAsync.findById(userId) : null;
   const selection = await resolveProviderSelectionAsync(user, providerName, credentialSource);
   const provider = await createProvider(providerName, selection.runtimeConfig);
 
