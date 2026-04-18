@@ -80,6 +80,22 @@
     <p class="step-subtitle">Your PDF has been split into individual pages.</p>
     <p class="step-subtitle-detail">Select pages and group them when they belong to the same document. Any ungrouped pages will be imported individually, and you can click any thumbnail to zoom in.</p>
 
+    <% if (!hasNoProviders) { %>
+      <div class="step-pages-model">
+        <h3>AI Model for Transcription</h3>
+        <div class="provider-select-row">
+          <div class="provider-select">
+            <label for="pages-provider">Provider</label>
+            <select id="pages-provider"></select>
+          </div>
+          <div class="provider-select">
+            <label for="pages-credential">Credentials</label>
+            <select id="pages-credential"></select>
+          </div>
+        </div>
+      </div>
+    <% } %>
+
     <% if (collections.length > 0) { %>
       <div class="step-pages-collections">
         <h3>Add Imported Documents To</h3>

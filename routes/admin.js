@@ -246,6 +246,7 @@ router.post('/application-settings', withCsrf(svgUpload.fields([
 router.get('/import', asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
+  const defaultProvider = await settingsAsync.get('default_provider');
 
   // If resuming from a completed import job, pass the job data
   let resumeJob = null;
@@ -282,7 +283,8 @@ router.get('/import', asyncHandler(async (req, res) => {
       importUrl: '/admin/import',
       settingsUrl: '/admin/llm-settings',
       collectionsUrl: '/admin/collections',
-      autoGroupPages: false
+      autoGroupPages: false,
+      defaultProvider: defaultProvider || null
     }
   });
 }));

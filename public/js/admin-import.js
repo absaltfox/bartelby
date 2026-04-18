@@ -87,6 +87,9 @@ document.addEventListener('DOMContentLoaded', function() {
   let groupingStateSaveTimer = null;
   let isSyncingCollectionSelection = false;
 
+  const pagesProviderSelect    = document.getElementById('pages-provider');
+  const pagesCredentialSelect  = document.getElementById('pages-credential');
+
   function refreshCredentialOptions() {
     if (!providerSelect || !credentialSelect) return;
     const selectedProvider = providerSelect.value;
@@ -103,10 +106,60 @@ document.addEventListener('DOMContentLoaded', function() {
     updateBatchOption();
   }
 
+  function refreshPagesCredentialOptions() {
+    if (!pagesProviderSelect || !pagesCredentialSelect) return;
+    const entry = providerOptions.find(o => o.provider === pagesProviderSelect.value);
+    pagesCredentialSelect.innerHTML = '';
+    (entry?.sources || []).forEach(source => {
+      const opt = document.createElement('option');
+      opt.value = source.value;
+      opt.textContent = source.label;
+      pagesCredentialSelect.appendChild(opt);
+    });
+  }
+
+  function initPagesProviderSelects() {
+    if (!pagesProviderSelect) return;
+    pagesProviderSelect.innerHTML = '';
+    providerOptions.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.provider;
+      opt.textContent = o.label;
+      pagesProviderSelect.appendChild(opt);
+    });
+
+    // Default to defaultProvider from config, then fall back to step-1 selection
+    const target = cfg.defaultProvider || (providerSelect ? providerSelect.value : null);
+    if (target) pagesProviderSelect.value = target;
+    refreshPagesCredentialOptions();
+
+    // Also pre-select defaultProvider in the step-1 dropdown
+    if (providerSelect && cfg.defaultProvider) {
+      providerSelect.value = cfg.defaultProvider;
+      refreshCredentialOptions();
+    }
+  }
+
+  if (pagesProviderSelect) {
+    pagesProviderSelect.addEventListener('change', () => {
+      refreshPagesCredentialOptions();
+      // Keep step-1 selects in sync so the single-doc review flow uses the same provider
+      if (providerSelect) {
+        providerSelect.value = pagesProviderSelect.value;
+        refreshCredentialOptions();
+      }
+    });
+    pagesCredentialSelect && pagesCredentialSelect.addEventListener('change', () => {
+      if (credentialSelect) credentialSelect.value = pagesCredentialSelect.value;
+    });
+  }
+
   if (providerSelect && credentialSelect) {
     providerSelect.addEventListener('change', refreshCredentialOptions);
     refreshCredentialOptions();
   }
+
+  initPagesProviderSelects();
 
   // Show/hide AI options panel based on mode
   function updateModeUI() {
@@ -801,11 +854,15 @@ document.addEventListener('DOMContentLoaded', function() {
       groupingProviderSelect.appendChild(opt);
     });
 
-    // Default to the transcription provider/credential already selected on step 1
-    const defaultProvider = providerSelect ? providerSelect.value : null;
+    // Default to the step-1b provider/credential (authoritative for transcription)
+    const defaultProvider = (pagesProviderSelect && pagesProviderSelect.value)
+      ? pagesProviderSelect.value
+      : (providerSelect ? providerSelect.value : null);
     if (defaultProvider) groupingProviderSelect.value = defaultProvider;
     refreshGroupingCredentialOptions();
-    const defaultCred = credentialSelect ? credentialSelect.value : 'system';
+    const defaultCred = (pagesCredentialSelect && pagesCredentialSelect.value)
+      ? pagesCredentialSelect.value
+      : (credentialSelect ? credentialSelect.value : 'system');
     if (defaultCred && groupingCredentialSelect) groupingCredentialSelect.value = defaultCred;
 
     groupingModelModal.classList.remove('is-hidden');
@@ -980,8 +1037,8 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify({
           groups,
           originalName,
-          provider: providerSelect ? providerSelect.value : null,
-          credentialSource: credentialSelect ? credentialSelect.value : 'system',
+          provider: pagesProviderSelect ? pagesProviderSelect.value : (providerSelect ? providerSelect.value : null),
+          credentialSource: pagesCredentialSelect ? pagesCredentialSelect.value : (credentialSelect ? credentialSelect.value : 'system'),
           temperature: document.getElementById('temperature')
             ? document.getElementById('temperature').value : null,
           initiatedBy: document.getElementById('initiated-by')

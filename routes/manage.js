@@ -9,7 +9,8 @@ const {
   transcriptionJobsAsync,
   importJobsAsync,
   usersAsync,
-  userCollectionAccessAsync
+  userCollectionAccessAsync,
+  settingsAsync
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
@@ -364,6 +365,7 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
 
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
+  const defaultProvider = await settingsAsync.get('default_provider');
 
   // Get all collections this manager manages (for collection picker)
   const managedIds = await getManagedIds(req);
@@ -412,7 +414,8 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
       jobsUrl: `/manage/collections/${collectionId}/jobs`,
       documentsUrl: `/manage/collections/${collectionId}/documents`,
       importUrl: `/manage/collections/${collectionId}/import`,
-      autoGroupPages: !!collection.auto_group_pages
+      autoGroupPages: !!collection.auto_group_pages,
+      defaultProvider: defaultProvider || null
     }
   });
 }));
