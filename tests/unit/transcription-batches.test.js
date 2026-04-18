@@ -18,8 +18,45 @@ jest.mock('../../utils/llm', () => ({
   }))
 }));
 
+jest.mock('../../utils/vertex-batch', () => ({
+  assertVertexBatchConfig: jest.fn(),
+  buildGsUri: jest.fn((bucket, objectName) => `gs://${bucket}/${objectName}`),
+  buildVertexAssetObjectName: jest.fn((config, opts) => `input/transcription/job-${opts.jobId}/${opts.customId}${opts.extension}`),
+  buildVertexBatchPartPaths: jest.fn((config, opts) => ({
+    partLabel: `part-${opts.chunkIndex + 1}-of-${opts.totalChunks}`,
+    inputObjectName: `input/transcription/job-${opts.jobId}/part-${opts.chunkIndex + 1}-of-${opts.totalChunks}/requests.jsonl`,
+    outputPrefix: `output/transcription/job-${opts.jobId}/part-${opts.chunkIndex + 1}-of-${opts.totalChunks}`
+  })),
+  buildVertexRequestMatcher: jest.fn((descriptors) => ({ descriptors })),
+  createVertexBatchJob: jest.fn(async (config, opts) => ({
+    name: `projects/test/locations/global/batchPredictionJobs/${opts.displayName.replace(/[^a-zA-Z0-9-]+/g, '-')}`,
+    state: 'JOB_STATE_PENDING'
+  })),
+  downloadVertexBatchOutputs: jest.fn(async () => []),
+  getVertexBatchJob: jest.fn(async () => ({
+    state: 'JOB_STATE_SUCCEEDED',
+    completionStats: { successfulCount: '1', failedCount: '0' }
+  })),
+  isVertexBatchRemoteId: jest.fn((remoteId) => String(remoteId || '').startsWith('projects/')),
+  matchVertexCustomId: jest.fn((matcher, request) => {
+    return matcher.descriptors.find((descriptor) => {
+      return descriptor.requestObject?.contents?.[0]?.parts?.[0]?.fileData?.fileUri === request?.contents?.[0]?.parts?.[0]?.fileData?.fileUri;
+    })?.customId || null;
+  }),
+  resolveVertexBatchConfig: jest.fn(() => ({
+    projectId: 'test-project',
+    location: 'global',
+    bucket: 'test-bucket',
+    inputPrefix: 'input',
+    outputPrefix: 'output'
+  })),
+  uploadBufferToGcs: jest.fn(async () => {}),
+  uploadTextToGcs: jest.fn(async () => {})
+}));
+
 const storage = require('../../utils/storage');
 const llm = require('../../utils/llm');
+const vertexBatch = require('../../utils/vertex-batch');
 
 function jsonResponse(payload) {
   return {
@@ -151,5 +188,98 @@ describe('transcription batch chunking', () => {
     expect(polled.failedCount).toBe(0);
     expect(llm.resolveTranscriptionRuntime).toHaveBeenCalled();
     expect(storage.readUploadByUrl).toHaveBeenCalled();
+  });
+
+  it('submits and polls Vertex transcription batches through Vertex batch prediction jobs', async () => {
+    const { submitTranscriptionBatch, pollTranscriptionBatch } = require('../../utils/transcription-batches');
+
+    llm.resolveTranscriptionRuntime
+      .mockResolvedValueOnce({
+        apiKey: 'vertex-express-key',
+        model: 'gemini-2.5-flash',
+        temperature: null,
+        cfg: {
+          vertex_batch_project_id: 'test-project',
+          vertex_batch_bucket: 'test-bucket'
+        }
+      })
+      .mockResolvedValueOnce({
+        apiKey: 'vertex-express-key',
+        model: 'gemini-2.5-flash',
+        temperature: null,
+        cfg: {
+          vertex_batch_project_id: 'test-project',
+          vertex_batch_bucket: 'test-bucket'
+        }
+      });
+
+    vertexBatch.downloadVertexBatchOutputs.mockResolvedValueOnce([
+      {
+        status: '',
+        request: {
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  fileData: {
+                    fileUri: 'gs://test-bucket/input/transcription/job-77/job-77-page-1.png',
+                    mimeType: 'image/png'
+                  }
+                },
+                {
+                  text: 'Please transcribe this document page.'
+                }
+              ]
+            }
+          ]
+        },
+        response: {
+          candidates: [{ content: { parts: [{ text: 'Vertex Page 1' }] } }],
+          modelVersion: 'gemini-2.5-flash@001',
+          usageMetadata: {
+            promptTokenCount: 10,
+            candidatesTokenCount: 20
+          }
+        }
+      }
+    ]);
+
+    const submitted = await submitTranscriptionBatch({
+      id: 77,
+      provider: 'vertex',
+      model: 'gemini-2.5-flash',
+      temperature: null,
+      batch_manifest: {
+        requests: [
+          { customId: 'job-77-page-1', imagePath: '/uploads/page1.png' }
+        ]
+      }
+    });
+
+    expect(submitted.remoteId).toMatch(/^projects\/test\/locations\/global\/batchPredictionJobs\//);
+    expect(vertexBatch.uploadBufferToGcs).toHaveBeenCalled();
+    expect(vertexBatch.uploadTextToGcs).toHaveBeenCalled();
+    expect(vertexBatch.createVertexBatchJob).toHaveBeenCalled();
+
+    const polled = await pollTranscriptionBatch({
+      id: 77,
+      provider: 'vertex',
+      model: 'gemini-2.5-flash',
+      temperature: null,
+      batch_remote_id: submitted.remoteId,
+      batch_manifest: {
+        requests: [
+          { customId: 'job-77-page-1', imagePath: '/uploads/page1.png' }
+        ]
+      }
+    });
+
+    expect(polled.state).toBe('succeeded');
+    expect(polled.completedCount).toBe(1);
+    expect(polled.failedCount).toBe(0);
+    expect(polled.pageResults).toHaveLength(1);
+    expect(polled.pageResults[0].customId).toBe('job-77-page-1');
+    expect(polled.pageResults[0].result.transcription).toBe('Vertex Page 1');
   });
 });

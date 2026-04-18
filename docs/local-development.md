@@ -39,6 +39,31 @@ npm run setup:python
 npm start
 ```
 
+## Vertex batch configuration
+
+Realtime Vertex requests in Bartelby still use Vertex AI Express Mode with an
+API key. Batch transcription and batch extraction now use the native Vertex
+batch prediction API instead, which has different requirements:
+
+- Google Cloud bearer-token auth available to the app, typically through
+  Application Default Credentials
+- a Google Cloud project ID
+- a Vertex batch location
+- a Cloud Storage bucket for staged inputs and outputs
+
+You can configure those in Admin > LLM Settings, or via environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `VERTEX_BATCH_PROJECT_ID` | Google Cloud project for Vertex batch jobs |
+| `VERTEX_BATCH_LOCATION` | Vertex batch location such as `global` or `us-central1` |
+| `VERTEX_BATCH_BUCKET` | Cloud Storage bucket used for staged inputs and outputs |
+| `VERTEX_BATCH_INPUT_PREFIX` | Optional object prefix for request JSONL and uploaded page assets |
+| `VERTEX_BATCH_OUTPUT_PREFIX` | Optional object prefix for Vertex batch result files |
+
+`GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` are also respected as
+fallbacks for project and location.
+
 ## Production environment requirements
 
 Bartelby production now assumes the app is running behind a trusted reverse

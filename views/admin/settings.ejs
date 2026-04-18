@@ -166,7 +166,7 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
           modelName: 'vertex_model',
           modelValue: cfg.vertex_model || 'gemini-2.5-flash',
           modelPlaceholder: 'gemini-2.5-flash',
-          modelHelp: 'Must support vision. Uses Vertex AI Express Mode (API key auth).',
+          modelHelp: 'Must support vision. Realtime calls use Vertex AI Express Mode (API key auth); batch jobs use the Vertex batch settings below.',
           visionName: 'vertex_vision_model',
           visionValue: cfg.vertex_vision_model || '',
           visionPlaceholder: 'gemini-2.5-flash',
@@ -194,6 +194,50 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     <% providerSections.forEach(function(provider) { %>
       <%- include('../partials/provider-settings', provider) %>
     <% }) %>
+
+    <section class="settings-section">
+      <h2>Vertex Batch Settings</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="vertex_batch_project_id">Project ID</label>
+          <input type="text" id="vertex_batch_project_id" name="vertex_batch_project_id"
+                 value="<%= cfg.vertex_batch_project_id || '' %>"
+                 placeholder="my-google-cloud-project">
+          <p class="field-hint">Required for Vertex batch jobs. Falls back to <code>VERTEX_BATCH_PROJECT_ID</code> or <code>GOOGLE_CLOUD_PROJECT</code>.</p>
+        </div>
+        <div class="form-group">
+          <label for="vertex_batch_location">Location</label>
+          <input type="text" id="vertex_batch_location" name="vertex_batch_location"
+                 value="<%= cfg.vertex_batch_location || 'global' %>"
+                 placeholder="global">
+          <p class="field-hint">Batch inference region, usually <code>global</code> or a supported regional endpoint like <code>us-central1</code>.</p>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="vertex_batch_bucket">Cloud Storage bucket</label>
+          <input type="text" id="vertex_batch_bucket" name="vertex_batch_bucket"
+                 value="<%= cfg.vertex_batch_bucket || '' %>"
+                 placeholder="my-vertex-batch-bucket">
+          <p class="field-hint">Required. Batch inputs, uploaded page assets, and output JSONL files are staged here.</p>
+        </div>
+        <div class="form-group">
+          <label for="vertex_batch_input_prefix">Input prefix</label>
+          <input type="text" id="vertex_batch_input_prefix" name="vertex_batch_input_prefix"
+                 value="<%= cfg.vertex_batch_input_prefix || 'bartelby/vertex-batch/input' %>"
+                 placeholder="bartelby/vertex-batch/input">
+          <p class="field-hint">Prefix inside the bucket for request JSONL files and page image assets.</p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="vertex_batch_output_prefix">Output prefix</label>
+        <input type="text" id="vertex_batch_output_prefix" name="vertex_batch_output_prefix"
+               value="<%= cfg.vertex_batch_output_prefix || 'bartelby/vertex-batch/output' %>"
+               placeholder="bartelby/vertex-batch/output">
+        <p class="field-hint">Prefix inside the bucket where Vertex writes batch results.</p>
+      </div>
+      <p class="field-hint provider-settings-note">Vertex batch jobs use Application Default Credentials or another Google Cloud bearer-token source available to the server. The Express Mode API key above is still used for non-batch Vertex requests.</p>
+    </section>
 
     <section class="settings-section">
       <h2>Ollama <span class="badge-local">Local</span></h2>

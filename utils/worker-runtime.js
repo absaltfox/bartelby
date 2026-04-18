@@ -67,6 +67,10 @@ async function resolveRuntimeConfig(job, logLine) {
     await logLine('Using system AI credentials');
   }
 
+  if (providerName === 'vertex' && job.job_kind === 'batch') {
+    await logLine('Vertex batch transport uses Google Cloud bearer credentials and Cloud Storage staging.');
+  }
+
   await logLine(`Provider: ${providerName}, Model: ${job.model || runtimeConfig.model || 'default'}`);
   return { providerName, temperature, runtimeConfig };
 }

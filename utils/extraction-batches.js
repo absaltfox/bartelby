@@ -6,6 +6,19 @@ const {
   parseExtractionResponse
 } = require('./extraction-llm');
 const { settingsAsync, transcriptsAsync, documentsAsync } = require('../database/db');
+const {
+  assertVertexBatchConfig,
+  buildGsUri,
+  buildVertexBatchPartPaths,
+  buildVertexRequestMatcher,
+  createVertexBatchJob,
+  downloadVertexBatchOutputs,
+  getVertexBatchJob,
+  isVertexBatchRemoteId,
+  matchVertexCustomId,
+  resolveVertexBatchConfig,
+  uploadTextToGcs
+} = require('./vertex-batch');
 
 const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 const DEFAULT_MAX_REQUESTS_PER_CHUNK = 25;
@@ -126,13 +139,15 @@ async function resolveExtractionRuntime(providerName, runtimeConfig = {}, opts =
     return {
       apiKey: runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
       model: opts.model || runtimeConfig.utilityModel || cfg.google_utility_model || cfg.google_model,
-      temperature
+      temperature,
+      cfg
     };
   }
   return {
     apiKey: runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY,
     model: opts.model || runtimeConfig.utilityModel || cfg.vertex_utility_model || cfg.vertex_model,
-    temperature
+    temperature,
+    cfg
   };
 }
 
@@ -214,7 +229,7 @@ async function buildOpenAiRequestEntry(request, runtime) {
     body
   });
 
-  return { payload, bytes: Buffer.byteLength(payload, 'utf8') };
+  return { customId: request.customId, payload, bytes: Buffer.byteLength(payload, 'utf8') };
 }
 
 async function submitOpenAiBatchChunk(job, runtime, chunkEntries, chunkIndex, totalChunks) {
@@ -273,7 +288,7 @@ async function buildAnthropicRequestEntry(request, runtime) {
     }
   };
   if (runtime.temperature != null) payload.params.temperature = runtime.temperature;
-  return { payload, bytes: estimateJsonBytes(payload) };
+  return { customId: request.customId, payload, bytes: estimateJsonBytes(payload) };
 }
 
 async function submitAnthropicBatchChunk(job, runtime, chunkEntries) {
@@ -319,7 +334,34 @@ async function buildGeminiRequestEntry(request, runtime) {
   if (runtime.temperature != null) {
     payload.request.generation_config.temperature = runtime.temperature;
   }
-  return { payload, bytes: estimateJsonBytes(payload) };
+  return { customId: request.customId, payload, bytes: estimateJsonBytes(payload) };
+}
+
+async function buildVertexExtractionRequestEntry(job, request, runtime) {
+  const loaded = await loadManifestRequest(request);
+  const requestObject = {
+    systemInstruction: {
+      parts: [{ text: EXTRACTION_SYSTEM_PROMPT }]
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: loaded.prompt }]
+      }
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json'
+    }
+  };
+  if (runtime.temperature != null) {
+    requestObject.generationConfig.temperature = runtime.temperature;
+  }
+  return {
+    customId: request.customId,
+    requestObject,
+    payload: { request: requestObject },
+    bytes: estimateJsonBytes({ request: requestObject })
+  };
 }
 
 async function submitGeminiBatchChunk(job, runtime, chunkEntries, chunkIndex, totalChunks) {
@@ -363,7 +405,66 @@ async function submitChunkedProviderBatch(job, runtime, manifest, buildEntry, su
       remoteId: submission.remoteId,
       remoteStatus: submission.remoteStatus,
       requestCount: submission.requestCount || chunks[i].entries.length,
-      estimatedBytes: chunks[i].bytes
+      estimatedBytes: chunks[i].bytes,
+      requestIds: chunks[i].entries.map((entry) => entry.customId).filter(Boolean)
+    });
+  }
+
+  if (submissions.length === 1) {
+    return {
+      remoteId: submissions[0].remoteId,
+      remoteStatus: submissions[0].remoteStatus,
+      model: runtime.model
+    };
+  }
+
+  return {
+    remoteId: serializeChunkedBatchState(job.provider, submissions),
+    remoteStatus: `submitted (${submissions.length} chunks)`,
+    model: runtime.model
+  };
+}
+
+async function submitVertexExtractionBatch(job, runtime, manifest) {
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
+  assertVertexBatchConfig(vertexConfig);
+  const chunks = await splitManifestIntoChunks(
+    manifest,
+    (request) => buildVertexExtractionRequestEntry(job, request, runtime)
+  );
+
+  if (!chunks.length) {
+    throw new Error('This extraction batch job has no requests after chunking.');
+  }
+
+  const submissions = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+      family: 'extraction',
+      jobId: job.id,
+      attempt: (job.attempts || 0) + 1,
+      chunkIndex: i,
+      totalChunks: chunks.length
+    });
+    const jsonl = `${chunk.entries.map((entry) => JSON.stringify(entry.payload)).join('\n')}\n`;
+    await uploadTextToGcs(vertexConfig, partPaths.inputObjectName, jsonl, 'application/jsonl');
+
+    const batch = await createVertexBatchJob(vertexConfig, {
+      displayName: chunks.length > 1
+        ? `${job.batch_display_name || `extraction-batch-${job.id}`}-${partPaths.partLabel}`
+        : (job.batch_display_name || `extraction-batch-${job.id}`),
+      model: runtime.model,
+      inputUri: buildGsUri(vertexConfig.bucket, partPaths.inputObjectName),
+      outputPrefix: partPaths.outputPrefix
+    });
+
+    submissions.push({
+      remoteId: batch.name,
+      remoteStatus: batch.state || 'JOB_STATE_PENDING',
+      requestCount: chunk.entries.length,
+      estimatedBytes: chunk.bytes,
+      requestIds: chunk.entries.map((entry) => entry.customId)
     });
   }
 
@@ -393,7 +494,7 @@ async function submitExtractionBatch(job, runtimeConfig = {}) {
     model: job.model || undefined,
     temperature: job.temperature
   });
-  if (!runtime.apiKey) {
+  if (job.provider !== 'vertex' && !runtime.apiKey) {
     throw new Error(`Missing API key for ${job.provider} extraction batch.`);
   }
 
@@ -402,6 +503,9 @@ async function submitExtractionBatch(job, runtimeConfig = {}) {
   }
   if (job.provider === 'claude') {
     return await submitChunkedProviderBatch(job, runtime, manifest, buildAnthropicRequestEntry, submitAnthropicBatchChunk);
+  }
+  if (job.provider === 'vertex') {
+    return await submitVertexExtractionBatch(job, runtime, manifest);
   }
   return await submitChunkedProviderBatch(job, runtime, manifest, buildGeminiRequestEntry, submitGeminiBatchChunk);
 }
@@ -508,6 +612,37 @@ function extractGeminiExtractionResult(entry, requestedModel, temperature, provi
       ...parseExtractionResponse(extractGeminiText(response)),
       paradata: {
         provider: providerName,
+        model: response?.modelVersion || requestedModel,
+        prompt: EXTRACTION_SYSTEM_PROMPT,
+        temperature,
+        run_duration_ms: null,
+        input_tokens: response?.usageMetadata?.promptTokenCount ?? null,
+        output_tokens: response?.usageMetadata?.candidatesTokenCount ?? null
+      }
+    },
+    error: null
+  };
+}
+
+function extractVertexExtractionResult(customId, entry, requestedModel, temperature) {
+  const response = entry?.response;
+  const status = String(entry?.status || '').trim();
+  if (!response || status) {
+    return {
+      customId,
+      ok: false,
+      result: null,
+      error: status || 'Vertex extraction batch request failed.'
+    };
+  }
+
+  return {
+    customId,
+    ok: true,
+    result: {
+      ...parseExtractionResponse(extractGeminiText(response)),
+      paradata: {
+        provider: 'vertex',
         model: response?.modelVersion || requestedModel,
         prompt: EXTRACTION_SYSTEM_PROMPT,
         temperature,
@@ -643,24 +778,98 @@ async function pollGeminiBatch(job, runtime, batchRemoteId = job.batch_remote_id
   };
 }
 
+function buildManifestSubset(manifest, requestIds) {
+  if (!Array.isArray(requestIds) || requestIds.length === 0) {
+    return manifest;
+  }
+  const wanted = new Set(requestIds);
+  return manifest.filter((entry) => wanted.has(entry.customId));
+}
+
+async function buildVertexExtractionDescriptors(job, runtime, manifest) {
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
+  assertVertexBatchConfig(vertexConfig);
+  const descriptors = [];
+  for (const request of manifest) {
+    descriptors.push(await buildVertexExtractionRequestEntry(job, request, runtime));
+  }
+  return { vertexConfig, descriptors };
+}
+
+async function pollVertexExtractionBatch(job, runtime, manifest, batchRemoteId = job.batch_remote_id, batchOptions = {}) {
+  const { vertexConfig, descriptors } = await buildVertexExtractionDescriptors(job, runtime, manifest);
+  const batch = await getVertexBatchJob(vertexConfig, batchRemoteId);
+  const remoteStatus = batch?.state || 'JOB_STATE_PENDING';
+
+  if (remoteStatus !== 'JOB_STATE_SUCCEEDED') {
+    return {
+      state: ['JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_PAUSED'].includes(remoteStatus) ? 'failed' : 'running',
+      remoteStatus,
+      completedCount: Number(batch?.completionStats?.successfulCount || 0),
+      failedCount: Number(batch?.completionStats?.failedCount || 0),
+      itemResults: [],
+      error: batch?.error?.message || null
+    };
+  }
+
+  const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+    family: 'extraction',
+    jobId: job.id,
+    attempt: (job.attempts || 0) + 1,
+    chunkIndex: batchOptions.chunkIndex || 0,
+    totalChunks: batchOptions.totalChunks || 1
+  });
+
+  const outputLines = await downloadVertexBatchOutputs(vertexConfig, partPaths.outputPrefix);
+  const matcher = buildVertexRequestMatcher(descriptors);
+  const itemResults = outputLines.map((entry) => {
+    const customId = matchVertexCustomId(matcher, entry?.request);
+    return extractVertexExtractionResult(customId, entry, runtime.model, runtime.temperature);
+  });
+
+  return {
+    state: 'succeeded',
+    remoteStatus,
+    completedCount: Number(batch?.completionStats?.successfulCount || itemResults.filter((item) => item.ok).length),
+    failedCount: Number(batch?.completionStats?.failedCount || itemResults.filter((item) => !item.ok).length),
+    itemResults,
+    error: null
+  };
+}
+
 async function pollExtractionBatch(job, runtimeConfig = {}) {
   const runtime = await resolveExtractionRuntime(job.provider, runtimeConfig, {
     model: job.model || undefined,
     temperature: job.temperature
   });
-  if (!runtime.apiKey) {
+  if (job.provider !== 'vertex' && !runtime.apiKey) {
     throw new Error(`Missing API key for ${job.provider} extraction batch.`);
   }
 
   const chunkState = parseChunkedBatchState(job.batch_remote_id);
+  const manifest = parseBatchManifest(job);
   if (chunkState) {
     const chunkPolls = [];
-    for (const chunk of chunkState.chunks) {
+    for (let i = 0; i < chunkState.chunks.length; i++) {
+      const chunk = chunkState.chunks[i];
       const chunkJob = { ...job, batch_remote_id: chunk.remoteId };
+      const chunkManifest = buildManifestSubset(manifest, chunk.requestIds);
       if (job.provider === 'openai') {
         chunkPolls.push(await pollOpenAiBatch(chunkJob, runtime, chunk.remoteId));
       } else if (job.provider === 'claude') {
         chunkPolls.push(await pollAnthropicBatch(chunkJob, runtime, chunk.remoteId));
+      } else if (job.provider === 'vertex') {
+        if (isVertexBatchRemoteId(chunk.remoteId)) {
+          chunkPolls.push(await pollVertexExtractionBatch(
+            chunkJob,
+            runtime,
+            chunkManifest,
+            chunk.remoteId,
+            { chunkIndex: i, totalChunks: chunkState.chunks.length }
+          ));
+        } else {
+          chunkPolls.push(await pollGeminiBatch(chunkJob, runtime, chunk.remoteId));
+        }
       } else {
         chunkPolls.push(await pollGeminiBatch(chunkJob, runtime, chunk.remoteId));
       }
@@ -705,6 +914,12 @@ async function pollExtractionBatch(job, runtimeConfig = {}) {
 
   if (job.provider === 'openai') return await pollOpenAiBatch(job, runtime);
   if (job.provider === 'claude') return await pollAnthropicBatch(job, runtime);
+  if (job.provider === 'vertex') {
+    if (isVertexBatchRemoteId(job.batch_remote_id)) {
+      return await pollVertexExtractionBatch(job, runtime, manifest);
+    }
+    return await pollGeminiBatch(job, runtime);
+  }
   return await pollGeminiBatch(job, runtime);
 }
 

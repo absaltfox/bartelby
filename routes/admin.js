@@ -178,6 +178,8 @@ async function saveLlmSettings(req, res) {
       'vertex_model', 'vertex_vision_model', 'vertex_utility_model',
       'vertex_input_cost_per_mtok', 'vertex_output_cost_per_mtok',
       'vertex_utility_input_cost_per_mtok', 'vertex_utility_output_cost_per_mtok',
+      'vertex_batch_project_id', 'vertex_batch_location', 'vertex_batch_bucket',
+      'vertex_batch_input_prefix', 'vertex_batch_output_prefix',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];
@@ -250,12 +252,21 @@ router.get('/import', asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
   const defaultProvider = await settingsAsync.get('default_provider');
+  const isResumableImportJob = (job) => {
+    return !!(
+      job
+      && job.status === 'done'
+      && job.pages
+      && !job.submitted
+      && (job.job_kind || 'render') === 'render'
+    );
+  };
 
   // If resuming from a completed import job, pass the job data
   let resumeJob = null;
   if (req.query.importJobId) {
     const job = await importJobsAsync.getById(parseInt(req.query.importJobId));
-    if (job && job.status === 'done' && job.pages && !job.submitted) {
+    if (isResumableImportJob(job)) {
       let groupingState = null;
       try {
         groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;

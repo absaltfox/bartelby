@@ -47,6 +47,42 @@ jest.mock('../../utils/extraction-llm', () => ({
   })
 }));
 
+jest.mock('../../utils/vertex-batch', () => ({
+  assertVertexBatchConfig: jest.fn(),
+  buildGsUri: jest.fn((bucket, objectName) => `gs://${bucket}/${objectName}`),
+  buildVertexBatchPartPaths: jest.fn((config, opts) => ({
+    partLabel: `part-${opts.chunkIndex + 1}-of-${opts.totalChunks}`,
+    inputObjectName: `input/extraction/job-${opts.jobId}/part-${opts.chunkIndex + 1}-of-${opts.totalChunks}/requests.jsonl`,
+    outputPrefix: `output/extraction/job-${opts.jobId}/part-${opts.chunkIndex + 1}-of-${opts.totalChunks}`
+  })),
+  buildVertexRequestMatcher: jest.fn((descriptors) => ({ descriptors })),
+  createVertexBatchJob: jest.fn(async (config, opts) => ({
+    name: `projects/test/locations/global/batchPredictionJobs/${opts.displayName.replace(/[^a-zA-Z0-9-]+/g, '-')}`,
+    state: 'JOB_STATE_PENDING'
+  })),
+  downloadVertexBatchOutputs: jest.fn(async () => []),
+  getVertexBatchJob: jest.fn(async () => ({
+    state: 'JOB_STATE_SUCCEEDED',
+    completionStats: { successfulCount: '1', failedCount: '0' }
+  })),
+  isVertexBatchRemoteId: jest.fn((remoteId) => String(remoteId || '').startsWith('projects/')),
+  matchVertexCustomId: jest.fn((matcher, request) => {
+    return matcher.descriptors.find((descriptor) => {
+      return descriptor.requestObject?.contents?.[0]?.parts?.[0]?.text === request?.contents?.[0]?.parts?.[0]?.text;
+    })?.customId || null;
+  }),
+  resolveVertexBatchConfig: jest.fn(() => ({
+    projectId: 'test-project',
+    location: 'global',
+    bucket: 'test-bucket',
+    inputPrefix: 'input',
+    outputPrefix: 'output'
+  })),
+  uploadTextToGcs: jest.fn(async () => {})
+}));
+
+const vertexBatch = require('../../utils/vertex-batch');
+
 function jsonResponse(payload) {
   return {
     ok: true,
@@ -178,5 +214,67 @@ describe('extraction batch chunking', () => {
     expect(polled.failedCount).toBe(0);
     expect(polled.itemResults.map((item) => item.customId)).toEqual(['extract-1', 'extract-2']);
     expect(polled.itemResults.every((item) => item.ok)).toBe(true);
+  });
+
+  it('submits and polls Vertex extraction batches through Vertex batch prediction jobs', async () => {
+    const { submitExtractionBatch, pollExtractionBatch } = require('../../utils/extraction-batches');
+
+    vertexBatch.downloadVertexBatchOutputs.mockResolvedValueOnce([
+      {
+        status: '',
+        request: {
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: 'Metadata: Document 1\nTranscript: Transcript content 101' }]
+            }
+          ]
+        },
+        response: {
+          candidates: [{ content: { parts: [{ text: '{"entities":[{"mention":"Alice","normalized":"Alice","type":"person","span_start":0,"span_end":5,"confidence":0.9,"properties":{}}],"relationships":[],"dates":[]}' }] } }],
+          modelVersion: 'gemini-2.5-flash@001',
+          usageMetadata: {
+            promptTokenCount: 9,
+            candidatesTokenCount: 17
+          }
+        }
+      }
+    ]);
+
+    const submitted = await submitExtractionBatch({
+      id: 66,
+      provider: 'vertex',
+      model: 'gemini-2.5-flash',
+      temperature: 0.2,
+      batch_manifest: {
+        requests: [
+          { customId: 'extract-1', documentId: 1, transcriptId: 101 }
+        ]
+      }
+    });
+
+    expect(submitted.remoteId).toMatch(/^projects\/test\/locations\/global\/batchPredictionJobs\//);
+    expect(vertexBatch.uploadTextToGcs).toHaveBeenCalled();
+    expect(vertexBatch.createVertexBatchJob).toHaveBeenCalled();
+
+    const polled = await pollExtractionBatch({
+      id: 66,
+      provider: 'vertex',
+      model: 'gemini-2.5-flash',
+      temperature: 0.2,
+      batch_remote_id: submitted.remoteId,
+      batch_manifest: {
+        requests: [
+          { customId: 'extract-1', documentId: 1, transcriptId: 101 }
+        ]
+      }
+    });
+
+    expect(polled.state).toBe('succeeded');
+    expect(polled.completedCount).toBe(1);
+    expect(polled.failedCount).toBe(0);
+    expect(polled.itemResults).toHaveLength(1);
+    expect(polled.itemResults[0].customId).toBe('extract-1');
+    expect(polled.itemResults[0].result.entities[0].mention).toBe('Alice');
   });
 });

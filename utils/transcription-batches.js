@@ -8,6 +8,21 @@ const {
   parseTranscriptionResponse,
   resolveTranscriptionRuntime
 } = require('./llm');
+const {
+  assertVertexBatchConfig,
+  buildGsUri,
+  buildVertexAssetObjectName,
+  buildVertexBatchPartPaths,
+  buildVertexRequestMatcher,
+  createVertexBatchJob,
+  downloadVertexBatchOutputs,
+  getVertexBatchJob,
+  isVertexBatchRemoteId,
+  matchVertexCustomId,
+  resolveVertexBatchConfig,
+  uploadBufferToGcs,
+  uploadTextToGcs
+} = require('./vertex-batch');
 
 const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 const DEFAULT_BATCH_MAX_REQUESTS_PER_CHUNK = 25;
@@ -191,6 +206,7 @@ async function buildOpenAiRequestEntry(request, runtime, systemPrompt) {
   });
 
   return {
+    customId: request.customId,
     payload,
     bytes: Buffer.byteLength(payload, 'utf8')
   };
@@ -271,6 +287,7 @@ async function buildAnthropicRequestEntry(request, runtime, systemPrompt) {
   }
 
   return {
+    customId: request.customId,
     payload,
     bytes: estimateJsonBytes(payload)
   };
@@ -391,8 +408,60 @@ async function buildGeminiRequestEntry(request, runtime, systemPrompt) {
   }
 
   return {
+    customId: request.customId,
     payload,
     bytes: estimateJsonBytes(payload)
+  };
+}
+
+function buildVertexTranscriptionRequestDescriptor(job, request, runtime, systemPrompt, vertexConfig) {
+  const mimeType = request.mimeType || guessMimeType(request.imagePath);
+  const extension = path.extname(request.imagePath || '') || '.png';
+  const assetObjectName = buildVertexAssetObjectName(vertexConfig, {
+    family: 'transcription',
+    jobId: job.id,
+    attempt: (job.attempts || 0) + 1,
+    customId: request.customId,
+    extension
+  });
+  const imageUri = buildGsUri(vertexConfig.bucket, assetObjectName);
+  const requestObject = {
+    systemInstruction: {
+      parts: [{ text: systemPrompt }]
+    },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            fileData: {
+              fileUri: imageUri,
+              mimeType
+            }
+          },
+          {
+            text: 'Please transcribe this document page.'
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json'
+    }
+  };
+
+  if (runtime.temperature != null) {
+    requestObject.generationConfig.temperature = runtime.temperature;
+  }
+
+  return {
+    customId: request.customId,
+    imagePath: request.imagePath,
+    mimeType,
+    assetObjectName,
+    requestObject,
+    payload: { request: requestObject },
+    bytes: estimateJsonBytes({ request: requestObject })
   };
 }
 
@@ -443,7 +512,73 @@ async function submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, 
       remoteId: submission.remoteId,
       remoteStatus: submission.remoteStatus,
       requestCount: submission.requestCount || chunks[i].entries.length,
-      estimatedBytes: chunks[i].bytes
+      estimatedBytes: chunks[i].bytes,
+      requestIds: chunks[i].entries.map((entry) => entry.customId).filter(Boolean)
+    });
+  }
+
+  if (submissions.length === 1) {
+    return {
+      remoteId: submissions[0].remoteId,
+      remoteStatus: submissions[0].remoteStatus,
+      model: runtime.model
+    };
+  }
+
+  return {
+    remoteId: serializeChunkedBatchState(job.provider, submissions),
+    remoteStatus: `submitted (${submissions.length} chunks)`,
+    model: runtime.model
+  };
+}
+
+async function submitVertexTranscriptionBatch(job, runtime, systemPrompt, manifest) {
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
+  assertVertexBatchConfig(vertexConfig);
+
+  const chunks = await splitManifestIntoChunks(
+    manifest,
+    (request) => buildVertexTranscriptionRequestDescriptor(job, request, runtime, systemPrompt, vertexConfig)
+  );
+
+  if (chunks.length === 0) {
+    throw new Error('This batch job has no requests after chunking.');
+  }
+
+  const submissions = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+      family: 'transcription',
+      jobId: job.id,
+      attempt: (job.attempts || 0) + 1,
+      chunkIndex: i,
+      totalChunks: chunks.length
+    });
+
+    for (const entry of chunk.entries) {
+      const imageBuffer = await storage.readUploadByUrl(entry.imagePath);
+      await uploadBufferToGcs(vertexConfig, entry.assetObjectName, imageBuffer, entry.mimeType);
+    }
+
+    const jsonl = `${chunk.entries.map((entry) => JSON.stringify(entry.payload)).join('\n')}\n`;
+    await uploadTextToGcs(vertexConfig, partPaths.inputObjectName, jsonl, 'application/jsonl');
+
+    const batch = await createVertexBatchJob(vertexConfig, {
+      displayName: chunks.length > 1
+        ? `${job.batch_display_name || `bartelby-batch-${job.id}`}-${partPaths.partLabel}`
+        : (job.batch_display_name || `bartelby-batch-${job.id}`),
+      model: runtime.model,
+      inputUri: buildGsUri(vertexConfig.bucket, partPaths.inputObjectName),
+      outputPrefix: partPaths.outputPrefix
+    });
+
+    submissions.push({
+      remoteId: batch.name,
+      remoteStatus: batch.state || 'JOB_STATE_PENDING',
+      requestCount: chunk.entries.length,
+      estimatedBytes: chunk.bytes,
+      requestIds: chunk.entries.map((entry) => entry.customId)
     });
   }
 
@@ -476,7 +611,7 @@ async function submitTranscriptionBatch(job, runtimeConfig = {}) {
     temperature: job.temperature
   });
   const systemPrompt = await getTranscriptionSystemPrompt(runtimeConfig);
-  if (!runtime.apiKey) {
+  if (job.provider !== 'vertex' && !runtime.apiKey) {
     throw new Error(`Missing API key for ${job.provider} batch transcription.`);
   }
 
@@ -486,7 +621,9 @@ async function submitTranscriptionBatch(job, runtimeConfig = {}) {
   if (job.provider === 'claude') {
     return await submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, buildAnthropicRequestEntry, submitAnthropicBatchChunk);
   }
-  // gemini and vertex both use the Gemini batch API (generativelanguage.googleapis.com)
+  if (job.provider === 'vertex') {
+    return await submitVertexTranscriptionBatch(job, runtime, systemPrompt, manifest);
+  }
   return await submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, buildGeminiRequestEntry, submitGeminiBatchChunk);
 }
 
@@ -596,6 +733,46 @@ function extractGeminiPageResult(entry, requestedModel, temperature, systemPromp
       ...parsed,
       paradata: {
         provider: providerName,
+        model: response?.modelVersion || requestedModel,
+        prompt: systemPrompt,
+        temperature,
+        run_duration_ms: null,
+        input_tokens: response?.usageMetadata?.promptTokenCount ?? null,
+        output_tokens: response?.usageMetadata?.candidatesTokenCount ?? null
+      }
+    },
+    error: null
+  };
+}
+
+function extractVertexText(response) {
+  return (response?.candidates || [])
+    .flatMap((candidate) => candidate?.content?.parts || [])
+    .map((part) => part?.text || '')
+    .filter(Boolean)
+    .join('\n');
+}
+
+function extractVertexPageResult(customId, entry, requestedModel, temperature, systemPrompt) {
+  const response = entry?.response;
+  const status = String(entry?.status || '').trim();
+  if (!response || status) {
+    return {
+      customId,
+      ok: false,
+      result: null,
+      error: status || 'Vertex batch request failed.'
+    };
+  }
+
+  const parsed = parseTranscriptionResponse(extractVertexText(response));
+  return {
+    customId,
+    ok: true,
+    result: {
+      ...parsed,
+      paradata: {
+        provider: 'vertex',
         model: response?.modelVersion || requestedModel,
         prompt: systemPrompt,
         temperature,
@@ -737,25 +914,106 @@ async function pollGeminiBatch(job, runtime, systemPrompt, batchRemoteId = job.b
   };
 }
 
+function buildManifestSubset(manifest, requestIds) {
+  if (!Array.isArray(requestIds) || requestIds.length === 0) {
+    return manifest;
+  }
+  const wanted = new Set(requestIds);
+  return manifest.filter((entry) => wanted.has(entry.customId));
+}
+
+async function buildVertexTranscriptionDescriptors(job, runtime, systemPrompt, manifest) {
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
+  assertVertexBatchConfig(vertexConfig);
+  const descriptors = manifest.map((request) => (
+    buildVertexTranscriptionRequestDescriptor(job, request, runtime, systemPrompt, vertexConfig)
+  ));
+  return { vertexConfig, descriptors };
+}
+
+async function pollVertexTranscriptionBatch(
+  job,
+  runtime,
+  systemPrompt,
+  manifest,
+  batchRemoteId = job.batch_remote_id,
+  batchOptions = {}
+) {
+  const { vertexConfig, descriptors } = await buildVertexTranscriptionDescriptors(job, runtime, systemPrompt, manifest);
+  const batch = await getVertexBatchJob(vertexConfig, batchRemoteId);
+  const remoteStatus = batch?.state || 'JOB_STATE_PENDING';
+
+  if (remoteStatus !== 'JOB_STATE_SUCCEEDED') {
+    return {
+      state: ['JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_PAUSED'].includes(remoteStatus) ? 'failed' : 'running',
+      remoteStatus,
+      completedCount: Number(batch?.completionStats?.successfulCount || 0),
+      failedCount: Number(batch?.completionStats?.failedCount || 0),
+      pageResults: [],
+      error: batch?.error?.message || null
+    };
+  }
+
+  const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+    family: 'transcription',
+    jobId: job.id,
+    attempt: (job.attempts || 0) + 1,
+    chunkIndex: batchOptions.chunkIndex || 0,
+    totalChunks: batchOptions.totalChunks || 1
+  });
+
+  const outputLines = await downloadVertexBatchOutputs(vertexConfig, partPaths.outputPrefix);
+  const matcher = buildVertexRequestMatcher(descriptors);
+  const pageResults = outputLines.map((entry) => {
+    const customId = matchVertexCustomId(matcher, entry?.request);
+    return extractVertexPageResult(customId, entry, runtime.model, runtime.temperature, systemPrompt);
+  });
+
+  return {
+    state: 'succeeded',
+    remoteStatus,
+    completedCount: Number(batch?.completionStats?.successfulCount || pageResults.filter((item) => item.ok).length),
+    failedCount: Number(batch?.completionStats?.failedCount || pageResults.filter((item) => !item.ok).length),
+    pageResults,
+    error: null
+  };
+}
+
 async function pollTranscriptionBatch(job, runtimeConfig = {}) {
   const runtime = await resolveTranscriptionRuntime(job.provider, runtimeConfig, {
     model: job.model || undefined,
     temperature: job.temperature
   });
   const systemPrompt = await getTranscriptionSystemPrompt(runtimeConfig);
-  if (!runtime.apiKey) {
+  if (job.provider !== 'vertex' && !runtime.apiKey) {
     throw new Error(`Missing API key for ${job.provider} batch transcription.`);
   }
 
   const chunkState = parseChunkedBatchState(job.batch_remote_id);
+  const manifest = parseBatchManifest(job);
   if (chunkState) {
     const chunkPolls = [];
-    for (const chunk of chunkState.chunks) {
+    for (let i = 0; i < chunkState.chunks.length; i++) {
+      const chunk = chunkState.chunks[i];
       const chunkJob = { ...job, batch_remote_id: chunk.remoteId };
+      const chunkManifest = buildManifestSubset(manifest, chunk.requestIds);
       if (job.provider === 'openai') {
         chunkPolls.push(await pollOpenAiBatch(chunkJob, runtime, systemPrompt, chunk.remoteId));
       } else if (job.provider === 'claude') {
         chunkPolls.push(await pollAnthropicBatch(chunkJob, runtime, systemPrompt, chunk.remoteId));
+      } else if (job.provider === 'vertex') {
+        if (isVertexBatchRemoteId(chunk.remoteId)) {
+          chunkPolls.push(await pollVertexTranscriptionBatch(
+            chunkJob,
+            runtime,
+            systemPrompt,
+            chunkManifest,
+            chunk.remoteId,
+            { chunkIndex: i, totalChunks: chunkState.chunks.length }
+          ));
+        } else {
+          chunkPolls.push(await pollGeminiBatch(chunkJob, runtime, systemPrompt, chunk.remoteId));
+        }
       } else {
         chunkPolls.push(await pollGeminiBatch(chunkJob, runtime, systemPrompt, chunk.remoteId));
       }
@@ -803,6 +1061,12 @@ async function pollTranscriptionBatch(job, runtimeConfig = {}) {
   }
   if (job.provider === 'claude') {
     return await pollAnthropicBatch(job, runtime, systemPrompt);
+  }
+  if (job.provider === 'vertex') {
+    if (isVertexBatchRemoteId(job.batch_remote_id)) {
+      return await pollVertexTranscriptionBatch(job, runtime, systemPrompt, manifest);
+    }
+    return await pollGeminiBatch(job, runtime, systemPrompt);
   }
   return await pollGeminiBatch(job, runtime, systemPrompt);
 }
