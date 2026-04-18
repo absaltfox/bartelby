@@ -81,11 +81,12 @@
               }
               const isImport = job.job_type === 'import';
               const isImportSubmit = isImport && job.job_kind === 'submit';
+              const isImportGrouping = isImport && job.job_kind === 'grouping';
               const isBatch = !isImport && job.job_kind === 'batch';
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>">
               <td>
-                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImportSubmit ? 'Submit' : isImport ? 'Import' : 'Transcription' %></span>
+                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImportSubmit ? 'Submit' : isImportGrouping ? 'Grouping' : isImport ? 'Import' : 'Transcription' %></span>
               </td>
               <td>
                 <span class="status-badge status-<%= job.status %>"><%= job.status %></span>
@@ -136,7 +137,7 @@
                   <% if (!isImport) { %>
                     <button type="button" class="btn-action btn-sm toggle-log-btn" data-id="<%= job.id %>">Log</button>
                   <% } %>
-                  <% if (isImport && job.status === 'done' && !job.submitted) { %>
+                  <% if (isImport && !isImportGrouping && job.status === 'done' && !job.submitted) { %>
                     <a href="/manage/collections/<%= collection.id %>/import?importJobId=<%= job.id %>" class="btn-action btn-sm btn-promote">Continue</a>
                   <% } %>
                   <% if (isImportSubmit && job.status === 'failed') { %>

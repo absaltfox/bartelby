@@ -41,6 +41,14 @@
 
   function buildProgressHtml(job) {
     if (job.job_type !== 'import') return '';
+    if (job.job_kind === 'grouping') {
+      if (job.status === 'processing') {
+        return '<small class="muted">Analyzing pages for suggested document groups...</small>';
+      }
+      if (job.status === 'done') {
+        return '<small class="muted">Grouping suggestions ready.</small>';
+      }
+    }
     if (job.job_kind === 'submit' && (job.status === 'running' || job.status === 'queued') && job.page_count) {
       var submitPct = Math.round((job.pages_rendered || 0) / job.page_count * 100);
       var nextDoc = Math.min((job.pages_rendered || 0) + 1, job.page_count);

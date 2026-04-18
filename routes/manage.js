@@ -366,6 +366,15 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
 
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
   const defaultProvider = await settingsAsync.get('default_provider');
+  const isResumableImportJob = (job) => {
+    return !!(
+      job
+      && job.status === 'done'
+      && job.pages
+      && !job.submitted
+      && (job.job_kind || 'render') === 'render'
+    );
+  };
 
   // Get all collections this manager manages (for collection picker)
   const managedIds = await getManagedIds(req);
@@ -384,7 +393,7 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
     if (job && req.user.role !== 'admin' && job.user_id !== req.user.id) {
       return res.status(403).render('error', { message: 'You do not have access to that import job.', error: {} });
     }
-    if (job && job.status === 'done' && job.pages && !job.submitted) {
+    if (isResumableImportJob(job)) {
       let groupingState = null;
       try {
         groupingState = job.grouping_state ? JSON.parse(job.grouping_state) : null;
