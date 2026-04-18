@@ -85,7 +85,7 @@
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>">
               <td>
-                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImport ? 'Import' : 'Transcription' %></span>
+                <span class="job-type-badge job-type-<%= job.job_type %>"><%= isImportSubmit ? 'Submit' : isImport ? 'Import' : 'Transcription' %></span>
               </td>
               <td>
                 <span class="status-badge status-<%= job.status %>"><%= job.status %></span>

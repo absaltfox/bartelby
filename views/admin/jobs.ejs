@@ -117,7 +117,7 @@
               </td>
               <td>
                 <span class="job-type-badge job-type-<%= job.job_type %>">
-                  <%= isImport ? 'Import' : job.job_type === 'extraction' ? 'Extraction' : 'Transcription' %>
+                  <%= isImportSubmit ? 'Submit' : isImport ? 'Import' : job.job_type === 'extraction' ? 'Extraction' : 'Transcription' %>
                 </span>
               </td>
               <td>
