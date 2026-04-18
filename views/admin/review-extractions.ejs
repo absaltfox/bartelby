@@ -23,27 +23,6 @@
       if (targetPage && targetPage > 1) params.push('page=' + encodeURIComponent(targetPage));
       return '/admin/knowledge/review-extractions' + (params.length ? '?' + params.join('&') : '');
     }
-
-    function documentHref(citation) {
-      var back = encodeURIComponent(reviewHref(approvalStatus, currentPage));
-      return '/documents/' + citation.document_id + '?back=' + back;
-    }
-
-    function citationKind(citation) {
-      if (citation.entity_name) return 'Entity citation';
-      if (citation.relationship_type) return 'Relationship citation';
-      return 'Citation';
-    }
-
-    function evidenceLabel(citation) {
-      if (citation.entity_name) {
-        return citation.entity_name + ' (' + (citation.entity_type || 'entity') + ')';
-      }
-      if (citation.relationship_type) {
-        return citation.relationship_type + ' relationship';
-      }
-      return 'Transcript #' + citation.transcript_id;
-    }
   %>
 
   <div class="knowledge-toolbar review-extractions-toolbar">
@@ -82,9 +61,9 @@
           <% } %>
         </h2>
         <p class="subtitle">
-          Showing <%= citations.length %> of <%= totalCount %> citation<%= totalCount === 1 ? '' : 's' %>.
+          Showing <%= reviewItems.length %> of <%= totalCount %> citation<%= totalCount === 1 ? '' : 's' %>.
           <% if (approvalStatus === 'pending') { %>
-            Review low-confidence extractions before they appear in the graph.
+            Approval makes pending evidence eligible to appear in the visible knowledge graph.
           <% } else if (approvalStatus === 'approved') { %>
             Already-visible evidence can still be revisited or removed here.
           <% } else if (approvalStatus === 'rejected') { %>
@@ -96,7 +75,7 @@
       </div>
     </div>
 
-    <% if (citations.length === 0) { %>
+    <% if (reviewItems.length === 0) { %>
       <div class="empty-state">
         <% if (approvalStatus === 'pending') { %>
           <p>No extraction evidence is waiting for review right now.</p>
@@ -115,46 +94,38 @@
       </div>
     <% } else { %>
       <div class="review-extraction-list">
-        <% citations.forEach(function(citation) { %>
-          <%
-            var citationStatus = citation.approval_status || 'pending';
-            var statusLabel = citationStatus.charAt(0).toUpperCase() + citationStatus.slice(1);
-            var statusClass = citationStatus === 'approved'
-              ? 'status-done'
-              : citationStatus === 'rejected'
-                ? 'status-failed'
-                : 'status-running';
-          %>
+        <% reviewItems.forEach(function(item) { %>
           <article class="review-extraction-card">
             <div class="review-extraction-card-header">
               <div class="review-extraction-title-group">
-                <p class="kg-panel-eyebrow"><%= citationKind(citation) %></p>
-                <% if (citation.document_title) { %>
-                  <h3><a href="<%= documentHref(citation) %>"><%= citation.document_title %></a></h3>
-                <% } else { %>
-                  <h3>Transcript #<%= citation.transcript_id %></h3>
+                <p class="kg-panel-eyebrow"><%= item.kind_label %></p>
+                <h3><%= item.claim_title %></h3>
+                <p class="review-extraction-context"><strong>Claim</strong> <%= item.claim_explainer %></p>
+                <% if (item.claim_detail) { %>
+                  <p class="review-extraction-detail"><%= item.claim_detail %></p>
                 <% } %>
-                <p class="review-extraction-context"><strong><%= evidenceLabel(citation) %></strong></p>
+                <% if (item.claim_meta) { %>
+                  <p class="review-extraction-meta-line"><%= item.claim_meta %></p>
+                <% } %>
               </div>
               <div class="review-extraction-summary">
-                <span class="status-badge <%= statusClass %>"><%= statusLabel %></span>
-                <% if (citation.confidence != null) { %>
-                  <span class="review-confidence">Confidence <%= Math.round(Number(citation.confidence) * 100) %>%</span>
+                <span class="status-badge <%= item.status_class %>"><%= item.status_label %></span>
+                <% if (item.confidence_label) { %>
+                  <span class="review-confidence"><%= item.confidence_label %></span>
                 <% } %>
-                <% if (citation.approval_method === 'auto') { %>
-                  <span class="review-method-note">Auto-approved</span>
-                <% } else if (citation.approval_method === 'manual') { %>
-                  <span class="review-method-note">Reviewed by a human</span>
+                <% if (item.method_label) { %>
+                  <span class="review-method-note"><%= item.method_label %></span>
                 <% } %>
-                <% if (citation.document_id) { %>
-                  <a href="<%= documentHref(citation) %>" class="btn-secondary btn-sm">Open Document</a>
+                <% if (item.open_passage_href) { %>
+                  <a href="<%= item.open_passage_href %>" class="btn-secondary btn-sm"><%= item.open_passage_label %></a>
                 <% } %>
               </div>
             </div>
 
             <div class="review-extraction-evidence">
-              <% if (citation.passage_text) { %>
-                <blockquote class="graph-citation-quote"><%= citation.passage_text %></blockquote>
+              <div class="review-extraction-section-label">Evidence</div>
+              <% if (item.passage_text) { %>
+                <blockquote class="graph-citation-quote"><%= item.passage_text %></blockquote>
               <% } else { %>
                 <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
               <% } %>
@@ -162,24 +133,34 @@
 
             <div class="review-extraction-footer">
               <div class="review-extraction-meta">
-                <span class="review-meta-item">Transcript #<%= citation.transcript_id %></span>
-                <% if (citation.created_at) { %>
-                  <span class="review-meta-item">Queued <%= new Date(citation.created_at).toLocaleString() %></span>
+                <span class="review-extraction-section-label">Provenance</span>
+                <% if (item.document_id) { %>
+                  <span class="review-meta-item">Document <%= item.document_title || ('#' + item.document_id) %></span>
+                <% } %>
+                <span class="review-meta-item">Transcript #<%= item.transcript_id %></span>
+                <% if (item.created_at) { %>
+                  <span class="review-meta-item">Queued <%= new Date(item.created_at).toLocaleString() %></span>
+                <% } %>
+                <% if (item.method_label) { %>
+                  <span class="review-meta-item"><%= item.method_label %></span>
+                <% } %>
+                <% if (item.confidence_label) { %>
+                  <span class="review-meta-item"><%= item.confidence_label %></span>
                 <% } %>
               </div>
 
               <div class="review-extraction-actions">
                 <div class="review-extraction-decisions">
-                  <% if (citationStatus !== 'approved') { %>
-                    <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/confirm" class="inline-form">
+                  <% if (item.approval_status !== 'approved') { %>
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/confirm" class="inline-form">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="status" value="<%= approvalStatus %>">
                       <input type="hidden" name="page" value="<%= currentPage %>">
                       <button type="submit" class="btn-primary btn-sm">Approve</button>
                     </form>
                   <% } %>
-                  <% if (citationStatus !== 'rejected') { %>
-                    <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
+                  <% if (item.approval_status !== 'rejected') { %>
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/reject" class="inline-form" data-confirm-message="Reject this evidence claim?">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="status" value="<%= approvalStatus %>">
                       <input type="hidden" name="page" value="<%= currentPage %>">
@@ -187,11 +168,11 @@
                     </form>
                   <% } %>
                 </div>
-                <form method="POST" action="/admin/knowledge/review-extractions/<%= citation.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction evidence permanently?">
+                <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/delete" class="inline-form" data-confirm-message="Delete this evidence permanently?">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <input type="hidden" name="status" value="<%= approvalStatus %>">
                   <input type="hidden" name="page" value="<%= currentPage %>">
-                  <button type="submit" class="btn-danger btn-sm">Delete</button>
+                  <button type="submit" class="btn-danger btn-sm">Delete evidence</button>
                 </form>
               </div>
             </div>

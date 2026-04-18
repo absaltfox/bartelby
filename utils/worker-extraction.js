@@ -182,7 +182,7 @@ async function materializeExtractionResult({
         continue;
       }
 
-      await dateExpressions.createIfMissing({
+      const dateExpressionId = await dateExpressions.createIfMissing({
         entity_id: entityId,
         label,
         earliest: dateExt.earliest || null,
@@ -199,6 +199,7 @@ async function materializeExtractionResult({
 
       await citations.create({
         entity_id: entityId,
+        date_expression_id: dateExpressionId,
         relationship_id: null,
         transcript_id: transcript.id,
         document_id: doc.id,

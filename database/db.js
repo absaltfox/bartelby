@@ -139,6 +139,12 @@ MIGRATIONS.push(`
   ALTER TABLE extraction_jobs ADD COLUMN partial_results TEXT
 `);
 
+// v54 — link citations directly to date expressions for clearer review flows
+MIGRATIONS.push(`
+  ALTER TABLE citations ADD COLUMN date_expression_id INTEGER REFERENCES date_expressions(id) ON DELETE CASCADE;
+  CREATE INDEX IF NOT EXISTS idx_citations_date_expression ON citations(date_expression_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

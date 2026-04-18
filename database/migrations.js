@@ -576,6 +576,7 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   CREATE TABLE IF NOT EXISTS citations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    date_expression_id INTEGER REFERENCES date_expressions(id) ON DELETE CASCADE,
     relationship_id INTEGER REFERENCES relationships(id) ON DELETE CASCADE,
     transcript_id INTEGER NOT NULL REFERENCES transcripts(id) ON DELETE CASCADE,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -590,6 +591,7 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_citations_entity ON citations(entity_id);
+  CREATE INDEX IF NOT EXISTS idx_citations_date_expression ON citations(date_expression_id);
   CREATE INDEX IF NOT EXISTS idx_citations_relationship ON citations(relationship_id);
   CREATE INDEX IF NOT EXISTS idx_citations_transcript ON citations(transcript_id);
   CREATE INDEX IF NOT EXISTS idx_citations_document ON citations(document_id);

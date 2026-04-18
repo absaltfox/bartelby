@@ -98,8 +98,13 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - The review workflow lives in `review-extractions`
 - High-confidence citations are auto-approved during extraction
 - Lower-confidence citations remain hidden until a human approves them
+- Review now handles three evidence kinds:
+  entity evidence, relationship evidence, and date-expression evidence
 - Citations can later be approved, rejected, or deleted from the admin UI
 - Review operates on citation evidence, not on the entity nodes alone
+- Date citations may link directly to `date_expressions` through
+  `citations.date_expression_id`, so reviewers can confirm the specific
+  normalized date claim rather than only the owning entity
 
 ### Merge Entities
 

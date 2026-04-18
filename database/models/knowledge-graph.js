@@ -438,6 +438,7 @@ const relationships = {
 const citations = {
   async create({
     entity_id,
+    date_expression_id,
     relationship_id,
     transcript_id,
     document_id,
@@ -465,16 +466,17 @@ const citations = {
       : null;
     const result = await runAsync(`
       INSERT INTO citations (
-        entity_id, relationship_id, transcript_id, document_id,
+        entity_id, date_expression_id, relationship_id, transcript_id, document_id,
         passage_start, passage_end, passage_text,
         extraction_method, extraction_model, confidence,
         reviewed_at, reviewed_by_user_id,
         approval_status, approval_method,
         approved_at, approved_by_user_id,
         rejected_at, rejected_by_user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       entity_id || null,
+      date_expression_id || null,
       relationship_id || null,
       transcript_id,
       document_id,
@@ -498,11 +500,31 @@ const citations = {
 
   async getById(id) {
     return await getAsync(`
-      SELECT c.*, e.canonical_name AS entity_name, e.entity_type,
-             r.relationship_type, d.title AS document_title
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        r.relationship_type,
+        r.start_date AS relationship_start_date,
+        r.end_date AS relationship_end_date,
+        r.date_precision AS relationship_date_precision,
+        r.date_qualifier AS relationship_date_qualifier,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type,
+        d.title AS document_title
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN entities se ON se.id = r.source_entity_id
+      LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE c.id = ?
     `, [id]);
@@ -514,8 +536,19 @@ const citations = {
       entityId
     });
     return await allAsync(`
-      SELECT c.*, d.title AS document_title
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        d.title AS document_title
       FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       LEFT JOIN documents d ON d.id = c.document_id
       ${queryFilter.clause}
       ORDER BY c.created_at DESC
@@ -528,8 +561,28 @@ const citations = {
       relationshipId
     });
     return await allAsync(`
-      SELECT c.*, d.title AS document_title
+      SELECT
+        c.*,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        r.relationship_type,
+        r.start_date AS relationship_start_date,
+        r.end_date AS relationship_end_date,
+        r.date_precision AS relationship_date_precision,
+        r.date_qualifier AS relationship_date_qualifier,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type,
+        d.title AS document_title
       FROM citations c
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
+      LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN entities se ON se.id = r.source_entity_id
+      LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN documents d ON d.id = c.document_id
       ${queryFilter.clause}
       ORDER BY c.created_at DESC
@@ -542,9 +595,18 @@ const citations = {
       documentId
     });
     return await allAsync(`
-      SELECT c.*, e.canonical_name AS entity_name, e.entity_type
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       ${queryFilter.clause}
       ORDER BY c.created_at DESC
     `, queryFilter.params);
@@ -556,9 +618,18 @@ const citations = {
       transcriptId
     });
     return await allAsync(`
-      SELECT c.*, e.canonical_name AS entity_name, e.entity_type
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       ${queryFilter.clause}
       ORDER BY c.created_at DESC
     `, queryFilter.params);
@@ -600,11 +671,31 @@ const citations = {
     }
     params.push(limit, offset);
     return await allAsync(`
-      SELECT c.*, e.canonical_name AS entity_name, e.entity_type,
-             r.relationship_type, d.title AS document_title
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        r.relationship_type,
+        r.start_date AS relationship_start_date,
+        r.end_date AS relationship_end_date,
+        r.date_precision AS relationship_date_precision,
+        r.date_qualifier AS relationship_date_qualifier,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type,
+        d.title AS document_title
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN entities se ON se.id = r.source_entity_id
+      LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE (${access.clause})
         AND (${collection.clause})
@@ -725,8 +816,19 @@ const citations = {
     // clause is either '' or 'WHERE ...' — strip the WHERE prefix so we can AND it
     const extra = clause ? 'AND ' + clause.replace(/^WHERE\s+/i, '') : '';
     const rows = await allAsync(`
-      SELECT c.*, d.title AS document_title
+      SELECT
+        c.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        d.title AS document_title
       FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE c.entity_id IN (${placeholders}) ${extra}
       ORDER BY c.created_at DESC
@@ -740,8 +842,28 @@ const citations = {
     const { clause, params } = buildCitationQueryConditions(opts);
     const extra = clause ? 'AND ' + clause.replace(/^WHERE\s+/i, '') : '';
     const rows = await allAsync(`
-      SELECT c.*, d.title AS document_title
+      SELECT
+        c.*,
+        de.label AS date_label,
+        de.earliest AS date_earliest,
+        de.latest AS date_latest,
+        de.precision AS date_precision,
+        de.qualifier AS date_qualifier,
+        r.relationship_type,
+        r.start_date AS relationship_start_date,
+        r.end_date AS relationship_end_date,
+        r.date_precision AS relationship_date_precision,
+        r.date_qualifier AS relationship_date_qualifier,
+        se.canonical_name AS source_name,
+        se.entity_type AS source_type,
+        te.canonical_name AS target_name,
+        te.entity_type AS target_type,
+        d.title AS document_title
       FROM citations c
+      LEFT JOIN date_expressions de ON de.id = c.date_expression_id
+      LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN entities se ON se.id = r.source_entity_id
+      LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE c.relationship_id IN (${placeholders}) ${extra}
       ORDER BY c.created_at DESC

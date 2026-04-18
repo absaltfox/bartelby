@@ -3836,20 +3836,21 @@ main { flex: 1; padding: 32px 0; }
 }
 
 .review-extraction-title-group h3 {
-  margin-bottom: 6px;
-}
-
-.review-extraction-title-group h3 a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.review-extraction-title-group h3 a:hover,
-.review-extraction-title-group h3 a:focus-visible {
-  text-decoration: underline;
+  margin: 0 0 6px;
 }
 
 .review-extraction-context {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.review-extraction-detail {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.review-extraction-meta-line {
   margin: 0;
   color: var(--ink-muted);
 }
@@ -3870,6 +3871,17 @@ main { flex: 1; padding: 32px 0; }
   font-size: 0.92rem;
 }
 
+.review-extraction-section-label {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .review-extraction-evidence {
   margin-top: 18px;
 }
@@ -3888,6 +3900,7 @@ main { flex: 1; padding: 32px 0; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
+  align-items: center;
 }
 
 .review-extraction-actions,
@@ -3978,6 +3991,10 @@ main { flex: 1; padding: 32px 0; }
 
   .review-extraction-summary {
     text-align: left;
+  }
+
+  .review-extraction-meta {
+    width: 100%;
   }
 }
 

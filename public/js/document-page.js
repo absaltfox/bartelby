@@ -82,6 +82,112 @@
     loadComparisonImagesForVisiblePages(pageBlocks);
   }
 
+  function clearQueryHighlights(root) {
+    root.querySelectorAll('mark.kg-highlight').forEach(function(mark) {
+      var parent = mark.parentNode;
+      if (!parent) return;
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark);
+      }
+      parent.removeChild(mark);
+      parent.normalize();
+    });
+  }
+
+  function findHighlightTarget(start, end) {
+    var pres = Array.from(document.querySelectorAll('.transcript-page-pre'));
+    if (!pres.length) {
+      var fallback = document.querySelector('#transcript-content pre');
+      if (fallback) return { pre: fallback, block: fallback.closest('.comparison-page-block') };
+      return null;
+    }
+
+    var match = pres.find(function(pre) {
+      var pageStart = parseInt(pre.dataset.pageStart || '0', 10);
+      var pageEnd = parseInt(pre.dataset.pageEnd || String(pageStart + (pre.textContent || '').length), 10);
+      return end > pageStart && start < pageEnd;
+    }) || pres[0];
+
+    return {
+      pre: match,
+      block: match.closest('.comparison-page-block')
+    };
+  }
+
+  function locateTextOffset(root, targetOffset) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var traversed = 0;
+    var node;
+
+    while ((node = walker.nextNode())) {
+      var length = node.nodeValue.length;
+      if (targetOffset <= traversed + length) {
+        return {
+          node: node,
+          offset: Math.max(0, Math.min(targetOffset - traversed, length))
+        };
+      }
+      traversed += length;
+    }
+
+    return null;
+  }
+
+  function highlightTranscriptRange(pre, start, end) {
+    if (!pre) return;
+    clearQueryHighlights(pre);
+
+    var text = pre.textContent || '';
+    if (!text) return;
+
+    var pageStart = parseInt(pre.dataset.pageStart || '0', 10);
+    var safeStart = Math.max(0, Math.min(start - pageStart, text.length));
+    var safeEnd = Math.max(safeStart, Math.min(end - pageStart, text.length));
+    if (safeEnd <= safeStart) return;
+
+    var startPoint = locateTextOffset(pre, safeStart);
+    var endPoint = locateTextOffset(pre, safeEnd);
+    if (!startPoint || !endPoint) return;
+
+    var range = document.createRange();
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+
+    var mark = document.createElement('mark');
+    mark.className = 'kg-highlight';
+    try {
+      range.surroundContents(mark);
+    } catch (err) {
+      var fragment = range.extractContents();
+      mark.appendChild(fragment);
+      range.insertNode(mark);
+    }
+
+    if (typeof mark.scrollIntoView === 'function') {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  function initTranscriptHighlightFromQuery() {
+    var params = new URLSearchParams(window.location.search || '');
+    var start = parseInt(params.get('highlightStart') || '', 10);
+    var end = parseInt(params.get('highlightEnd') || '', 10);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) return;
+
+    var target = findHighlightTarget(start, end);
+    if (!target || !target.pre) return;
+
+    if (target.block && target.block.dataset.pageNumber) {
+      comparisonPage = parseInt(target.block.dataset.pageNumber, 10) || comparisonPage;
+      comparisonShowAll = false;
+      updateComparisonView();
+    }
+
+    window.setTimeout(function() {
+      highlightTranscriptRange(target.pre, start, end);
+    }, 0);
+  }
+
   function initPendingJobPolling() {
     if (!pendingBanner) return;
 
@@ -219,6 +325,7 @@
 
   updateModeToggleVisibility('info');
   initPendingJobPolling();
+  initTranscriptHighlightFromQuery();
 
   // ── Unsaved changes tracking ───────────────────────────────────────────────
   var metadataForm = document.getElementById('metadata-edit-form');
