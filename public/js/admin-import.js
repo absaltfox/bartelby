@@ -152,6 +152,13 @@ document.addEventListener('DOMContentLoaded', function() {
   const groupingResetCancel = document.getElementById('grouping-reset-cancel');
   const groupingResetConfirm = document.getElementById('grouping-reset-confirm');
 
+  const groupingModelModal    = document.getElementById('grouping-model-modal');
+  const groupingModelClose    = document.getElementById('grouping-model-close');
+  const groupingModelCancel   = document.getElementById('grouping-model-cancel');
+  const groupingModelOk       = document.getElementById('grouping-model-ok');
+  const groupingProviderSelect = document.getElementById('grouping-provider-select');
+  const groupingCredentialSelect = document.getElementById('grouping-credential-select');
+
   // Multi-document queue (PDF groups)
   let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
 
@@ -766,15 +773,56 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // ── AI-Assisted Document Grouping ────────────────────────────────
 
-  document.getElementById('suggest-groups-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('suggest-groups-btn');
-    if (allTempFiles.length < 2) { showError('Need at least 2 pages to auto-group a PDF.'); return; }
-    if (autoGroupingCompleted) { return; }
+  function refreshGroupingCredentialOptions() {
+    if (!groupingProviderSelect || !groupingCredentialSelect) return;
+    const entry = providerOptions.find(o => o.provider === groupingProviderSelect.value);
+    groupingCredentialSelect.innerHTML = '';
+    (entry?.sources || []).forEach(source => {
+      const opt = document.createElement('option');
+      opt.value = source.value;
+      opt.textContent = source.label;
+      groupingCredentialSelect.appendChild(opt);
+    });
+  }
 
+  if (groupingProviderSelect) {
+    groupingProviderSelect.addEventListener('change', refreshGroupingCredentialOptions);
+  }
+
+  function showGroupingModelModal() {
+    if (!groupingModelModal || !groupingProviderSelect) return;
+
+    // Populate provider options
+    groupingProviderSelect.innerHTML = '';
+    providerOptions.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.provider;
+      opt.textContent = o.label;
+      groupingProviderSelect.appendChild(opt);
+    });
+
+    // Default to the transcription provider/credential already selected on step 1
+    const defaultProvider = providerSelect ? providerSelect.value : null;
+    if (defaultProvider) groupingProviderSelect.value = defaultProvider;
+    refreshGroupingCredentialOptions();
+    const defaultCred = credentialSelect ? credentialSelect.value : 'system';
+    if (defaultCred && groupingCredentialSelect) groupingCredentialSelect.value = defaultCred;
+
+    groupingModelModal.classList.remove('is-hidden');
+  }
+
+  function hideGroupingModelModal() {
+    if (groupingModelModal) groupingModelModal.classList.add('is-hidden');
+  }
+
+  if (groupingModelClose)  groupingModelClose.addEventListener('click', hideGroupingModelModal);
+  if (groupingModelCancel) groupingModelCancel.addEventListener('click', hideGroupingModelModal);
+
+  async function runGroupingWithProvider(selectedProvider, selectedCredential) {
+    const btn = document.getElementById('suggest-groups-btn');
     btn.disabled = true;
     autoGroupingRequested = true;
     btn.textContent = 'Analyzing pages...';
-    hideError();
 
     // Show processing screen immediately — don't wait for the server round-trip
     {
@@ -800,8 +848,8 @@ document.addEventListener('DOMContentLoaded', function() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           tempFiles: allTempFiles,
-          provider: providerSelect ? providerSelect.value : null,
-          credentialSource: credentialSelect ? credentialSelect.value : 'system'
+          provider: selectedProvider,
+          credentialSource: selectedCredential
         })
       });
 
@@ -816,9 +864,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
     } catch (err) {
       showError(err.message);
+      showStep('pages');
       updateSuggestGroupsAvailability();
     }
+  }
+
+  document.getElementById('suggest-groups-btn').addEventListener('click', () => {
+    if (allTempFiles.length < 2) { showError('Need at least 2 pages to auto-group a PDF.'); return; }
+    if (autoGroupingCompleted) { return; }
+    hideError();
+    showGroupingModelModal();
   });
+
+  if (groupingModelOk) {
+    groupingModelOk.addEventListener('click', () => {
+      const selectedProvider = groupingProviderSelect ? groupingProviderSelect.value : null;
+      const selectedCredential = groupingCredentialSelect ? groupingCredentialSelect.value : 'system';
+      hideGroupingModelModal();
+      runGroupingWithProvider(selectedProvider, selectedCredential);
+    });
+  }
 
   async function pollGroupingJob(jobId) {
     const progressWrap = document.getElementById('progress-bar-wrap');
