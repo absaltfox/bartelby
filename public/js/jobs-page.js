@@ -136,19 +136,27 @@
 
     var canDelete = job.status === 'done' || job.status === 'failed';
     var canRetry = job.status === 'failed' && (job.job_type !== 'import' || job.job_kind === 'submit');
+    var canEdit = job.status === 'failed' && job.job_type !== 'import';
     var isAdmin = config && config.mode === 'admin';
 
-    var html = '';
-    if (job.log !== undefined) {
-      html += '<button class="btn btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) + '">Log</button> ';
+    var html = '<div class="job-actions">';
+    if (job.job_type !== 'import') {
+      html += '<button class="btn-secondary btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) + '">Log</button> ';
+    }
+    if (canEdit && isAdmin) {
+      html += '<button class="btn-secondary btn-sm edit-job-btn" data-id="' + escapeHtml(String(job.id)) +
+              '" data-type="' + escapeHtml(job.job_type || 'transcription') +
+              '" data-provider="' + escapeHtml(job.provider || '') +
+              '" data-model="' + escapeHtml(job.model || '') + '">Edit</button> ';
     }
     if (canRetry) {
-      html += '<button class="btn btn-sm retry-btn" data-id="' + escapeHtml(String(job.id)) + '">Retry</button> ';
+      html += '<button class="btn-secondary btn-sm retry-btn" data-id="' + escapeHtml(String(job.id)) + '">Retry</button> ';
     }
     if (canDelete && isAdmin) {
-      html += '<button class="btn btn-sm btn-danger delete-job-btn" data-id="' + escapeHtml(String(job.id)) +
+      html += '<button class="btn-danger btn-sm delete-job-btn" data-id="' + escapeHtml(String(job.id)) +
               '" data-type="' + escapeHtml(job.job_type || 'transcription') + '">Delete</button>';
     }
+    html += '</div>';
     actionsCell.innerHTML = html;
 
     // Re-attach event listeners for newly created buttons
@@ -159,6 +167,9 @@
       });
     });
     if (config) {
+      actionsCell.querySelectorAll('.edit-job-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { openEditJobModal(btn, config); });
+      });
       actionsCell.querySelectorAll('.retry-btn').forEach(function(btn) {
         btn.addEventListener('click', function() { handleRetryClick(btn, row, config); });
       });
@@ -205,6 +216,106 @@
 
     // Rebuild the actions cell so Retry/Delete buttons reflect live state
     updateRowActions(row, job, config);
+  }
+
+  function openEditJobModal(btn, config) {
+    var modal = document.getElementById('edit-job-modal');
+    var providerSelect = document.getElementById('edit-job-provider');
+    var modelInput = document.getElementById('edit-job-model');
+    var statusEl = document.getElementById('edit-job-status');
+    if (!modal || !providerSelect) return;
+
+    // Populate provider options
+    var providerLabels = { openai: 'OpenAI', claude: 'Claude', gemini: 'Gemini', vertex: 'Google Vertex', ollama: 'Ollama', lmstudio: 'LM Studio' };
+    var providers = (config && config.configuredProviders) || [];
+    providerSelect.innerHTML = '';
+    providers.forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = providerLabels[p] || (p.charAt(0).toUpperCase() + p.slice(1));
+      providerSelect.appendChild(opt);
+    });
+    if (providers.length === 0) {
+      var opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No providers configured';
+      providerSelect.appendChild(opt);
+    }
+
+    // Pre-select current provider
+    var currentProvider = btn.dataset.provider || '';
+    if (currentProvider && providers.indexOf(currentProvider) !== -1) {
+      providerSelect.value = currentProvider;
+    }
+
+    // Pre-fill current model
+    if (modelInput) modelInput.value = btn.dataset.model || '';
+    if (statusEl) statusEl.textContent = '';
+
+    // Store job info on the form for submit
+    var form = document.getElementById('edit-job-form');
+    if (form) {
+      form.dataset.jobId = btn.dataset.id;
+      form.dataset.jobType = btn.dataset.type || 'transcription';
+    }
+
+    modal.classList.remove('is-hidden');
+    providerSelect.focus();
+  }
+
+  function initEditJobModal(config) {
+    var modal = document.getElementById('edit-job-modal');
+    var closeBtn = document.getElementById('close-edit-job-modal');
+    var form = document.getElementById('edit-job-form');
+    var submitBtn = document.getElementById('edit-job-submit-btn');
+    var statusEl = document.getElementById('edit-job-status');
+    if (!modal) return;
+
+    function closeModal() {
+      modal.classList.add('is-hidden');
+    }
+
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) closeModal();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && !modal.classList.contains('is-hidden')) closeModal();
+    });
+
+    if (form) {
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var jobId = form.dataset.jobId;
+        var jobType = form.dataset.jobType || 'transcription';
+        var provider = document.getElementById('edit-job-provider').value;
+        var model = (document.getElementById('edit-job-model').value || '').trim();
+        if (!provider) return;
+
+        submitBtn.disabled = true;
+        if (statusEl) statusEl.textContent = 'Saving…';
+
+        var url = getJobApiBase(config, jobType) + jobId;
+        try {
+          var r = await fetch(url, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+            body: JSON.stringify({ provider: provider, model: model || null })
+          });
+          var body = await r.json().catch(function() { return {}; });
+          if (!r.ok) {
+            if (statusEl) statusEl.textContent = body.error || 'Save failed (' + r.status + ')';
+            submitBtn.disabled = false;
+            return;
+          }
+          closeModal();
+          window.location.reload();
+        } catch (err) {
+          if (statusEl) statusEl.textContent = 'Request failed.';
+          submitBtn.disabled = false;
+        }
+      });
+    }
   }
 
   function initToggleLogs() {
@@ -273,6 +384,16 @@
     document.querySelectorAll('.delete-job-btn').forEach(function(btn) {
       btn.addEventListener('click', async function() {
         await handleDeleteClick(btn, config);
+      });
+    });
+  }
+
+  function initEditButtons(config) {
+    if (config.mode !== 'admin') return;
+
+    document.querySelectorAll('.edit-job-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        openEditJobModal(btn, config);
       });
     });
   }
@@ -465,6 +586,8 @@
   initToggleLogs();
   initRetryButtons(config);
   initDeleteButtons(config);
+  initEditButtons(config);
+  initEditJobModal(config);
   initBulkActions(config);
   initLogPolling(config);
   initPolling(config);

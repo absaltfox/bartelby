@@ -175,6 +175,9 @@ async function saveLlmSettings(req, res) {
       'google_model', 'google_vision_model', 'google_utility_model',
       'google_input_cost_per_mtok', 'google_output_cost_per_mtok',
       'google_utility_input_cost_per_mtok', 'google_utility_output_cost_per_mtok',
+      'vertex_model', 'vertex_vision_model', 'vertex_utility_model',
+      'vertex_input_cost_per_mtok', 'vertex_output_cost_per_mtok',
+      'vertex_utility_input_cost_per_mtok', 'vertex_utility_output_cost_per_mtok',
       'ollama_base_url', 'ollama_model',
       'lmstudio_base_url', 'lmstudio_model'
     ];
@@ -182,7 +185,7 @@ async function saveLlmSettings(req, res) {
       if (req.body[field] !== undefined) await settingsAsync.set(field, req.body[field]);
     }
     // Secret fields: only overwrite if a new non-empty value was submitted
-    const secretFields = ['openai_api_key', 'anthropic_api_key', 'google_api_key'];
+    const secretFields = ['openai_api_key', 'anthropic_api_key', 'google_api_key', 'vertex_api_key'];
     const hasSecretUpdates = secretFields.some(field => req.body[field] && req.body[field].trim() !== '');
     if (hasSecretUpdates && !canEncryptSecrets()) {
       throw new Error('DATA_ENCRYPTION_KEY is not configured. Add it to .env before saving API keys.');

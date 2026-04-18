@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const modeManual      = document.getElementById('mode-manual');
   const aiOptions       = document.getElementById('ai-options');
   const providerOptions = getProviderOptions();
-  const batchProviders = new Set(['openai', 'claude', 'gemini']);
+  const batchProviders = new Set(['openai', 'claude', 'gemini', 'vertex']);
 
   // State variables declared here so they're initialized before any function calls below.
   let allTempFiles = [];

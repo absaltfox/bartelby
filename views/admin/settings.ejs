@@ -156,6 +156,37 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
           utilityOutputCostName: 'google_utility_output_cost_per_mtok',
           utilityOutputCostValue: cfg.google_utility_output_cost_per_mtok || '',
           utilityOutputCostPlaceholder: 'e.g. 0.30'
+        },
+        {
+          title: 'Google Vertex',
+          apiKeyName: 'vertex_api_key',
+          apiKeyValue: cfg.vertex_api_key,
+          apiKeyPlaceholder: cfg.vertex_api_key ? '••••••••••••••••' : 'AIza…',
+          apiKeyEnvVar: 'GOOGLE_VERTEX_API_KEY',
+          modelName: 'vertex_model',
+          modelValue: cfg.vertex_model || 'gemini-2.5-flash',
+          modelPlaceholder: 'gemini-2.5-flash',
+          modelHelp: 'Must support vision. Uses Vertex AI Express Mode (API key auth).',
+          visionName: 'vertex_vision_model',
+          visionValue: cfg.vertex_vision_model || '',
+          visionPlaceholder: 'gemini-2.5-flash',
+          visionDefault: 'gemini-2.5-flash',
+          utilityName: 'vertex_utility_model',
+          utilityValue: cfg.vertex_utility_model || '',
+          utilityPlaceholder: 'gemini-2.5-flash',
+          utilityDefault: 'gemini-2.5-flash',
+          inputCostName: 'vertex_input_cost_per_mtok',
+          inputCostValue: cfg.vertex_input_cost_per_mtok || '',
+          inputCostPlaceholder: 'e.g. 1.25',
+          outputCostName: 'vertex_output_cost_per_mtok',
+          outputCostValue: cfg.vertex_output_cost_per_mtok || '',
+          outputCostPlaceholder: 'e.g. 5.00',
+          utilityInputCostName: 'vertex_utility_input_cost_per_mtok',
+          utilityInputCostValue: cfg.vertex_utility_input_cost_per_mtok || '',
+          utilityInputCostPlaceholder: 'e.g. 0.08',
+          utilityOutputCostName: 'vertex_utility_output_cost_per_mtok',
+          utilityOutputCostValue: cfg.vertex_utility_output_cost_per_mtok || '',
+          utilityOutputCostPlaceholder: 'e.g. 0.30'
         }
       ];
     %>

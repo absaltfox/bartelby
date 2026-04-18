@@ -108,6 +108,7 @@
               const isBatch = !isImport && job.job_kind === 'batch';
               const canDelete = job.status === 'done' || job.status === 'failed';
               const canRetry = job.status === 'failed' && (!isImport || isImportSubmit);
+              const canEdit = job.status === 'failed' && !isImport;
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
                 data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
@@ -171,13 +172,16 @@
                 <span class="muted"><%= new Date(job.created_at).toLocaleString() %></span>
                 <% if (durationStr) { %><span class="job-duration"><%= durationStr %></span><% } %>
               </td>
-              <td class="job-actions-cell">
+              <td class="job-actions-cell" data-job-cell="actions">
                 <div class="job-actions">
                   <% if (!isImport) { %>
                     <button type="button" class="btn-secondary btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
                   <% } %>
                   <% if (isImport && job.status === 'done' && !job.submitted) { %>
                     <a href="/admin/import?importJobId=<%= job.id %>" class="btn-secondary btn-sm">Continue</a>
+                  <% } %>
+                  <% if (canEdit) { %>
+                    <button type="button" class="btn-secondary btn-sm edit-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>" data-provider="<%= job.provider || '' %>" data-model="<%= job.model || '' %>">Edit</button>
                   <% } %>
                   <% if (canRetry) { %>
                     <button type="button" class="btn-secondary btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
@@ -226,6 +230,32 @@
   <% } %>
 </div>
 
+<!-- Edit Job Provider Modal -->
+<div class="modal-overlay is-hidden" id="edit-job-modal" role="dialog" aria-modal="true" aria-labelledby="edit-job-modal-title">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="edit-job-modal-title">Change Provider &amp; Retry</h3>
+      <button type="button" class="modal-close" id="close-edit-job-modal" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="edit-job-form">
+        <div class="edit-field">
+          <label for="edit-job-provider">Provider</label>
+          <select id="edit-job-provider" name="provider"></select>
+        </div>
+        <div class="edit-field">
+          <label for="edit-job-model">Model <span class="field-hint-inline">(optional override)</span></label>
+          <input type="text" id="edit-job-model" name="model" placeholder="Use provider default">
+        </div>
+        <div class="edit-actions edit-actions--spaced">
+          <button type="submit" class="btn-primary btn-sm" id="edit-job-submit-btn">Save &amp; Retry</button>
+          <span class="save-status" id="edit-job-status"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script id="jobs-page-config" type="application/json"><%- JSON.stringify({
   mode: 'admin',
   filter,
@@ -240,7 +270,8 @@
   pollUrl: jobsApiBase + '/all',
   activePollUrl: jobsApiBase + '/all',
   bulkRetryUrl: jobsApiBase + '/bulk/retry',
-  bulkDeleteUrl: jobsApiBase + '/bulk/delete'
+  bulkDeleteUrl: jobsApiBase + '/bulk/delete',
+  configuredProviders: configuredProviders
 }).replace(/</g, '\\u003c') %></script>
 <script src="/js/jobs-page.js"></script>
 

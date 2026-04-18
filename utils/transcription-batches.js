@@ -9,7 +9,7 @@ const {
   resolveTranscriptionRuntime
 } = require('./llm');
 
-const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini']);
+const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 const DEFAULT_BATCH_MAX_REQUESTS_PER_CHUNK = 25;
 const DEFAULT_BATCH_MAX_CHUNK_BYTES = 10 * 1024 * 1024;
 const DEFAULT_BATCH_MAX_CHUNKS = 200;
@@ -486,6 +486,7 @@ async function submitTranscriptionBatch(job, runtimeConfig = {}) {
   if (job.provider === 'claude') {
     return await submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, buildAnthropicRequestEntry, submitAnthropicBatchChunk);
   }
+  // gemini and vertex both use the Gemini batch API (generativelanguage.googleapis.com)
   return await submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, buildGeminiRequestEntry, submitGeminiBatchChunk);
 }
 
@@ -576,14 +577,14 @@ function extractGeminiText(response) {
     .join('\n');
 }
 
-function extractGeminiPageResult(entry, requestedModel, temperature, systemPrompt) {
+function extractGeminiPageResult(entry, requestedModel, temperature, systemPrompt, providerName = 'gemini') {
   const response = entry?.response;
   if (!response) {
     return {
       customId: geminiMetadataCustomId(entry?.metadata),
       ok: false,
       result: null,
-      error: entry?.error?.message || 'Gemini batch request failed.'
+      error: entry?.error?.message || `${providerName} batch request failed.`
     };
   }
 
@@ -594,7 +595,7 @@ function extractGeminiPageResult(entry, requestedModel, temperature, systemPromp
     result: {
       ...parsed,
       paradata: {
-        provider: 'gemini',
+        provider: providerName,
         model: response?.modelVersion || requestedModel,
         prompt: systemPrompt,
         temperature,
@@ -701,6 +702,7 @@ async function pollAnthropicBatch(job, runtime, systemPrompt, batchRemoteId = jo
 }
 
 async function pollGeminiBatch(job, runtime, systemPrompt, batchRemoteId = job.batch_remote_id) {
+  const providerName = job.provider || 'gemini';
   const batch = await fetchJson(
     `https://generativelanguage.googleapis.com/v1beta/${batchRemoteId}?key=${encodeURIComponent(runtime.apiKey)}`,
     {
@@ -708,7 +710,7 @@ async function pollGeminiBatch(job, runtime, systemPrompt, batchRemoteId = job.b
         'Content-Type': 'application/json'
       }
     },
-    'Failed to fetch Gemini batch status'
+    `Failed to fetch ${providerName} batch status`
   );
 
   const remoteStatus = batch?.metadata?.state || batch?.state || 'JOB_STATE_PENDING';
@@ -724,7 +726,7 @@ async function pollGeminiBatch(job, runtime, systemPrompt, batchRemoteId = job.b
   }
 
   const inlineResponses = batch?.response?.inlinedResponses?.inlinedResponses || [];
-  const pageResults = inlineResponses.map((entry) => extractGeminiPageResult(entry, runtime.model, runtime.temperature, systemPrompt));
+  const pageResults = inlineResponses.map((entry) => extractGeminiPageResult(entry, runtime.model, runtime.temperature, systemPrompt, providerName));
   return {
     state: 'succeeded',
     remoteStatus,

@@ -4,6 +4,7 @@ const { requireAdmin } = require('../middleware/auth');
 const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, adminJobsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
+const { listConfiguredProviders } = require('../utils/llm');
 
 router.use(requireAdmin);
 
@@ -39,10 +40,11 @@ router.get('/', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  const [{ counts, typeCounts }, filteredTotal, jobs] = await Promise.all([
+  const [{ counts, typeCounts }, filteredTotal, jobs, configuredProviders] = await Promise.all([
     adminJobsAsync.getCounts(),
     adminJobsAsync.getFilteredCount(filter, typeFilter),
-    adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter)
+    adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter),
+    listConfiguredProviders()
   ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
@@ -56,7 +58,8 @@ router.get('/', asyncHandler(async (req, res) => {
     typeCounts,
     page,
     totalPages,
-    filteredTotal
+    filteredTotal,
+    configuredProviders
   });
 }));
 
@@ -185,6 +188,48 @@ router.post('/api/import/:id/retry', asyncHandler(async (req, res) => {
     ...audit.reqContext(req),
     jobId,
     jobType: 'import'
+  });
+  res.json({ success: true });
+}));
+
+// API: update provider for failed transcription job (also re-queues it)
+router.patch('/api/:id', express.json(), asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const { provider, model } = req.body;
+  if (!provider || typeof provider !== 'string') {
+    return res.status(400).json({ error: 'provider is required' });
+  }
+  const result = await transcriptionJobsAsync.updateProvider(jobId, { provider, model: model || null });
+  if (result && result.changes === 0) {
+    return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  }
+  audit.log('admin.job_provider_updated', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'transcription',
+    provider,
+    model: model || null
+  });
+  res.json({ success: true });
+}));
+
+// API: update provider for failed extraction job (also re-queues it)
+router.patch('/api/extraction/:id', express.json(), asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const { provider, model } = req.body;
+  if (!provider || typeof provider !== 'string') {
+    return res.status(400).json({ error: 'provider is required' });
+  }
+  const result = await extractionJobsAsync.updateProvider(jobId, { provider, model: model || null });
+  if (result && result.changes === 0) {
+    return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  }
+  audit.log('admin.job_provider_updated', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'extraction',
+    provider,
+    model: model || null
   });
   res.json({ success: true });
 }));

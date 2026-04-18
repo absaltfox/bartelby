@@ -7,7 +7,7 @@ const {
 } = require('./extraction-llm');
 const { settingsAsync, transcriptsAsync, documentsAsync } = require('../database/db');
 
-const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini']);
+const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 const DEFAULT_MAX_REQUESTS_PER_CHUNK = 25;
 const DEFAULT_MAX_CHUNK_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_CHUNKS = 200;
@@ -122,9 +122,16 @@ async function resolveExtractionRuntime(providerName, runtimeConfig = {}, opts =
       temperature
     };
   }
+  if (providerName === 'gemini') {
+    return {
+      apiKey: runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      model: opts.model || runtimeConfig.utilityModel || cfg.google_utility_model || cfg.google_model,
+      temperature
+    };
+  }
   return {
-    apiKey: runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-    model: opts.model || runtimeConfig.utilityModel || cfg.google_utility_model || cfg.google_model,
+    apiKey: runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY,
+    model: opts.model || runtimeConfig.utilityModel || cfg.vertex_utility_model || cfg.vertex_model,
     temperature
   };
 }
@@ -483,14 +490,14 @@ function extractGeminiText(response) {
     .join('\n');
 }
 
-function extractGeminiExtractionResult(entry, requestedModel, temperature) {
+function extractGeminiExtractionResult(entry, requestedModel, temperature, providerName = 'gemini') {
   const response = entry?.response;
   if (!response) {
     return {
       customId: geminiMetadataCustomId(entry?.metadata),
       ok: false,
       result: null,
-      error: entry?.error?.message || 'Gemini extraction batch request failed.'
+      error: entry?.error?.message || `${providerName} extraction batch request failed.`
     };
   }
 
@@ -500,7 +507,7 @@ function extractGeminiExtractionResult(entry, requestedModel, temperature) {
     result: {
       ...parseExtractionResponse(extractGeminiText(response)),
       paradata: {
-        provider: 'gemini',
+        provider: providerName,
         model: response?.modelVersion || requestedModel,
         prompt: EXTRACTION_SYSTEM_PROMPT,
         temperature,
@@ -605,10 +612,11 @@ async function pollAnthropicBatch(job, runtime, batchRemoteId = job.batch_remote
 }
 
 async function pollGeminiBatch(job, runtime, batchRemoteId = job.batch_remote_id) {
+  const providerName = job.provider || 'gemini';
   const batch = await fetchJson(
     `https://generativelanguage.googleapis.com/v1beta/${batchRemoteId}?key=${encodeURIComponent(runtime.apiKey)}`,
     { headers: { 'Content-Type': 'application/json' } },
-    'Failed to fetch Gemini extraction batch status'
+    `Failed to fetch ${providerName} extraction batch status`
   );
 
   const remoteStatus = batch?.metadata?.state || batch?.state || 'JOB_STATE_PENDING';
@@ -624,7 +632,7 @@ async function pollGeminiBatch(job, runtime, batchRemoteId = job.batch_remote_id
   }
 
   const inlineResponses = batch?.response?.inlinedResponses?.inlinedResponses || [];
-  const itemResults = inlineResponses.map((entry) => extractGeminiExtractionResult(entry, runtime.model, runtime.temperature));
+  const itemResults = inlineResponses.map((entry) => extractGeminiExtractionResult(entry, runtime.model, runtime.temperature, providerName));
   return {
     state: 'succeeded',
     remoteStatus,

@@ -528,6 +528,27 @@ const transcriptionJobsAsync = {
     await saveDatabase();
   },
 
+  async updateProvider(id, { provider, model }) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET provider = ?,
+          model = CASE WHEN ? IS NOT NULL THEN ? ELSE model END,
+          provider_key_scope = 'system',
+          user_api_key_id = NULL,
+          status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0
+      WHERE id = ? AND status = 'failed'
+    `, [provider, model || null, model || null, id]);
+    await saveDatabase();
+    return result;
+  },
+
   async delete(id) {
     return await runAsync("DELETE FROM transcription_jobs WHERE id = ?", [id]);
   }
@@ -1169,6 +1190,29 @@ const extractionJobs = {
           partial_results = NULL
       WHERE id = ? AND status = 'failed'
     `, [id]);
+    await saveDatabase();
+    return result;
+  },
+
+  async updateProvider(id, { provider, model }) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE extraction_jobs
+      SET provider = ?,
+          model = CASE WHEN ? IS NOT NULL THEN ? ELSE model END,
+          provider_key_scope = 'system',
+          user_api_key_id = NULL,
+          status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          reset_existing = 1,
+          batch_remote_id = NULL,
+          batch_remote_status = NULL,
+          batch_completed_count = 0,
+          batch_failed_count = 0,
+          partial_results = NULL
+      WHERE id = ? AND status = 'failed'
+    `, [provider, model || null, model || null, id]);
     await saveDatabase();
     return result;
   },

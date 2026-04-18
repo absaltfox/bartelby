@@ -3,7 +3,7 @@
 const { encryptSecret, decryptSecret } = require('../../utils/secrets');
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
-const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key', 'google_api_key']);
+const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key', 'google_api_key', 'vertex_api_key']);
 
 const settings = {
   get(key) {
@@ -34,6 +34,7 @@ const settings = {
     if (provider === 'openai') return !!(this.get('openai_api_key') || process.env.OPENAI_API_KEY);
     if (provider === 'claude') return !!(this.get('anthropic_api_key') || process.env.ANTHROPIC_API_KEY);
     if (provider === 'gemini') return !!(this.get('google_api_key') || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
+    if (provider === 'vertex') return !!(this.get('vertex_api_key') || process.env.GOOGLE_VERTEX_API_KEY);
     if (provider === 'ollama' || provider === 'lmstudio') return true;
     return false;
   }
@@ -68,6 +69,7 @@ const settingsAsync = {
     if (provider === 'openai') return !!((await this.get('openai_api_key')) || process.env.OPENAI_API_KEY);
     if (provider === 'claude') return !!((await this.get('anthropic_api_key')) || process.env.ANTHROPIC_API_KEY);
     if (provider === 'gemini') return !!((await this.get('google_api_key')) || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
+    if (provider === 'vertex') return !!((await this.get('vertex_api_key')) || process.env.GOOGLE_VERTEX_API_KEY);
     if (provider === 'ollama' || provider === 'lmstudio') return true;
     return false;
   }

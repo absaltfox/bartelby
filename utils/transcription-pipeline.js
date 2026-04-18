@@ -181,7 +181,9 @@ async function persistDocumentTranscription({
           ? 'anthropic'
           : providerName === 'gemini'
             ? 'google'
-            : null;
+            : providerName === 'vertex'
+              ? 'vertex'
+              : null;
       if (prefix) {
         txInputRate = cfg[`${prefix}_input_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_input_cost_per_mtok`]) : null;
         txOutputRate = cfg[`${prefix}_output_cost_per_mtok`] != null ? parseFloat(cfg[`${prefix}_output_cost_per_mtok`]) : null;

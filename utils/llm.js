@@ -6,6 +6,7 @@ const { generateText } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
+const { createVertex } = require('@ai-sdk/google-vertex');
 const { createOllama } = require('ollama-ai-provider');
 
 // ── SSRF guard ─────────────────────────────────────────────────────────────
@@ -153,6 +154,15 @@ async function resolveTranscriptionRuntime(providerName, runtimeConfig = {}, opt
     };
   }
 
+  if (providerName === 'vertex') {
+    return {
+      apiKey: runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY,
+      model: opts.model || runtimeConfig.model || cfg.vertex_model || 'gemini-2.5-flash',
+      temperature,
+      cfg
+    };
+  }
+
   return {
     apiKey: null,
     model: opts.model || runtimeConfig.model || null,
@@ -223,6 +233,18 @@ const PROVIDERS = {
     }
   },
 
+  vertex: {
+    name: 'vertex',
+    async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
+      const cfg = await mergeConfig(runtimeConfig);
+      const apiKey = runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY;
+      const model = opts.model || runtimeConfig.model || cfg.vertex_model || 'gemini-2.5-flash';
+      const temperature = opts.temperature != null ? opts.temperature : null;
+      const client = createVertex({ apiKey });
+      return runTranscription(client(model), 'vertex', model, temperature, imageBuffer, mimeType, cfg);
+    }
+  },
+
   ollama: {
     name: 'ollama',
     async transcribeDocument(imageBuffer, mimeType, opts = {}, runtimeConfig = {}) {
@@ -257,6 +279,7 @@ const CHEAP_VISION_MODELS = {
   openai: 'gpt-4o-mini',
   claude: 'claude-haiku-4-5-20251001',
   gemini: 'gemini-1.5-flash-latest',
+  vertex: 'gemini-2.5-flash',
   ollama: null,   // use configured model (local, no cost)
   lmstudio: null  // use configured model (local, no cost)
 };
@@ -267,6 +290,7 @@ const CHEAP_UTILITY_MODELS = {
   openai: 'gpt-4o-mini',
   claude: 'claude-haiku-4-5-20251001',
   gemini: 'gemini-1.5-flash-latest',
+  vertex: 'gemini-2.5-flash',
   ollama: null,
   lmstudio: null
 };
@@ -293,6 +317,11 @@ async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
       const model = userVisionModel || cfg.google_vision_model || CHEAP_VISION_MODELS.gemini;
       return createGoogleGenerativeAI({ apiKey })(model);
     }
+    case 'vertex': {
+      const apiKey = runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY;
+      const model = userVisionModel || cfg.vertex_vision_model || CHEAP_VISION_MODELS.vertex;
+      return createVertex({ apiKey })(model);
+    }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
       validateLlmBaseUrl(baseURL, 'Ollama');
@@ -311,7 +340,7 @@ async function getCheapVisionModelInstance(providerName, runtimeConfig = {}) {
 }
 
 function providerNeedsApiKey(name) {
-  return name === 'openai' || name === 'claude' || name === 'gemini';
+  return name === 'openai' || name === 'claude' || name === 'gemini' || name === 'vertex';
 }
 
 async function createProvider(name, runtimeConfig = {}) {
@@ -328,6 +357,9 @@ async function createProvider(name, runtimeConfig = {}) {
   }
   if (name === 'gemini' && !runtimeConfig.apiKey && !cfg.google_api_key && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     throw new Error('Google AI API key is not configured. Set it in Admin → LLM Settings.');
+  }
+  if (name === 'vertex' && !runtimeConfig.apiKey && !cfg.vertex_api_key && !process.env.GOOGLE_VERTEX_API_KEY) {
+    throw new Error('Google Vertex API key is not configured. Set it in Admin → LLM Settings.');
   }
   return {
     ...provider,
@@ -352,6 +384,7 @@ async function listConfiguredProviders() {
     if (name === 'openai')   return !!(cfg.openai_api_key    || process.env.OPENAI_API_KEY);
     if (name === 'claude')   return !!(cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY);
     if (name === 'gemini')   return !!(cfg.google_api_key    || process.env.GOOGLE_GENERATIVE_AI_API_KEY);
+    if (name === 'vertex')   return !!(cfg.vertex_api_key    || process.env.GOOGLE_VERTEX_API_KEY);
     // ollama and lmstudio are local — always available
     return true;
   });
@@ -378,6 +411,11 @@ async function getUtilityModelInstance(providerName, runtimeConfig = {}) {
       const apiKey = runtimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
       const model = userUtilityModel || cfg.google_utility_model || CHEAP_UTILITY_MODELS.gemini;
       return createGoogleGenerativeAI({ apiKey })(model);
+    }
+    case 'vertex': {
+      const apiKey = runtimeConfig.apiKey || cfg.vertex_api_key || process.env.GOOGLE_VERTEX_API_KEY;
+      const model = userUtilityModel || cfg.vertex_utility_model || CHEAP_UTILITY_MODELS.vertex;
+      return createVertex({ apiKey })(model);
     }
     case 'ollama': {
       const baseURL = runtimeConfig.baseURL || cfg.ollama_base_url || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
