@@ -776,6 +776,24 @@ document.addEventListener('DOMContentLoaded', function() {
     btn.textContent = 'Analyzing pages...';
     hideError();
 
+    // Show processing screen immediately — don't wait for the server round-trip
+    {
+      const progressWrap = document.getElementById('progress-bar-wrap');
+      const progressBar  = document.getElementById('progress-bar');
+      const processingText = document.getElementById('processing-text');
+      if (progressWrap) { progressWrap.classList.remove('is-hidden'); }
+      if (progressBar)  { progressBar.style.width = '50%'; }
+      if (processingText) { processingText.textContent = 'Evaluating optimal groupings...'; }
+      const first = allTempFiles.length > 0
+        ? (typeof allTempFiles[0] === 'string' ? allTempFiles[0] : (allTempFiles[0].filename || ''))
+        : '';
+      if (previewImage && first) {
+        previewImage.src = `${apiBase}/temp-image/${encodeURIComponent(first)}`;
+        previewImage.classList.remove('is-hidden');
+      }
+      showStep('processing');
+    }
+
     try {
       const response = await fetch(`${apiBase}/suggest-groups`, {
         method: 'POST',
@@ -804,14 +822,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function pollGroupingJob(jobId) {
     const progressWrap = document.getElementById('progress-bar-wrap');
-    const progressBar  = document.getElementById('progress-bar');
-    const processingText = document.getElementById('processing-text');
-    progressWrap.classList.remove('is-hidden');
-    progressBar.style.width = '50%'; // Indeterminate style since grouping doesn't stream progress yet
-    processingText.textContent = 'Evaluating optimal groupings...';
-    
-    // We are already on the 'pages' step, but we show the progress overlay
-    showStep('processing');
 
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {

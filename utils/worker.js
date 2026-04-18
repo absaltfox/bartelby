@@ -261,6 +261,13 @@ async function tickGroupingJobs() {
 
     console.log(`[worker] grouping job ${job.id}: starting`);
     const payload = JSON.parse(job.submit_payload || '{}');
+
+    // Promote temp files to S3 here (not in the HTTP handler) so the response
+    // is immediate regardless of how many pages are being grouped.
+    const { promoteQueuedTempAssets } = require('./temp-assets');
+    const durableTempFiles = await promoteQueuedTempAssets(payload.tempFiles || []);
+    payload.tempFiles = durableTempFiles;
+
     const { runDocumentGrouping } = require('./grouping-llm');
     
     const groupingResult = await runDocumentGrouping(
