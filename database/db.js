@@ -355,6 +355,26 @@ async function initializeSchema() {
     console.log(`[db] Requeued ${staleSubmitImportCount} stale import submission job(s)`);
   }
 
+  const staleGroupingImports = await get(`
+    SELECT COUNT(*) as count
+    FROM import_jobs
+    WHERE status = 'processing'
+      AND COALESCE(job_kind, 'render') = 'grouping'
+  `);
+  const staleGroupingImportCount = staleGroupingImports?.count || 0;
+  if (staleGroupingImportCount > 0) {
+    await db.run(`
+      UPDATE import_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE status = 'processing'
+        AND COALESCE(job_kind, 'render') = 'grouping'
+    `);
+    console.log(`[db] Requeued ${staleGroupingImportCount} stale grouping job(s)`);
+  }
+
   const staleTranscriptions = await get(`
     SELECT COUNT(*) as count
     FROM transcription_jobs
