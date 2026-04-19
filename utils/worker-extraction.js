@@ -9,6 +9,12 @@ const {
   resolveRuntimeConfig
 } = require('./worker-runtime');
 
+const EXTRACTION_BATCH_FINALIZATION_OWNER = `pid:${process.pid}`;
+const EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS = Number.parseInt(
+  process.env.EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS || '',
+  10
+) || (2 * 60 * 60);
+
 function normalizeEvidenceText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -324,7 +330,7 @@ async function processExtractionBatchSubmission(job, logLine) {
   }
 }
 
-async function finalizeExtractionBatchJob(job, pollResult, logLine) {
+async function finalizeExtractionBatchJob(job, pollResult, logLine, finalizationOwner) {
   const {
     extractionJobs,
     transcriptsAsync,
@@ -354,6 +360,11 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine) {
   const silentLogger = async () => {};
 
   for (const itemResult of pollResult.itemResults || []) {
+    const stillClaimed = await extractionJobs.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
+    if (!stillClaimed) {
+      throw new Error(`Lost extraction finalization claim for batch job ${job.id}.`);
+    }
+
     if (processedIds.has(itemResult.customId)) {
       continue;
     }
@@ -487,7 +498,16 @@ async function pollRunningExtractionBatches() {
         continue;
       }
 
-      await finalizeExtractionBatchJob(job, pollResult, logLine);
+      const claimed = await extractionJobs.claimBatchFinalization(
+        job.id,
+        EXTRACTION_BATCH_FINALIZATION_OWNER,
+        EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS
+      );
+      if (!claimed) {
+        continue;
+      }
+
+      await finalizeExtractionBatchJob(job, pollResult, logLine, EXTRACTION_BATCH_FINALIZATION_OWNER);
     } catch (err) {
       // Finalization errors are NOT safe to retry — entities/relationships
       // created before the error are already committed.  Re-running would

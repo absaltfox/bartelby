@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS transcripts (
   temperature REAL,
   initiated_by TEXT,
   run_duration_ms INTEGER,
+  source_job_id INTEGER REFERENCES transcription_jobs(id) ON DELETE SET NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (document_id) REFERENCES documents(id)
 );
@@ -45,6 +46,9 @@ CREATE TABLE IF NOT EXISTS annotations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transcripts_document_id ON transcripts(document_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_transcripts_source_job_document
+  ON transcripts(source_job_id, document_id)
+  WHERE source_job_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_annotations_transcript_id ON annotations(transcript_id);
 
@@ -148,6 +152,12 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS worker_leases (
+  name TEXT PRIMARY KEY,
+  claimed_at DATETIME,
+  claimed_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS transcription_jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   document_id INTEGER NOT NULL,
@@ -167,6 +177,8 @@ CREATE TABLE IF NOT EXISTS transcription_jobs (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   started_at DATETIME,
   completed_at DATETIME,
+  batch_finalization_claimed_at DATETIME,
+  batch_finalization_claimed_by TEXT,
   FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 

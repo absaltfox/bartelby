@@ -31,7 +31,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Import – submit (batch provider) | `import_jobs` (kind `submit`) | `utils/worker.js::tickImportSubmissionJobs` |
 | Import – auto-grouping (LLM) | `import_jobs` (kind `grouping`) | `utils/worker.js::tickGroupingJobs` |
 | Knowledge graph extraction | `extraction_jobs` | `utils/worker-extraction.js` |
-| Collection analytics | module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
+| Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
 > **Note:** Analytics do not use a DB-backed job record for the outer sweep;
 > `collection_analytics` rows serve as the durable output. The BERTopic sub-step
@@ -60,6 +60,14 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 Each tick is guarded by a module-level `busy` flag so overlapping invocations of
 the same tick do not stack up. Ticks that encounter no work return immediately.
 
+For batch finalization, the in-memory poller flags are not enough on their own
+because Fly can briefly run overlapping app processes during deployments or
+machine handoff. Completed transcription and extraction batches are therefore
+claimed durably in their job tables using
+`batch_finalization_claimed_at` / `batch_finalization_claimed_by` before any
+documents are materialized. Only the process that wins that claim may finalize
+the batch.
+
 ---
 
 ## Analytics Scheduler
@@ -76,23 +84,22 @@ Whether a collection _actually_ runs is determined by `shouldRunAnalytics()` in
 
 ### Concurrency Lock
 
-`_analyticsRunning` is a **module-level boolean** in `utils/analytics.js`. It is
-set to `true` at the start of `runScheduledAnalytics()` and reset in a `finally`
-block. Both of these call sites share the same flag:
+Analytics use a two-layer lock:
+
+1. `_analyticsRunning`, a **module-level boolean** in `utils/analytics.js`, to
+   prevent duplicate sweeps inside one process.
+2. A durable lease in `worker_leases` so only one app instance can own the
+   global sweep, and only one app instance can run analytics for a given
+   collection at a time.
+
+Both of these call sites share that logic:
 
 - The `setInterval` timer in `utils/worker.js`
 - The admin "Run All" route (`POST /admin/analytics-settings/run-all`)
 
-This prevents a double-click or concurrent admin session from triggering overlapping
-sweeps that could cause `SQLITE_BUSY` locking or spawn multiple BERTopic Python
-processes simultaneously.
-
-> **Important:** `runAnalyticsForCollection()` (single-collection run) is
-> intentionally **not** guarded by this flag. It is called from three places:
-> the sweep loop, the per-collection admin button, and
-> `POST /admin/analytics-settings/run/:collectionId`. Single-collection runs are
-> considered safe to overlap (different collections, different data) and are
-> serialised by the operator acting in the browser.
+This prevents a double-click, concurrent admin session, or second container from
+triggering overlapping sweeps that could cause `SQLITE_BUSY` locking or spawn
+multiple BERTopic dispatches for the same collection.
 
 ### Two-Phase Run
 
@@ -136,6 +143,8 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`import_jobs` (render, `processing`, no `machine_id`)** → marked `failed`
 - **`import_jobs` (submit, `running`)** → re-queued to `queued`
 - **`transcription_jobs` (`running`, not a batch)** → marked `failed`
+- **`transcription_jobs` (`running`, batch finalization claimed)** → claim cleared so finalization can resume
+- **`extraction_jobs` (`running`, batch finalization claimed)** → claim cleared so finalization can resume
 - **`extraction_jobs` (`running`, not a batch)** → marked `failed`
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 

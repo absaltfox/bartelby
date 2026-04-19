@@ -6,10 +6,11 @@ describe('persistDocumentTranscription', () => {
     jest.clearAllMocks();
   });
 
-  function loadPipeline(existingTranscripts) {
+  function loadPipeline(existingTranscripts, opts = {}) {
     const transcriptsCreate = jest.fn(async (payload) => payload.version + 100);
     const extractionCreate = jest.fn(async () => 1);
     const documentsUpdate = jest.fn(async () => {});
+    const existingBySourceJob = opts.existingBySourceJob || null;
 
     jest.doMock('../../database/db', () => ({
       documentsAsync: {
@@ -23,6 +24,7 @@ describe('persistDocumentTranscription', () => {
       },
       transcriptsAsync: {
         getByDocumentId: jest.fn(async () => existingTranscripts),
+        getBySourceJobId: jest.fn(async () => existingBySourceJob),
         create: transcriptsCreate
       },
       extractionJobs: {
@@ -92,5 +94,33 @@ describe('persistDocumentTranscription', () => {
       version: 3,
       is_best: false
     }));
+  });
+
+  it('reuses the existing transcript when the same job already materialized the document', async () => {
+    const existingTranscript = {
+      id: 444,
+      document_id: 7,
+      source_job_id: 99,
+      cost_usd: 0.12
+    };
+    const { pipeline, transcriptsCreate, extractionCreate } = loadPipeline([], {
+      existingBySourceJob: existingTranscript
+    });
+
+    const result = await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      job: {
+        ...baseArgs.job,
+        id: 99
+      }
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      transcriptId: 444,
+      reusedExistingTranscript: true,
+      costUsd: 0.12
+    }));
+    expect(transcriptsCreate).not.toHaveBeenCalled();
+    expect(extractionCreate).not.toHaveBeenCalled();
   });
 });

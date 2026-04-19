@@ -790,13 +790,22 @@ const transcripts = {
     return get('SELECT * FROM transcripts WHERE id = ?', [id]);
   },
 
+  getBySourceJobId(sourceJobId, documentId) {
+    if (!Number.isInteger(sourceJobId) || !Number.isInteger(documentId)) return null;
+    return get(`
+      SELECT * FROM transcripts
+      WHERE source_job_id = ? AND document_id = ?
+      LIMIT 1
+    `, [sourceJobId, documentId]);
+  },
+
   create(transcript) {
     const result = run(`
       INSERT INTO transcripts (
         document_id, content, transcriber, version, notes,
         provider, model, prompt, temperature, initiated_by, run_duration_ms,
-        provider_key_scope, page_segments
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        source_job_id, provider_key_scope, page_segments
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -809,6 +818,7 @@ const transcripts = {
       transcript.temperature != null ? transcript.temperature : null,
       transcript.initiated_by || null,
       transcript.run_duration_ms || null,
+      transcript.source_job_id || null,
       transcript.provider_key_scope || null,
       transcript.page_segments ? JSON.stringify(transcript.page_segments) : null
     ]);
@@ -919,6 +929,15 @@ const transcriptsAsync = {
     return await getAsync('SELECT * FROM transcripts WHERE id = ?', [id]);
   },
 
+  async getBySourceJobId(sourceJobId, documentId) {
+    if (!Number.isInteger(sourceJobId) || !Number.isInteger(documentId)) return null;
+    return await getAsync(`
+      SELECT * FROM transcripts
+      WHERE source_job_id = ? AND document_id = ?
+      LIMIT 1
+    `, [sourceJobId, documentId]);
+  },
+
   async getBestByDocumentId(documentId) {
     return await getAsync('SELECT * FROM transcripts WHERE document_id = ? AND is_best = 1', [documentId]);
   },
@@ -928,9 +947,9 @@ const transcriptsAsync = {
       INSERT INTO transcripts (
         document_id, content, transcriber, version, notes,
         provider, model, prompt, temperature, initiated_by, run_duration_ms,
-        is_best, created_by_user_id, provider_key_scope, page_segments,
+        source_job_id, is_best, created_by_user_id, provider_key_scope, page_segments,
         input_tokens, output_tokens, cost_usd, confidence, unknown_word_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       transcript.document_id,
       transcript.content,
@@ -943,6 +962,7 @@ const transcriptsAsync = {
       transcript.temperature != null ? transcript.temperature : null,
       transcript.initiated_by || null,
       transcript.run_duration_ms || null,
+      transcript.source_job_id || null,
       transcript.is_best ? 1 : 0,
       transcript.created_by_user_id || null,
       transcript.provider_key_scope || null,

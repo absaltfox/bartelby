@@ -15,6 +15,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all,
 // at a time on the same connection.
 let _exclusiveLockBusy = false;
 const _exclusiveLockQueue = [];
+const DEFAULT_BATCH_FINALIZATION_STALE_SECONDS = 2 * 60 * 60;
 
 async function withExclusiveLock(fn) {
   if (process.env.DATABASE_DRIVER === 'turso') {
@@ -107,10 +108,6 @@ const transcriptionJobs = {
     });
   },
 
-  getNextQueued() {
-    return get("SELECT * FROM transcription_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1");
-  },
-
   markRunning(id) {
     runWithoutSave("UPDATE transcription_jobs SET status = 'running', started_at = CURRENT_TIMESTAMP, attempts = attempts + 1 WHERE id = ?", [id]);
     saveDatabase();
@@ -122,12 +119,27 @@ const transcriptionJobs = {
   },
 
   markDone(id) {
-    runWithoutSave("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    runWithoutSave(`
+      UPDATE transcription_jobs
+      SET status = 'done',
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+    `, [id]);
     saveDatabase();
   },
 
   markFailed(id, error) {
-    runWithoutSave("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
+    runWithoutSave(`
+      UPDATE transcription_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
     saveDatabase();
   },
 
@@ -140,6 +152,8 @@ const transcriptionJobs = {
           completed_at = NULL,
           batch_remote_id = NULL,
           batch_remote_status = NULL,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0
       WHERE id = ?
@@ -311,10 +325,6 @@ const transcriptionJobsAsync = {
     }
   },
 
-  async getNextQueued() {
-    return await getAsync("SELECT * FROM transcription_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1");
-  },
-
   async claimNextQueued() {
     return await withExclusiveLock(async () => {
       const job = await getAsync(
@@ -344,12 +354,27 @@ const transcriptionJobsAsync = {
   },
 
   async markDone(id) {
-    await runAsyncWithoutSave("UPDATE transcription_jobs SET status = 'done', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+    await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET status = 'done',
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+    `, [id]);
     await saveDatabase();
   },
 
   async markFailed(id, error) {
-    await runAsyncWithoutSave("UPDATE transcription_jobs SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?", [error || 'Unknown error', id]);
+    await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
     await saveDatabase();
   },
 
@@ -362,6 +387,8 @@ const transcriptionJobsAsync = {
           completed_at = NULL,
           batch_remote_id = NULL,
           batch_remote_status = NULL,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0
       WHERE id = ?
@@ -472,6 +499,65 @@ const transcriptionJobsAsync = {
     `);
   },
 
+  async claimBatchFinalization(id, owner, staleSeconds = DEFAULT_BATCH_FINALIZATION_STALE_SECONDS) {
+    const ttlSeconds = Number.isInteger(staleSeconds) && staleSeconds > 0
+      ? staleSeconds
+      : DEFAULT_BATCH_FINALIZATION_STALE_SECONDS;
+    const claimed = await withExclusiveLock(async () => {
+      const result = await runAsyncWithoutSave(`
+        UPDATE transcription_jobs
+        SET batch_finalization_claimed_at = CURRENT_TIMESTAMP,
+            batch_finalization_claimed_by = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND job_kind = 'batch'
+          AND (
+            batch_finalization_claimed_at IS NULL
+            OR batch_finalization_claimed_at < datetime('now', ?)
+            OR batch_finalization_claimed_by = ?
+          )
+      `, [owner || null, id, `-${ttlSeconds} seconds`, owner || null]);
+      if (!result || !result.changes) return false;
+      return true;
+    });
+    if (claimed) {
+      await saveDatabase();
+    }
+    return claimed;
+  },
+
+  async heartbeatBatchFinalizationClaim(id, owner) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET batch_finalization_claimed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'running'
+        AND job_kind = 'batch'
+        AND batch_finalization_claimed_by = ?
+    `, [id, owner || null]);
+    if (result?.changes) {
+      await saveDatabase();
+      return true;
+    }
+    return false;
+  },
+
+  async releaseBatchFinalizationClaim(id, owner = null) {
+    const params = [id];
+    let ownerClause = '';
+    if (owner != null) {
+      ownerClause = ' AND batch_finalization_claimed_by = ?';
+      params.push(owner);
+    }
+    await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?${ownerClause}
+    `, params);
+    await saveDatabase();
+  },
+
   async updateBatchRemote(id, { remoteId, remoteStatus }) {
     await runAsyncWithoutSave(`
       UPDATE transcription_jobs
@@ -521,6 +607,8 @@ const transcriptionJobsAsync = {
           completed_at = NULL,
           batch_remote_id = NULL,
           batch_remote_status = NULL,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0
       WHERE id = ? AND status = 'failed'
@@ -541,6 +629,8 @@ const transcriptionJobsAsync = {
           completed_at = NULL,
           batch_remote_id = NULL,
           batch_remote_status = NULL,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0
       WHERE id = ? AND status = 'failed'
@@ -1136,6 +1226,8 @@ const extractionJobs = {
           entity_count = COALESCE(?, entity_count),
           relationship_count = COALESCE(?, relationship_count),
           completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           partial_results = NULL
       WHERE id = ?
     `, [
@@ -1151,6 +1243,8 @@ const extractionJobs = {
       UPDATE extraction_jobs
       SET status = 'failed',
           error = ?,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [error || 'Unknown error', id]);
@@ -1169,6 +1263,8 @@ const extractionJobs = {
           batch_remote_status = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           partial_results = NULL
       WHERE id = ?
     `, [id]);
@@ -1187,6 +1283,8 @@ const extractionJobs = {
           batch_remote_status = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           partial_results = NULL
       WHERE id = ? AND status = 'failed'
     `, [id]);
@@ -1210,6 +1308,8 @@ const extractionJobs = {
           batch_remote_status = NULL,
           batch_completed_count = 0,
           batch_failed_count = 0,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
           partial_results = NULL
       WHERE id = ? AND status = 'failed'
     `, [provider, model || null, model || null, id]);
@@ -1260,6 +1360,49 @@ const extractionJobs = {
       WHERE j.job_kind = 'batch' AND j.status = 'running'
       ORDER BY j.created_at ASC
     `);
+  },
+
+  async claimBatchFinalization(id, owner, staleSeconds = DEFAULT_BATCH_FINALIZATION_STALE_SECONDS) {
+    const ttlSeconds = Number.isInteger(staleSeconds) && staleSeconds > 0
+      ? staleSeconds
+      : DEFAULT_BATCH_FINALIZATION_STALE_SECONDS;
+    const claimed = await withExclusiveLock(async () => {
+      const result = await runAsyncWithoutSave(`
+        UPDATE extraction_jobs
+        SET batch_finalization_claimed_at = CURRENT_TIMESTAMP,
+            batch_finalization_claimed_by = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND job_kind = 'batch'
+          AND (
+            batch_finalization_claimed_at IS NULL
+            OR batch_finalization_claimed_at < datetime('now', ?)
+            OR batch_finalization_claimed_by = ?
+          )
+      `, [owner || null, id, `-${ttlSeconds} seconds`, owner || null]);
+      if (!result || !result.changes) return false;
+      return true;
+    });
+    if (claimed) {
+      await saveDatabase();
+    }
+    return claimed;
+  },
+
+  async heartbeatBatchFinalizationClaim(id, owner) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE extraction_jobs
+      SET batch_finalization_claimed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'running'
+        AND job_kind = 'batch'
+        AND batch_finalization_claimed_by = ?
+    `, [id, owner || null]);
+    if (result?.changes) {
+      await saveDatabase();
+      return true;
+    }
+    return false;
   },
 
   async updateBatchRemote(id, { remoteId, remoteStatus }) {

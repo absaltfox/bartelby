@@ -153,3 +153,154 @@ describe('transcription worker cycle', () => {
     expect(markFailed).not.toHaveBeenCalled();
   });
 });
+
+describe('transcription batch polling', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  it('only finalizes a completed batch after winning the durable claim', async () => {
+    const appendLog = jest.fn(async () => {});
+    const updateBatchProgress = jest.fn(async () => {});
+    const claimBatchFinalization = jest.fn(async () => true);
+    const heartbeatBatchFinalizationClaim = jest.fn(async () => true);
+    const markDone = jest.fn(async () => {});
+    const markFailed = jest.fn(async () => {});
+    const persistDocumentTranscription = jest.fn(async () => ({
+      transcriptId: 3244,
+      combined: { paradata: { run_duration_ms: 10 } }
+    }));
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeJobLogger: jest.fn(() => jest.fn(async (line) => appendLog(line))),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'vertex',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+    jest.doMock('../../database/db', () => ({
+      transcriptionJobsAsync: {
+        getRunningBatches: jest.fn(async () => [{
+          id: 55,
+          job_kind: 'batch',
+          status: 'running',
+          provider: 'vertex',
+          model: 'default',
+          batch_remote_id: 'remote-1',
+          batch_remote_status: 'running',
+          batch_manifest: JSON.stringify({
+            requests: [{ customId: 'doc-7-page-1', documentId: 7, pageIndex: 0 }]
+          })
+        }]),
+        appendLog,
+        updateBatchProgress,
+        claimBatchFinalization,
+        heartbeatBatchFinalizationClaim,
+        markDone,
+        markFailed
+      }
+    }));
+    jest.doMock('../../utils/transcription-batches', () => ({
+      pollTranscriptionBatch: jest.fn(async () => ({
+        state: 'completed',
+        remoteStatus: 'completed',
+        completedCount: 1,
+        failedCount: 0,
+        pageResults: [{
+          customId: 'doc-7-page-1',
+          ok: true,
+          result: { transcription: 'page text', metadata: {}, notes: null, paradata: {} }
+        }]
+      })),
+      parseBatchManifest: jest.fn(() => [{ customId: 'doc-7-page-1', documentId: 7, pageIndex: 0 }])
+    }));
+    jest.doMock('../../utils/transcription-pipeline', () => ({
+      persistDocumentTranscription
+    }));
+
+    const worker = require('../../utils/worker-transcription');
+    await worker.pollRunningTranscriptionBatches();
+
+    expect(claimBatchFinalization).toHaveBeenCalledWith(55, expect.stringMatching(/^pid:/), expect.any(Number));
+    expect(heartbeatBatchFinalizationClaim).toHaveBeenCalledWith(55, expect.stringMatching(/^pid:/));
+    expect(persistDocumentTranscription).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: 7
+    }));
+    expect(markDone).toHaveBeenCalledWith(55);
+    expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it('skips finalization when another worker already holds the durable claim', async () => {
+    const appendLog = jest.fn(async () => {});
+    const updateBatchProgress = jest.fn(async () => {});
+    const claimBatchFinalization = jest.fn(async () => false);
+    const persistDocumentTranscription = jest.fn(async () => ({
+      transcriptId: 999,
+      combined: { paradata: { run_duration_ms: 10 } }
+    }));
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeJobLogger: jest.fn(() => jest.fn(async (line) => appendLog(line))),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'vertex',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+    jest.doMock('../../database/db', () => ({
+      transcriptionJobsAsync: {
+        getRunningBatches: jest.fn(async () => [{
+          id: 56,
+          job_kind: 'batch',
+          status: 'running',
+          provider: 'vertex',
+          model: 'default',
+          batch_remote_id: 'remote-2',
+          batch_remote_status: 'running',
+          batch_manifest: JSON.stringify({
+            requests: [{ customId: 'doc-8-page-1', documentId: 8, pageIndex: 0 }]
+          })
+        }]),
+        appendLog,
+        updateBatchProgress,
+        claimBatchFinalization,
+        heartbeatBatchFinalizationClaim: jest.fn(async () => true),
+        markDone: jest.fn(async () => {}),
+        markFailed: jest.fn(async () => {})
+      }
+    }));
+    jest.doMock('../../utils/transcription-batches', () => ({
+      pollTranscriptionBatch: jest.fn(async () => ({
+        state: 'completed',
+        remoteStatus: 'completed',
+        completedCount: 1,
+        failedCount: 0,
+        pageResults: [{
+          customId: 'doc-8-page-1',
+          ok: true,
+          result: { transcription: 'page text', metadata: {}, notes: null, paradata: {} }
+        }]
+      })),
+      parseBatchManifest: jest.fn(() => [{ customId: 'doc-8-page-1', documentId: 8, pageIndex: 0 }])
+    }));
+    jest.doMock('../../utils/transcription-pipeline', () => ({
+      persistDocumentTranscription
+    }));
+
+    const worker = require('../../utils/worker-transcription');
+    await worker.pollRunningTranscriptionBatches();
+
+    expect(claimBatchFinalization).toHaveBeenCalled();
+    expect(persistDocumentTranscription).not.toHaveBeenCalled();
+  });
+});

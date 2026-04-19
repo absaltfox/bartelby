@@ -11,6 +11,12 @@ const {
   resolveRuntimeConfig
 } = require('./worker-runtime');
 
+const BATCH_FINALIZATION_OWNER = `pid:${process.pid}`;
+const BATCH_FINALIZATION_STALE_SECONDS = Number.parseInt(
+  process.env.BATCH_FINALIZATION_STALE_SECONDS || '',
+  10
+) || (2 * 60 * 60);
+
 async function processSingleJob(job, logLine) {
   const {
     transcriptionJobsAsync,
@@ -136,7 +142,7 @@ function groupManifestByDocument(manifest) {
   return docs;
 }
 
-async function finalizeBatchJob(job, pollResult, logLine) {
+async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
   const { transcriptionJobsAsync } = require('../database/db');
   const { providerName, temperature, runtimeConfig } = await resolveRuntimeConfig(job, logLine);
   const { parseBatchManifest } = require('./transcription-batches');
@@ -168,6 +174,11 @@ async function finalizeBatchJob(job, pollResult, logLine) {
   let failedDocs = 0;
 
   for (const [documentId, docManifest] of groupedByDocument.entries()) {
+    const stillClaimed = await transcriptionJobsAsync.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
+    if (!stillClaimed) {
+      throw new Error(`Lost finalization claim for batch job ${job.id}.`);
+    }
+
     const expectedPages = docManifest.length;
     const pageMap = pageResultsByDocument.get(documentId) || new Map();
     const pageErrors = pageErrorsByDocument.get(documentId) || [];
@@ -307,7 +318,16 @@ async function pollRunningTranscriptionBatches() {
         continue;
       }
 
-      await finalizeBatchJob(job, pollResult, logLine);
+      const claimed = await transcriptionJobsAsync.claimBatchFinalization(
+        job.id,
+        BATCH_FINALIZATION_OWNER,
+        BATCH_FINALIZATION_STALE_SECONDS
+      );
+      if (!claimed) {
+        continue;
+      }
+
+      await finalizeBatchJob(job, pollResult, logLine, BATCH_FINALIZATION_OWNER);
     } catch (err) {
       // Finalization errors are NOT safe to retry — transcriptions
       // persisted before the error are already committed.  Re-running

@@ -397,10 +397,14 @@ router.post('/analytics-settings/run/:collectionId', asyncHandler(async (req, re
   }
   try {
     const { runAnalyticsForCollection } = require('../utils/analytics');
-    await runAnalyticsForCollection(collectionId);
+    const result = await runAnalyticsForCollection(collectionId);
     const collection = await collectionsAsync.getById(collectionId);
     const label = collection ? collection.name : `collection ${collectionId}`;
-    req.session.flashMessage = { type: 'success', text: `Analytics run started for ${label}. Topic analysis will continue in the background.` };
+    if (result?.skippedDueToLease) {
+      req.session.flashMessage = { type: 'info', text: `Analytics is already running for ${label}. Please wait for it to complete.` };
+    } else {
+      req.session.flashMessage = { type: 'success', text: `Analytics run started for ${label}. Topic analysis will continue in the background.` };
+    }
   } catch (err) {
     req.session.flashMessage = { type: 'error', text: `Analytics failed: ${err.message}` };
   }
@@ -408,12 +412,12 @@ router.post('/analytics-settings/run/:collectionId', asyncHandler(async (req, re
 }));
 
 router.post('/analytics-settings/run-all', asyncHandler(async (req, res) => {
-  const { runScheduledAnalytics, isAnalyticsRunning } = require('../utils/analytics');
+  const { runScheduledAnalytics, isAnalyticsSweepRunning } = require('../utils/analytics');
 
   // Refuse a duplicate run if one is already in progress.  This protects against
   // double-click, concurrent admin sessions, or rapid re-submissions causing
   // overlapping BERTopic processes or SQLITE_BUSY locking errors.
-  if (isAnalyticsRunning()) {
+  if (await isAnalyticsSweepRunning()) {
     req.session.flashMessage = { type: 'info', text: 'An analytics run is already in progress. Please wait for it to complete before starting another.' };
     return res.redirect('/admin/analytics-settings');
   }

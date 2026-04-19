@@ -28,6 +28,12 @@ describe('job claim functions use withExclusiveLock', () => {
     expect(match[0]).toContain('withExclusiveLock');
   });
 
+  it('transcriptionJobs.claimBatchFinalization delegates to withExclusiveLock', () => {
+    const match = src.match(/claimBatchFinalization[\s\S]{0,2000}?UPDATE transcription_jobs/);
+    expect(match).not.toBeNull();
+    expect(match[0]).toContain('withExclusiveLock');
+  });
+
   it('importJobsAsync.claimNextQueuedSubmission delegates to withExclusiveLock', () => {
     const match = src.match(/claimNextQueuedSubmission[\s\S]{0,2000}?UPDATE import_jobs/);
     expect(match).not.toBeNull();
@@ -48,6 +54,12 @@ describe('job claim functions use withExclusiveLock', () => {
 
   it('extractionJobsAsync.claimNextQueued delegates to withExclusiveLock', () => {
     const match = src.match(/claimNextQueued[\s\S]{0,2000}?UPDATE extraction_jobs/);
+    expect(match).not.toBeNull();
+    expect(match[0]).toContain('withExclusiveLock');
+  });
+
+  it('extractionJobsAsync.claimBatchFinalization delegates to withExclusiveLock', () => {
+    const match = src.match(/claimBatchFinalization[\s\S]{0,2000}?UPDATE extraction_jobs/);
     expect(match).not.toBeNull();
     expect(match[0]).toContain('withExclusiveLock');
   });

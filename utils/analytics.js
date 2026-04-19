@@ -47,6 +47,9 @@ function countUnknownWords(text) {
 const { resolvePythonBin } = require('./python-runtime');
 const config = require('../config');
 const { collectDocumentAssetPaths, computeStorageBytes } = require('./analytics-storage');
+const WORKER_LEASE_OWNER = `pid:${process.pid}`;
+const DEFAULT_WORKER_LEASE_STALE_SECONDS = 2 * 60 * 60;
+const ANALYTICS_SWEEP_LEASE = 'analytics:sweep';
 
 function getRawDb() {
   return require('../database/db').getDb();
@@ -58,6 +61,10 @@ async function allAsync(sql, params = []) {
 
 async function getAsync(sql, params = []) {
   return getRawDb().get(sql, params);
+}
+
+async function runAsync(sql, params = []) {
+  return getRawDb().run(sql, params);
 }
 
 /**
@@ -266,6 +273,70 @@ function isAnalyticsRunning() {
   return _analyticsRunning;
 }
 
+function getCollectionLeaseName(collectionId) {
+  return `analytics:collection:${collectionId}`;
+}
+
+async function ensureWorkerLease(name) {
+  await runAsync(`
+    INSERT OR IGNORE INTO worker_leases (name, claimed_at, claimed_by)
+    VALUES (?, NULL, NULL)
+  `, [name]);
+}
+
+async function claimWorkerLease(name, owner = WORKER_LEASE_OWNER, staleSeconds = DEFAULT_WORKER_LEASE_STALE_SECONDS) {
+  const ttlSeconds = Number.isInteger(staleSeconds) && staleSeconds > 0
+    ? staleSeconds
+    : DEFAULT_WORKER_LEASE_STALE_SECONDS;
+  await ensureWorkerLease(name);
+  const result = await runAsync(`
+    UPDATE worker_leases
+    SET claimed_at = CURRENT_TIMESTAMP,
+        claimed_by = ?
+    WHERE name = ?
+      AND (
+        claimed_at IS NULL
+        OR claimed_at < datetime('now', ?)
+        OR claimed_by = ?
+      )
+  `, [owner, name, `-${ttlSeconds} seconds`, owner]);
+  return !!result?.changes;
+}
+
+async function heartbeatWorkerLease(name, owner = WORKER_LEASE_OWNER) {
+  const result = await runAsync(`
+    UPDATE worker_leases
+    SET claimed_at = CURRENT_TIMESTAMP
+    WHERE name = ? AND claimed_by = ?
+  `, [name, owner]);
+  return !!result?.changes;
+}
+
+async function releaseWorkerLease(name, owner = WORKER_LEASE_OWNER) {
+  await runAsync(`
+    UPDATE worker_leases
+    SET claimed_at = NULL,
+        claimed_by = NULL
+    WHERE name = ? AND claimed_by = ?
+  `, [name, owner]);
+}
+
+async function isWorkerLeaseHeld(name, staleSeconds = DEFAULT_WORKER_LEASE_STALE_SECONDS) {
+  const ttlSeconds = Number.isInteger(staleSeconds) && staleSeconds > 0
+    ? staleSeconds
+    : DEFAULT_WORKER_LEASE_STALE_SECONDS;
+  await ensureWorkerLease(name);
+  const row = await getAsync(`
+    SELECT 1 AS held
+    FROM worker_leases
+    WHERE name = ?
+      AND claimed_at IS NOT NULL
+      AND claimed_at >= datetime('now', ?)
+    LIMIT 1
+  `, [name, `-${ttlSeconds} seconds`]);
+  return !!row?.held;
+}
+
 // ── BERTopic dispatch helpers ────────────────────────────────────────────────
 
 const { spawn } = require('child_process');
@@ -438,24 +509,38 @@ async function dispatchBertopicAnalysis(collectionId, analyticsRowId) {
 }
 
 async function runAnalyticsForCollection(collectionId) {
-  console.log(`[analytics] starting for collection ${collectionId}`);
-  const db = require('../database/db');
-
-  const stats = await computeCollectionStats(collectionId);
-  stats.topics_computed = false;
-  const analyticsRowId = await db.collectionAnalyticsAsync.upsert(stats);
-  await db.saveDatabase();
-
-  if (stats.transcribed_count >= 5) {
-    await dispatchBertopicAnalysis(collectionId, analyticsRowId).catch(err => {
-      console.error(`[analytics] BERTopic failed for collection ${collectionId}:`, err.message);
-    });
-  } else {
-    console.log(`[analytics] collection ${collectionId}: fewer than 5 transcribed docs, skipping BERTopic dispatch`);
+  const leaseName = getCollectionLeaseName(collectionId);
+  const claimed = await claimWorkerLease(leaseName);
+  if (!claimed) {
+    console.log(`[analytics] collection ${collectionId}: already running elsewhere, skipping duplicate invocation`);
+    return {
+      collection_id: collectionId,
+      skippedDueToLease: true
+    };
   }
 
-  console.log(`[analytics] snapshot stored for collection ${collectionId}. topics queued=${stats.transcribed_count >= 5}`);
-  return { ...stats, id: analyticsRowId, topics_computed: false };
+  console.log(`[analytics] starting for collection ${collectionId}`);
+  const db = require('../database/db');
+  try {
+    const stats = await computeCollectionStats(collectionId);
+    stats.topics_computed = false;
+    const analyticsRowId = await db.collectionAnalyticsAsync.upsert(stats);
+    await db.saveDatabase();
+    await heartbeatWorkerLease(leaseName);
+
+    if (stats.transcribed_count >= 5) {
+      await dispatchBertopicAnalysis(collectionId, analyticsRowId).catch(err => {
+        console.error(`[analytics] BERTopic failed for collection ${collectionId}:`, err.message);
+      });
+    } else {
+      console.log(`[analytics] collection ${collectionId}: fewer than 5 transcribed docs, skipping BERTopic dispatch`);
+    }
+
+    console.log(`[analytics] snapshot stored for collection ${collectionId}. topics queued=${stats.transcribed_count >= 5}`);
+    return { ...stats, id: analyticsRowId, topics_computed: false };
+  } finally {
+    await releaseWorkerLease(leaseName).catch(() => {});
+  }
 }
 
 /**
@@ -476,10 +561,20 @@ async function runScheduledAnalytics() {
     console.log('[analytics] runScheduledAnalytics: already running, skipping duplicate invocation');
     return;
   }
+  const claimed = await claimWorkerLease(ANALYTICS_SWEEP_LEASE);
+  if (!claimed) {
+    console.log('[analytics] runScheduledAnalytics: global sweep lease already held, skipping duplicate invocation');
+    return;
+  }
   _analyticsRunning = true;
   try {
     const collections = await allAsync(`SELECT id FROM collections`);
     for (const col of collections) {
+      const stillClaimed = await heartbeatWorkerLease(ANALYTICS_SWEEP_LEASE);
+      if (!stillClaimed) {
+        console.log('[analytics] runScheduledAnalytics: lost global sweep lease, stopping early');
+        return;
+      }
       if (await shouldRunAnalytics(col.id)) {
         await runAnalyticsForCollection(col.id).catch(err => {
           console.error(`[analytics] error for collection ${col.id}:`, err.message);
@@ -488,7 +583,12 @@ async function runScheduledAnalytics() {
     }
   } finally {
     _analyticsRunning = false;
+    await releaseWorkerLease(ANALYTICS_SWEEP_LEASE).catch(() => {});
   }
+}
+
+async function isAnalyticsSweepRunning() {
+  return isAnalyticsRunning() || await isWorkerLeaseHeld(ANALYTICS_SWEEP_LEASE);
 }
 
 module.exports = {
@@ -502,5 +602,6 @@ module.exports = {
   runBertopicAnalysis,
   runAnalyticsForCollection,
   runScheduledAnalytics,
-  isAnalyticsRunning
+  isAnalyticsRunning,
+  isAnalyticsSweepRunning
 };

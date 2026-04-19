@@ -61,6 +61,26 @@ async function persistDocumentTranscription({
   if (!doc) {
     throw new Error(`Document ${documentId} no longer exists.`);
   }
+  const sourceJobId = Number.isInteger(job?.id) ? job.id : parseInt(job?.id, 10);
+
+  if (Number.isInteger(sourceJobId)) {
+    const existingTranscript = await transcriptsAsync.getBySourceJobId(sourceJobId, documentId);
+    if (existingTranscript) {
+      if (logLine) {
+        await logLine(
+          `Skipping transcript creation for document ${documentId}: job ${sourceJobId} already materialized as transcript ${existingTranscript.id}`
+        );
+      }
+      return {
+        transcriptId: existingTranscript.id,
+        combined,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        costUsd: existingTranscript.cost_usd ?? null,
+        reusedExistingTranscript: true
+      };
+    }
+  }
 
   if (Object.keys(llmMeta).length > 0) {
     let existing = doc.metadata;
@@ -236,6 +256,7 @@ async function persistDocumentTranscription({
     temperature: pd.temperature != null ? pd.temperature : temperature,
     initiated_by: job.initiated_by || null,
     run_duration_ms: pd.run_duration_ms || null,
+    source_job_id: Number.isInteger(sourceJobId) ? sourceJobId : null,
     provider_key_scope: job.provider_key_scope || null,
     is_best: shouldBeBest,
     input_tokens: totalInputTokens > 0 ? totalInputTokens : null,
