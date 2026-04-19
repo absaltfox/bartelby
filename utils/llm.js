@@ -100,6 +100,29 @@ function parseResponse(text) {
       confidence
     };
   } catch {
+    // JSON.parse failed (malformed response). Try to salvage the transcription
+    // field via a quoted-string walk before falling back to the raw text.
+    const txMatch = match[0].match(/"transcription"\s*:\s*"/);
+    if (txMatch) {
+      const start = txMatch.index + txMatch[0].length;
+      let value = '';
+      let i = start;
+      const src = match[0];
+      while (i < src.length) {
+        const ch = src[i];
+        if (ch === '\\' && i + 1 < src.length) {
+          const next = src[i + 1];
+          const escapes = { '"': '"', '\\': '\\', '/': '/', n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' };
+          if (next in escapes) { value += escapes[next]; i += 2; }
+          else if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(src.slice(i + 2, i + 6))) {
+            value += String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)); i += 6;
+          } else { value += next; i += 2; }
+        } else if (ch === '"') {
+          if (value.trim()) return { transcription: value.trim(), metadata: {}, notes: 'Partial JSON parse (malformed response).', confidence: null };
+          break;
+        } else { value += ch; i++; }
+      }
+    }
     return { transcription: text, metadata: {}, notes: 'JSON parse error.', confidence: null };
   }
 }
