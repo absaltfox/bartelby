@@ -12,7 +12,7 @@ const IGNORED_DIRS = new Set([
   '.worktrees',
   '.superpowers'
 ]);
-const FORBIDDEN_TOP_LEVEL = ['Claude.md', 'Knowledge'];
+const FORBIDDEN_TOP_LEVEL = ['Knowledge'];
 const problems = [];
 
 function walk(dir) {

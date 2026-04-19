@@ -60,6 +60,11 @@ node --check path/to/file.js
 npm test -- --runInBand
 ```
 
+The repository hygiene check allows the committed top-level guidance docs used
+by contributors and agents, including `Claude.md`. Treat unexpected extra
+top-level files and directories as hygiene failures unless the repo documents
+them intentionally.
+
 For template-heavy changes, also sanity-check template compilation and the
 relevant pages locally.
 
