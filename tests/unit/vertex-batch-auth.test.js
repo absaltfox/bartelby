@@ -63,6 +63,40 @@ describe('vertex batch auth configuration', () => {
     );
   });
 
+  it('preserves authorization when google auth returns a Headers instance', async () => {
+    const GoogleAuth = jest.fn().mockImplementation(() => ({
+      getClient: async () => ({
+        getRequestHeaders: async () => new Headers({
+          Authorization: 'Bearer headers-token'
+        })
+      })
+    }));
+    jest.doMock('google-auth-library', () => ({ GoogleAuth }));
+
+    const { uploadTextToGcs } = require('../../utils/vertex-batch');
+    await uploadTextToGcs(
+      {
+        bucket: 'test-bucket',
+        credentialsJson: JSON.stringify({
+          client_email: 'vertex@test-project.iam.gserviceaccount.com',
+          private_key: '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n',
+          token_uri: 'https://oauth2.googleapis.com/token'
+        })
+      },
+      'input/requests.jsonl',
+      '{"request":"ok"}'
+    );
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: 'Bearer headers-token'
+        })
+      })
+    );
+  });
+
   it('rebuilds the auth client when the credentials JSON changes', async () => {
     const GoogleAuth = jest.fn().mockImplementation((options) => ({
       getClient: async () => ({

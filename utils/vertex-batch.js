@@ -170,8 +170,19 @@ async function getGoogleAuthHeaders(config = {}) {
   return await client.getRequestHeaders();
 }
 
+function normalizeRequestHeaders(headers) {
+  if (!headers) return {};
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+  if (typeof headers.entries === 'function') {
+    return Object.fromEntries(headers.entries());
+  }
+  return { ...headers };
+}
+
 async function fetchVertexJson(config, url, options = {}, errorPrefix = 'Vertex request failed') {
-  const authHeaders = await getGoogleAuthHeaders(config);
+  const authHeaders = normalizeRequestHeaders(await getGoogleAuthHeaders(config));
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -194,7 +205,7 @@ async function fetchVertexJson(config, url, options = {}, errorPrefix = 'Vertex 
 }
 
 async function fetchVertexText(config, url, options = {}, errorPrefix = 'Vertex request failed') {
-  const authHeaders = await getGoogleAuthHeaders(config);
+  const authHeaders = normalizeRequestHeaders(await getGoogleAuthHeaders(config));
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -436,6 +447,7 @@ module.exports = {
   isVertexBatchRemoteId,
   matchVertexCustomId,
   normalizeVertexBatchCredentials,
+  normalizeRequestHeaders,
   resolveVertexBatchConfig,
   sanitizeObjectSegment,
   stableJsonStringify,
