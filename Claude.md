@@ -84,3 +84,18 @@ If a change introduces, alters, or retires a documented rule, update the
 relevant `.md` file in the same change, per the Documentation Rule in
 [AGENTS.md](./AGENTS.md) and the Documentation Principle in
 [docs/development-principles.md](./docs/development-principles.md).
+
+## Public-Repo Hygiene
+
+This file is committed to the repository and may be read by anyone with
+repo access, as well as by future AI agents. Do not add:
+
+- secrets, API keys, tokens, or credentials of any kind
+- internal hostnames, private URLs, or infrastructure topology
+- private issue/PR links, customer names, or employee/user names
+- unreleased product plans or other confidential context
+
+Keep the content limited to repo conventions, doc pointers, and process
+rules that are safe to share publicly. Treat edits to this file (and to any
+other AI-instruction file in the repo) with the same review care as code,
+since its contents directly shape agent behavior.
