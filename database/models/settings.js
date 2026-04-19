@@ -3,7 +3,13 @@
 const { encryptSecret, decryptSecret } = require('../../utils/secrets');
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
-const SECRET_SETTING_KEYS = new Set(['openai_api_key', 'anthropic_api_key', 'google_api_key', 'vertex_api_key']);
+const SECRET_SETTING_KEYS = new Set([
+  'openai_api_key',
+  'anthropic_api_key',
+  'google_api_key',
+  'vertex_api_key',
+  'vertex_batch_credentials_json'
+]);
 
 const settings = {
   get(key) {

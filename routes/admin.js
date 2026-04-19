@@ -65,6 +65,24 @@ function getImportApiRouter() {
   return require('./import-api');
 }
 
+function normalizeVertexBatchCredentialsSecret(rawValue) {
+  const trimmed = String(rawValue || '').trim();
+  if (!trimmed) return '';
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    throw new Error('Vertex batch credentials JSON must be valid JSON.');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Vertex batch credentials JSON must be a JSON object.');
+  }
+
+  return JSON.stringify(parsed);
+}
+
 function normalizeSvgUpload(file) {
   if (!file) return null;
   const name = String(file.originalname || '').toLowerCase();
@@ -187,14 +205,23 @@ async function saveLlmSettings(req, res) {
       if (req.body[field] !== undefined) await settingsAsync.set(field, req.body[field]);
     }
     // Secret fields: only overwrite if a new non-empty value was submitted
-    const secretFields = ['openai_api_key', 'anthropic_api_key', 'google_api_key', 'vertex_api_key'];
+    const secretFields = [
+      'openai_api_key',
+      'anthropic_api_key',
+      'google_api_key',
+      'vertex_api_key',
+      'vertex_batch_credentials_json'
+    ];
     const hasSecretUpdates = secretFields.some(field => req.body[field] && req.body[field].trim() !== '');
     if (hasSecretUpdates && !canEncryptSecrets()) {
-      throw new Error('DATA_ENCRYPTION_KEY is not configured. Add it to .env before saving API keys.');
+      throw new Error('DATA_ENCRYPTION_KEY is not configured. Add it to .env before saving encrypted provider secrets.');
     }
     for (const field of secretFields) {
       if (req.body[field] && req.body[field].trim() !== '') {
-        await settingsAsync.set(field, req.body[field].trim());
+        const value = field === 'vertex_batch_credentials_json'
+          ? normalizeVertexBatchCredentialsSecret(req.body[field])
+          : req.body[field].trim();
+        await settingsAsync.set(field, value);
       }
     }
     res.redirect('/admin/llm-settings?saved=1');

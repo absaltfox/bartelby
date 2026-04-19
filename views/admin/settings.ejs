@@ -16,7 +16,7 @@
   <% } %>
 
   <% if (!hasEncryptionKey) { %>
-    <div class="alert alert-error"><code>DATA_ENCRYPTION_KEY</code> is not configured, so API keys cannot be saved securely until it is added to <code>.env</code>.</div>
+    <div class="alert alert-error"><code>DATA_ENCRYPTION_KEY</code> is not configured, so API keys and other encrypted provider secrets cannot be saved securely until it is added to <code>.env</code>.</div>
   <% } %>
 
   <form method="POST" action="/admin/llm-settings">
@@ -236,7 +236,15 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
                placeholder="bartelby/vertex-batch/output">
         <p class="field-hint">Prefix inside the bucket where Vertex writes batch results.</p>
       </div>
-      <p class="field-hint provider-settings-note">Vertex batch jobs use Application Default Credentials or another Google Cloud bearer-token source available to the server. The Express Mode API key above is still used for non-batch Vertex requests.</p>
+      <div class="form-group">
+        <label for="vertex_batch_credentials_json">Service account JSON (optional)</label>
+        <textarea id="vertex_batch_credentials_json" name="vertex_batch_credentials_json" rows="8" placeholder="<%= cfg.vertex_batch_credentials_json ? 'Encrypted credentials are already stored. Paste new JSON only to replace them.' : '{\"type\":\"service_account\",...}' %>"></textarea>
+        <p class="field-hint">Optional. Stored encrypted in the database like API keys. Leave blank to keep the existing secret, or to rely on <code>VERTEX_BATCH_CREDENTIALS_JSON</code>, <code>GOOGLE_APPLICATION_CREDENTIALS_JSON</code>, or ambient Application Default Credentials.</p>
+        <% if (cfg.vertex_batch_credentials_json) { %>
+          <p class="field-hint">An encrypted Vertex batch credentials JSON secret is already stored.</p>
+        <% } %>
+      </div>
+      <p class="field-hint provider-settings-note">Vertex batch jobs use a Google Cloud bearer-token source. The app prefers the encrypted JSON secret above when present, then falls back to environment-based credentials or ambient Application Default Credentials. The Express Mode API key above is still used for non-batch Vertex requests.</p>
     </section>
 
     <section class="settings-section">

@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 
 let authClientPromise = null;
+let authClientCacheKey = null;
 
 function trimSlashes(value) {
   return String(value || '').replace(/^\/+|\/+$/g, '');
@@ -127,20 +128,50 @@ function matchVertexCustomId(matcher, requestObject) {
   return shiftMatcherValue(matcher.byPromptText, collectVertexPromptText(requestObject));
 }
 
-async function getGoogleAuthHeaders() {
-  if (!authClientPromise) {
+function normalizeVertexBatchCredentials(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return null;
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    throw new Error(`Invalid Vertex batch credentials JSON: ${err.message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid Vertex batch credentials JSON: expected a JSON object.');
+  }
+
+  return parsed;
+}
+
+async function getGoogleAuthHeaders(config = {}) {
+  const credentials = normalizeVertexBatchCredentials(config.credentialsJson);
+  const cacheKey = credentials
+    ? crypto.createHash('sha256').update(stableJsonStringify(credentials)).digest('hex')
+    : '__adc__';
+
+  if (!authClientPromise || authClientCacheKey !== cacheKey) {
     const { GoogleAuth } = require('google-auth-library');
     const auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      credentials: credentials || undefined
     });
+    authClientCacheKey = cacheKey;
     authClientPromise = auth.getClient();
   }
   const client = await authClientPromise;
   return await client.getRequestHeaders();
 }
 
-async function fetchVertexJson(url, options = {}, errorPrefix = 'Vertex request failed') {
-  const authHeaders = await getGoogleAuthHeaders();
+async function fetchVertexJson(config, url, options = {}, errorPrefix = 'Vertex request failed') {
+  const authHeaders = await getGoogleAuthHeaders(config);
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -162,8 +193,8 @@ async function fetchVertexJson(url, options = {}, errorPrefix = 'Vertex request 
   return data;
 }
 
-async function fetchVertexText(url, options = {}, errorPrefix = 'Vertex request failed') {
-  const authHeaders = await getGoogleAuthHeaders();
+async function fetchVertexText(config, url, options = {}, errorPrefix = 'Vertex request failed') {
+  const authHeaders = await getGoogleAuthHeaders(config);
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -194,6 +225,11 @@ function resolveVertexBatchConfig(cfg = {}, runtimeConfig = {}) {
     bucket: runtimeConfig.vertexBatchBucket
       || cfg.vertex_batch_bucket
       || process.env.VERTEX_BATCH_BUCKET
+      || '',
+    credentialsJson: runtimeConfig.vertexBatchCredentialsJson
+      || cfg.vertex_batch_credentials_json
+      || process.env.VERTEX_BATCH_CREDENTIALS_JSON
+      || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
       || '',
     inputPrefix: runtimeConfig.vertexBatchInputPrefix
       || cfg.vertex_batch_input_prefix
@@ -268,6 +304,7 @@ function isVertexBatchRemoteId(remoteId) {
 
 async function uploadTextToGcs(config, objectName, text, contentType = 'application/jsonl') {
   await fetchVertexJson(
+    config,
     `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(config.bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`,
     {
       method: 'POST',
@@ -282,6 +319,7 @@ async function uploadTextToGcs(config, objectName, text, contentType = 'applicat
 
 async function uploadBufferToGcs(config, objectName, buffer, contentType) {
   await fetchVertexJson(
+    config,
     `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(config.bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`,
     {
       method: 'POST',
@@ -305,6 +343,7 @@ async function createVertexBatchJob(config, {
     ? String(model)
     : `publishers/google/models/${model}`;
   return await fetchVertexJson(
+    config,
     `https://${endpointPrefix}aiplatform.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/locations/${encodeURIComponent(config.location)}/batchPredictionJobs`,
     {
       method: 'POST',
@@ -335,6 +374,7 @@ async function createVertexBatchJob(config, {
 async function getVertexBatchJob(config, remoteId) {
   const endpointPrefix = config.location === 'global' ? '' : `${config.location}-`;
   return await fetchVertexJson(
+    config,
     `https://${endpointPrefix}aiplatform.googleapis.com/v1/${remoteId}`,
     {},
     'Failed to fetch Vertex batch status'
@@ -351,7 +391,7 @@ async function listGcsObjects(config, prefix) {
     if (pageToken) {
       url.searchParams.set('pageToken', pageToken);
     }
-    const data = await fetchVertexJson(url.toString(), {}, 'Failed to list Vertex batch output objects');
+    const data = await fetchVertexJson(config, url.toString(), {}, 'Failed to list Vertex batch output objects');
     if (Array.isArray(data?.items)) {
       items.push(...data.items);
     }
@@ -371,6 +411,7 @@ async function downloadVertexBatchOutputs(config, outputPrefix) {
   const lines = [];
   for (const objectName of jsonlObjects) {
     const text = await fetchVertexText(
+      config,
       `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(config.bucket)}/o/${encodeURIComponent(objectName)}?alt=media`,
       {},
       'Failed to download Vertex batch output'
@@ -394,6 +435,7 @@ module.exports = {
   hashVertexRequest,
   isVertexBatchRemoteId,
   matchVertexCustomId,
+  normalizeVertexBatchCredentials,
   resolveVertexBatchConfig,
   sanitizeObjectSegment,
   stableJsonStringify,

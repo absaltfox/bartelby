@@ -46,7 +46,7 @@ API key. Batch transcription and batch extraction now use the native Vertex
 batch prediction API instead, which has different requirements:
 
 - Google Cloud bearer-token auth available to the app, typically through
-  Application Default Credentials
+  Application Default Credentials or a service-account JSON credential
 - a Google Cloud project ID
 - a Vertex batch location
 - a Cloud Storage bucket for staged inputs and outputs
@@ -58,11 +58,18 @@ You can configure those in Admin > LLM Settings, or via environment variables:
 | `VERTEX_BATCH_PROJECT_ID` | Google Cloud project for Vertex batch jobs |
 | `VERTEX_BATCH_LOCATION` | Vertex batch location such as `global` or `us-central1` |
 | `VERTEX_BATCH_BUCKET` | Cloud Storage bucket used for staged inputs and outputs |
+| `VERTEX_BATCH_CREDENTIALS_JSON` | Optional service-account JSON for batch auth when ambient ADC is not available |
 | `VERTEX_BATCH_INPUT_PREFIX` | Optional object prefix for request JSONL and uploaded page assets |
 | `VERTEX_BATCH_OUTPUT_PREFIX` | Optional object prefix for Vertex batch result files |
 
 `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` are also respected as
-fallbacks for project and location.
+fallbacks for project and location. `GOOGLE_APPLICATION_CREDENTIALS_JSON` is
+also supported as a JSON-credential fallback.
+
+In the admin UI, the optional Vertex batch credentials JSON is stored encrypted
+in the database using the same `DATA_ENCRYPTION_KEY` mechanism as provider API
+keys. This is the recommended way to configure Vertex batch auth on Fly when
+ambient Google credentials are not available.
 
 ## Production environment requirements
 
