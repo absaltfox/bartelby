@@ -275,7 +275,17 @@ async function tickGroupingJobs() {
       payload.tempFiles,
       payload.credentialSource,
       job.user_id,
-      { cropRegion: payload.cropRegion || 'top' }
+      {
+        cropRegion: payload.cropRegion || 'top',
+        onProgress: async ({ processedPages, totalPages }) => {
+          try {
+            await importJobsAsync.updateProgress(job.id, {
+              page_count: totalPages,
+              pages_rendered: processedPages
+            });
+          } catch (e) { /* non-fatal */ }
+        }
+      }
     );
 
     // Save as done with the resulting groups mapped into pages

@@ -103,6 +103,12 @@ async function runDocumentGrouping(providerNameInput, tempFiles, credentialSourc
     if (Array.isArray(result)) {
       pageAnnotations.push(...result);
     }
+    if (typeof opts.onProgress === 'function') {
+      opts.onProgress({
+        processedPages: Math.min(i + BATCH_SIZE, tempFiles.length),
+        totalPages: tempFiles.length
+      });
+    }
   }
 
   const groups = buildGroupsFromAnnotations(pageAnnotations, tempFiles);

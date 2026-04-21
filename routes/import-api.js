@@ -454,10 +454,6 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
   if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
     return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
   }
-  if (tempFiles.length > 2000) {
-    return res.status(400).json({ error: 'Too many pages (max 2000) for grouping analysis' });
-  }
-
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
