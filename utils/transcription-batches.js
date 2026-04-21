@@ -1075,5 +1075,11 @@ module.exports = {
   parseBatchManifest,
   pollTranscriptionBatch,
   submitTranscriptionBatch,
-  supportsBatchProvider
+  supportsBatchProvider,
+  fetchJson,
+  pollOpenAiBatch,
+  pollAnthropicBatch,
+  pollGeminiBatch,
+  pollVertexTranscriptionBatch,
+  isVertexBatchRemoteId
 };

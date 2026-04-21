@@ -679,5 +679,7 @@ module.exports = {
   generateDocumentTitle,
   generateDocumentSummary,
   generateTopicLabels,
-  validateLlmBaseUrl
+  validateLlmBaseUrl,
+  GROUPING_PROMPT,
+  getCheapVisionModelInstance
 };
