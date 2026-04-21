@@ -58,3 +58,10 @@ describe('cropPageStrip', () => {
     expect(result).toBeInstanceOf(Buffer);
   });
 });
+
+describe('cropPageStrip error handling', () => {
+  it('throws on invalid buffer so caller can log and skip', async () => {
+    const { cropPageStrip } = require('../../utils/grouping-llm');
+    await expect(cropPageStrip(Buffer.from('not an image'))).rejects.toThrow();
+  });
+});

@@ -71,8 +71,14 @@ async function runDocumentGrouping(providerNameInput, tempFiles, credentialSourc
         if (await tempAssetExists(safeName)) {
           rawBuffer = await readTempAsset(safeName);
         }
-      } catch (e) { continue; }
-      if (!rawBuffer) continue;
+      } catch (e) {
+        console.warn(`[grouping] page ${i + j + 1}: skipped (asset read failed: ${e.message})`);
+        continue;
+      }
+      if (!rawBuffer) {
+        console.warn(`[grouping] page ${i + j + 1}: skipped (asset not found: ${safeName})`);
+        continue;
+      }
 
       // Crop the requested strip(s) of the page
       try {
@@ -92,7 +98,7 @@ async function runDocumentGrouping(providerNameInput, tempFiles, credentialSourc
           );
         }
       } catch (e) {
-        // If cropping fails, skip this page rather than sending the full image
+        console.warn(`[grouping] page ${i + j + 1}: skipped (crop failed: ${e.message})`);
         continue;
       }
     }
@@ -109,6 +115,12 @@ async function runDocumentGrouping(providerNameInput, tempFiles, credentialSourc
         totalPages: tempFiles.length
       });
     }
+  }
+
+  const annotatedCount = pageAnnotations.length;
+  const skippedCount = tempFiles.length - annotatedCount;
+  if (skippedCount > 0) {
+    console.warn(`[grouping] ${skippedCount} of ${tempFiles.length} pages produced no annotation (skipped or unreadable)`);
   }
 
   const groups = buildGroupsFromAnnotations(pageAnnotations, tempFiles);
