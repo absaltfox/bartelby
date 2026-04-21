@@ -387,6 +387,7 @@ async function initializeSchema() {
     FROM import_jobs
     WHERE status = 'processing'
       AND COALESCE(job_kind, 'render') = 'grouping'
+      AND batch_remote_id IS NULL
   `);
   const staleGroupingImportCount = staleGroupingImports?.count || 0;
   if (staleGroupingImportCount > 0) {
@@ -398,8 +399,23 @@ async function initializeSchema() {
           completed_at = NULL
       WHERE status = 'processing'
         AND COALESCE(job_kind, 'render') = 'grouping'
+        AND batch_remote_id IS NULL
     `);
     console.log(`[db] Requeued ${staleGroupingImportCount} stale grouping job(s)`);
+  }
+
+  // Stale grouping batch jobs — provider may have completed while we were down.
+  // Leave them in processing so the poll tick can resume.
+  const staleGroupingBatches = await get(`
+    SELECT COUNT(*) as count
+    FROM import_jobs
+    WHERE status = 'processing'
+      AND COALESCE(job_kind, 'render') = 'grouping'
+      AND batch_remote_id IS NOT NULL
+  `);
+  const staleGroupingBatchCount = staleGroupingBatches?.count || 0;
+  if (staleGroupingBatchCount > 0) {
+    console.log(`[db] Leaving ${staleGroupingBatchCount} grouping batch job(s) in processing state for poll resume`);
   }
 
   const staleTranscriptions = await get(`
