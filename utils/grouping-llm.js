@@ -21,12 +21,12 @@ const MAX_DIM = 1999;    // Anthropic's many-image API limit: each dimension mus
  */
 async function cropPageStrip(buffer, opts = {}) {
   const { createCanvas, loadImage } = require('canvas');
-  const region = (opts && opts.region) || 'top';
+  const region = opts.region || 'top';
 
   const img = await loadImage(buffer);
   const cropHeight = Math.round(img.height * CROP_RATIO);
 
-  const _cropRegion = (srcY) => {
+  const renderStrip = (srcY) => {
     const scale = Math.min(1, MAX_DIM / img.width, MAX_DIM / cropHeight);
     const outW = Math.round(img.width * scale);
     const outH = Math.round(cropHeight * scale);
@@ -37,12 +37,12 @@ async function cropPageStrip(buffer, opts = {}) {
   };
 
   if (region === 'bottom') {
-    return _cropRegion(img.height - cropHeight);
+    return renderStrip(img.height - cropHeight);
   } else if (region === 'both') {
-    return [_cropRegion(0), _cropRegion(img.height - cropHeight)];
+    return [renderStrip(0), renderStrip(img.height - cropHeight)];
   } else {
     // default: 'top'
-    return _cropRegion(0);
+    return renderStrip(0);
   }
 }
 
