@@ -86,9 +86,18 @@ document.addEventListener('DOMContentLoaded', function() {
   let autoGroupingCompleted = false;
   let groupingStateSaveTimer = null;
   let isSyncingCollectionSelection = false;
+  let currentWizardFlow = 'single';
 
   const pagesProviderSelect    = document.getElementById('pages-provider');
   const pagesCredentialSelect  = document.getElementById('pages-credential');
+  const stepPagesCollectionContainer = document.getElementById('step-pages-collection-checkboxes');
+  const stepPagesCollectionTools = document.getElementById('step-pages-collection-tools');
+  const stepPagesCollectionSearch = document.getElementById('step-pages-collection-search');
+  const stepPagesSelectVisibleBtn = document.getElementById('step-pages-select-visible');
+  const stepPagesClearSelectionsBtn = document.getElementById('step-pages-clear-selections');
+  const stepPagesShowSelectedOnly = document.getElementById('step-pages-show-selected-only');
+  const stepPagesSelectedCount = document.getElementById('step-pages-selected-count');
+  const stepPagesCollectionEmpty = document.getElementById('step-pages-collection-empty');
 
   function refreshCredentialOptions() {
     if (!providerSelect || !credentialSelect) return;
@@ -173,7 +182,10 @@ document.addEventListener('DOMContentLoaded', function() {
   updateModeUI();
 
   document.querySelectorAll('.page-collection-cb').forEach((cb) => {
-    cb.addEventListener('change', handlePageCollectionSelectionChange);
+    cb.addEventListener('change', async () => {
+      await handlePageCollectionSelectionChange();
+      updateStepPagesCollectionListUI();
+    });
   });
 
   document.querySelectorAll('.review-collection-cb').forEach((cb) => {
@@ -185,6 +197,8 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   });
 
+  initStepPagesCollectionTools();
+
   function isManualMode() { return modeManual && modeManual.checked; }
 
   const stepUpload     = document.getElementById('step-upload');
@@ -192,6 +206,10 @@ document.addEventListener('DOMContentLoaded', function() {
   const stepProcessing = document.getElementById('step-processing');
   const stepReview     = document.getElementById('step-review');
   const stepComplete   = document.getElementById('step-complete');
+  const stepNumberUpload = document.getElementById('step-number-upload');
+  const stepNumberPages = document.getElementById('step-number-pages');
+  const stepNumberProcessing = document.getElementById('step-number-processing');
+  const stepNumberReview = document.getElementById('step-number-review');
 
   const previewImage   = document.getElementById('preview-image');
   const reviewPreview  = document.getElementById('review-preview');
@@ -215,6 +233,16 @@ document.addEventListener('DOMContentLoaded', function() {
   // Multi-document queue (PDF groups)
   let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
 
+  function updateWizardStepNumbers() {
+    const isPdfFlow = currentWizardFlow === 'pdf';
+    if (stepNumberUpload) stepNumberUpload.textContent = '1';
+    if (stepNumberProcessing) stepNumberProcessing.textContent = '2';
+    if (stepNumberPages) stepNumberPages.textContent = '3';
+    if (stepNumberReview) stepNumberReview.textContent = isPdfFlow ? '4' : '3';
+  }
+
+  updateWizardStepNumbers();
+
   if (errorCloseBtn) {
     errorCloseBtn.addEventListener('click', hideError);
   }
@@ -234,6 +262,105 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     isSyncingCollectionSelection = false;
     lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
+    updateStepPagesCollectionListUI();
+  }
+
+  function getStepPagesCollectionRows() {
+    if (!stepPagesCollectionContainer) return [];
+    return Array.from(stepPagesCollectionContainer.querySelectorAll('.step-pages-collection-item'));
+  }
+
+  function updateStepPagesCollectionListUI() {
+    const rows = getStepPagesCollectionRows();
+    if (rows.length === 0) return;
+
+    const query = (stepPagesCollectionSearch ? stepPagesCollectionSearch.value : '').trim().toLowerCase();
+    const showSelectedOnly = !!(stepPagesShowSelectedOnly && stepPagesShowSelectedOnly.checked);
+    const totalCount = rows.length;
+    let selectedCount = 0;
+    let visibleCount = 0;
+
+    rows.forEach((row, index) => {
+      const checkbox = row.querySelector('.page-collection-cb');
+      if (!checkbox) return;
+
+      const isSelected = !!checkbox.checked;
+      const name = (checkbox.dataset.name || '').toLowerCase();
+      const description = (checkbox.dataset.description || '').toLowerCase();
+      const matchesQuery = !query || name.includes(query) || description.includes(query);
+      const shouldShow = !!(matchesQuery && (!showSelectedOnly || isSelected));
+
+      if (isSelected) selectedCount += 1;
+      if (shouldShow) visibleCount += 1;
+
+      row.classList.toggle('is-hidden', !shouldShow);
+      row.style.order = isSelected
+        ? String(index - totalCount)
+        : String(index + totalCount);
+    });
+
+    if (stepPagesSelectedCount) {
+      stepPagesSelectedCount.textContent = `${selectedCount} of ${totalCount} selected`;
+    }
+
+    if (stepPagesSelectVisibleBtn) {
+      stepPagesSelectVisibleBtn.disabled = visibleCount === 0;
+    }
+
+    if (stepPagesClearSelectionsBtn) {
+      stepPagesClearSelectionsBtn.disabled = selectedCount === 0;
+    }
+
+    setHidden(stepPagesCollectionEmpty, visibleCount !== 0);
+  }
+
+  function initStepPagesCollectionTools() {
+    const rows = getStepPagesCollectionRows();
+    if (rows.length === 0) return;
+
+    const showAdvancedControls = rows.length > 8;
+    setHidden(stepPagesCollectionTools, !showAdvancedControls);
+
+    if (stepPagesCollectionSearch) {
+      stepPagesCollectionSearch.addEventListener('input', updateStepPagesCollectionListUI);
+    }
+
+    if (stepPagesShowSelectedOnly) {
+      stepPagesShowSelectedOnly.addEventListener('change', updateStepPagesCollectionListUI);
+    }
+
+    if (stepPagesSelectVisibleBtn) {
+      stepPagesSelectVisibleBtn.addEventListener('click', async () => {
+        let changed = false;
+        getStepPagesCollectionRows().forEach((row) => {
+          if (row.classList.contains('is-hidden')) return;
+          const checkbox = row.querySelector('.page-collection-cb');
+          if (!checkbox || checkbox.checked) return;
+          checkbox.checked = true;
+          changed = true;
+        });
+        if (!changed) return;
+        await handlePageCollectionSelectionChange();
+        updateStepPagesCollectionListUI();
+      });
+    }
+
+    if (stepPagesClearSelectionsBtn) {
+      stepPagesClearSelectionsBtn.addEventListener('click', async () => {
+        let changed = false;
+        getStepPagesCollectionRows().forEach((row) => {
+          const checkbox = row.querySelector('.page-collection-cb');
+          if (!checkbox || !checkbox.checked) return;
+          checkbox.checked = false;
+          changed = true;
+        });
+        if (!changed) return;
+        await handlePageCollectionSelectionChange();
+        updateStepPagesCollectionListUI();
+      });
+    }
+
+    updateStepPagesCollectionListUI();
   }
 
   function selectedCollectionEnablesAutoGrouping(selector) {
@@ -533,6 +660,9 @@ document.addEventListener('DOMContentLoaded', function() {
       showError('Please select an image or PDF file.');
       return;
     }
+
+    currentWizardFlow = isPdf ? 'pdf' : 'single';
+    updateWizardStepNumbers();
 
     showStep('processing');
     processingText.textContent = 'Uploading file...';
@@ -854,7 +984,7 @@ document.addEventListener('DOMContentLoaded', function() {
       groupingProviderSelect.appendChild(opt);
     });
 
-    // Default to the step-1b provider/credential (authoritative for transcription)
+    // Default to the Step "Organize Pages" provider/credential (authoritative for transcription)
     const defaultProvider = (pagesProviderSelect && pagesProviderSelect.value)
       ? pagesProviderSelect.value
       : (providerSelect ? providerSelect.value : null);
@@ -1274,6 +1404,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     documentQueue = [];
     currentQueueIndex = -1;
+    currentWizardFlow = 'single';
+    updateWizardStepNumbers();
     reviewForm.reset();
     fileInput.value = '';
     showStep('upload');
@@ -1334,6 +1466,8 @@ document.addEventListener('DOMContentLoaded', function() {
   const resumeJob = getResumeImportJob();
   if (resumeJob && Array.isArray(resumeJob.pages) && resumeJob.pages.length > 0) {
     const job = resumeJob;
+    currentWizardFlow = 'pdf';
+    updateWizardStepNumbers();
     importJobId = job.id;
     originalName = job.originalName || 'document.pdf';
     setTempPreviews(job.pages);

@@ -3,12 +3,13 @@
   var selectedCollectionId = typeof selectedCollectionId !== 'undefined' ? selectedCollectionId : null;
   var noProvidersHint = typeof noProvidersHint !== 'undefined' ? noProvidersHint : '';
   var collectionsEmptyHint = typeof collectionsEmptyHint !== 'undefined' ? collectionsEmptyHint : '';
+  var stepPagesCollectionMode = collections.length > 18 ? 'dense' : (collections.length > 6 ? 'compact' : 'comfortable');
 %>
 
 <!-- Step 1: Upload -->
 <div id="step-upload" class="import-step active">
   <div class="step-header">
-    <span class="step-number">1</span>
+    <span class="step-number" id="step-number-upload">1</span>
     <span class="step-title">Upload File</span>
   </div>
 
@@ -69,48 +70,71 @@
   </div>
 </div>
 
-<!-- Step 1b: PDF Page Management -->
+<!-- Step: PDF Page Management -->
 <div id="step-pages" class="import-step">
   <div class="step-header">
-    <span class="step-number">1b</span>
+    <span class="step-number" id="step-number-pages">3</span>
     <span class="step-title">Organize Pages</span>
   </div>
 
   <div class="step-intro">
-    <p class="step-subtitle">Your PDF has been split into individual pages.</p>
-    <p class="step-subtitle-detail">Select pages and group them when they belong to the same document. Any ungrouped pages will be imported individually, and you can click any thumbnail to zoom in.</p>
-
-    <% if (!hasNoProviders) { %>
-      <div class="step-pages-collections">
-        <h3>AI Model for Transcription</h3>
-        <div class="provider-select-row">
-          <div class="provider-select">
-            <label for="pages-provider">Provider</label>
-            <select id="pages-provider"></select>
-          </div>
-          <div class="provider-select">
-            <label for="pages-credential">Credentials</label>
-            <select id="pages-credential"></select>
-          </div>
-        </div>
+    <div class="step-intro-grid">
+      <div class="step-intro-copy">
+        <p class="step-subtitle">Your PDF has been split into individual pages.</p>
+        <p class="step-subtitle-detail">Select pages and group them when they belong to the same document. Any ungrouped pages will be imported individually, and you can click any thumbnail to zoom in.</p>
       </div>
-    <% } %>
 
-    <% if (collections.length > 0) { %>
-      <div class="step-pages-collections">
-        <h3>Add Imported Documents To</h3>
-        <div class="collection-checkboxes" id="step-pages-collection-checkboxes">
-          <% collections.forEach(function(c) { %>
-            <label class="collection-access-item">
-              <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" <%= selectedCollectionId === c.id ? 'checked' : '' %>>
-              <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
-            </label>
-          <% }) %>
-        </div>
+      <div class="step-intro-controls">
+        <% if (!hasNoProviders) { %>
+          <div class="step-pages-collections">
+            <h3>AI Model for Transcription</h3>
+            <div class="provider-select-row">
+              <div class="provider-select">
+                <label for="pages-provider">Provider</label>
+                <select id="pages-provider"></select>
+              </div>
+              <div class="provider-select">
+                <label for="pages-credential">Credentials</label>
+                <select id="pages-credential"></select>
+              </div>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (collections.length > 0) { %>
+          <div class="step-pages-collections step-pages-collections--assignment">
+            <div class="step-pages-collections-head">
+              <h3>Add Imported Documents To</h3>
+              <p id="step-pages-selected-count" class="step-pages-selected-count" aria-live="polite"></p>
+            </div>
+            <div id="step-pages-collection-tools" class="step-pages-collection-tools is-hidden">
+              <label for="step-pages-collection-search" class="sr-only">Search collections</label>
+              <input type="search" id="step-pages-collection-search" class="step-pages-collection-search" placeholder="Find collection">
+              <div class="step-pages-collection-actions">
+                <button type="button" class="btn-secondary btn-sm" id="step-pages-select-visible">Select visible</button>
+                <button type="button" class="btn-secondary btn-sm" id="step-pages-clear-selections">Clear all</button>
+                <label class="step-pages-show-selected">
+                  <input type="checkbox" id="step-pages-show-selected-only">
+                  <span>Show selected only</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="collection-checkboxes step-pages-collection-list step-pages-collection-list--<%= stepPagesCollectionMode %>" id="step-pages-collection-checkboxes">
+              <% collections.forEach(function(c) { %>
+                <label class="collection-access-item step-pages-collection-item">
+                  <input type="checkbox" class="page-collection-cb" data-id="<%= c.id %>" data-auto-group="<%= c.auto_group_pages ? '1' : '0' %>" data-name="<%= c.name %>" data-description="<%= c.description || '' %>" <%= selectedCollectionId === c.id ? 'checked' : '' %>>
+                  <span><strong><%= c.name %></strong><% if (c.description) { %> <small class="muted">— <%= c.description %></small><% } %></span>
+                </label>
+              <% }) %>
+            </div>
+            <p id="step-pages-collection-empty" class="field-hint is-hidden">No collections match this filter.</p>
+          </div>
+        <% } else if (collectionsEmptyHint) { %>
+          <p class="field-hint"><%- collectionsEmptyHint %></p>
+        <% } %>
       </div>
-    <% } else if (collectionsEmptyHint) { %>
-      <p class="field-hint"><%- collectionsEmptyHint %></p>
-    <% } %>
+    </div>
   </div>
 
   <div class="page-manager">
@@ -155,10 +179,10 @@
   </div>
 </div>
 
-<!-- Step 2: Processing -->
+<!-- Step: Processing -->
 <div id="step-processing" class="import-step">
   <div class="step-header">
-    <span class="step-number">2</span>
+    <span class="step-number" id="step-number-processing">2</span>
     <span class="step-title">Processing</span>
   </div>
 
@@ -180,10 +204,10 @@
   </div>
 </div>
 
-<!-- Step 3: Configure & Save -->
+<!-- Step: Configure & Save -->
 <div id="step-review" class="import-step">
   <div class="step-header">
-    <span class="step-number">3</span>
+    <span class="step-number" id="step-number-review">3</span>
     <span class="step-title">Configure &amp; Save</span>
   </div>
 
@@ -287,7 +311,7 @@
   </div>
 </div>
 
-<!-- Step 4: Complete -->
+<!-- Step: Complete -->
 <div id="step-complete" class="import-step">
   <div class="step-header">
     <span class="step-number">&#10003;</span>
