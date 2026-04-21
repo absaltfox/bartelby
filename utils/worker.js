@@ -269,12 +269,13 @@ async function tickGroupingJobs() {
     payload.tempFiles = durableTempFiles;
 
     const { runDocumentGrouping } = require('./grouping-llm');
-    
+
     const groupingResult = await runDocumentGrouping(
       payload.provider,
       payload.tempFiles,
       payload.credentialSource,
-      job.user_id
+      job.user_id,
+      { cropRegion: payload.cropRegion || 'top' }
     );
 
     // Save as done with the resulting groups mapped into pages
