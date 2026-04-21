@@ -100,6 +100,14 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - Lower-confidence citations remain hidden until a human approves them
 - Review now handles three evidence kinds:
   entity evidence, relationship evidence, and date-expression evidence
+- Review cards show primary citation text plus supporting subject snippets when
+  a claim span does not clearly anchor all involved entities
+- The review queue can be filtered by evidence/entity type (for example date,
+  relationship, person, or place) without leaving the page
+- Relationship review explicitly surfaces source/target mention context so
+  reviewers can verify that both sides of the edge are evidenced
+- Review actions (approve/reject/delete) support in-place updates via JSON so
+  triage can continue without full-page reload jumps
 - Citations can later be approved, rejected, or deleted from the admin UI
 - Review operates on citation evidence, not on the entity nodes alone
 - Date citations may link directly to `date_expressions` through

@@ -1,5 +1,15 @@
 'use strict';
 const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
+const REVIEW_KIND_ENTITY_TYPES = new Set([
+  'person',
+  'place',
+  'event',
+  'organization',
+  'topic',
+  'artifact',
+  'claim',
+  'document'
+]);
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, isFts5Available = () => false) => {
 const entities = {
@@ -640,13 +650,16 @@ const citations = {
       ? buildAccessibleDocumentFilter(opts, 'c.document_id')
       : { clause: '1=1', params: [] };
     const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
+    const kindFilter = buildReviewKindFilter(opts.reviewKind, 'c', 'e');
     const rows = await allAsync(`
       SELECT c.approval_status, COUNT(*) AS count
       FROM citations c
+      LEFT JOIN entities e ON e.id = c.entity_id
       WHERE (${access.clause})
         AND (${collection.clause})
+        AND (${kindFilter.clause})
       GROUP BY c.approval_status
-    `, [...access.params, ...collection.params]);
+    `, [...access.params, ...collection.params, ...kindFilter.params]);
     return rows.reduce((acc, row) => {
       acc[row.approval_status || CITATION_APPROVAL_STATUSES.PENDING] = row.count;
       return acc;
@@ -662,7 +675,8 @@ const citations = {
       ? buildAccessibleDocumentFilter(opts, 'c.document_id')
       : { clause: '1=1', params: [] };
     const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
-    const params = [...access.params, ...collection.params];
+    const kindFilter = buildReviewKindFilter(opts.reviewKind, 'c', 'e');
+    const params = [...access.params, ...collection.params, ...kindFilter.params];
     const statusClause = status === 'all'
       ? ''
       : ' AND c.approval_status = ?';
@@ -689,6 +703,18 @@ const citations = {
         se.entity_type AS source_type,
         te.canonical_name AS target_name,
         te.entity_type AS target_type,
+        ec.id AS entity_support_citation_id,
+        ec.passage_text AS entity_support_passage_text,
+        ec.passage_start AS entity_support_passage_start,
+        ec.passage_end AS entity_support_passage_end,
+        sec.id AS source_support_citation_id,
+        sec.passage_text AS source_support_passage_text,
+        sec.passage_start AS source_support_passage_start,
+        sec.passage_end AS source_support_passage_end,
+        tec.id AS target_support_citation_id,
+        tec.passage_text AS target_support_passage_text,
+        tec.passage_start AS target_support_passage_start,
+        tec.passage_end AS target_support_passage_end,
         d.title AS document_title
       FROM citations c
       LEFT JOIN entities e ON e.id = c.entity_id
@@ -696,9 +722,43 @@ const citations = {
       LEFT JOIN relationships r ON r.id = c.relationship_id
       LEFT JOIN entities se ON se.id = r.source_entity_id
       LEFT JOIN entities te ON te.id = r.target_entity_id
+      LEFT JOIN citations ec ON ec.id = (
+        SELECT c2.id
+        FROM citations c2
+        WHERE c2.entity_id = c.entity_id
+          AND c2.transcript_id = c.transcript_id
+          AND c2.id != c.id
+          AND c2.relationship_id IS NULL
+          AND c2.date_expression_id IS NULL
+        ORDER BY ABS(COALESCE(c2.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c2.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN citations sec ON sec.id = (
+        SELECT c3.id
+        FROM citations c3
+        WHERE c3.entity_id = r.source_entity_id
+          AND c3.transcript_id = c.transcript_id
+          AND c3.id != c.id
+          AND c3.relationship_id IS NULL
+          AND c3.date_expression_id IS NULL
+        ORDER BY ABS(COALESCE(c3.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c3.id DESC
+        LIMIT 1
+      )
+      LEFT JOIN citations tec ON tec.id = (
+        SELECT c4.id
+        FROM citations c4
+        WHERE c4.entity_id = r.target_entity_id
+          AND c4.transcript_id = c.transcript_id
+          AND c4.id != c.id
+          AND c4.relationship_id IS NULL
+          AND c4.date_expression_id IS NULL
+        ORDER BY ABS(COALESCE(c4.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c4.id DESC
+        LIMIT 1
+      )
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE (${access.clause})
         AND (${collection.clause})
+        AND (${kindFilter.clause})
         ${statusClause}
       ORDER BY c.created_at DESC
       LIMIT ?
@@ -1242,6 +1302,43 @@ function buildKnowledgeCitationVisibilityFilter(opts = {}, citationAlias = 'c', 
     clause: `(${access.clause}) AND (${collection.clause}) AND ${citationAlias}.approval_status = ?`,
     params: [...access.params, ...collection.params, CITATION_APPROVAL_STATUSES.APPROVED]
   };
+}
+
+function buildReviewKindFilter(reviewKind, citationAlias = 'c', entityAlias = 'e') {
+  const normalized = String(reviewKind || '').trim().toLowerCase();
+  if (!normalized || normalized === 'all') {
+    return { clause: '1=1', params: [] };
+  }
+
+  if (normalized === 'date') {
+    return {
+      clause: `${citationAlias}.date_expression_id IS NOT NULL`,
+      params: []
+    };
+  }
+
+  if (normalized === 'relationship') {
+    return {
+      clause: `${citationAlias}.relationship_id IS NOT NULL`,
+      params: []
+    };
+  }
+
+  if (normalized === 'entity') {
+    return {
+      clause: `${citationAlias}.relationship_id IS NULL AND ${citationAlias}.date_expression_id IS NULL`,
+      params: []
+    };
+  }
+
+  if (REVIEW_KIND_ENTITY_TYPES.has(normalized)) {
+    return {
+      clause: `${entityAlias}.entity_type = ?`,
+      params: [normalized]
+    };
+  }
+
+  return { clause: '1=1', params: [] };
 }
 
 function buildCitationQueryConditions(opts = {}, alias = 'c') {

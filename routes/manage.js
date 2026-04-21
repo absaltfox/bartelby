@@ -360,6 +360,7 @@ router.post('/collections/:collectionId/users/:userId/revoke', requireCollection
 // ── Import document into a managed collection ────────────────────────────────
 router.get('/collections/:collectionId/import', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
+  const { getImportableCollectionIds } = require('../utils/import-workflow');
   const collectionId = parseInt(req.params.collectionId);
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
@@ -376,14 +377,17 @@ router.get('/collections/:collectionId/import', requireCollectionRole('manager')
     );
   };
 
-  // Get all collections this manager manages (for collection picker)
-  const managedIds = await getManagedIds(req);
-  let managedCollections;
-  if (managedIds === null) {
-    managedCollections = await collectionsAsync.getAll();
-  } else {
-    const all = await collectionsAsync.getAll();
-    managedCollections = all.filter(c => managedIds.includes(c.id));
+  // Collection picker only shows collections this user can import into.
+  const allCollections = await collectionsAsync.getAll();
+  const importableCollectionIds = await getImportableCollectionIds(req, {
+    allCollectionIds: allCollections.map((row) => row.id)
+  });
+  const managedCollections = allCollections.filter((row) => importableCollectionIds.includes(row.id));
+  if (!importableCollectionIds.includes(collectionId)) {
+    return res.status(403).render('error', {
+      message: 'You do not have permission to import into this collection.',
+      error: {}
+    });
   }
 
   // Resume from import job if applicable

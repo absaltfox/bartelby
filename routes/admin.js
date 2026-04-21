@@ -277,6 +277,7 @@ router.post('/application-settings', withCsrf(svgUpload.fields([
 // Import page
 router.get('/import', asyncHandler(async (req, res) => {
   const { buildProviderAccessOptionsAsync } = require('../utils/provider-access');
+  const { getImportableCollectionIds } = require('../utils/import-workflow');
   const providerOptions = await buildProviderAccessOptionsAsync(req.user);
   const defaultProvider = await settingsAsync.get('default_provider');
   const isResumableImportJob = (job) => {
@@ -311,11 +312,21 @@ router.get('/import', asyncHandler(async (req, res) => {
     }
   }
 
+  const allCollections = await collectionsAsync.getAll();
+  const importableCollectionIds = await getImportableCollectionIds(req, {
+    allCollectionIds: allCollections.map((collection) => collection.id)
+  });
+  const importableCollections = allCollections.filter((collection) => importableCollectionIds.includes(collection.id));
+  const collectionsEmptyHint = importableCollections.length > 0
+    ? ''
+    : 'No collections are available for import. You need manager access on at least one collection before adding documents.';
+
   res.render('admin/import', {
     pageTitle: 'Import Document',
     providerOptions,
     hasNoProviders: providerOptions.length === 0,
-    allCollections: await collectionsAsync.getAll(),
+    allCollections: importableCollections,
+    collectionsEmptyHint,
     resumeJob,
     importConfig: {
       apiBase: '/admin/api',

@@ -15,37 +15,63 @@
   <% if (typeof confirmed !== 'undefined' && confirmed) { %><div class="alert alert-success">Citation approved.</div><% } %>
   <% if (typeof rejected !== 'undefined' && rejected) { %><div class="alert alert-success">Citation rejected.</div><% } %>
   <% if (typeof deleted !== 'undefined' && deleted) { %><div class="alert alert-success">Citation deleted.</div><% } %>
+  <div class="alert is-hidden" data-review-live-message role="status" aria-live="polite"></div>
 
   <%
-    function reviewHref(targetStatus, targetPage) {
+    function reviewHref(targetStatus, targetPage, targetKind) {
       var params = [];
       if (targetStatus && targetStatus !== 'pending') params.push('status=' + encodeURIComponent(targetStatus));
+      var effectiveKind = targetKind || reviewKind || 'all';
+      if (effectiveKind && effectiveKind !== 'all') params.push('kind=' + encodeURIComponent(effectiveKind));
       if (targetPage && targetPage > 1) params.push('page=' + encodeURIComponent(targetPage));
       return '/admin/knowledge/review-extractions' + (params.length ? '?' + params.join('&') : '');
+    }
+
+    var summaryTail = '';
+    if (approvalStatus === 'pending') {
+      summaryTail = 'Approval makes pending evidence eligible to appear in the visible knowledge graph.';
+    } else if (approvalStatus === 'approved') {
+      summaryTail = 'Already-visible evidence can still be revisited or removed here.';
+    } else if (approvalStatus === 'rejected') {
+      summaryTail = 'Rejected evidence stays hidden from the graph until it is approved.';
+    } else {
+      summaryTail = 'Use the status tabs to narrow the queue when you are triaging specific states.';
     }
   %>
 
   <div class="knowledge-toolbar review-extractions-toolbar">
     <div class="review-status-tabs" role="tablist" aria-label="Extraction review status">
-      <a href="<%= reviewHref('pending', 1) %>" class="review-status-tab <%= approvalStatus === 'pending' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'pending' ? 'true' : 'false' %>">
-        Pending <span class="review-status-count"><%= statusCounts.pending || 0 %></span>
+      <a href="<%= reviewHref('pending', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'pending' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'pending' ? 'true' : 'false' %>" data-review-status-tab data-status="pending">
+        Pending <span class="review-status-count" data-review-status-count data-status="pending"><%= statusCounts.pending || 0 %></span>
       </a>
-      <a href="<%= reviewHref('approved', 1) %>" class="review-status-tab <%= approvalStatus === 'approved' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'approved' ? 'true' : 'false' %>">
-        Approved <span class="review-status-count"><%= statusCounts.approved || 0 %></span>
+      <a href="<%= reviewHref('approved', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'approved' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'approved' ? 'true' : 'false' %>" data-review-status-tab data-status="approved">
+        Approved <span class="review-status-count" data-review-status-count data-status="approved"><%= statusCounts.approved || 0 %></span>
       </a>
-      <a href="<%= reviewHref('rejected', 1) %>" class="review-status-tab <%= approvalStatus === 'rejected' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'rejected' ? 'true' : 'false' %>">
-        Rejected <span class="review-status-count"><%= statusCounts.rejected || 0 %></span>
+      <a href="<%= reviewHref('rejected', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'rejected' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'rejected' ? 'true' : 'false' %>" data-review-status-tab data-status="rejected">
+        Rejected <span class="review-status-count" data-review-status-count data-status="rejected"><%= statusCounts.rejected || 0 %></span>
       </a>
-      <a href="<%= reviewHref('all', 1) %>" class="review-status-tab <%= approvalStatus === 'all' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'all' ? 'true' : 'false' %>">
-        All <span class="review-status-count"><%= totalCount %></span>
+      <a href="<%= reviewHref('all', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'all' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'all' ? 'true' : 'false' %>" data-review-status-tab data-status="all">
+        All <span class="review-status-count" data-review-status-count data-status="all"><%= totalCount %></span>
       </a>
     </div>
     <div class="knowledge-toolbar-actions">
+      <form method="GET" action="/admin/knowledge/review-extractions" class="admin-search-form review-filter-form">
+        <% if (approvalStatus && approvalStatus !== 'pending') { %>
+          <input type="hidden" name="status" value="<%= approvalStatus %>">
+        <% } %>
+        <label for="review_kind_filter" class="review-filter-label">Filter type</label>
+        <select id="review_kind_filter" name="kind" class="review-filter-select" data-submit-on-change="1" aria-label="Filter review queue by evidence or entity type">
+          <% (reviewKindOptions || []).forEach(function(option) { %>
+            <option value="<%= option.value %>" <%= option.value === (reviewKind || 'all') ? 'selected' : '' %>><%= option.label %></option>
+          <% }) %>
+        </select>
+        <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
+      </form>
       <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
     </div>
   </div>
 
-  <section class="settings-section review-extractions-panel">
+  <section class="settings-section review-extractions-panel" data-review-panel data-active-status="<%= approvalStatus %>" data-total-count="<%= totalCount %>">
     <div class="review-extractions-panel-header">
       <div>
         <p class="kg-panel-eyebrow">Queue</p>
@@ -61,16 +87,11 @@
           <% } %>
         </h2>
         <p class="subtitle">
-          Showing <%= reviewItems.length %> of <%= totalCount %> citation<%= totalCount === 1 ? '' : 's' %>.
-          <% if (approvalStatus === 'pending') { %>
-            Approval makes pending evidence eligible to appear in the visible knowledge graph.
-          <% } else if (approvalStatus === 'approved') { %>
-            Already-visible evidence can still be revisited or removed here.
-          <% } else if (approvalStatus === 'rejected') { %>
-            Rejected evidence stays hidden from the graph until it is approved.
-          <% } else { %>
-            Use the status tabs to narrow the queue when you are triaging specific states.
+          Showing <span data-review-visible-count><%= reviewItems.length %></span> of <span data-review-total-count><%= totalCount %></span> citation<span data-review-total-plural><%= totalCount === 1 ? '' : 's' %></span>.
+          <% if (reviewKind && reviewKind !== 'all') { %>
+            Filtered by <strong><%= reviewKindLabel %></strong>.
           <% } %>
+          <span data-review-summary-tail><%= summaryTail %></span>
         </p>
       </div>
     </div>
@@ -78,7 +99,7 @@
     <% if (reviewItems.length === 0) { %>
       <div class="empty-state">
         <% if (approvalStatus === 'pending') { %>
-          <p>No extraction evidence is waiting for review right now.</p>
+          <p>No extraction evidence is waiting for review right now<%= reviewKind && reviewKind !== 'all' ? ' for this filter' : '' %>.</p>
           <p class="muted">New low-confidence extractions will appear here automatically, while high-confidence evidence is auto-approved.</p>
           <p><a href="/admin/knowledge">Return to Knowledge overview</a> or <a href="/admin/jobs?type=extraction">check extraction jobs</a>.</p>
         <% } else if (approvalStatus === 'approved') { %>
@@ -95,7 +116,7 @@
     <% } else { %>
       <div class="review-extraction-list">
         <% reviewItems.forEach(function(item) { %>
-          <article class="review-extraction-card">
+          <article class="review-extraction-card" data-review-card data-citation-id="<%= item.id %>" data-citation-status="<%= item.approval_status || 'pending' %>" data-kind="<%= item.kind %>">
             <div class="review-extraction-card-header">
               <div class="review-extraction-title-group">
                 <p class="kg-panel-eyebrow"><%= item.kind_label %></p>
@@ -123,11 +144,21 @@
             </div>
 
             <div class="review-extraction-evidence">
-              <div class="review-extraction-section-label">Evidence</div>
-              <% if (item.passage_text) { %>
-                <blockquote class="graph-citation-quote"><%= item.passage_text %></blockquote>
+              <div class="review-extraction-section-label">Evidence to review</div>
+              <% if (item.evidence_blocks && item.evidence_blocks.length) { %>
+                <% item.evidence_blocks.forEach(function(block) { %>
+                  <div class="review-evidence-block">
+                    <p class="review-evidence-block-label"><%= block.label %></p>
+                    <blockquote class="graph-citation-quote"><%= block.text %></blockquote>
+                  </div>
+                <% }) %>
               <% } else { %>
                 <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
+              <% } %>
+              <% if (item.review_notes && item.review_notes.length) { %>
+                <% item.review_notes.forEach(function(note) { %>
+                  <p class="review-evidence-note <%= note.tone ? ('review-evidence-note--' + note.tone) : '' %>"><%= note.text %></p>
+                <% }) %>
               <% } %>
             </div>
 
@@ -152,38 +183,44 @@
               <div class="review-extraction-actions">
                 <div class="review-extraction-decisions">
                   <% if (item.approval_status !== 'approved') { %>
-                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/confirm" class="inline-form">
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/confirm" class="inline-form" data-review-action-form="1" data-review-action="approve">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="status" value="<%= approvalStatus %>">
+                      <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
                       <input type="hidden" name="page" value="<%= currentPage %>">
-                      <button type="submit" class="btn-primary btn-sm">Approve</button>
+                      <button type="submit" class="btn-primary btn-sm" data-review-action-button>Approve</button>
                     </form>
                   <% } %>
                   <% if (item.approval_status !== 'rejected') { %>
-                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/reject" class="inline-form" data-confirm-message="Reject this evidence claim?">
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/reject" class="inline-form" data-confirm-message="Reject this evidence claim?" data-review-action-form="1" data-review-action="reject">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="status" value="<%= approvalStatus %>">
+                      <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
                       <input type="hidden" name="page" value="<%= currentPage %>">
-                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
+                      <button type="submit" class="btn-secondary btn-sm" data-review-action-button>Reject</button>
                     </form>
                   <% } %>
                 </div>
-                <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/delete" class="inline-form" data-confirm-message="Delete this evidence permanently?">
+                <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/delete" class="inline-form" data-confirm-message="Delete this evidence permanently?" data-review-action-form="1" data-review-action="delete">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <input type="hidden" name="status" value="<%= approvalStatus %>">
+                  <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
                   <input type="hidden" name="page" value="<%= currentPage %>">
-                  <button type="submit" class="btn-danger btn-sm">Delete evidence</button>
+                  <button type="submit" class="btn-danger btn-sm" data-review-action-button>Delete evidence</button>
                 </form>
               </div>
             </div>
           </article>
         <% }) %>
       </div>
+      <p class="graph-empty-state graph-empty-state--compact review-empty-inline is-hidden" data-review-inline-empty>
+        No more citations remain in this page view. Use status tabs or pagination to continue triage.
+      </p>
 
       <% if (totalPages > 1) { %>
         <div class="pagination">
           <% if (currentPage > 1) { %>
-            <a href="<%= reviewHref(approvalStatus, currentPage - 1) %>" class="pagination-btn">&lsaquo; Prev</a>
+            <a href="<%= reviewHref(approvalStatus, currentPage - 1, reviewKind) %>" class="pagination-btn">&lsaquo; Prev</a>
           <% } else { %>
             <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
           <% } %>
@@ -192,7 +229,7 @@
             <span class="muted">(<%= totalCount %> citations)</span>
           </span>
           <% if (currentPage < totalPages) { %>
-            <a href="<%= reviewHref(approvalStatus, currentPage + 1) %>" class="pagination-btn">Next &rsaquo;</a>
+            <a href="<%= reviewHref(approvalStatus, currentPage + 1, reviewKind) %>" class="pagination-btn">Next &rsaquo;</a>
           <% } else { %>
             <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
           <% } %>
@@ -202,4 +239,5 @@
   </section>
 </div>
 
+<script src="/js/review-extractions.js"></script>
 <%- include('../partials/footer') %>

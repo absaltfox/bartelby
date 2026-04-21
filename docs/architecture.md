@@ -61,7 +61,8 @@ metadata and graph relationships that are built from them over time.
 
 1. A user uploads a document.
 2. The import pipeline renders or extracts page images.
-3. The user reviews or groups pages.
+3. The user reviews or groups pages and can assign collections from the subset
+   they are authorized to import into.
 4. A transcription job is queued or submitted as a provider batch job.
 5. The resulting transcript is stored as the best transcript for the document.
 

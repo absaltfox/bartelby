@@ -45,17 +45,38 @@ function normalizeCollectionIds(collectionIds) {
     .filter(Number.isInteger))];
 }
 
+async function getImportableCollectionIds(req, opts = {}) {
+  if (!req?.user?.id) return [];
+  const preloadedAll = normalizeCollectionIds(opts.allCollectionIds);
+  const { userCollectionAccessAsync, collectionsAsync } = require('../database/db');
+
+  // Admins can import into all collections by role.
+  if (req.user.role === 'admin') {
+    if (preloadedAll.length > 0) return preloadedAll;
+    const allCollections = await collectionsAsync.getAll();
+    return normalizeCollectionIds(allCollections.map((collection) => collection.id));
+  }
+
+  // Collection-level manager access is the canonical import permission.
+  const managerIds = normalizeCollectionIds(
+    req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id)
+  );
+
+  // Users with global access can import to any collection.
+  if (req.user.access_all) {
+    if (preloadedAll.length > 0) return preloadedAll;
+    const allCollections = await collectionsAsync.getAll();
+    return normalizeCollectionIds(allCollections.map((collection) => collection.id));
+  }
+
+  return managerIds;
+}
+
 async function getAuthorizedCollectionIds(req, collectionIds) {
   const normalized = normalizeCollectionIds(collectionIds);
   if (normalized.length === 0) return [];
-
-  if (req.user?.role === 'admin') {
-    return normalized;
-  }
-
-  const { userCollectionAccessAsync } = require('../database/db');
-  const managedIds = req.managedCollectionIds || await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
-  if (!normalized.every((id) => managedIds.includes(id))) {
+  const importableIds = await getImportableCollectionIds(req);
+  if (!normalized.every((id) => importableIds.includes(id))) {
     const err = new Error('You do not have permission to import into one or more selected collections.');
     err.statusCode = 403;
     throw err;
@@ -201,6 +222,7 @@ module.exports = {
   getTempImageContentType,
   parseGroupingState,
   buildTranscriptPageSegments,
+  getImportableCollectionIds,
   getAuthorizedCollectionIds,
   spawnLocalPdfWorker,
   stripPageMarkers,

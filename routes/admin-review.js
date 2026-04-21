@@ -20,6 +20,21 @@ const ENTITY_TYPE_LABELS = Object.freeze({
   claim: 'Claim',
   document: 'Document'
 });
+const REVIEW_KIND_OPTIONS = Object.freeze([
+  { value: 'all', label: 'All evidence' },
+  { value: 'date', label: 'Date evidence' },
+  { value: 'relationship', label: 'Relationship evidence' },
+  { value: 'entity', label: 'Entity evidence only' },
+  { value: 'person', label: 'Person' },
+  { value: 'place', label: 'Place' },
+  { value: 'event', label: 'Event' },
+  { value: 'organization', label: 'Organization' },
+  { value: 'topic', label: 'Topic' },
+  { value: 'artifact', label: 'Artifact' },
+  { value: 'claim', label: 'Claim' },
+  { value: 'document', label: 'Document' }
+]);
+const REVIEW_KIND_VALUES = new Set(REVIEW_KIND_OPTIONS.map((option) => option.value));
 
 function knowledgePath(pathname, queryString) {
   return '/admin/knowledge' + pathname + (queryString || '');
@@ -42,6 +57,34 @@ function normalizeStatus(value) {
   if (value === CITATION_APPROVAL_STATUSES.REJECTED) return CITATION_APPROVAL_STATUSES.REJECTED;
   if (value === 'all') return 'all';
   return CITATION_APPROVAL_STATUSES.PENDING;
+}
+
+function normalizeReviewKind(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'all') return 'all';
+  if (REVIEW_KIND_VALUES.has(normalized)) return normalized;
+  return 'all';
+}
+
+function reviewKindLabel(value) {
+  const normalized = normalizeReviewKind(value);
+  const option = REVIEW_KIND_OPTIONS.find((entry) => entry.value === normalized);
+  return option ? option.label : 'All evidence';
+}
+
+function normalizeStatusCounts(value = {}) {
+  return {
+    [CITATION_APPROVAL_STATUSES.PENDING]: Number(value[CITATION_APPROVAL_STATUSES.PENDING] || 0),
+    [CITATION_APPROVAL_STATUSES.APPROVED]: Number(value[CITATION_APPROVAL_STATUSES.APPROVED] || 0),
+    [CITATION_APPROVAL_STATUSES.REJECTED]: Number(value[CITATION_APPROVAL_STATUSES.REJECTED] || 0)
+  };
+}
+
+function totalCountForStatus(statusCounts, status) {
+  if (status === 'all') {
+    return Object.values(statusCounts || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+  }
+  return Number((statusCounts && statusCounts[status]) || 0);
 }
 
 function humanizeLabel(value) {
@@ -88,16 +131,66 @@ function buildDateSummary(citation) {
   return parts.join(' | ');
 }
 
+function normalizeEvidenceForMatch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, '\'')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function passageMentionsEntity(passageText, entityName) {
+  const normalizedPassage = normalizeEvidenceForMatch(passageText);
+  const normalizedEntity = normalizeEvidenceForMatch(entityName);
+  if (!normalizedPassage || !normalizedEntity) return false;
+  return normalizedPassage.includes(normalizedEntity);
+}
+
+function addEvidenceBlock(item, label, text) {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) return false;
+  item.evidence_blocks.push({
+    label: String(label || 'Evidence').trim() || 'Evidence',
+    text: normalizedText
+  });
+  return true;
+}
+
+function addReviewNote(item, text, tone = 'warn') {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) return;
+  item.review_notes.push({
+    text: normalizedText,
+    tone
+  });
+}
+
+function addSupportEvidence(item, seenEvidence, label, text) {
+  const normalizedText = String(text || '').trim();
+  if (!normalizedText) return false;
+
+  const normalizedKey = normalizeEvidenceForMatch(normalizedText);
+  if (!normalizedKey) return false;
+  if (seenEvidence.has(normalizedKey)) return false;
+
+  seenEvidence.add(normalizedKey);
+  return addEvidenceBlock(item, label, normalizedText);
+}
+
 function hasPassageSpan(citation) {
   return Number.isInteger(citation.passage_start)
     && Number.isInteger(citation.passage_end)
     && citation.passage_end > citation.passage_start;
 }
 
-function buildDocumentHref(citation, status, page) {
+function buildDocumentHref(citation, status, page, reviewKind) {
   if (!citation.document_id) return null;
   const params = new URLSearchParams();
-  params.set('back', reviewRedirect(status, { page }));
+  params.set('back', reviewRedirect(status, {
+    page,
+    kind: reviewKind && reviewKind !== 'all' ? reviewKind : null
+  }));
   if (citation.transcript_id) {
     params.set('transcript', String(citation.transcript_id));
   }
@@ -108,7 +201,7 @@ function buildDocumentHref(citation, status, page) {
   return `/documents/${citation.document_id}?${params.toString()}`;
 }
 
-function buildReviewItem(citation, status, page) {
+function buildReviewItem(citation, status, page, reviewKind) {
   const citationStatus = citation.approval_status || CITATION_APPROVAL_STATUSES.PENDING;
   const kind = citation.date_expression_id
     ? 'date'
@@ -137,35 +230,109 @@ function buildReviewItem(citation, status, page) {
       : citation.approval_method === 'manual'
         ? 'Reviewed by a human'
         : null,
-    open_passage_href: buildDocumentHref(citation, status, page),
+    open_passage_href: buildDocumentHref(citation, status, page, reviewKind),
     open_passage_label: hasPassageSpan(citation) ? 'Open Passage' : 'Open Document',
     claim_title: '',
     claim_detail: '',
     claim_meta: '',
-    claim_explainer: ''
+    claim_explainer: '',
+    evidence_blocks: [],
+    review_notes: []
   };
+  const primaryPassage = String(citation.passage_text || '').trim();
+  const seenEvidence = new Set();
+  if (addEvidenceBlock(item, 'Primary citation', primaryPassage)) {
+    const normalizedPrimary = normalizeEvidenceForMatch(primaryPassage);
+    if (normalizedPrimary) {
+      seenEvidence.add(normalizedPrimary);
+    }
+  }
 
   if (kind === 'relationship') {
     const relationshipPhrase = humanizeLabel(citation.relationship_type || 'related_to').toLowerCase();
+    const sourceName = citation.source_name || 'source entity';
+    const targetName = citation.target_name || 'target entity';
+    const sourceMentioned = passageMentionsEntity(primaryPassage, citation.source_name);
+    const targetMentioned = passageMentionsEntity(primaryPassage, citation.target_name);
+    const missingSides = [];
+
     item.claim_title = `${citation.source_name || 'Unknown source'} ${relationshipPhrase} ${citation.target_name || 'Unknown target'}`;
     item.claim_detail = `${entityTypeLabel(citation.source_type)} -> ${entityTypeLabel(citation.target_type)}`;
     item.claim_meta = buildRelationshipWindow(citation);
-    item.claim_explainer = 'Approve that this edge is supported by the cited transcript passage.';
+    item.claim_explainer = 'Approve only when the evidence shows the source, the target, and the claimed relationship in context.';
+
+    if (!sourceMentioned) {
+      missingSides.push('source');
+      addSupportEvidence(item, seenEvidence, `Source mention (${sourceName})`, citation.source_support_passage_text);
+    }
+    if (!targetMentioned) {
+      missingSides.push('target');
+      addSupportEvidence(item, seenEvidence, `Target mention (${targetName})`, citation.target_support_passage_text);
+    }
+
+    if (!missingSides.length) {
+      addReviewNote(item, 'Primary citation names both sides of the relationship.', 'ok');
+    } else if (item.evidence_blocks.length > 1) {
+      addReviewNote(
+        item,
+        `Primary citation is missing the ${missingSides.join(' and ')} mention${missingSides.length > 1 ? 's' : ''}. Review supporting snippets before approving.`,
+        'warn'
+      );
+    } else {
+      addReviewNote(
+        item,
+        `Primary citation is missing the ${missingSides.join(' and ')} mention${missingSides.length > 1 ? 's' : ''}. Use Open Passage before approving.`,
+        'warn'
+      );
+    }
+
     return item;
   }
 
   if (kind === 'date') {
+    const datePassageMentionsEntity = passageMentionsEntity(citation.passage_text, citation.entity_name);
+    const supportAdded = addSupportEvidence(
+      item,
+      seenEvidence,
+      citation.entity_name ? `Subject mention (${citation.entity_name})` : 'Subject mention',
+      citation.entity_support_passage_text
+    );
+
     item.claim_title = `${citation.date_label || 'Date evidence'} applies to ${citation.entity_name || 'this entity'}`;
     item.claim_detail = entityTypeLabel(citation.entity_type);
     item.claim_meta = buildDateSummary(citation);
-    item.claim_explainer = 'Approve that this normalized date expression belongs to the cited entity.';
+    item.claim_explainer = 'Approve only when evidence ties the normalized date expression to the subject entity.';
+
+    if (datePassageMentionsEntity) {
+      addReviewNote(item, 'Primary citation explicitly names the subject entity.', 'ok');
+    } else if (supportAdded) {
+      addReviewNote(item, 'Primary date snippet does not name the subject. Review supporting subject mention before approving.', 'warn');
+    } else {
+      addReviewNote(item, 'Primary date snippet does not name the subject entity. Use Open Passage before approving.', 'warn');
+    }
+
     return item;
   }
 
   item.claim_title = `${entityTypeLabel(citation.entity_type)}: ${citation.entity_name || 'Unnamed entity'}`;
-  item.claim_detail = 'Canonical graph entity supported by this passage.';
+  item.claim_detail = 'Canonical graph entity supported by transcript evidence.';
   item.claim_meta = null;
-  item.claim_explainer = 'Approve that this passage supports creating or keeping this graph node.';
+  item.claim_explainer = 'Approve only when the evidence supports creating or keeping this graph node.';
+  if (passageMentionsEntity(primaryPassage, citation.entity_name)) {
+    addReviewNote(item, 'Primary citation explicitly names this entity.', 'ok');
+  } else {
+    const supportAdded = addSupportEvidence(
+      item,
+      seenEvidence,
+      citation.entity_name ? `Subject mention (${citation.entity_name})` : 'Subject mention',
+      citation.entity_support_passage_text
+    );
+    if (supportAdded) {
+      addReviewNote(item, 'Primary snippet does not name the entity directly. Review supporting subject mention before approving.', 'warn');
+    } else {
+      addReviewNote(item, 'Primary snippet does not clearly name the entity. Use Open Passage before approving.', 'warn');
+    }
+  }
   return item;
 }
 
@@ -186,6 +353,72 @@ function appendQuery(params = {}) {
   return url.search;
 }
 
+function requestWantsJson(req) {
+  const accept = String(req.get('accept') || '').toLowerCase();
+  const requestedWith = String(req.get('x-requested-with') || '').toLowerCase();
+  return requestedWith === 'xmlhttprequest'
+    || requestedWith === 'fetch'
+    || accept.includes('application/json');
+}
+
+function reviewErrorResponse(req, res, status, page, reviewKind, message, code = 400) {
+  if (requestWantsJson(req)) {
+    return res.status(code).json({
+      ok: false,
+      error: message
+    });
+  }
+  const redirectParams = {
+    page,
+    error: message
+  };
+  if (reviewKind && reviewKind !== 'all') {
+    redirectParams.kind = reviewKind;
+  }
+  return res.redirect(reviewRedirect(status, redirectParams));
+}
+
+async function reviewSuccessResponse(req, res, stores, payload = {}) {
+  const {
+    status = CITATION_APPROVAL_STATUSES.PENDING,
+    page = 1,
+    reviewKind = 'all',
+    redirectFlag = null,
+    redirectValue = 1,
+    message = 'Review action completed.',
+    action = 'updated',
+    citationId = null
+  } = payload;
+
+  if (!requestWantsJson(req)) {
+    const redirectParams = { page };
+    if (reviewKind && reviewKind !== 'all') {
+      redirectParams.kind = reviewKind;
+    }
+    if (redirectFlag) {
+      redirectParams[redirectFlag] = redirectValue;
+    }
+    return res.redirect(reviewRedirect(status, {
+      ...redirectParams
+    }));
+  }
+
+  const statusCounts = stores.citations && typeof stores.citations.getStatusCounts === 'function'
+    ? normalizeStatusCounts(await stores.citations.getStatusCounts({ reviewKind }))
+    : normalizeStatusCounts();
+
+  return res.json({
+    ok: true,
+    action,
+    citationId,
+    message,
+    activeStatus: status,
+    reviewKind,
+    totalCount: totalCountForStatus(statusCounts, status),
+    statusCounts
+  });
+}
+
 router.get('/review-extractions', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin') {
     const queryString = req.originalUrl.includes('?')
@@ -198,32 +431,32 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
   const status = normalizeStatus(req.query.status);
+  const reviewKind = normalizeReviewKind(req.query.kind);
   const [citations, statusCounts] = stores.citations && typeof stores.citations.getStatusCounts === 'function'
     ? await Promise.all([
       typeof stores.citations.list === 'function'
-        ? stores.citations.list(status, PAGE_SIZE, offset)
+        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind })
         : (status === 'all'
-          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000).then(async (pending) => {
+          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { reviewKind }).then(async (pending) => {
             const [approved, rejected] = await Promise.all([
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000),
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000)
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000, { reviewKind }),
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000, { reviewKind })
             ]);
             return [...pending, ...approved, ...rejected].sort((a, b) => {
               return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
             }).slice(offset, offset + PAGE_SIZE);
           })
-          : stores.citations.getByStatus(status, PAGE_SIZE, {})),
-      stores.citations.getStatusCounts()
+          : stores.citations.getByStatus(status, PAGE_SIZE, { reviewKind })),
+      stores.citations.getStatusCounts({ reviewKind })
     ])
     : [[], {
       [CITATION_APPROVAL_STATUSES.PENDING]: 0,
       [CITATION_APPROVAL_STATUSES.APPROVED]: 0,
       [CITATION_APPROVAL_STATUSES.REJECTED]: 0
     }];
-  const totalCount = status === 'all'
-    ? Object.values(statusCounts || {}).reduce((sum, count) => sum + Number(count || 0), 0)
-    : Number((statusCounts && statusCounts[status]) || 0);
-  const reviewItems = citations.map((citation) => buildReviewItem(citation, status, page));
+  const normalizedStatusCounts = normalizeStatusCounts(statusCounts);
+  const totalCount = totalCountForStatus(normalizedStatusCounts, status);
+  const reviewItems = citations.map((citation) => buildReviewItem(citation, status, page, reviewKind));
 
   res.render('admin/review-extractions', {
     pageTitle: 'Review Extractions',
@@ -233,11 +466,10 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
     totalPages: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
     totalCount,
     approvalStatus: status,
-    statusCounts: statusCounts || {
-      pending: 0,
-      approved: 0,
-      rejected: 0
-    },
+    reviewKind,
+    reviewKindLabel: reviewKindLabel(reviewKind),
+    reviewKindOptions: REVIEW_KIND_OPTIONS,
+    statusCounts: normalizedStatusCounts,
     graphReady: !!stores.citations,
     graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',
     activeKnowledgePage: 'review-extractions',
@@ -251,96 +483,90 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
 router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
+  const status = normalizeStatus(req.body.status);
+  const reviewKind = normalizeReviewKind(req.body.kind);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
   if (!id) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Invalid extraction citation id.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Invalid extraction citation id.');
   }
 
   if (!stores.citations || typeof stores.citations.approve !== 'function') {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Extraction review confirm is not wired yet.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Extraction review confirm is not wired yet.', 503);
   }
 
   try {
     await stores.citations.approve(id, req.user.id, 'manual');
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+    return reviewSuccessResponse(req, res, stores, {
+      status,
       page,
-      confirmed: 1
-    }));
+      reviewKind,
+      action: 'approved',
+      citationId: id,
+      message: 'Citation approved.',
+      redirectFlag: 'confirmed'
+    });
   } catch (err) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: err.message
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, err.message, 500);
   }
 }));
 
 router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
+  const status = normalizeStatus(req.body.status);
+  const reviewKind = normalizeReviewKind(req.body.kind);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
   if (!id) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Invalid extraction citation id.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Invalid extraction citation id.');
   }
 
   if (!stores.citations || typeof stores.citations.reject !== 'function') {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Extraction review reject is not wired yet.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Extraction review reject is not wired yet.', 503);
   }
 
   try {
     await stores.citations.reject(id, req.user.id);
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+    return reviewSuccessResponse(req, res, stores, {
+      status,
       page,
-      rejected: 1
-    }));
+      reviewKind,
+      action: 'rejected',
+      citationId: id,
+      message: 'Citation rejected.',
+      redirectFlag: 'rejected'
+    });
   } catch (err) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: err.message
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, err.message, 500);
   }
 }));
 
 router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
+  const status = normalizeStatus(req.body.status);
+  const reviewKind = normalizeReviewKind(req.body.kind);
   const page = Math.max(1, parseInt(req.body.page, 10) || 1);
   if (!id) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Invalid extraction citation id.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Invalid extraction citation id.');
   }
 
   if (!stores.citations || typeof stores.citations.delete !== 'function') {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: 'Extraction evidence delete is not wired yet.'
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, 'Extraction evidence delete is not wired yet.', 503);
   }
 
   try {
     await stores.citations.delete(id);
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
+    return reviewSuccessResponse(req, res, stores, {
+      status,
       page,
-      deleted: 1
-    }));
+      reviewKind,
+      action: 'deleted',
+      citationId: id,
+      message: 'Citation deleted.',
+      redirectFlag: 'deleted'
+    });
   } catch (err) {
-    return res.redirect(reviewRedirect(normalizeStatus(req.body.status), {
-      page,
-      error: err.message
-    }));
+    return reviewErrorResponse(req, res, status, page, reviewKind, err.message, 500);
   }
 }));
 

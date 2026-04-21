@@ -17,7 +17,7 @@
     resumeJob,
     importConfig,
     noProvidersHint: 'No AI providers are configured. <a href="' + importConfig.settingsUrl + '">Add an API key</a> to enable AI transcription.',
-    collectionsEmptyHint: 'No collections created yet. <a href="' + importConfig.collectionsUrl + '" target="_blank">Create one</a> before importing to assign documents.'
+    collectionsEmptyHint: collectionsEmptyHint || ('No collections created yet. <a href="' + importConfig.collectionsUrl + '" target="_blank">Create one</a> before importing to assign documents.')
   }) %>
 </div>
 
