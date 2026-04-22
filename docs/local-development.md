@@ -12,6 +12,16 @@ For UI- and template-layer changes, follow
 the project baseline for EJS, shared partials, CSS organization, and
 presentation-layer accessibility/usability conventions.
 
+## Node.js runtime
+
+Bartelby is pinned to Node.js `25.9.0` for local development and Docker builds.
+
+- Use the repo's [`.nvmrc`](../.nvmrc) to select the expected runtime when
+  using `nvm`.
+- `package.json` declares the supported engine as `>=25.9.0 <26`.
+- The production Docker image uses the same pinned runtime so local behavior
+  stays aligned with container deployments.
+
 ## Python dependencies for analytics
 
 Collection topic analysis uses the Python BERTopic stack. Install it into a
@@ -34,6 +44,7 @@ PYTHON_BIN=/absolute/path/to/python3
 ## Typical startup
 
 ```bash
+nvm use
 npm install
 npm run setup:python
 npm start
