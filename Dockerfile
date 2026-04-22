@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:25.9.0-slim
 
 # Install system dependencies for canvas, sharp, pdfjs-dist, and poppler (pdftoppm)
 RUN apt-get update && apt-get install -y --no-install-recommends \

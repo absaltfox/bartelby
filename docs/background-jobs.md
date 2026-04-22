@@ -29,7 +29,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Transcription | `transcription_jobs` | `utils/worker-transcription.js` |
 | Import – render (PDF → images) | `import_jobs` (kind `render`) | `utils/worker.js::tickImportRenderJobs` |
 | Import – submit (batch provider) | `import_jobs` (kind `submit`) | `utils/worker.js::tickImportSubmissionJobs` |
-| Import – auto-grouping (LLM) | `import_jobs` (kind `grouping`) | `utils/worker.js::tickGroupingJobs` |
+| Import – auto-grouping (LLM) | `import_jobs` (kind `grouping`) | `utils/worker.js::tickGroupingJobs` (submit) + `pollRunningGroupingBatches` (finalize) |
 | Knowledge graph extraction | `extraction_jobs` | `utils/worker-extraction.js` |
 | Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
@@ -52,6 +52,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | `tickGroupingJobs` | 5 s | `groupingBusy` boolean |
 | `tickExtractionJobs` | 5 s | `extractionBusy` boolean |
 | `pollRunningBatches` (transcription) | `BATCH_POLL_MS` | `batchPollBusy` boolean |
+| `pollRunningGroupingBatches` | `BATCH_POLL_MS` | `groupingBatchPollBusy` boolean |
 | `pollRunningExtractionBatchesTick` | `BATCH_POLL_MS` | `extractionBatchPollBusy` boolean |
 | `checkStaleImportJobs` | 60 s | — (read-only) |
 | Analytics sweep | 15 min | `_analyticsRunning` in `utils/analytics.js` |

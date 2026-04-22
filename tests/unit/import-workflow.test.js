@@ -74,4 +74,67 @@ describe('import workflow helpers', () => {
       { pageIndices: [4, 5], label: 'Document (pages 5, 6)' }
     ]);
   });
+
+  it('handles annotations starting after page 1 (partial sequence)', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+
+    // Sequence starts at page 3 with number "3" — no "1" anchor, so no group
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: 3 },
+      { page: 2, number: 4 },
+      { page: 3, number: 5 }
+    ], ['a', 'b', 'c']);
+
+    expect(groups).toEqual([]);
+  });
+
+  it('handles all-null annotations (no detected numbers)', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: null },
+      { page: 2, number: null },
+      { page: 3, number: null }
+    ], ['a', 'b', 'c']);
+
+    expect(groups).toEqual([]);
+  });
+
+  it('handles empty annotations array', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+    expect(buildGroupsFromAnnotations([], ['a', 'b'])).toEqual([]);
+    expect(buildGroupsFromAnnotations(null, ['a', 'b'])).toEqual([]);
+  });
+
+  it('tolerates a missing page in the middle of a sequence', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+
+    // Pages: 1, 2, null (missing), 4 — should keep the group if anchored
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: 1 },
+      { page: 2, number: 2 },
+      { page: 3, number: null },
+      { page: 4, number: 4 }
+    ], ['a', 'b', 'c', 'd']);
+
+    // The null page should be included due to the tolerance logic (explicitMatches >= 2
+    // and the upcoming page has expectedNumber)
+    expect(groups).toHaveLength(1);
+    expect(groups[0].pageIndices).toEqual([0, 1, 2, 3]);
+  });
 });

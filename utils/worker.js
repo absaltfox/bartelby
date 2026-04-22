@@ -30,6 +30,7 @@ function startWorker() {
   setInterval(tickGroupingJobs, 5000);
   setInterval(tickExtractionJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
+  setInterval(pollRunningGroupingBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
   setInterval(checkStaleImportJobs, 60000);
   setInterval(async () => {
@@ -268,16 +269,60 @@ async function tickGroupingJobs() {
     const durableTempFiles = await promoteQueuedTempAssets(payload.tempFiles || []);
     payload.tempFiles = durableTempFiles;
 
+    const { buildGroupingManifest, resolveGroupingRuntime, submitGroupingBatch } = require('./grouping-batches');
+    const { supportsBatchProvider } = require('./transcription-batches');
+
+    const cropRegion = payload.cropRegion || 'top';
+    const runtime = await resolveGroupingRuntime(
+      payload.provider, payload.credentialSource, job.user_id
+    );
+
+    if (supportsBatchProvider(runtime.provider)) {
+      // Batch path: crop, build manifest, submit, mark running
+      const manifest = await buildGroupingManifest(payload.tempFiles, { cropRegion });
+      if (manifest.requests.length === 0) {
+        await importJobsAsync.markDone(job.id, []);
+        console.log(`[worker] grouping job ${job.id}: no pages to process after cropping`);
+        return;
+      }
+
+      const batchResult = await submitGroupingBatch(job, manifest, runtime);
+      if (batchResult) {
+        await importJobsAsync.markRunningBatch(job.id, {
+          batch_remote_id: batchResult.batch_remote_id,
+          batch_remote_status: batchResult.batch_remote_status,
+          batch_manifest: manifest.requests.map((r) => ({
+            customId: r.customId,
+            startIndex: r.startIndex,
+            batchSize: r.batchSize
+          }))
+        });
+        console.log(`[worker] grouping job ${job.id}: submitted as batch (${manifest.requests.length} requests)`);
+        return;
+      }
+      // If submitGroupingBatch returned null, fall through to synchronous path
+    }
+
+    // Synchronous fallback for non-batch providers
     const { runDocumentGrouping } = require('./grouping-llm');
-    
     const groupingResult = await runDocumentGrouping(
       payload.provider,
       payload.tempFiles,
       payload.credentialSource,
-      job.user_id
+      job.user_id,
+      {
+        cropRegion,
+        onProgress: async ({ processedPages, totalPages }) => {
+          try {
+            await importJobsAsync.updateProgress(job.id, {
+              page_count: totalPages,
+              pages_rendered: processedPages
+            });
+          } catch (e) { /* non-fatal */ }
+        }
+      }
     );
 
-    // Save as done with the resulting groups mapped into pages
     await importJobsAsync.markDone(job.id, groupingResult.groups);
     console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
 
@@ -286,6 +331,103 @@ async function tickGroupingJobs() {
     if (job) await importJobsAsync.markFailed(job.id, err.message);
   } finally {
     groupingBusy = false;
+  }
+}
+
+let groupingBatchPollBusy = false;
+async function pollRunningGroupingBatches() {
+  if (groupingBatchPollBusy) return;
+  groupingBatchPollBusy = true;
+
+  try {
+    const { importJobsAsync } = require('../database/db');
+    const jobs = await importJobsAsync.getRunningGroupingBatches();
+    if (jobs.length === 0) return;
+
+    const { resolveGroupingRuntime, parseGroupingBatchResults } = require('./grouping-batches');
+    const { buildGroupsFromAnnotations } = require('./import-workflow');
+    const {
+      pollOpenAiBatch,
+      pollAnthropicBatch,
+      pollGeminiBatch,
+      pollVertexTranscriptionBatch,
+      isVertexBatchRemoteId,
+      parseBatchManifest
+    } = require('./transcription-batches');
+    const { GROUPING_PROMPT } = require('./llm');
+
+    for (const job of jobs) {
+      try {
+        const payload = JSON.parse(job.submit_payload || '{}');
+        const runtime = await resolveGroupingRuntime(
+          payload.provider, payload.credentialSource, job.user_id
+        );
+
+        const batchRuntime = {
+          apiKey: runtime.apiKey,
+          model: runtime.modelInstance?.modelId,
+          cfg: runtime.runtimeConfig
+        };
+        const batchJob = { ...job, batch_remote_id: job.batch_remote_id };
+
+        let pollResult;
+        if (runtime.provider === 'openai') {
+          pollResult = await pollOpenAiBatch(batchJob, batchRuntime, GROUPING_PROMPT, job.batch_remote_id);
+        } else if (runtime.provider === 'claude') {
+          pollResult = await pollAnthropicBatch(batchJob, batchRuntime, GROUPING_PROMPT, job.batch_remote_id);
+        } else if (runtime.provider === 'gemini') {
+          pollResult = await pollGeminiBatch(batchJob, batchRuntime, GROUPING_PROMPT, job.batch_remote_id);
+        } else if (runtime.provider === 'vertex') {
+          if (isVertexBatchRemoteId(job.batch_remote_id)) {
+            const vertexManifest = parseBatchManifest(job);
+            pollResult = await pollVertexTranscriptionBatch(
+              batchJob, batchRuntime, GROUPING_PROMPT, vertexManifest, job.batch_remote_id
+            );
+          } else {
+            pollResult = await pollGeminiBatch(batchJob, batchRuntime, GROUPING_PROMPT, job.batch_remote_id);
+          }
+        } else {
+          continue;
+        }
+
+        await importJobsAsync.updateBatchStatus(job.id, pollResult.remoteStatus);
+
+        if (pollResult.state === 'running') continue;
+
+        if (pollResult.state === 'failed') {
+          await importJobsAsync.markFailed(job.id,
+            pollResult.error || 'Grouping batch failed at provider');
+          console.error(`[worker] grouping batch job ${job.id}: failed`);
+          continue;
+        }
+
+        // Batch succeeded — parse results and build groups
+        // Note: poll functions parse results using transcription extractors,
+        // so we extract raw text from the result object for grouping parsing.
+        const batchResults = pollResult.pageResults.map((pr) => ({
+          customId: pr.customId,
+          ok: pr.ok,
+          text: pr.result?.transcription || pr.result?.text ||
+            (pr.result?.paradata ? null : JSON.stringify(pr.result)),
+          error: pr.error
+        }));
+
+        const annotations = parseGroupingBatchResults(batchResults);
+        const tempFiles = payload.tempFiles || [];
+        const groups = buildGroupsFromAnnotations(annotations, tempFiles);
+
+        await importJobsAsync.markDone(job.id, groups);
+        console.log(`[worker] grouping batch job ${job.id}: complete (${groups.length} groups from ${annotations.length} annotations)`);
+
+      } catch (err) {
+        console.error(`[worker] grouping batch poll job ${job.id} error:`, err.message);
+        await importJobsAsync.markFailed(job.id, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('[worker] grouping batch poll error:', err.message);
+  } finally {
+    groupingBatchPollBusy = false;
   }
 }
 

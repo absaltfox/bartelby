@@ -849,6 +849,38 @@ const importJobsAsync = {
     return await this.getById(job.id);
   },
 
+  async markRunningBatch(id, { batch_remote_id, batch_remote_status, batch_manifest }) {
+    await runAsyncWithoutSave(`
+      UPDATE import_jobs
+      SET status = 'processing',
+          started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+          batch_remote_id = ?,
+          batch_remote_status = ?,
+          batch_manifest = ?
+      WHERE id = ?
+    `, [batch_remote_id, batch_remote_status || 'submitted',
+        batch_manifest ? JSON.stringify(batch_manifest) : null, id]);
+    await saveDatabase();
+  },
+
+  async updateBatchStatus(id, remoteStatus) {
+    await runAsyncWithoutSave(
+      "UPDATE import_jobs SET batch_remote_status = ? WHERE id = ?",
+      [remoteStatus, id]
+    );
+    // Don't persist on every poll — in-memory is updated, will persist on markDone/markFailed.
+  },
+
+  async getRunningGroupingBatches() {
+    return await allAsync(`
+      SELECT * FROM import_jobs
+      WHERE status = 'processing'
+        AND COALESCE(job_kind, 'render') = 'grouping'
+        AND batch_remote_id IS NOT NULL
+      ORDER BY created_at ASC
+    `);
+  },
+
   async updateMachineId(id, machineId) {
     await runAsyncWithoutSave("UPDATE import_jobs SET machine_id = ? WHERE id = ?", [machineId, id]);
   },

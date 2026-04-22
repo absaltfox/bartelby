@@ -674,6 +674,13 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     ('opposes_claim', 'Opposes Claim', NULL, NULL, 'claim', 'interpretive'),
     ('claim_concerns', 'Claim Concerns', NULL, 'claim', 'topic', 'interpretive'),
     ('related_to_topic', 'Related To Topic', NULL, NULL, 'topic', 'interpretive')
+  `,
+
+  // v<next> — batch support for grouping jobs
+  `
+    ALTER TABLE import_jobs ADD COLUMN batch_remote_id TEXT;
+    ALTER TABLE import_jobs ADD COLUMN batch_remote_status TEXT;
+    ALTER TABLE import_jobs ADD COLUMN batch_manifest TEXT
   `
 ];
 

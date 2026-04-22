@@ -454,13 +454,10 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
   if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
     return res.status(400).json({ error: 'Need at least 2 pages to suggest groupings' });
   }
-  if (tempFiles.length > 2000) {
-    return res.status(400).json({ error: 'Too many pages (max 2000) for grouping analysis' });
-  }
-
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const cropRegion = ['top', 'bottom', 'both'].includes(req.body.cropRegion) ? req.body.cropRegion : 'top';
     // Validate temp files exist but don't promote to S3 here — the worker does that
     // to avoid blocking the HTTP response for large page sets.
     const sanitized = require('../utils/temp-assets').sanitizeTempFiles(tempFiles);
@@ -475,7 +472,8 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
       payload: {
         tempFiles: sanitized,
         provider: providerName,
-        credentialSource
+        credentialSource,
+        cropRegion
       }
     });
 

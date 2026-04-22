@@ -12,7 +12,8 @@ Estimated monthly cost for light usage: **$0–5** (all three services have gene
 
 ## Prerequisites
 
-- Node.js 20+ installed locally
+- Node.js 25.9.0 installed locally (or another `25.x` runtime that satisfies
+  the repo's engine check)
 - A working local Bartelby instance with data in `data/transcriber.db` and files in `data/uploads/`
 
 Install the CLIs:
