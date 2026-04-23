@@ -232,4 +232,30 @@ router.post('/:id/merge', express.urlencoded({ extended: false }), asyncHandler(
   }
 }));
 
+// POST /admin/knowledge/authorities/suggestion-jobs — full-corpus authority suggestion run
+router.post('/suggestion-jobs', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const jobId = await db.authoritySuggestionJobsAsync.create({
+    collection_id: null,
+    requested_by_user_id: req.user ? req.user.id : null
+  });
+  return res.redirect(knowledgePath(`/authorities?suggestionJobQueued=${jobId}`));
+}));
+
+// POST /admin/knowledge/authorities/suggestion-jobs/collection/:id — collection-scoped run
+router.post('/suggestion-jobs/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(collectionId)) {
+    return res.redirect(knowledgePath('/authorities?error=' + encodeURIComponent('Invalid collection id.')));
+  }
+  const alreadyQueued = await db.authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(collectionId);
+  if (alreadyQueued) {
+    return res.redirect(knowledgePath('/authorities?error=' + encodeURIComponent('An authority suggestion job for this collection is already running or queued.')));
+  }
+  const jobId = await db.authoritySuggestionJobsAsync.create({
+    collection_id: collectionId,
+    requested_by_user_id: req.user ? req.user.id : null
+  });
+  return res.redirect(knowledgePath(`/authorities?suggestionJobQueued=${jobId}`));
+}));
+
 module.exports = router;
