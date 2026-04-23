@@ -1197,11 +1197,14 @@ const extractionJobs = {
       batch_manifest
     });
 
-    for (const item of (documents || [])) {
-      await runAsync(`
-        INSERT OR IGNORE INTO extraction_job_documents (job_id, document_id, transcript_id)
-        VALUES (?, ?, ?)
-      `, [jobId, item.document_id, item.transcript_id]);
+    const docs = documents || [];
+    if (docs.length > 0) {
+      const placeholders = docs.map(() => '(?, ?, ?)').join(', ');
+      const values = docs.flatMap((item) => [jobId, item.document_id, item.transcript_id]);
+      await runAsync(
+        `INSERT OR IGNORE INTO extraction_job_documents (job_id, document_id, transcript_id) VALUES ${placeholders}`,
+        values
+      );
     }
 
     return jobId;

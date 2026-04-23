@@ -9,9 +9,6 @@ const {
   allAsync
 } = require('../database/db');
 
-function supportsExtractionBatchProvider(providerName) {
-  return require('./extraction-batches').supportsExtractionBatchProvider(providerName);
-}
 
 async function getPreferredTranscript(documentId) {
   const best = await transcriptsAsync.getBestByDocumentId(documentId);
@@ -149,7 +146,7 @@ async function queueCollectionRerun({ collectionId, userId }) {
     });
   }
 
-  if (manifest.length > 1 && supportsExtractionBatchProvider(provider)) {
+  if (manifest.length > 0) {
     const first = manifest[0];
     await extractionJobsAsync.createBatch({
       transcript_id: first.transcriptId,
@@ -170,25 +167,7 @@ async function queueCollectionRerun({ collectionId, userId }) {
         transcript_id: item.transcriptId
       }))
     });
-
     queuedCount = manifest.length;
-    return {
-      collection,
-      queuedCount,
-      skippedPending,
-      skippedNoTranscript,
-      mode: 'batch'
-    };
-  }
-
-  for (const item of manifest) {
-    await queueExtractionRerun({
-      documentId: item.documentId,
-      transcriptId: item.transcriptId,
-      userId,
-      provider
-    });
-    queuedCount += 1;
   }
 
   return {
@@ -196,7 +175,7 @@ async function queueCollectionRerun({ collectionId, userId }) {
     queuedCount,
     skippedPending,
     skippedNoTranscript,
-    mode: 'single'
+    mode: 'batch'
   };
 }
 
