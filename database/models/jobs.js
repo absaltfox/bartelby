@@ -1640,6 +1640,99 @@ const authorityResolutionJobs = {
 };
 
 
+const authoritySuggestionJobs = {
+  async create({ collection_id = null, fuzzy_threshold = 0.6, pending_threshold = 0.75, auto_approve_threshold = 0.92, requested_by_user_id = null } = {}) {
+    const result = await runAsync(`
+      INSERT INTO authority_suggestion_jobs
+        (collection_id, fuzzy_threshold, pending_threshold, auto_approve_threshold, requested_by_user_id, status)
+      VALUES (?, ?, ?, ?, ?, 'queued')
+    `, [
+      collection_id != null ? Number(collection_id) : null,
+      fuzzy_threshold,
+      pending_threshold,
+      auto_approve_threshold,
+      requested_by_user_id != null ? Number(requested_by_user_id) : null
+    ]);
+    await saveDatabase();
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM authority_suggestion_jobs WHERE id = ?', [id]);
+  },
+
+  async hasPendingOrRunningForCollection(collection_id) {
+    const row = await getAsync(`
+      SELECT id FROM authority_suggestion_jobs
+      WHERE collection_id IS ? AND status IN ('queued', 'running')
+      LIMIT 1
+    `, [collection_id != null ? Number(collection_id) : null]);
+    return !!row;
+  },
+
+  async claimNextQueued() {
+    return await withExclusiveLock(async () => {
+      const job = await getAsync(`
+        SELECT * FROM authority_suggestion_jobs
+        WHERE status = 'queued'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) return null;
+      const result = await runAsyncWithoutSave(`
+        UPDATE authority_suggestion_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL,
+            attempts = attempts + 1
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    });
+  },
+
+  async appendLog(id, text) {
+    await runAsyncWithoutSave(
+      'UPDATE authority_suggestion_jobs SET log = log || ? WHERE id = ?',
+      [text, id]
+    );
+    await saveDatabase();
+  },
+
+  async markDone(id, { entityCount, candidateCount, suggestionCount, autoApprovedCount } = {}) {
+    await runAsyncWithoutSave(`
+      UPDATE authority_suggestion_jobs
+      SET status = 'done',
+          entity_count = COALESCE(?, entity_count),
+          candidate_count = COALESCE(?, candidate_count),
+          suggestion_count = COALESCE(?, suggestion_count),
+          auto_approved_count = COALESCE(?, auto_approved_count),
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      Number.isInteger(entityCount) ? entityCount : null,
+      Number.isInteger(candidateCount) ? candidateCount : null,
+      Number.isInteger(suggestionCount) ? suggestionCount : null,
+      Number.isInteger(autoApprovedCount) ? autoApprovedCount : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await runAsyncWithoutSave(`
+      UPDATE authority_suggestion_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  }
+};
+
   return {
     transcriptionJobs,
     transcriptionJobsAsync,
@@ -1648,6 +1741,7 @@ const authorityResolutionJobs = {
     adminJobsAsync,
     extractionJobs,
     authorityResolutionJobs,
-    authorityResolutionJobsAsync: authorityResolutionJobs
+    authorityResolutionJobsAsync: authorityResolutionJobs,
+    authoritySuggestionJobs
   };
 };

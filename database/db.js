@@ -231,6 +231,31 @@ MIGRATIONS.push(`
   CREATE INDEX IF NOT EXISTS idx_authority_resolution_jobs_status ON authority_resolution_jobs(status);
 `);
 
+// v60 — async authority suggestion pipeline
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS authority_suggestion_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    entity_count INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    suggestion_count INTEGER NOT NULL DEFAULT 0,
+    auto_approved_count INTEGER NOT NULL DEFAULT 0,
+    fuzzy_threshold REAL NOT NULL DEFAULT 0.6,
+    pending_threshold REAL NOT NULL DEFAULT 0.75,
+    auto_approve_threshold REAL NOT NULL DEFAULT 0.92,
+    requested_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    log TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_authority_suggestion_jobs_status ON authority_suggestion_jobs(status);
+  CREATE INDEX IF NOT EXISTS idx_authority_suggestion_jobs_collection ON authority_suggestion_jobs(collection_id)
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -909,7 +934,7 @@ function parseJsonValue(value, fallback) {
 const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
+const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
 const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
@@ -976,6 +1001,8 @@ module.exports = {
   extractionJobsAsync: extractionJobs,
   authorityResolutionJobs,
   authorityResolutionJobsAsync,
+  authoritySuggestionJobs,
+  authoritySuggestionJobsAsync: authoritySuggestionJobs,
   relationshipTypes,
   relationshipTypesAsync: relationshipTypes,
   authorities,
