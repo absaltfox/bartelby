@@ -152,6 +152,10 @@ async function materializeExtractionResult({
       mentionToEntityId.set(normalizeComparable(normalized), entityId);
       mentionToEntityId.set(normalizeForMatching(mention), entityId);
       mentionToEntityId.set(normalizeForMatching(normalized), entityId);
+      // Also register raw lowercase forms so downstream date/relationship lookups
+      // (which use .toLowerCase()) continue to resolve correctly.
+      mentionToEntityId.set(mention.toLowerCase(), entityId);
+      mentionToEntityId.set(normalized.toLowerCase(), entityId);
 
       const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
       const spanEnd = Number.isInteger(ext.span_end)
