@@ -172,6 +172,7 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
 
   let completedDocs = 0;
   let failedDocs = 0;
+  const extractionManifest = []; // collect {documentId, transcriptId} for batch extraction
 
   for (const [documentId, docManifest] of groupedByDocument.entries()) {
     const stillClaimed = await transcriptionJobsAsync.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
@@ -202,14 +203,20 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
       .map((entry) => pageMap.get(entry.pageIndex || 0));
 
     const { persistDocumentTranscription } = require('./transcription-pipeline');
-    await persistDocumentTranscription({
+    const persisted = await persistDocumentTranscription({
       job,
       documentId,
       providerName,
       runtimeConfig,
       temperature,
       results: orderedResults,
-      logLine
+      logLine,
+      skipExtractionJob: true
+    });
+    extractionManifest.push({
+      customId: `extract-doc-${documentId}-tx-${persisted.transcriptId}`,
+      documentId,
+      transcriptId: persisted.transcriptId
     });
     completedDocs += 1;
     await logLine(`Document ${documentId} materialized from batch (${orderedResults.length} page${orderedResults.length !== 1 ? 's' : ''})`);
@@ -230,6 +237,56 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
 
   await logLine(`Batch complete. ${completedDocs} document${completedDocs !== 1 ? 's' : ''} imported from provider batch.`);
   await transcriptionJobsAsync.markDone(job.id);
+
+  // Queue a single batch extraction job for all completed documents
+  if (extractionManifest.length > 0) {
+    try {
+      const { extractionJobsAsync } = require('../database/db');
+      const { supportsExtractionBatchProvider } = require('./extraction-batches');
+
+      if (extractionManifest.length === 1 || !supportsExtractionBatchProvider(providerName)) {
+        // Single document or non-batch provider: individual extraction jobs
+        for (const item of extractionManifest) {
+          await extractionJobsAsync.create({
+            transcript_id: item.transcriptId,
+            document_id: item.documentId,
+            provider: providerName,
+            model: runtimeConfig.utilityModel || job.model || null,
+            temperature: 0.2,
+            initiated_by: job.initiated_by || null,
+            provider_key_scope: job.provider_key_scope || null,
+            user_api_key_id: job.user_api_key_id || null,
+            requested_by_user_id: job.requested_by_user_id || null
+          });
+        }
+        await logLine(`Queued ${extractionManifest.length} knowledge graph extraction job${extractionManifest.length !== 1 ? 's' : ''}`);
+      } else {
+        // Multi-document batch: one extraction batch job
+        const first = extractionManifest[0];
+        await extractionJobsAsync.createBatch({
+          transcript_id: first.transcriptId,
+          document_id: first.documentId,
+          provider: providerName,
+          model: runtimeConfig.utilityModel || job.model || null,
+          temperature: 0.2,
+          initiated_by: job.initiated_by || null,
+          provider_key_scope: job.provider_key_scope || null,
+          user_api_key_id: job.user_api_key_id || null,
+          requested_by_user_id: job.requested_by_user_id || null,
+          batch_display_name: job.batch_display_name || null,
+          batch_document_count: extractionManifest.length,
+          batch_manifest: { requests: extractionManifest },
+          documents: extractionManifest.map((item) => ({
+            document_id: item.documentId,
+            transcript_id: item.transcriptId
+          }))
+        });
+        await logLine(`Queued batch knowledge graph extraction for ${extractionManifest.length} document${extractionManifest.length !== 1 ? 's' : ''}`);
+      }
+    } catch (extractionErr) {
+      await logLine(`Knowledge graph extraction queueing failed (non-fatal): ${extractionErr.message}`);
+    }
+  }
 }
 
 async function runTranscriptionWorkerCycle() {

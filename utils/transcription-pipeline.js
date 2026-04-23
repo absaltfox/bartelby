@@ -40,7 +40,8 @@ async function persistDocumentTranscription({
   runtimeConfig = {},
   temperature = null,
   results,
-  logLine = null
+  logLine = null,
+  skipExtractionJob = false
 }) {
   if (!Array.isArray(results) || results.length === 0) {
     throw new Error('Cannot persist an empty transcription result set.');
@@ -266,24 +267,26 @@ async function persistDocumentTranscription({
     unknown_word_count: countUnknownWords(combined.transcription)
   });
 
-  try {
-    await extractionJobs.create({
-      transcript_id: transcriptId,
-      document_id: documentId,
-      provider: providerName,
-      model: runtimeConfig.utilityModel || job.model || null,
-      temperature: 0.2,
-      initiated_by: job.initiated_by || null,
-      provider_key_scope: job.provider_key_scope || null,
-      user_api_key_id: job.user_api_key_id || null,
-      requested_by_user_id: job.requested_by_user_id || null
-    });
-    if (logLine) {
-      await logLine(`Queued knowledge graph extraction for transcript ${transcriptId}`);
-    }
-  } catch (err) {
-    if (logLine) {
-      await logLine(`Knowledge graph extraction queueing failed (non-fatal): ${err.message}`);
+  if (!skipExtractionJob) {
+    try {
+      await extractionJobs.create({
+        transcript_id: transcriptId,
+        document_id: documentId,
+        provider: providerName,
+        model: runtimeConfig.utilityModel || job.model || null,
+        temperature: 0.2,
+        initiated_by: job.initiated_by || null,
+        provider_key_scope: job.provider_key_scope || null,
+        user_api_key_id: job.user_api_key_id || null,
+        requested_by_user_id: job.requested_by_user_id || null
+      });
+      if (logLine) {
+        await logLine(`Queued knowledge graph extraction for transcript ${transcriptId}`);
+      }
+    } catch (err) {
+      if (logLine) {
+        await logLine(`Knowledge graph extraction queueing failed (non-fatal): ${err.message}`);
+      }
     }
   }
 
