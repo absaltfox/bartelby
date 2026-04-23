@@ -5,7 +5,8 @@ const {
   extractionJobsAsync,
   settingsAsync,
   collectionsAsync,
-  documentCollectionsAsync
+  documentCollectionsAsync,
+  allAsync
 } = require('../database/db');
 
 function supportsExtractionBatchProvider(providerName) {
@@ -82,15 +83,60 @@ async function queueCollectionRerun({ collectionId, userId }) {
   let skippedPending = 0;
   let skippedNoTranscript = 0;
 
+  const docIds = (documentLinks || []).map((l) => l.document_id);
+  if (docIds.length === 0) {
+    return { collection, queuedCount: 0, skippedPending: 0, skippedNoTranscript: 0, mode: 'single' };
+  }
+
+  const placeholders = docIds.map(() => '?').join(',');
+
+  // Bulk-fetch pending/running extraction jobs for all documents in one query
+  const pendingJobRows = await allAsync(`
+    SELECT DISTINCT document_id FROM extraction_jobs
+    WHERE document_id IN (${placeholders})
+      AND status IN ('queued', 'running')
+    UNION
+    SELECT ejd.document_id FROM extraction_jobs j
+    INNER JOIN extraction_job_documents ejd ON ejd.job_id = j.id
+    WHERE ejd.document_id IN (${placeholders})
+      AND j.status IN ('queued', 'running')
+  `, [...docIds, ...docIds]);
+  const pendingDocIds = new Set((pendingJobRows || []).map((r) => r.document_id));
+
+  // Bulk-fetch best transcripts for all documents in one query
+  const bestTranscriptRows = await allAsync(`
+    SELECT * FROM transcripts
+    WHERE document_id IN (${placeholders})
+      AND is_best = 1
+  `, docIds);
+  const bestTranscriptByDocId = new Map((bestTranscriptRows || []).map((t) => [t.document_id, t]));
+
+  // Fall back to any transcript for docs that have no best
+  const docsNeedingFallback = docIds.filter(
+    (id) => !bestTranscriptByDocId.has(id) && !pendingDocIds.has(id)
+  );
+  if (docsNeedingFallback.length > 0) {
+    const fbPlaceholders = docsNeedingFallback.map(() => '?').join(',');
+    const fallbackRows = await allAsync(`
+      SELECT * FROM transcripts
+      WHERE document_id IN (${fbPlaceholders})
+      ORDER BY document_id, id ASC
+    `, docsNeedingFallback);
+    for (const t of (fallbackRows || [])) {
+      if (!bestTranscriptByDocId.has(t.document_id)) {
+        bestTranscriptByDocId.set(t.document_id, t);
+      }
+    }
+  }
+
   for (const link of (documentLinks || [])) {
     const documentId = link.document_id;
-    const pendingJob = await extractionJobsAsync.getPendingForDocument(documentId);
-    if (pendingJob) {
+    if (pendingDocIds.has(documentId)) {
       skippedPending += 1;
       continue;
     }
 
-    const transcript = await getPreferredTranscript(documentId);
+    const transcript = bestTranscriptByDocId.get(documentId);
     if (!transcript) {
       skippedNoTranscript += 1;
       continue;
