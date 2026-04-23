@@ -524,6 +524,10 @@ const authorityLinkSuggestions = {
     return await this.list('all', limit, { entityId });
   },
 
+  async getById(id) {
+    return await getAsync('SELECT * FROM authority_link_suggestions WHERE id = ?', [id]);
+  },
+
   async approve(id, reviewedByUserId) {
     const suggestion = await getAsync(`
       SELECT * FROM authority_link_suggestions

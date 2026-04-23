@@ -453,6 +453,10 @@ router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencod
   }
 
   try {
+    const suggestion = await stores.authorityLinkSuggestions.getById(suggestionId);
+    if (!suggestion || suggestion.entity_id !== entityId) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Authority suggestion not found.')));
+    }
     await stores.authorityLinkSuggestions.approve(suggestionId, req.user.id);
     return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
   } catch (err) {
@@ -469,6 +473,10 @@ router.post('/:id/authority-suggestions/:suggestionId/reject', express.urlencode
   }
 
   try {
+    const suggestion = await stores.authorityLinkSuggestions.getById(suggestionId);
+    if (!suggestion || suggestion.entity_id !== entityId) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Authority suggestion not found.')));
+    }
     await stores.authorityLinkSuggestions.reject(suggestionId, req.user.id);
     return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
   } catch (err) {

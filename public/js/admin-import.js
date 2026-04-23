@@ -2,6 +2,15 @@
 // Works for both admin (/admin/import) and manager (/manage/collections/:id/import) pages.
 // Reads configurable paths from an #import-config JSON block on the page.
 
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function getCsrfToken() {
   var meta = document.querySelector('meta[name="csrf-token"]');
   return meta ? meta.getAttribute('content') : '';
@@ -1219,7 +1228,7 @@ document.addEventListener('DOMContentLoaded', function() {
         : '';
       div.innerHTML = `
         <div class="page-group-header">
-          <strong>${g.label}</strong>
+          <strong>${escapeHtml(g.label)}</strong>
           ${confidenceBadge}
           <span class="page-group-count">${g.pages.length} page${g.pages.length !== 1 ? 's' : ''}</span>
           <button type="button" class="btn-danger btn-sm" data-group-id="${g.id}" ${autoGroupingInProgress ? 'disabled' : ''}>Ungroup</button>
