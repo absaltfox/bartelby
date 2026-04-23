@@ -1,6 +1,6 @@
 'use strict';
 
-const { resolveEntityInScope, normalizeForMatching } = require('../../utils/entity-resolution');
+const { resolveEntityInScope } = require('../../utils/entity-resolution');
 
 describe('resolveEntityInScope', () => {
   let scope;
