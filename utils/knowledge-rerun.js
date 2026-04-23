@@ -8,6 +8,7 @@ const {
   documentCollectionsAsync,
   allAsync
 } = require('../database/db');
+const { supportsExtractionBatchProvider } = require('./extraction-batches');
 
 
 async function getPreferredTranscript(documentId) {
@@ -67,6 +68,20 @@ async function queueDocumentRerun({ documentId, userId }) {
 async function queueCollectionRerun({ collectionId, userId }) {
   const defaultProvider = await settingsAsync.get('default_provider');
   const provider = defaultProvider || 'openai';
+
+  if (!supportsExtractionBatchProvider(provider)) {
+    const error = new Error(`Provider "${provider}" does not support batch extraction. Configure a batch-capable provider (openai, claude, gemini, or vertex) to re-extract a collection.`);
+    error.code = 'provider_no_batch';
+    throw error;
+  }
+
+  const hasKey = await settingsAsync.hasSystemKeyForProvider(provider);
+  if (!hasKey) {
+    const error = new Error(`No API key configured for provider "${provider}". Add the key in Settings before re-extracting.`);
+    error.code = 'provider_no_key';
+    throw error;
+  }
+
   const collection = await collectionsAsync.getById(collectionId);
   if (!collection) {
     const error = new Error('Collection not found.');
