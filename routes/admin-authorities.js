@@ -152,6 +152,7 @@ router.get('/', asyncHandler(async (req, res) => {
       suggestionCount,
       authorityJobCounts: jobCounts,
       queuedBackfill: parseInt(req.query.queuedBackfill, 10) || 0,
+      suggestionJobQueued: parseInt(req.query.suggestionJobQueued, 10) || 0,
       activeKnowledgePage: 'authorities'
     });
   }

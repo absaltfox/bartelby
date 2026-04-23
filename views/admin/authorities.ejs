@@ -12,6 +12,9 @@
   <% if (queuedBackfill) { %>
     <div class="alert alert-success">Queued <strong><%= queuedBackfill %></strong> authority backfill job<%= queuedBackfill !== 1 ? 's' : '' %>.</div>
   <% } %>
+  <% if (suggestionJobQueued) { %>
+    <div class="alert alert-success">Authority suggestion job #<%= parseInt(suggestionJobQueued, 10) %> queued.</div>
+  <% } %>
 
   <div class="admin-stats">
     <div class="stat-card">
@@ -43,6 +46,10 @@
     <form method="POST" action="/admin/knowledge/authorities/backfill" class="inline-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <button type="submit" class="btn-primary btn-sm">Queue Authority Backfill</button>
+    </form>
+    <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs" class="inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn-secondary btn-sm">Run authority suggestion (full corpus)</button>
     </form>
   </div>
 
