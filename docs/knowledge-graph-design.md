@@ -14,11 +14,16 @@ only see graph evidence that comes from documents they are allowed to access.
 
 ### Entities
 
-- Canonical nodes in the graph
+- Canonical nodes in the graph, scoped to a single document
 - Stored in `entities`
+- Represent one distinct subject as attested by one transcript — the "person
+  record" in prosopographical terms
 - Have an `entity_type`, canonical name, optional description, JSON
   properties, and an optional `authority_id`
-- Remain the evidence-bearing layer for citations, dates, and relationships
+- Remain the evidence-bearing layer: citations, relationships, and dates
+  attach to entities
+- Never merged across documents at extraction time; cross-document identity
+  is the authority layer's responsibility
 
 Common entity types include:
 
@@ -36,19 +41,37 @@ does not create standalone date nodes for explorer use.
 ### Authorities
 
 - Stored in `authorities`
-- Represent cross-document identity clusters that group multiple extracted
-  entities referring to the same person, place, organization, or other subject
+- The sole mechanism for cross-document identity
+- Represent editorial assertions that multiple entity records (from different
+  documents) refer to the same real-world subject
 - Have an `authority_type`, canonical name, optional description, JSON
   properties, and nullable placeholder external-id fields for future authority
   source integration
+- Populated via the authority suggestion job (async, human-reviewed) rather
+  than at extraction time
 - Drive authority-first graph focus in the explorer when an entity has an
   assigned authority
 
 ### Aliases
 
 - Stored in `entity_aliases`
-- Track alternate names and extracted mentions for an entity
-- Used for searching and for entity resolution during extraction
+- Track alternate name forms used for an entity **within its source document**
+- Scoped to the document by construction: because entities are created fresh
+  per transcript, aliases written during extraction belong to that
+  transcript's context
+- Used by the authority suggestion pipeline as richer embedding input
+
+### Authority Suggestion Jobs
+
+- Stored in `authority_suggestion_jobs`
+- An async job type registered in the background worker loop
+- Runs a four-stage pipeline: normalise → fuzzy pre-filter (inverted token
+  index) → embed (`all-MiniLM-L6-v2` via `@xenova/transformers`) → write
+  suggestions
+- Triggered automatically after extraction completes for a collection's
+  document, or manually from the admin UI (per-collection or full-corpus)
+- High-confidence pairs (≥ 0.92 cosine) are auto-approved; mid-confidence
+  (0.75–0.91) enter the pending review queue; below 0.75 are discarded
 
 ### Authority Link Suggestions
 
@@ -104,24 +127,27 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - The worker resolves the active transcript for the job
 - An LLM prompt extracts entities, dates, and relationships from transcript
   content
-- Entity aliases are deduplicated where possible
-- Each extracted or re-used entity is also assigned to an authority
+- Entity aliases are deduplicated within the current transcript only (not
+  across documents)
+- Each extracted entity is created fresh — no cross-document entity
+  resolution occurs
+- No authority assignment happens during extraction; that is deferred to the
+  authority suggestion job
 - Date expressions are attached to the referenced subject entity rather than
   creating a separate date node
-- Relationships are deduplicated by source, target, and type
+- Relationships are deduplicated by source, target, and type within the
+  transcript
 - Citations are always written for the transcript and document being processed
 
-### Authority Resolution and Backfill
+### Authority Suggestion (post-extraction)
 
-- High-confidence exact or fuzzy matches can auto-link an entity to an
-  existing authority of the same type
-- When no safe authority match exists, extraction creates a new authority and
-  assigns the entity to it
-- When a candidate is plausible but not safe enough to auto-link, extraction
-  still creates a new authority for the entity and records a pending
-  `authority_link_suggestion`
-- Legacy entities can be assigned authorities later by queueing
-  `authority_resolution_jobs` without re-running transcript extraction
+- After each extraction job completes, a scoped `authority_suggestion_job` is
+  automatically queued for any collection the document belongs to, provided no
+  suggestion job is already pending or running for that collection (debounce)
+- Curators can also trigger a per-collection or full-corpus suggestion run
+  manually from the Knowledge → Authorities admin page
+- Legacy entities that predate the async suggestion pipeline can be reprocessed
+  by running the suggestion job manually
 
 ## Review and Curation
 
