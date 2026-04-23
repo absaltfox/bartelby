@@ -705,7 +705,7 @@
     var rows = [];
     safeArray(neighbors).forEach(function(n) {
       var id = Number(n.id);
-      var direction = n.direction === 'incoming' ? 'incoming' : 'outgoing';
+      var direction = n.direction === 'incoming' ? 'incoming' : (n.direction === 'mixed' ? 'mixed' : 'outgoing');
       var relType = String(n.relationship_type || n.type || 'related_to');
       var key = id + '|' + direction + '|' + relType;
       if (seen.has(key)) return;
@@ -715,10 +715,16 @@
         canonical_name: n.canonical_name || n.name,
         entity_type: n.entity_type,
         description: n.description || '',
+        authority_id: n.authority_id != null ? Number(n.authority_id) : null,
+        node_kind: n.node_kind || 'entity',
+        member_count: n.member_count != null ? Number(n.member_count) : 0,
+        member_entity_ids: safeArray(n.member_entity_ids),
         relationship_id: n.relationship_id != null ? Number(n.relationship_id) : null,
         relationship_type: relType,
+        relationship_types: safeArray(n.relationship_types),
         direction: direction,
-        evidence_text: n.evidence_text || null
+        evidence_text: n.evidence_text || null,
+        evidence_texts: safeArray(n.evidence_texts)
       });
     });
     return rows;
@@ -1625,12 +1631,15 @@
     var aliases = safeArray(detail.aliases);
     var dates = safeArray(detail.dates);
     var citations = safeArray(detail.citations);
+    var authority = detail && detail.authority ? detail.authority : null;
+    var linkedEntities = safeArray(detail && detail.linkedEntities);
 
     var hasSources = citations.length > 0;
     var hasConnections = neighbors.length > 0;
     var hasDates = dates.length > 0;
     var hasDescription = !!(entity.description && String(entity.description).trim());
-    var hasAnyContent = hasSources || hasConnections || hasDates || hasDescription || aliases.length > 0;
+    var hasAuthority = !!authority;
+    var hasAnyContent = hasSources || hasConnections || hasDates || hasDescription || aliases.length > 0 || hasAuthority;
 
     var aliasMarkup = buildAliasMarkup(entity.id, aliases, 3);
     var headerHtml = ''
@@ -1681,11 +1690,16 @@
     var connectionsHtml = '';
     if (hasConnections) {
       var rows = neighbors.map(function(neighbor) {
-        var arrow = neighbor.direction === 'incoming' ? '&larr;' : '&rarr;';
-        var relLabel = escHtml(humaniseRelType(neighbor.relationship_type));
+        var arrow = neighbor.direction === 'incoming' ? '&larr;' : (neighbor.direction === 'mixed' ? '&harr;' : '&rarr;');
+        var relLabel = escHtml(humaniseRelType((neighbor.relationship_types && neighbor.relationship_types.length)
+          ? neighbor.relationship_types.join(', ')
+          : neighbor.relationship_type));
         var typeBadge = '<span class="entity-type-badge ' + entityTypeClass(neighbor.entity_type) + '">'
           + escHtml(entityTypeLabel(neighbor.entity_type))
           + '</span>';
+        var memberMeta = neighbor.node_kind === 'authority' && neighbor.member_count > 1
+          ? '<span class="graph-muted"> (' + neighbor.member_count + ' linked entities)</span>'
+          : '';
         var evidence = neighbor.evidence_text
           ? '<div class="graph-connection-evidence">' + escHtml(normalizeCitationExcerpt(neighbor.evidence_text)) + '</div>'
           : '';
@@ -1693,7 +1707,7 @@
           + '<button type="button" class="graph-connection-row" data-neighbor-id="' + escHtml(neighbor.id) + '">'
           +   '<span class="graph-connection-arrow">' + arrow + '</span>'
           +   '<span class="graph-connection-rel">' + relLabel + '</span>'
-          +   '<span class="graph-connection-name">' + escHtml(neighbor.canonical_name || 'Entity') + typeBadge + '</span>'
+          +   '<span class="graph-connection-name">' + escHtml(neighbor.canonical_name || 'Entity') + typeBadge + memberMeta + '</span>'
           +   evidence
           + '</button>';
       }).join('');
@@ -1702,6 +1716,26 @@
         + '<section class="graph-detail-section">'
         +   '<div class="graph-detail-section-label">Connections <span class="graph-detail-section-count">' + neighbors.length + '</span></div>'
         +   '<div class="graph-connection-list">' + rows + '</div>'
+        + '</section>';
+    }
+
+    var authorityHtml = '';
+    if (hasAuthority) {
+      var linkedRows = linkedEntities.map(function(linked) {
+        return ''
+          + '<div class="graph-detail-card">'
+          +   '<strong>' + escHtml(linked.canonical_name || 'Entity') + '</strong>'
+          +   '<div class="graph-muted">' + escHtml(entityTypeLabel(linked.entity_type)) + '</div>'
+          + '</div>';
+      }).join('');
+      authorityHtml = ''
+        + '<hr class="graph-detail-divider">'
+        + '<section class="graph-detail-section">'
+        +   '<div class="graph-detail-section-label">Authority <span class="graph-detail-section-count">' + escHtml(authority.canonical_name || 'Authority') + '</span></div>'
+        +   '<div class="graph-detail-card"><strong>' + escHtml(authority.canonical_name || 'Authority') + '</strong><div class="graph-muted">' + escHtml(entityTypeLabel(authority.authority_type || entity.entity_type)) + ' authority</div></div>'
+        +   (linkedRows
+          ? '<div class="graph-detail-list">' + linkedRows + '</div>'
+          : '')
         + '</section>';
     }
 
@@ -1724,7 +1758,7 @@
         + '</section>';
     }
 
-    container.innerHTML = headerHtml + sourcesHtml + connectionsHtml + datesHtml;
+    container.innerHTML = headerHtml + authorityHtml + sourcesHtml + connectionsHtml + datesHtml;
 
     var aliasToggle = container.querySelector('.graph-alias-toggle');
     if (aliasToggle) {
@@ -1838,8 +1872,12 @@
         state.selectedNeighbors = neighbors;
         state.selectedEntity = detail.entity;
 
-        if (visualTitle) visualTitle.textContent = detail.entity.canonical_name || 'Graph view';
-        if (visualSubtitle) visualSubtitle.textContent = detail.entity.description || 'Neighborhood graph and citations';
+        if (visualTitle) visualTitle.textContent = (detail.authority && detail.authority.canonical_name) || detail.entity.canonical_name || 'Graph view';
+        if (visualSubtitle) {
+          visualSubtitle.textContent = detail.authority
+            ? 'Authority-wide neighborhood graph and citations'
+            : (detail.entity.description || 'Neighborhood graph and citations');
+        }
         if (edgeCount) edgeCount.textContent = formatCount(neighbors.length, 'relationship', 'relationships');
 
         if (canvas) {

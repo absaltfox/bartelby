@@ -129,9 +129,8 @@ describe('import api hardening', () => {
     expect(tempAssetsMock.deleteTempAssets).toHaveBeenCalledTimes(1);
   });
 
-  it('promotes grouping temp inputs before queueing the job', async () => {
+  it('queues grouping temp inputs without promoting them in the HTTP handler', async () => {
     const app = buildApp();
-    tempAssetsMock.promoteQueuedTempAssets.mockResolvedValue(['durable-1.png', 'durable-2.png']);
 
     const res = await request(app)
       .post('/suggest-groups')
@@ -142,11 +141,11 @@ describe('import api hardening', () => {
       });
 
     expect(res.status).toBe(200);
-    expect(tempAssetsMock.promoteQueuedTempAssets).toHaveBeenCalledWith(['page-1.png', 'page-2.png']);
+    expect(tempAssetsMock.promoteQueuedTempAssets).not.toHaveBeenCalled();
     expect(dbMock.importJobsAsync.create).toHaveBeenCalledWith(expect.objectContaining({
       job_kind: 'grouping',
       payload: expect.objectContaining({
-        tempFiles: ['durable-1.png', 'durable-2.png'],
+        tempFiles: ['page-1.png'],
         provider: 'openai',
         credentialSource: 'user:5'
       })

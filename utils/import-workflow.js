@@ -157,6 +157,11 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
     return false;
   }
 
+  function hasUpcomingPlausibleNumber(startCursor, expectedNumber) {
+    return hasUpcomingExpectedNumber(startCursor, expectedNumber)
+      || hasUpcomingExpectedNumber(startCursor, expectedNumber + 1);
+  }
+
   while (index < tempFiles.length) {
     const startNumber = annotationMap.get(index + 1);
     if (startNumber !== 1) {
@@ -168,6 +173,7 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
     let explicitMatches = 1;
     let expectedNumber = 2;
     let cursor = index + 1;
+    let unreadableGapPending = false;
 
     while (cursor < tempFiles.length) {
       const detectedNumber = annotationMap.get(cursor + 1);
@@ -177,6 +183,19 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
         explicitMatches += 1;
         expectedNumber += 1;
         cursor += 1;
+        unreadableGapPending = false;
+        continue;
+      }
+
+      if (
+        unreadableGapPending &&
+        detectedNumber === expectedNumber + 1
+      ) {
+        pages.push(cursor);
+        explicitMatches += 1;
+        expectedNumber = detectedNumber + 1;
+        cursor += 1;
+        unreadableGapPending = false;
         continue;
       }
 
@@ -193,10 +212,11 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
       if (
         detectedNumber == null &&
         explicitMatches >= 2 &&
-        hasUpcomingExpectedNumber(cursor + 1, expectedNumber)
+        hasUpcomingPlausibleNumber(cursor + 1, expectedNumber)
       ) {
         pages.push(cursor);
         cursor += 1;
+        unreadableGapPending = true;
         continue;
       }
 

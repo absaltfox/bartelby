@@ -11,6 +11,8 @@ function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
     entityAliases: db.entityAliasesAsync || db.entityAliases || null,
+    authorities: db.authoritiesAsync || db.authorities || null,
+    authorityLinkSuggestions: db.authorityLinkSuggestionsAsync || db.authorityLinkSuggestions || null,
     dateExpressions: db.dateExpressionsAsync || db.dateExpressions || null,
     relationships: db.relationshipsAsync || db.relationships || null,
     citations: db.citationsAsync || db.citations || null,
@@ -50,6 +52,15 @@ async function canManageDocumentKnowledge(req, documentId) {
 
 function collectionFilterId(req) {
   return parseCollectionId(req.query.collectionId);
+}
+
+function safeRelationshipTypes(neighbor) {
+  if (Array.isArray(neighbor && neighbor.relationship_types)) {
+    return neighbor.relationship_types.map((value) => String(value));
+  }
+  const value = String((neighbor && (neighbor.relationship_type || neighbor.type)) || '').trim();
+  if (!value) return [];
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 router.get('/', requireAuth, (req, res) => {
@@ -143,15 +154,30 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
   }
 
   const collectionId = collectionFilterId(req);
+  const authorityContext = stores.graphAccess && typeof stores.graphAccess.getAuthorityContext === 'function'
+    ? await stores.graphAccess.getAuthorityContext(id, req.user.id, req.user.role === 'admin', !!req.user.access_all, collectionId)
+    : { authority: null, linkedEntities: [entity], centerEntityIds: [entity.id] };
+  const visibleLinkedEntities = Array.isArray(authorityContext.linkedEntities) && authorityContext.linkedEntities.length
+    ? authorityContext.linkedEntities
+    : [entity];
+  const centerEntityIds = visibleLinkedEntities.map((row) => row.id);
+
   const [aliases, dates, citations] = await Promise.all([
     stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
     stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
-    stores.citations && stores.citations.getByEntityId
-      ? stores.citations.getByEntityId(id, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
+    stores.citations && stores.citations.getByEntityIds
+      ? stores.citations.getByEntityIds(centerEntityIds, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
       : []
   ]);
 
-  return res.json({ entity, aliases: aliases || [], dates: dates || [], citations: citations || [] });
+  return res.json({
+    entity,
+    authority: authorityContext.authority || null,
+    linkedEntities: visibleLinkedEntities,
+    aliases: aliases || [],
+    dates: dates || [],
+    citations: citations || []
+  });
 }));
 
 router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
@@ -186,28 +212,10 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
   );
   let accessible = accessChecks.filter((c) => c.allowed).map((c) => c.neighbor);
   if (relType) {
-    accessible = accessible.filter((n) => n.relationship_type === relType);
+    accessible = accessible.filter((n) => safeRelationshipTypes(n).includes(relType));
   }
 
-  const relationshipIds = Array.from(new Set(
-    accessible.map((n) => n.relationship_id).filter((value) => Number.isInteger(value))
-  ));
-  const relationshipCitations = relationshipIds.length && stores.citations && stores.citations.getByRelationshipIds
-    ? await stores.citations.getByRelationshipIds(relationshipIds, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
-    : [];
-  const firstExcerptByRelationship = new Map();
-  for (const citation of relationshipCitations) {
-    if (!firstExcerptByRelationship.has(citation.relationship_id) && citation.passage_text) {
-      firstExcerptByRelationship.set(citation.relationship_id, citation.passage_text);
-    }
-  }
-
-  const enrichedNeighbors = accessible.map((neighbor) => ({
-    ...neighbor,
-    evidence_text: firstExcerptByRelationship.get(neighbor.relationship_id) || null
-  }));
-
-  return res.json({ entity, neighbors: enrichedNeighbors, depth });
+  return res.json({ entity, neighbors: accessible, depth });
 }));
 
 router.get('/relationships/:id', asyncHandler(async (req, res) => {

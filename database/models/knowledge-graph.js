@@ -13,15 +13,16 @@ const REVIEW_KIND_ENTITY_TYPES = new Set([
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, isFts5Available = () => false) => {
 const entities = {
-  async create({ entity_type, canonical_name, description, properties }) {
+  async create({ entity_type, canonical_name, description, properties, authority_id }) {
     const result = await runAsync(`
-      INSERT INTO entities (entity_type, canonical_name, description, properties)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO entities (entity_type, canonical_name, description, properties, authority_id)
+      VALUES (?, ?, ?, ?, ?)
     `, [
       entity_type,
       canonical_name,
       description || null,
-      JSON.stringify(properties || {})
+      JSON.stringify(properties || {}),
+      Number.isInteger(authority_id) ? authority_id : null
     ]);
     return result.lastInsertRowid;
   },
@@ -127,15 +128,41 @@ const entities = {
     if (!existing) return null;
     await runAsync(`
       UPDATE entities
-      SET canonical_name = ?, description = ?, properties = ?
+      SET canonical_name = ?, description = ?, properties = ?, authority_id = ?
       WHERE id = ?
     `, [
       fields.canonical_name !== undefined ? fields.canonical_name : existing.canonical_name,
       fields.description !== undefined ? fields.description : existing.description,
       fields.properties !== undefined ? JSON.stringify(fields.properties || {}) : JSON.stringify(existing.properties || {}),
+      fields.authority_id !== undefined
+        ? (Number.isInteger(fields.authority_id) ? fields.authority_id : null)
+        : (Number.isInteger(existing.authority_id) ? existing.authority_id : null),
       id
     ]);
     return await this.getById(id);
+  },
+
+  async getByAuthorityId(authorityId, limit = 200) {
+    if (!Number.isInteger(Number(authorityId)) || Number(authorityId) <= 0) return [];
+    return (await allAsync(`
+      SELECT *
+      FROM entities
+      WHERE authority_id = ?
+      ORDER BY canonical_name
+      LIMIT ?
+    `, [Number(authorityId), limit])).map(hydrateEntity);
+  },
+
+  async assignAuthority(entityId, authorityId) {
+    await runAsync(`
+      UPDATE entities
+      SET authority_id = ?
+      WHERE id = ?
+    `, [
+      Number.isInteger(Number(authorityId)) ? Number(authorityId) : null,
+      entityId
+    ]);
+    return await this.getById(entityId);
   },
 
   async delete(id) {
@@ -277,6 +304,269 @@ const entityAliases = {
 
   async delete(id) {
     return await runAsync('DELETE FROM entity_aliases WHERE id = ?', [id]);
+  }
+};
+
+const authorities = {
+  async create({ authority_type, canonical_name, description, properties, external_source, external_key }) {
+    const result = await runAsync(`
+      INSERT INTO authorities (
+        authority_type, canonical_name, description, properties, external_source, external_key
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      authority_type,
+      canonical_name,
+      description || null,
+      JSON.stringify(properties || {}),
+      external_source || null,
+      external_key || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return hydrateAuthority(await getAsync('SELECT * FROM authorities WHERE id = ?', [id]));
+  },
+
+  async getAll(limit = 50, offset = 0) {
+    return (await allAsync(`
+      SELECT *
+      FROM authorities
+      ORDER BY canonical_name
+      LIMIT ? OFFSET ?
+    `, [limit, offset])).map(hydrateAuthority);
+  },
+
+  async getCount(authorityType = null) {
+    const row = authorityType
+      ? await getAsync('SELECT COUNT(*) AS count FROM authorities WHERE authority_type = ?', [authorityType])
+      : await getAsync('SELECT COUNT(*) AS count FROM authorities');
+    return Number(row?.count || 0);
+  },
+
+  async search(query, limit = 50, opts = {}) {
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    if (!sanitized) return [];
+    const pattern = `%${sanitized}%`;
+    const params = [pattern, pattern, pattern];
+    let typeClause = '';
+    if (opts.authorityType) {
+      typeClause = 'AND a.authority_type = ?';
+      params.push(opts.authorityType);
+    }
+    params.push(limit);
+    return (await allAsync(`
+      SELECT DISTINCT a.*
+      FROM authorities a
+      LEFT JOIN entities e ON e.authority_id = a.id
+      LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+      WHERE (
+        a.canonical_name LIKE ?
+        OR e.canonical_name LIKE ?
+        OR ea.alias LIKE ?
+      )
+      ${typeClause}
+      ORDER BY a.canonical_name
+      LIMIT ?
+    `, params)).map(hydrateAuthority);
+  },
+
+  async getMembers(authorityId, limit = 200) {
+    if (!Number.isInteger(Number(authorityId)) || Number(authorityId) <= 0) return [];
+    return (await allAsync(`
+      SELECT *
+      FROM entities
+      WHERE authority_id = ?
+      ORDER BY canonical_name
+      LIMIT ?
+    `, [Number(authorityId), limit])).map(hydrateEntity);
+  },
+
+  async getMemberAliases(authorityId, limit = 500) {
+    if (!Number.isInteger(Number(authorityId)) || Number(authorityId) <= 0) return [];
+    return await allAsync(`
+      SELECT DISTINCT ea.alias
+      FROM entity_aliases ea
+      INNER JOIN entities e ON e.id = ea.entity_id
+      WHERE e.authority_id = ?
+      ORDER BY ea.alias
+      LIMIT ?
+    `, [Number(authorityId), limit]);
+  },
+
+  async update(id, fields = {}) {
+    const existing = await this.getById(id);
+    if (!existing) return null;
+    await runAsync(`
+      UPDATE authorities
+      SET authority_type = ?,
+          canonical_name = ?,
+          description = ?,
+          properties = ?,
+          external_source = ?,
+          external_key = ?
+      WHERE id = ?
+    `, [
+      fields.authority_type || existing.authority_type,
+      fields.canonical_name !== undefined ? fields.canonical_name : existing.canonical_name,
+      fields.description !== undefined ? fields.description : existing.description,
+      fields.properties !== undefined ? JSON.stringify(fields.properties || {}) : JSON.stringify(existing.properties || {}),
+      fields.external_source !== undefined ? fields.external_source : existing.external_source,
+      fields.external_key !== undefined ? fields.external_key : existing.external_key,
+      id
+    ]);
+    return await this.getById(id);
+  },
+
+  async mergeAuthorities(keepId, mergeId) {
+    const keep = await this.getById(keepId);
+    const merge = await this.getById(mergeId);
+    if (!keep || !merge) {
+      throw new Error('Authority not found.');
+    }
+
+    await runAsync('BEGIN');
+    try {
+      await runAsync('UPDATE entities SET authority_id = ? WHERE authority_id = ?', [keepId, mergeId]);
+      await runAsync(`
+        DELETE FROM authority_link_suggestions
+        WHERE suggested_authority_id = ?
+          AND entity_id IN (
+            SELECT entity_id
+            FROM authority_link_suggestions
+            WHERE suggested_authority_id = ?
+          )
+      `, [mergeId, keepId]);
+      await runAsync('UPDATE authority_link_suggestions SET suggested_authority_id = ? WHERE suggested_authority_id = ?', [keepId, mergeId]);
+      await runAsync('DELETE FROM authorities WHERE id = ?', [mergeId]);
+      await runAsync('COMMIT');
+    } catch (err) {
+      await runAsync('ROLLBACK');
+      throw err;
+    }
+
+    await saveDatabase();
+    return await this.getById(keepId);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM authorities WHERE id = ?', [id]);
+  }
+};
+
+const authorityLinkSuggestions = {
+  async createIfMissing({ entity_id, suggested_authority_id, confidence, match_method, status = 'pending' }) {
+    const existing = await getAsync(`
+      SELECT * FROM authority_link_suggestions
+      WHERE entity_id = ? AND suggested_authority_id = ?
+      LIMIT 1
+    `, [entity_id, suggested_authority_id]);
+    if (existing) {
+      await runAsync(`
+        UPDATE authority_link_suggestions
+        SET confidence = COALESCE(?, confidence),
+            match_method = COALESCE(?, match_method),
+            status = CASE WHEN status = 'approved' THEN status ELSE ? END
+        WHERE id = ?
+      `, [
+        confidence != null ? confidence : null,
+        match_method || null,
+        status || 'pending',
+        existing.id
+      ]);
+      return existing.id;
+    }
+
+    const result = await runAsync(`
+      INSERT INTO authority_link_suggestions (
+        entity_id, suggested_authority_id, confidence, match_method, status
+      ) VALUES (?, ?, ?, ?, ?)
+    `, [
+      entity_id,
+      suggested_authority_id,
+      confidence != null ? confidence : null,
+      match_method || null,
+      status || 'pending'
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async list(status = 'pending', limit = 100, opts = {}) {
+    const params = [];
+    let statusClause = '';
+    if (status && status !== 'all') {
+      statusClause = 'WHERE als.status = ?';
+      params.push(status);
+    }
+    if (Number.isInteger(Number(opts.entityId)) && Number(opts.entityId) > 0) {
+      statusClause += statusClause ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
+      params.push(Number(opts.entityId));
+    }
+    params.push(limit);
+    return await allAsync(`
+      SELECT
+        als.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        e.authority_id AS current_authority_id,
+        a.canonical_name AS suggested_authority_name,
+        a.authority_type AS suggested_authority_type
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      INNER JOIN authorities a ON a.id = als.suggested_authority_id
+      ${statusClause}
+      ORDER BY als.created_at DESC
+      LIMIT ?
+    `, params);
+  },
+
+  async getByEntityId(entityId, limit = 50) {
+    return await this.list('all', limit, { entityId });
+  },
+
+  async approve(id, reviewedByUserId) {
+    const suggestion = await getAsync(`
+      SELECT * FROM authority_link_suggestions
+      WHERE id = ?
+    `, [id]);
+    if (!suggestion) {
+      throw new Error('Authority suggestion not found.');
+    }
+    await runAsync('BEGIN');
+    try {
+      await runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [suggestion.suggested_authority_id, suggestion.entity_id]);
+      await runAsync(`
+        UPDATE authority_link_suggestions
+        SET status = 'approved',
+            reviewed_at = CURRENT_TIMESTAMP,
+            reviewed_by_user_id = ?
+        WHERE id = ?
+      `, [reviewedByUserId || null, id]);
+      await runAsync(`
+        UPDATE authority_link_suggestions
+        SET status = 'rejected',
+            reviewed_at = CURRENT_TIMESTAMP,
+            reviewed_by_user_id = ?
+        WHERE entity_id = ?
+          AND id != ?
+          AND status = 'pending'
+      `, [reviewedByUserId || null, suggestion.entity_id, id]);
+      await runAsync('COMMIT');
+    } catch (err) {
+      await runAsync('ROLLBACK');
+      throw err;
+    }
+    await saveDatabase();
+  },
+
+  async reject(id, reviewedByUserId) {
+    await runAsync(`
+      UPDATE authority_link_suggestions
+      SET status = 'rejected',
+          reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?
+      WHERE id = ?
+    `, [reviewedByUserId || null, id]);
   }
 };
 
@@ -723,37 +1013,13 @@ const citations = {
       LEFT JOIN entities se ON se.id = r.source_entity_id
       LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN citations ec ON ec.id = (
-        SELECT c2.id
-        FROM citations c2
-        WHERE c2.entity_id = c.entity_id
-          AND c2.transcript_id = c.transcript_id
-          AND c2.id != c.id
-          AND c2.relationship_id IS NULL
-          AND c2.date_expression_id IS NULL
-        ORDER BY ABS(COALESCE(c2.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c2.id DESC
-        LIMIT 1
+        ${buildNearestSupportCitationSubquery('c2', 'c.entity_id')}
       )
       LEFT JOIN citations sec ON sec.id = (
-        SELECT c3.id
-        FROM citations c3
-        WHERE c3.entity_id = r.source_entity_id
-          AND c3.transcript_id = c.transcript_id
-          AND c3.id != c.id
-          AND c3.relationship_id IS NULL
-          AND c3.date_expression_id IS NULL
-        ORDER BY ABS(COALESCE(c3.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c3.id DESC
-        LIMIT 1
+        ${buildNearestSupportCitationSubquery('c3', 'r.source_entity_id')}
       )
       LEFT JOIN citations tec ON tec.id = (
-        SELECT c4.id
-        FROM citations c4
-        WHERE c4.entity_id = r.target_entity_id
-          AND c4.transcript_id = c.transcript_id
-          AND c4.id != c.id
-          AND c4.relationship_id IS NULL
-          AND c4.date_expression_id IS NULL
-        ORDER BY ABS(COALESCE(c4.passage_start, 0) - COALESCE(c.passage_start, 0)) ASC, c4.id DESC
-        LIMIT 1
+        ${buildNearestSupportCitationSubquery('c4', 'r.target_entity_id')}
       )
       LEFT JOIN documents d ON d.id = c.document_id
       WHERE (${access.clause})
@@ -1195,11 +1461,49 @@ const graphAccess = {
     return !!row;
   },
 
-  async getNeighbors(entityId, userId, isAdmin, accessAll, collectionId = null) {
+  async getAuthorityContext(entityId, userId, isAdmin, accessAll, collectionId = null) {
+    const entity = await entities.getById(entityId);
+    if (!entity) {
+      return { entity: null, authority: null, linkedEntities: [], centerEntityIds: [] };
+    }
+    if (!Number.isInteger(entity.authority_id)) {
+      return {
+        entity,
+        authority: null,
+        linkedEntities: [entity],
+        centerEntityIds: [entity.id]
+      };
+    }
+
     const visibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
-    return (await allAsync(`
-      SELECT DISTINCT
-        e.*,
+    const linkedEntities = (await allAsync(`
+      SELECT DISTINCT e.*
+      FROM entities e
+      INNER JOIN citations c ON c.entity_id = e.id
+      WHERE e.authority_id = ?
+        AND (${visibility.clause})
+      ORDER BY e.canonical_name
+    `, [entity.authority_id, ...visibility.params])).map(hydrateEntity);
+
+    return {
+      entity,
+      authority: await authorities.getById(entity.authority_id),
+      linkedEntities,
+      centerEntityIds: linkedEntities.length ? linkedEntities.map((row) => row.id) : [entity.id]
+    };
+  },
+
+  async getNeighbors(entityId, userId, isAdmin, accessAll, collectionId = null) {
+    const context = await this.getAuthorityContext(entityId, userId, isAdmin, accessAll, collectionId);
+    const centerEntityIds = Array.from(new Set(
+      (context.centerEntityIds || []).filter((value) => Number.isInteger(value))
+    ));
+    if (!centerEntityIds.length) return [];
+
+    const visibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
+    const centerPlaceholders = centerEntityIds.map(() => '?').join(',');
+    const rows = await allAsync(`
+      SELECT
         r.id AS relationship_id,
         r.relationship_type,
         r.confidence,
@@ -1207,22 +1511,87 @@ const graphAccess = {
         r.end_date,
         r.date_precision,
         r.date_qualifier,
-        CASE WHEN r.source_entity_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
-        se.canonical_name AS source_name,
-        se.entity_type AS source_type,
-        te.canonical_name AS target_name,
-        te.entity_type AS target_type
+        c.passage_text AS evidence_text,
+        CASE WHEN r.source_entity_id IN (${centerPlaceholders}) THEN 'outgoing' ELSE 'incoming' END AS direction,
+        other.id AS other_entity_id,
+        other.canonical_name AS other_entity_name,
+        other.entity_type AS other_entity_type,
+        other.description AS other_entity_description,
+        other.authority_id AS other_authority_id,
+        oa.canonical_name AS other_authority_name,
+        oa.authority_type AS other_authority_type
       FROM relationships r
-      JOIN citations c ON c.relationship_id = r.id
-      JOIN entities e
-        ON e.id = CASE WHEN r.source_entity_id = ? THEN r.target_entity_id ELSE r.source_entity_id END
-      JOIN entities se ON se.id = r.source_entity_id
-      JOIN entities te ON te.id = r.target_entity_id
-      WHERE (r.source_entity_id = ? OR r.target_entity_id = ?)
-        AND e.entity_type != 'date'
+      INNER JOIN citations c ON c.relationship_id = r.id
+      INNER JOIN entities other
+        ON other.id = CASE
+          WHEN r.source_entity_id IN (${centerPlaceholders}) THEN r.target_entity_id
+          ELSE r.source_entity_id
+        END
+      LEFT JOIN authorities oa ON oa.id = other.authority_id
+      WHERE (
+        (r.source_entity_id IN (${centerPlaceholders}) AND r.target_entity_id NOT IN (${centerPlaceholders}))
+        OR
+        (r.target_entity_id IN (${centerPlaceholders}) AND r.source_entity_id NOT IN (${centerPlaceholders}))
+      )
+        AND other.entity_type != 'date'
         AND (${visibility.clause})
-      ORDER BY e.canonical_name
-    `, [entityId, entityId, entityId, entityId, ...visibility.params])).map(hydrateEntity);
+      ORDER BY other.canonical_name, r.id, c.id
+    `, [
+      ...centerEntityIds,
+      ...centerEntityIds,
+      ...centerEntityIds,
+      ...centerEntityIds,
+      ...centerEntityIds,
+      ...centerEntityIds,
+      ...visibility.params
+    ]);
+
+    const grouped = new Map();
+    for (const row of rows) {
+      const hasAuthority = Number.isInteger(row.other_authority_id);
+      const key = hasAuthority ? `authority:${row.other_authority_id}` : `entity:${row.other_entity_id}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          id: row.other_entity_id,
+          canonical_name: hasAuthority ? row.other_authority_name : row.other_entity_name,
+          entity_type: hasAuthority ? row.other_authority_type : row.other_entity_type,
+          description: row.other_entity_description || '',
+          authority_id: hasAuthority ? row.other_authority_id : null,
+          node_kind: hasAuthority ? 'authority' : 'entity',
+          member_entity_ids: new Set(),
+          relationship_ids: new Set(),
+          relationship_types: new Set(),
+          directions: new Set(),
+          evidence_texts: []
+        });
+      }
+      const entry = grouped.get(key);
+      entry.member_entity_ids.add(row.other_entity_id);
+      entry.relationship_ids.add(row.relationship_id);
+      entry.relationship_types.add(row.relationship_type || 'related_to');
+      entry.directions.add(row.direction === 'incoming' ? 'incoming' : 'outgoing');
+      if (row.evidence_text && !entry.evidence_texts.includes(row.evidence_text) && entry.evidence_texts.length < 3) {
+        entry.evidence_texts.push(row.evidence_text);
+      }
+    }
+
+    return Array.from(grouped.values()).map((entry) => ({
+      id: entry.id,
+      canonical_name: entry.canonical_name,
+      entity_type: entry.entity_type,
+      description: entry.description,
+      authority_id: entry.authority_id,
+      node_kind: entry.node_kind,
+      member_entity_ids: Array.from(entry.member_entity_ids),
+      member_count: entry.member_entity_ids.size,
+      relationship_id: entry.relationship_ids.size === 1 ? Array.from(entry.relationship_ids)[0] : null,
+      relationship_ids: Array.from(entry.relationship_ids),
+      relationship_type: Array.from(entry.relationship_types).join(', '),
+      relationship_types: Array.from(entry.relationship_types),
+      direction: entry.directions.size === 1 ? Array.from(entry.directions)[0] : 'mixed',
+      evidence_text: entry.evidence_texts[0] || null,
+      evidence_texts: entry.evidence_texts
+    }));
   }
 };
 
@@ -1233,6 +1602,14 @@ function parseJsonValue(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function hydrateAuthority(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    properties: parseJsonValue(row.properties, {})
+  };
 }
 
 function hydrateEntity(row) {
@@ -1341,6 +1718,25 @@ function buildReviewKindFilter(reviewKind, citationAlias = 'c', entityAlias = 'e
   return { clause: '1=1', params: [] };
 }
 
+function buildNearestSupportCitationSubquery(candidateAlias, entityExpression) {
+  return `
+        SELECT ranked.id
+        FROM (
+          SELECT
+            ${candidateAlias}.id AS id,
+            ABS(COALESCE(${candidateAlias}.passage_start, 0) - COALESCE(c.passage_start, 0)) AS distance_from_primary
+          FROM citations ${candidateAlias}
+          WHERE ${candidateAlias}.entity_id = ${entityExpression}
+            AND ${candidateAlias}.transcript_id = c.transcript_id
+            AND ${candidateAlias}.id != c.id
+            AND ${candidateAlias}.relationship_id IS NULL
+            AND ${candidateAlias}.date_expression_id IS NULL
+          ORDER BY distance_from_primary ASC, ${candidateAlias}.id DESC
+          LIMIT 1
+        ) ranked
+      `;
+}
+
 function buildCitationQueryConditions(opts = {}, alias = 'c') {
   const clauses = [];
   const params = [];
@@ -1398,6 +1794,8 @@ function buildCitationQueryConditions(opts = {}, alias = 'c') {
   return {
     entities,
     entityAliases,
+    authorities,
+    authorityLinkSuggestions,
     dateExpressions,
     relationships,
     citations,

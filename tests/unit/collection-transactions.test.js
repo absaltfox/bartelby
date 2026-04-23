@@ -12,18 +12,20 @@ const src = fs.readFileSync(
 
 describe('collection replace helpers are transactional', () => {
   it('documentCollectionsAsync.setForDocument wraps DELETE+INSERT in a transaction', () => {
-    // Look for BEGIN EXCLUSIVE or db.transaction around the delete+insert block
+    // The helper now delegates transaction handling to the shared local/Turso-aware lock wrapper.
     const match = src.match(/setForDocument[\s\S]{0,2000}?INSERT OR IGNORE INTO document_collections/);
     expect(match).not.toBeNull();
     const block = match[0];
-    expect(block).toMatch(/BEGIN|transaction/i);
+    expect(src).toMatch(/function withExclusiveLockSync\(fn\)[\s\S]{0,400}?BEGIN EXCLUSIVE/);
+    expect(block).toMatch(/withExclusiveLockSync\s*\(/);
   });
 
   it('userCollectionAccessAsync.setForUserWithRoles wraps DELETE+INSERT in a transaction', () => {
     const match = src.match(/setForUserWithRoles[\s\S]{0,2000}?INSERT OR IGNORE INTO user_collection_access/);
     expect(match).not.toBeNull();
     const block = match[0];
-    expect(block).toMatch(/BEGIN|transaction/i);
+    expect(src).toMatch(/async function withExclusiveLock\(fn\)[\s\S]{0,500}?BEGIN EXCLUSIVE[\s\S]{0,500}?COMMIT/);
+    expect(block).toMatch(/withExclusiveLock\s*\(/);
   });
 
   it('collection replace helpers do not swallow SQL errors silently', () => {

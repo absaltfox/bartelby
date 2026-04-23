@@ -1,32 +1,42 @@
+<%
+  const resolvedAppName = typeof appName !== 'undefined' && appName ? appName : 'Bartelby';
+  const resolvedAppFaviconDataUri = typeof appFaviconDataUri !== 'undefined' ? appFaviconDataUri : '';
+  const resolvedAppLogoDataUri = typeof appLogoDataUri !== 'undefined' ? appLogoDataUri : '';
+  const resolvedCsrfToken = typeof csrfToken !== 'undefined' ? csrfToken : '';
+  const resolvedQuery = typeof query !== 'undefined' ? query : '';
+  const resolvedIsAdmin = typeof isAdmin !== 'undefined' ? isAdmin : false;
+  const resolvedIsManager = typeof isManager !== 'undefined' ? isManager : false;
+  const resolvedCurrentUser = typeof currentUser !== 'undefined' ? currentUser : null;
+%>
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %><%= appName || 'Bartelby' %></title>
-  <link rel="icon" type="image/svg+xml" href="<%= appFaviconDataUri || '' %>">
+  <title><%= typeof pageTitle !== 'undefined' ? pageTitle + ' — ' : '' %><%= resolvedAppName %></title>
+  <link rel="icon" type="image/svg+xml" href="<%= resolvedAppFaviconDataUri %>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
-  <meta name="csrf-token" content="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+  <meta name="csrf-token" content="<%= resolvedCsrfToken %>">
 </head>
 <body>
   <header class="site-header">
     <div class="container">
       <a href="/" class="logo">
         <span class="logo-mark">
-          <img src="<%= appLogoDataUri || '' %>" alt="" aria-hidden="true">
+          <img src="<%= resolvedAppLogoDataUri %>" alt="" aria-hidden="true">
         </span>
-        <%= appName || 'Bartelby' %>
+        <%= resolvedAppName %>
       </a>
       <div class="header-controls">
         <nav class="main-nav header-primary-nav">
           <a href="/" class="nav-pill" data-section="collection">Collections</a>
-          <% if (typeof isManager !== 'undefined' && isManager && !isAdmin) { %>
+          <% if (resolvedIsManager && !resolvedIsAdmin) { %>
             <a href="/manage" class="nav-pill" data-section="manage">Manage</a>
           <% } %>
-          <% if (isAdmin) { %>
+          <% if (resolvedIsAdmin) { %>
             <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
           <% } %>
         </nav>
@@ -34,13 +44,13 @@
         <div class="header-utility-nav">
           <div class="header-search-tools">
             <form action="/search" method="GET" class="search-form">
-              <input type="search" name="q" placeholder="Search transcripts…" value="<%= typeof query !== 'undefined' ? query : '' %>">
+              <input type="search" name="q" placeholder="Search transcripts…" value="<%= resolvedQuery %>">
               <button type="submit">Search</button>
             </form>
             <a href="/search/advanced" class="nav-search-link">Advanced Search</a>
           </div>
 
-          <% if (currentUser) { %>
+          <% if (resolvedCurrentUser) { %>
             <div class="user-menu" id="user-menu">
               <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-expanded="false" aria-controls="user-menu-panel">
                 <span class="user-menu-icon" aria-hidden="true">
@@ -49,12 +59,12 @@
                   </svg>
                 </span>
                 <span class="sr-only">Account</span>
-                <span class="user-menu-name"><%= currentUser.username %></span>
+                <span class="user-menu-name"><%= resolvedCurrentUser.username %></span>
               </button>
               <div class="user-menu-panel" id="user-menu-panel" hidden>
                 <a href="/account" class="user-menu-link">Profile</a>
                 <form method="POST" action="/logout" class="user-menu-form">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <input type="hidden" name="_csrf" value="<%= resolvedCsrfToken %>">
                   <button type="submit" class="user-menu-link user-menu-button">Sign out</button>
                 </form>
               </div>

@@ -7,6 +7,10 @@ without visible archival numbers (unnumbered loose items, photos, typed
 material) are silently skipped. For mixed-type batches, this means a
 significant fraction of pages may remain ungrouped.
 
+The current number-based pass is intentionally conservative but does tolerate a
+single unreadable page inside an otherwise anchored sequence, including a
+one-number jump such as `1, 2, unreadable, 4`.
+
 ## Approach Options
 
 ### A. Visual embedding + clustering

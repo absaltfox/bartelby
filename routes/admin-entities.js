@@ -19,6 +19,8 @@ function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
     entityAliases: db.entityAliasesAsync || db.entityAliases || null,
+    authorities: db.authoritiesAsync || db.authorities || null,
+    authorityLinkSuggestions: db.authorityLinkSuggestionsAsync || db.authorityLinkSuggestions || null,
     dateExpressions: db.dateExpressionsAsync || db.dateExpressions || null,
     relationships: db.relationshipsAsync || db.relationships || null,
     citations: db.citationsAsync || db.citations || null,
@@ -355,12 +357,21 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return res.status(404).render('error', { message: 'Entity not found', error: {} });
   }
 
-  const [aliases, dates, citations, relationships] = await Promise.all([
+  const [aliases, dates, citations, relationships, authoritySuggestions] = await Promise.all([
     stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
     stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
     stores.citations && stores.citations.getByEntityId ? stores.citations.getByEntityId(id) : [],
-    stores.relationships && stores.relationships.getByEntityId ? stores.relationships.getByEntityId(id) : []
+    stores.relationships && stores.relationships.getByEntityId ? stores.relationships.getByEntityId(id) : [],
+    stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.getByEntityId
+      ? stores.authorityLinkSuggestions.getByEntityId(id)
+      : []
   ]);
+  const authority = Number.isInteger(entity.authority_id) && stores.authorities && stores.authorities.getById
+    ? await stores.authorities.getById(entity.authority_id)
+    : null;
+  const linkedEntities = authority && stores.authorities && stores.authorities.getMembers
+    ? await stores.authorities.getMembers(authority.id, 100)
+    : [];
 
   res.render('admin/entity-detail', {
     pageTitle: entity.canonical_name,
@@ -368,6 +379,9 @@ router.get('/:id', asyncHandler(async (req, res) => {
       ...entity,
       properties: parseJsonMaybe(entity.properties)
     },
+    authority,
+    linkedEntities: Array.isArray(linkedEntities) ? linkedEntities.filter((row) => row.id !== entity.id) : [],
+    authoritySuggestions: Array.isArray(authoritySuggestions) ? authoritySuggestions : [],
     aliases: Array.isArray(aliases) ? aliases : [],
     dates: Array.isArray(dates) ? dates : [],
     citations: Array.isArray(citations) ? citations : [],
@@ -379,8 +393,87 @@ router.get('/:id', asyncHandler(async (req, res) => {
     merged: req.query.merged || null,
     approved: req.query.approved || null,
     rejected: req.query.rejected || null,
-    deleted: req.query.deleted || null
+    deleted: req.query.deleted || null,
+    authorityUpdated: req.query.authorityUpdated || null
   });
+}));
+
+router.post('/:id/authority/create', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(entityId)) {
+    return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Invalid entity id.')));
+  }
+
+  try {
+    const entity = await stores.entities.getById(entityId);
+    if (!entity) {
+      return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Entity not found.')));
+    }
+    const { ensureEntityAuthority } = require('../utils/authority-resolution');
+    await ensureEntityAuthority({ ...entity, authority_id: null });
+    return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
+}));
+
+router.post('/:id/authority/assign', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const authorityId = parseInt(req.body.authority_id, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(authorityId)) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Choose an authority first.')));
+  }
+
+  try {
+    const [entity, authority] = await Promise.all([
+      stores.entities.getById(entityId),
+      stores.authorities && stores.authorities.getById ? stores.authorities.getById(authorityId) : null
+    ]);
+    if (!entity || !authority) {
+      throw new Error('Entity or authority not found.');
+    }
+    if (entity.entity_type !== authority.authority_type) {
+      throw new Error('Entity type must match the authority type.');
+    }
+    await stores.entities.assignAuthority(entityId, authorityId);
+    return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
+}));
+
+router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const suggestionId = parseInt(req.params.suggestionId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(suggestionId)) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Invalid authority suggestion id.')));
+  }
+
+  try {
+    await stores.authorityLinkSuggestions.approve(suggestionId, req.user.id);
+    return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
+}));
+
+router.post('/:id/authority-suggestions/:suggestionId/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const suggestionId = parseInt(req.params.suggestionId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(suggestionId)) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Invalid authority suggestion id.')));
+  }
+
+  try {
+    await stores.authorityLinkSuggestions.reject(suggestionId, req.user.id);
+    return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
+  }
 }));
 
 router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {

@@ -6,7 +6,10 @@ const { requireAdmin } = require('../middleware/auth');
 const {
   collectionsAsync,
   documentsAsync,
-  extractionJobsAsync
+  extractionJobsAsync,
+  authoritiesAsync,
+  authorityLinkSuggestionsAsync,
+  authorityResolutionJobsAsync
 } = require('../database/db');
 const { queueDocumentRerun, queueCollectionRerun } = require('../utils/knowledge-rerun');
 const { asyncHandler } = require('../utils/async-handler');
@@ -30,9 +33,12 @@ function appendRedirectParams(basePath, params) {
 }
 
 async function buildKnowledgePageState() {
-  const [collections, extractionJobs] = await Promise.all([
+  const [collections, extractionJobs, authorityCount, authoritySuggestions, authorityJobCounts] = await Promise.all([
     collectionsAsync.getAll(),
-    extractionJobsAsync.getAll()
+    extractionJobsAsync.getAll(),
+    authoritiesAsync && authoritiesAsync.getCount ? authoritiesAsync.getCount() : 0,
+    authorityLinkSuggestionsAsync && authorityLinkSuggestionsAsync.list ? authorityLinkSuggestionsAsync.list('pending', 1000) : [],
+    authorityResolutionJobsAsync && authorityResolutionJobsAsync.getCounts ? authorityResolutionJobsAsync.getCounts() : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
   ]);
   const extractionCounts = (extractionJobs || []).reduce((acc, job) => {
     acc.total += 1;
@@ -42,7 +48,10 @@ async function buildKnowledgePageState() {
 
   return {
     collections: collections || [],
-    extractionCounts
+    extractionCounts,
+    authorityCount: Number(authorityCount || 0),
+    authoritySuggestionCount: Array.isArray(authoritySuggestions) ? authoritySuggestions.length : 0,
+    authorityJobCounts
   };
 }
 
@@ -52,6 +61,9 @@ router.get('/', asyncHandler(async (req, res) => {
     pageTitle: 'Knowledge',
     collections: state.collections,
     extractionCounts: state.extractionCounts,
+    authorityCount: state.authorityCount,
+    authoritySuggestionCount: state.authoritySuggestionCount,
+    authorityJobCounts: state.authorityJobCounts,
     activeKnowledgePage: 'overview',
     error: req.query.error || null,
     queuedDocumentTitle: req.query.queuedDocumentTitle || null,

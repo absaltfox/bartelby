@@ -1,0 +1,102 @@
+<%- include('../partials/header', { pageTitle: 'Authorities', query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'authorities' }) %>
+
+  <div class="admin-header">
+    <h1>Authorities</h1>
+    <p class="subtitle">Manage cross-document identity clusters that group extracted entities into shared people, places, organizations, and topics.</p>
+  </div>
+
+  <% if (queuedBackfill) { %>
+    <div class="alert alert-success">Queued <strong><%= queuedBackfill %></strong> authority backfill job<%= queuedBackfill !== 1 ? 's' : '' %>.</div>
+  <% } %>
+
+  <div class="admin-stats">
+    <div class="stat-card">
+      <div class="stat-value"><%= totalCount || 0 %></div>
+      <div class="stat-label">Authorities</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= suggestionCount || 0 %></div>
+      <div class="stat-label">Pending Suggestions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= authorityJobCounts.queued || 0 %></div>
+      <div class="stat-label">Queued Backfill Jobs</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= authorityJobCounts.running || 0 %></div>
+      <div class="stat-label">Running Backfill Jobs</div>
+    </div>
+  </div>
+
+  <div class="knowledge-toolbar knowledge-toolbar--spaced">
+    <form method="GET" action="/admin/knowledge/authorities" class="admin-search-form">
+      <input type="search" name="q" value="<%= q %>" placeholder="Search authorities, members, or aliases..." class="admin-search-input">
+      <button type="submit" class="btn-secondary btn-sm">Search</button>
+      <% if (q) { %>
+        <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">Clear</a>
+      <% } %>
+    </form>
+    <form method="POST" action="/admin/knowledge/authorities/backfill" class="inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn-primary btn-sm">Queue Authority Backfill</button>
+    </form>
+  </div>
+
+  <% if (authorities.length === 0) { %>
+    <div class="empty-state">
+      <p>No authorities found<% if (q) { %> for "<%= q %>"<% } %>.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th scope="col">Type</th>
+            <th scope="col">Authority</th>
+            <th scope="col">Members</th>
+            <th scope="col">Documents</th>
+            <th scope="col" class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% authorities.forEach(function(authority) { %>
+            <tr>
+              <td><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span></td>
+              <td>
+                <strong><a href="/admin/knowledge/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
+                <% if (authority.description) { %>
+                  <div class="muted"><%= authority.description %></div>
+                <% } %>
+              </td>
+              <td><%= authority.member_count || 0 %></td>
+              <td><%= authority.document_count || 0 %></td>
+              <td><a href="/admin/knowledge/authorities/<%= authority.id %>" class="btn-secondary btn-sm">Open</a></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <% if (totalPages > 1) { %>
+      <div class="pagination">
+        <% if (currentPage > 1) { %>
+          <a href="/admin/knowledge/authorities?<%= q ? ('q=' + encodeURIComponent(q) + '&') : '' %>page=<%= currentPage - 1 %>" class="pagination-btn">&lsaquo; Prev</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+        <% } %>
+        <span class="pagination-info">Page <%= currentPage %> of <%= totalPages %> <span class="muted">(<%= totalCount %> authorities)</span></span>
+        <% if (currentPage < totalPages) { %>
+          <a href="/admin/knowledge/authorities?<%= q ? ('q=' + encodeURIComponent(q) + '&') : '' %>page=<%= currentPage + 1 %>" class="pagination-btn">Next &rsaquo;</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,165 @@
+<%- include('../partials/header', { pageTitle: authority.canonical_name, query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'authorities' }) %>
+
+  <div class="admin-header">
+    <h1><%= authority.canonical_name %></h1>
+    <p class="subtitle">
+      <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
+      Authority cluster
+    </p>
+  </div>
+
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+  <% if (merged) { %><div class="alert alert-success">Authority merge completed.</div><% } %>
+
+  <div class="knowledge-toolbar knowledge-toolbar--spaced">
+    <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
+    <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
+  </div>
+
+  <div class="knowledge-detail-grid">
+    <section class="graph-shell-card knowledge-card">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Profile</p>
+        <h2>Properties</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <dl class="metadata-list">
+          <dt>ID</dt>
+          <dd><%= authority.id %></dd>
+          <dt>Type</dt>
+          <dd><%= authority.authority_type %></dd>
+          <dt>Canonical name</dt>
+          <dd><%= authority.canonical_name %></dd>
+          <% Object.entries(authority.properties || {}).forEach(function(entry) { %>
+            <dt><%= entry[0] %></dt>
+            <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
+          <% }) %>
+        </dl>
+      </div>
+    </section>
+
+    <section class="graph-shell-card knowledge-card">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Members</p>
+        <h2>Linked entities</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <% if (!members.length) { %>
+          <p class="graph-empty-state">No member entities are linked to this authority.</p>
+        <% } else { %>
+          <div class="graph-detail-list">
+            <% members.forEach(function(member) { %>
+              <div class="graph-detail-card">
+                <strong><a href="/admin/knowledge/entities/<%= member.id %>"><%= member.canonical_name %></a></strong>
+                <div class="graph-muted">Entity #<%= member.id %> • <%= member.entity_type %></div>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="graph-shell-card knowledge-card">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Aliases</p>
+        <h2>Rolled-up names</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <% if (!aliases.length) { %>
+          <p class="graph-empty-state">No member aliases are recorded.</p>
+        <% } else { %>
+          <div class="graph-alias-list">
+            <% aliases.forEach(function(alias) { %>
+              <div class="graph-detail-card">
+                <strong><%= alias.alias %></strong>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="graph-shell-card knowledge-card">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Merge</p>
+        <h2>Merge into another authority</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="target_authority_id" value="" data-authority-id required>
+          <div class="edit-field">
+            <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
+            <input
+              type="search"
+              id="authority-merge-search-<%= authority.id %>"
+              class="admin-search-input"
+              placeholder="Search the authority to keep..."
+              autocomplete="off"
+              spellcheck="false"
+              data-authority-search
+            >
+          </div>
+          <div class="knowledge-document-selection" data-authority-selected hidden></div>
+          <div class="knowledge-document-results" data-authority-results hidden></div>
+          <div class="edit-actions">
+            <button type="submit" class="btn-danger btn-sm">Merge Authority</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <section class="graph-shell-card knowledge-card">
+    <div class="graph-sidebar-header">
+      <p class="kg-panel-eyebrow">Evidence</p>
+      <h2>Approved citations</h2>
+    </div>
+    <div class="graph-sidebar-body">
+      <% if (!citations.length) { %>
+        <p class="graph-empty-state">No approved citations were found for this authority’s member entities.</p>
+      <% } else { %>
+        <div class="knowledge-citation-list">
+          <% citations.slice(0, 50).forEach(function(citation) { %>
+            <article class="knowledge-citation-card">
+              <div class="knowledge-citation-card-header">
+                <div>
+                  <strong><a href="/documents/<%= citation.document_id %>"><%= citation.document_title || ('Document ' + citation.document_id) %></a></strong>
+                </div>
+              </div>
+              <p><%= citation.passage_text %></p>
+            </article>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </section>
+
+  <section class="graph-shell-card knowledge-card">
+    <div class="graph-sidebar-header">
+      <p class="kg-panel-eyebrow">Relationships</p>
+      <h2>Connected edges</h2>
+    </div>
+    <div class="graph-sidebar-body">
+      <% if (!relationships.length) { %>
+        <p class="graph-empty-state">No relationships were found for this authority’s member entities.</p>
+      <% } else { %>
+        <div class="graph-detail-list">
+          <% relationships.slice(0, 100).forEach(function(rel) { %>
+            <div class="graph-detail-card">
+              <strong><%= rel.relationship_type || 'related_to' %></strong>
+              <div class="graph-muted"><%= rel.source_name || 'Unknown source' %> → <%= rel.target_name || 'Unknown target' %></div>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </section>
+</div>
+
+<script src="/js/authority-picker.js"></script>
+<%- include('../partials/footer') %>

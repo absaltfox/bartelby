@@ -16,8 +16,9 @@ only see graph evidence that comes from documents they are allowed to access.
 
 - Canonical nodes in the graph
 - Stored in `entities`
-- Have an `entity_type`, canonical name, optional description, and JSON
-  properties
+- Have an `entity_type`, canonical name, optional description, JSON
+  properties, and an optional `authority_id`
+- Remain the evidence-bearing layer for citations, dates, and relationships
 
 Common entity types include:
 
@@ -32,11 +33,29 @@ Common entity types include:
 The schema still supports a legacy `date` entity type, but current extraction
 does not create standalone date nodes for explorer use.
 
+### Authorities
+
+- Stored in `authorities`
+- Represent cross-document identity clusters that group multiple extracted
+  entities referring to the same person, place, organization, or other subject
+- Have an `authority_type`, canonical name, optional description, JSON
+  properties, and nullable placeholder external-id fields for future authority
+  source integration
+- Drive authority-first graph focus in the explorer when an entity has an
+  assigned authority
+
 ### Aliases
 
 - Stored in `entity_aliases`
 - Track alternate names and extracted mentions for an entity
 - Used for searching and for entity resolution during extraction
+
+### Authority Link Suggestions
+
+- Stored in `authority_link_suggestions`
+- Represent medium-confidence candidate links from an entity to an existing
+  authority
+- Remain review metadata until explicitly approved
 
 ### Dates
 
@@ -86,10 +105,23 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - An LLM prompt extracts entities, dates, and relationships from transcript
   content
 - Entity aliases are deduplicated where possible
+- Each extracted or re-used entity is also assigned to an authority
 - Date expressions are attached to the referenced subject entity rather than
   creating a separate date node
 - Relationships are deduplicated by source, target, and type
 - Citations are always written for the transcript and document being processed
+
+### Authority Resolution and Backfill
+
+- High-confidence exact or fuzzy matches can auto-link an entity to an
+  existing authority of the same type
+- When no safe authority match exists, extraction creates a new authority and
+  assigns the entity to it
+- When a candidate is plausible but not safe enough to auto-link, extraction
+  still creates a new authority for the entity and records a pending
+  `authority_link_suggestion`
+- Legacy entities can be assigned authorities later by queueing
+  `authority_resolution_jobs` without re-running transcript extraction
 
 ## Review and Curation
 
@@ -118,10 +150,24 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 
 - Duplicate entities can be merged in the admin UI
 - The merge workflow resolves one canonical entity and folds another into it
+- Entity merge is now the duplicate-row cleanup tool rather than the main
+  cross-document identity workflow
+- Entities assigned to different authorities must be reassigned before they can
+  be merged
+
+### Authorities Workspace
+
+- The admin `Authorities` workspace lists authority clusters, member entities,
+  document coverage, and pending authority-link suggestions
+- Authority detail pages show rolled-up aliases, citations, and relationships
+  across the member entities
+- Authorities can also be merged when two authority records represent the same
+  subject
 
 ### Entity Detail
 
-- Entity detail pages show aliases, dates, citations, and relationships
+- Entity detail pages show aliases, dates, citations, relationships, authority
+  assignment, linked entities, and pending authority suggestions
 - These pages are administrative tools for graph inspection and cleanup
 
 ## Access Rules
@@ -136,6 +182,8 @@ Graph visibility is permission-scoped through document access.
 - Search and browse operations use document-level access filters
 - Document-specific graph panels only expose graph data for documents the user
   can already open
+- Authority-backed graph focus only expands through member entities that remain
+  visible after the same document/collection access rules are applied
 
 This means the graph is citation-backed and document-scoped, not globally
 visible by default.
@@ -145,6 +193,8 @@ visible by default.
 The admin graph tools now live under a single `Knowledge` section:
 
 - `/admin/knowledge` overview
+- `/admin/knowledge/authorities`
+- `/admin/knowledge/authorities/suggestions`
 - `/admin/knowledge/entities`
 - `/admin/knowledge/review-extractions`
 - `/admin/knowledge/entities/merge`
@@ -179,3 +229,5 @@ protecting shared entities that are referenced by other transcripts.
   provider choice
 - The graph is intended to stay conservative and citation-based rather than
   speculative
+- Pending authority suggestions must not affect graph results until explicitly
+  approved

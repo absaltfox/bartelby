@@ -1486,6 +1486,151 @@ const extractionJobs = {
   }
 };
 
+const authorityResolutionJobs = {
+  async create({ entityIds = [], batchSize = 100, requestedByUserId = null }) {
+    const normalizedIds = Array.from(new Set(
+      (Array.isArray(entityIds) ? entityIds : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    ));
+    const result = await runAsync(`
+      INSERT INTO authority_resolution_jobs (
+        entity_ids,
+        batch_size,
+        requested_by_user_id,
+        status,
+        log
+      ) VALUES (?, ?, ?, 'queued', '')
+    `, [
+      normalizedIds.length ? JSON.stringify(normalizedIds) : null,
+      Number.isInteger(batchSize) && batchSize > 0 ? batchSize : 100,
+      requestedByUserId || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    return await getAsync(`
+      SELECT * FROM authority_resolution_jobs
+      WHERE id = ?
+    `, [id]);
+  },
+
+  async getAll() {
+    return await allAsync(`
+      SELECT * FROM authority_resolution_jobs
+      ORDER BY created_at DESC
+    `);
+  },
+
+  async getCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM authority_resolution_jobs
+      GROUP BY status
+    `);
+    return rows.reduce((acc, row) => {
+      acc.total += Number(row.count || 0);
+      acc[row.status || 'unknown'] = Number(row.count || 0);
+      return acc;
+    }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+  },
+
+  async claimNextQueued() {
+    return await withExclusiveLock(async () => {
+      const job = await getAsync(`
+        SELECT * FROM authority_resolution_jobs
+        WHERE status = 'queued'
+        ORDER BY created_at ASC
+        LIMIT 1
+      `);
+      if (!job) return null;
+      const result = await runAsyncWithoutSave(`
+        UPDATE authority_resolution_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL,
+            attempts = attempts + 1
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    });
+  },
+
+  async appendLog(id, text) {
+    await runAsyncWithoutSave('UPDATE authority_resolution_jobs SET log = log || ? WHERE id = ?', [text, id]);
+    await saveDatabase();
+  },
+
+  async updateProgress(id, { processedCount, resolvedCount }) {
+    await runAsyncWithoutSave(`
+      UPDATE authority_resolution_jobs
+      SET processed_count = COALESCE(?, processed_count),
+          resolved_count = COALESCE(?, resolved_count)
+      WHERE id = ?
+    `, [
+      Number.isInteger(processedCount) ? processedCount : null,
+      Number.isInteger(resolvedCount) ? resolvedCount : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async markDone(id, { processedCount, resolvedCount } = {}) {
+    await runAsyncWithoutSave(`
+      UPDATE authority_resolution_jobs
+      SET status = 'done',
+          processed_count = COALESCE(?, processed_count),
+          resolved_count = COALESCE(?, resolved_count),
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      Number.isInteger(processedCount) ? processedCount : null,
+      Number.isInteger(resolvedCount) ? resolvedCount : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await runAsyncWithoutSave(`
+      UPDATE authority_resolution_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  async retry(id) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE authority_resolution_jobs
+      SET status = 'queued',
+          error = NULL,
+          started_at = NULL,
+          completed_at = NULL
+      WHERE id = ? AND status = 'failed'
+    `, [id]);
+    await saveDatabase();
+    return result;
+  },
+
+  parseEntityIds(job) {
+    if (!job || !job.entity_ids) return [];
+    try {
+      const parsed = JSON.parse(job.entity_ids);
+      return Array.isArray(parsed)
+        ? parsed.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+};
+
 
   return {
     transcriptionJobs,
@@ -1493,6 +1638,8 @@ const extractionJobs = {
     importJobs,
     importJobsAsync,
     adminJobsAsync,
-    extractionJobs
+    extractionJobs,
+    authorityResolutionJobs,
+    authorityResolutionJobsAsync: authorityResolutionJobs
   };
 };

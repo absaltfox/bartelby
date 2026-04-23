@@ -53,11 +53,11 @@ function createDriver() {
       db.pragma(`user_version = ${Number.parseInt(version, 10) || 0}`);
     },
     persist() {
-      // better-sqlite3 writes to disk automatically (WAL mode),
-      // but we checkpoint to ensure durability
-      if (!isInMemory) {
-        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) {}
-      }
+      // better-sqlite3 writes to disk synchronously on each statement.
+      // Avoid forcing WAL checkpoints on every debounced saveDatabase() call:
+      // repeated TRUNCATE checkpoints are unnecessary for durability here and
+      // can destabilize local SQLite files on synced filesystems.
+      return;
     }
   };
 }

@@ -55,6 +55,17 @@ function logBootWarn(message) {
   void logger.warn('boot', message, { elapsedMs }, { console: false });
 }
 
+function normalizeRequestCharsetAlias(req, res, next) {
+  const contentType = req.headers['content-type'];
+  if (typeof contentType === 'string' && /;\s*charset\s*=\s*"?utf8"?/i.test(contentType)) {
+    req.headers['content-type'] = contentType.replace(
+      /(\;\s*charset\s*=\s*"?)(utf8)("?)/i,
+      '$1utf-8$3'
+    );
+  }
+  next();
+}
+
 function isMissingUploadError(err) {
   return err?.code === 'UPLOAD_NOT_FOUND' || err?.code === 'INVALID_UPLOAD_URL';
 }
@@ -256,6 +267,7 @@ app.use('/reset-password', authLimiter);
 app.use('/login/mfa', mfaLimiter);
 
 // ── Core middleware ────────────────────────────────────────────────────────
+app.use(normalizeRequestCharsetAlias);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -537,9 +549,11 @@ app.use('/admin/jobs', registerDeferredRoute('./routes/admin-jobs', 'admin job r
 app.use('/admin/logging', registerDeferredRoute('./routes/admin-logging', 'admin logging routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-knowledge', 'admin knowledge routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin knowledge extraction routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge/authorities', registerDeferredRoute('./routes/admin-authorities', 'admin knowledge authority routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/entities', registerDeferredRoute('./routes/admin-entities', 'admin knowledge entity routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-review', 'admin knowledge review routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin extraction routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/authorities', registerDeferredRoute('./routes/admin-authorities', 'admin authority routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/entities', registerDeferredRoute('./routes/admin-entities', 'admin entity routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin', registerDeferredRoute('./routes/admin-review', 'admin review routes', { tier: 'admin' })); // has its own requireAdmin
 logRouteLoadSummary('boot');
@@ -563,6 +577,7 @@ app.use((err, req, res, next) => {
     method: req.method,
     path: req.originalUrl,
     statusCode,
+    contentType: req.headers['content-type'] || null,
     userId: req.user ? req.user.id : null,
     error: err.stack || err.message
   });

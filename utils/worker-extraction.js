@@ -116,6 +116,7 @@ async function materializeExtractionResult({
   }
 
   const { resolveEntity } = require('./entity-resolution');
+  const { ensureEntityAuthority } = require('./authority-resolution');
   const mentionToEntityId = new Map();
   let entityCount = 0;
   let relationshipCount = 0;
@@ -147,6 +148,12 @@ async function materializeExtractionResult({
           await entityAliases.createIfMissing({ entity_id: entityId, alias: mention, source: 'extracted' });
         }
       }
+
+      await ensureEntityAuthority(entityId, {
+        mention,
+        normalized,
+        entityType
+      });
 
       mentionToEntityId.set(mention.toLowerCase(), entityId);
       mentionToEntityId.set(normalized.toLowerCase(), entityId);

@@ -166,6 +166,71 @@ MIGRATIONS.push(`
   );
 `);
 
+// v58 — batch support columns for import_jobs (repair)
+// Migration v46 in migrations.js added these columns, but databases that were
+// already at schema version ≥46 before that entry was inserted never ran it.
+// Re-applying here as v58 ensures every instance gets the columns. The
+// duplicate-column guard in initializeSchema() makes this safe for fresh
+// databases that already applied v46.
+MIGRATIONS.push(`
+  ALTER TABLE import_jobs ADD COLUMN batch_remote_id TEXT;
+  ALTER TABLE import_jobs ADD COLUMN batch_remote_status TEXT;
+  ALTER TABLE import_jobs ADD COLUMN batch_manifest TEXT
+`);
+
+// v59 — authority layer for cross-document knowledge graph identity
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS authorities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    authority_type TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    description TEXT,
+    properties TEXT NOT NULL DEFAULT '{}',
+    external_source TEXT,
+    external_key TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_authorities_type ON authorities(authority_type);
+  CREATE INDEX IF NOT EXISTS idx_authorities_name ON authorities(canonical_name);
+  CREATE INDEX IF NOT EXISTS idx_authorities_external ON authorities(external_source, external_key);
+
+  ALTER TABLE entities ADD COLUMN authority_id INTEGER REFERENCES authorities(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS idx_entities_authority ON entities(authority_id);
+
+  CREATE TABLE IF NOT EXISTS authority_link_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    suggested_authority_id INTEGER NOT NULL REFERENCES authorities(id) ON DELETE CASCADE,
+    confidence REAL,
+    match_method TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewed_at DATETIME,
+    reviewed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (entity_id, suggested_authority_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_status ON authority_link_suggestions(status);
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_entity ON authority_link_suggestions(entity_id);
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_authority ON authority_link_suggestions(suggested_authority_id);
+
+  CREATE TABLE IF NOT EXISTS authority_resolution_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    entity_ids TEXT,
+    batch_size INTEGER NOT NULL DEFAULT 100,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    resolved_count INTEGER NOT NULL DEFAULT 0,
+    requested_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    log TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_authority_resolution_jobs_status ON authority_resolution_jobs(status);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -535,6 +600,23 @@ async function initializeSchema() {
     console.log(`[db] Leaving ${staleCompletedBatchCount} completed extraction batch job(s) in running state for finalization resume`);
   }
 
+  const staleAuthorityResolutionJobs = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM authority_resolution_jobs
+    WHERE status = 'running'
+  `);
+  const staleAuthorityResolutionCount = staleAuthorityResolutionJobs?.count || 0;
+  if (staleAuthorityResolutionCount > 0) {
+    await db.run(`
+      UPDATE authority_resolution_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleAuthorityResolutionCount} stale authority resolution job(s) as failed`);
+  }
+
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
@@ -544,6 +626,7 @@ async function initializeSchema() {
     || staleCompletedTxBatchCount > 0
     || staleExtractionBatchFinalizationClaimCount > 0
     || staleCompletedBatchCount > 0
+    || staleAuthorityResolutionCount > 0
   ) {
     await saveDatabase();
   }
@@ -826,8 +909,8 @@ function parseJsonValue(value, fallback) {
 const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
-const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
+const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
+const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
@@ -891,8 +974,14 @@ module.exports = {
   graphMaintenanceAsync: graphMaintenance,
   extractionJobs,
   extractionJobsAsync: extractionJobs,
+  authorityResolutionJobs,
+  authorityResolutionJobsAsync,
   relationshipTypes,
   relationshipTypesAsync: relationshipTypes,
+  authorities,
+  authoritiesAsync: authorities,
+  authorityLinkSuggestions,
+  authorityLinkSuggestionsAsync: authorityLinkSuggestions,
   graphAccess,
   graphAccessAsync: graphAccess
 };

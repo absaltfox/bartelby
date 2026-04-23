@@ -174,6 +174,14 @@ async function mergeEntities(keepId, mergeId) {
 
   await db.run('BEGIN');
   try {
+    if (
+      Number.isInteger(keep.authority_id)
+      && Number.isInteger(merge.authority_id)
+      && keep.authority_id !== merge.authority_id
+    ) {
+      throw new Error('Cannot merge entities that belong to different authorities. Reassign one entity first.');
+    }
+
     const aliases = await entityAliases.getByEntityId(mergeId);
     for (const alias of aliases) {
       await db.run(`
@@ -186,6 +194,10 @@ async function mergeEntities(keepId, mergeId) {
       INSERT OR IGNORE INTO entity_aliases (entity_id, alias, source)
       VALUES (?, ?, 'merged')
     `, [keepId, merge.canonical_name]);
+
+    if (!Number.isInteger(keep.authority_id) && Number.isInteger(merge.authority_id)) {
+      await db.run('UPDATE entities SET authority_id = ? WHERE id = ?', [merge.authority_id, keepId]);
+    }
 
     await db.run('UPDATE date_expressions SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);
     await db.run('UPDATE citations SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);

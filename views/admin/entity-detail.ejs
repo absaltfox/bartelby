@@ -18,6 +18,7 @@
   <% if (approved) { %><div class="alert alert-success">Citation approved.</div><% } %>
   <% if (rejected) { %><div class="alert alert-success">Citation rejected.</div><% } %>
   <% if (deleted) { %><div class="alert alert-success">Citation deleted.</div><% } %>
+  <% if (authorityUpdated) { %><div class="alert alert-success">Authority assignment updated.</div><% } %>
 
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
@@ -33,6 +34,91 @@
   <% } %>
 
   <div class="knowledge-detail-grid">
+    <section class="graph-shell-card knowledge-card">
+      <div class="graph-sidebar-header">
+        <p class="kg-panel-eyebrow">Authority</p>
+        <h2>Cross-document identity</h2>
+      </div>
+      <div class="graph-sidebar-body">
+        <% if (authority) { %>
+          <div class="graph-detail-card">
+            <strong><a href="/admin/knowledge/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
+            <div class="graph-muted"><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span> authority</div>
+          </div>
+          <% if (linkedEntities && linkedEntities.length) { %>
+            <div class="graph-detail-list">
+              <% linkedEntities.forEach(function(linked) { %>
+                <div class="graph-detail-card">
+                  <strong><a href="/admin/knowledge/entities/<%= linked.id %>"><%= linked.canonical_name %></a></strong>
+                  <div class="graph-muted">Member entity #<%= linked.id %></div>
+                </div>
+              <% }) %>
+            </div>
+          <% } %>
+        <% } else { %>
+          <p class="graph-empty-state">This entity does not have an authority yet.</p>
+        <% } %>
+
+        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/create" class="inline-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="btn-secondary btn-sm"><%= authority ? 'Create New Authority' : 'Create Authority' %></button>
+        </form>
+
+        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/assign" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= entity.entity_type %>">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="authority_id" value="" data-authority-id required>
+          <div class="edit-field">
+            <label for="authority-search-<%= entity.id %>">Assign to authority</label>
+            <input
+              type="search"
+              id="authority-search-<%= entity.id %>"
+              class="admin-search-input"
+              placeholder="Search authorities by name or member alias..."
+              autocomplete="off"
+              spellcheck="false"
+              data-authority-search
+            >
+          </div>
+          <div class="knowledge-document-selection" data-authority-selected hidden></div>
+          <div class="knowledge-document-results" data-authority-results hidden></div>
+          <div class="edit-actions">
+            <button type="submit" class="btn-primary btn-sm">Assign Authority</button>
+          </div>
+        </form>
+
+        <% if (authoritySuggestions && authoritySuggestions.length) { %>
+          <div class="graph-detail-list">
+            <% authoritySuggestions.forEach(function(suggestion) { %>
+              <div class="graph-detail-card">
+                <strong><a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a></strong>
+                <div class="graph-muted">
+                  <span class="status-badge <%= suggestion.status === 'approved' ? 'status-done' : suggestion.status === 'rejected' ? 'status-failed' : 'status-running' %>"><%= suggestion.status %></span>
+                  <% if (suggestion.confidence != null) { %>
+                    <span>Confidence <%= Math.round(Number(suggestion.confidence) * 100) %>%</span>
+                  <% } %>
+                  <% if (suggestion.match_method) { %>
+                    <span><%= suggestion.match_method %></span>
+                  <% } %>
+                </div>
+                <% if (suggestion.status === 'pending') { %>
+                  <div class="job-actions">
+                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= suggestion.id %>/approve" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-primary btn-sm">Approve</button>
+                    </form>
+                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= suggestion.id %>/reject" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
+                    </form>
+                  </div>
+                <% } %>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
     <section class="graph-shell-card knowledge-card">
       <div class="graph-sidebar-header">
         <p class="kg-panel-eyebrow">Profile</p>
@@ -184,4 +270,5 @@
   </div>
 </div>
 
+<script src="/js/authority-picker.js"></script>
 <%- include('../partials/footer') %>

@@ -52,6 +52,14 @@
       <div class="stat-value"><%= extractionCounts.failed || 0 %></div>
       <div class="stat-label">Failed</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= authorityCount || 0 %></div>
+      <div class="stat-label">Authorities</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= authoritySuggestionCount || 0 %></div>
+      <div class="stat-label">Pending Links</div>
+    </div>
   </div>
 
   <section class="settings-section knowledge-overview-section">
@@ -129,6 +137,14 @@
         <div class="action-title">Entities</div>
         <div class="action-description">Browse the extracted graph entities and inspect their evidence.</div>
       </a>
+      <a href="/admin/knowledge/authorities" class="action-card">
+        <div class="action-title">Authorities</div>
+        <div class="action-description">Inspect cross-document identity clusters, member entities, and backfill status.</div>
+      </a>
+      <a href="/admin/knowledge/authorities/suggestions" class="action-card">
+        <div class="action-title">Authority Review</div>
+        <div class="action-description">Approve or reject medium-confidence authority links before they affect the graph.</div>
+      </a>
       <a href="/admin/knowledge/review-extractions" class="action-card">
         <div class="action-title">Review Extractions</div>
         <div class="action-description">Approve low-confidence evidence, reject weak extractions, and remove evidence later when needed.</div>
@@ -155,6 +171,10 @@
       <div class="knowledge-guidance-card">
         <h3>Approval rules</h3>
         <p class="muted">High-confidence evidence is auto-approved. Lower-confidence evidence stays hidden until a human approves it in Review.</p>
+      </div>
+      <div class="knowledge-guidance-card">
+        <h3>Authority backfill</h3>
+        <p class="muted">Legacy entities can be assigned to authorities without re-running extraction. Use the Authorities workspace to queue backfill jobs.</p>
       </div>
       <div class="knowledge-guidance-card">
         <h3>Batch behavior</h3>

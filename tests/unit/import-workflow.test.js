@@ -132,9 +132,42 @@ describe('import workflow helpers', () => {
       { page: 4, number: 4 }
     ], ['a', 'b', 'c', 'd']);
 
-    // The null page should be included due to the tolerance logic (explicitMatches >= 2
-    // and the upcoming page has expectedNumber)
+    // The unreadable page should be included, and the helper should allow a
+    // one-step numbering jump on the next page to account for the missed folio.
     expect(groups).toHaveLength(1);
     expect(groups[0].pageIndices).toEqual([0, 1, 2, 3]);
+  });
+
+  it('does not bridge a numbering jump without an unreadable page', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: 1 },
+      { page: 2, number: 2 },
+      { page: 3, number: 4 }
+    ], ['a', 'b', 'c']);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].pageIndices).toEqual([0, 1]);
+  });
+
+  it('does not bridge more than one missing folio number after an unreadable page', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: 1 },
+      { page: 2, number: 2 },
+      { page: 3, number: null },
+      { page: 4, number: 5 }
+    ], ['a', 'b', 'c', 'd']);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].pageIndices).toEqual([0, 1]);
   });
 });

@@ -109,6 +109,9 @@ Import workers write a heartbeat timestamp every 30 seconds. The main app requeu
 ## Local storage defaults
 
 - Local uploads are stored under `data/uploads/`.
+- On the default local `better-sqlite3` path, SQLite writes are durable per
+  statement; Bartelby does not force a WAL checkpoint after every debounced
+  `saveDatabase()` call.
 - The app still reads legacy files from `public/uploads/` when needed, but new
   local uploads should not be written there.
 - Any custom storage adapter or storage test double must implement the full
