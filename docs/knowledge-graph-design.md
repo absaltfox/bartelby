@@ -138,6 +138,9 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
   relationship, person, or place) without leaving the page
 - Relationship review explicitly surfaces source/target mention context so
   reviewers can verify that both sides of the edge are evidenced
+- Review cards can open an in-context preview overlay that keeps the reviewer
+  on the queue while showing the source document page beside the relevant
+  transcript context
 - Review actions (approve/reject/delete) support in-place updates via JSON so
   triage can continue without full-page reload jumps
 - Citations can later be approved, rejected, or deleted from the admin UI

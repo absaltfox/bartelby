@@ -40,18 +40,18 @@
   %>
 
   <div class="knowledge-toolbar review-extractions-toolbar">
-    <div class="review-status-tabs" role="tablist" aria-label="Extraction review status">
-      <a href="<%= reviewHref('pending', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'pending' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'pending' ? 'true' : 'false' %>" data-review-status-tab data-status="pending">
-        Pending <span class="review-status-count" data-review-status-count data-status="pending"><%= statusCounts.pending || 0 %></span>
+    <div class="filter-tabs review-status-tabs" role="tablist" aria-label="Extraction review status">
+      <a href="<%= reviewHref('pending', 1, reviewKind) %>" class="filter-tab review-status-tab <%= approvalStatus === 'pending' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'pending' ? 'true' : 'false' %>" data-review-status-tab data-status="pending">
+        Pending <span class="filter-count review-status-count" data-review-status-count data-status="pending"><%= statusCounts.pending || 0 %></span>
       </a>
-      <a href="<%= reviewHref('approved', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'approved' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'approved' ? 'true' : 'false' %>" data-review-status-tab data-status="approved">
-        Approved <span class="review-status-count" data-review-status-count data-status="approved"><%= statusCounts.approved || 0 %></span>
+      <a href="<%= reviewHref('approved', 1, reviewKind) %>" class="filter-tab review-status-tab <%= approvalStatus === 'approved' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'approved' ? 'true' : 'false' %>" data-review-status-tab data-status="approved">
+        Approved <span class="filter-count review-status-count" data-review-status-count data-status="approved"><%= statusCounts.approved || 0 %></span>
       </a>
-      <a href="<%= reviewHref('rejected', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'rejected' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'rejected' ? 'true' : 'false' %>" data-review-status-tab data-status="rejected">
-        Rejected <span class="review-status-count" data-review-status-count data-status="rejected"><%= statusCounts.rejected || 0 %></span>
+      <a href="<%= reviewHref('rejected', 1, reviewKind) %>" class="filter-tab review-status-tab <%= approvalStatus === 'rejected' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'rejected' ? 'true' : 'false' %>" data-review-status-tab data-status="rejected">
+        Rejected <span class="filter-count review-status-count" data-review-status-count data-status="rejected"><%= statusCounts.rejected || 0 %></span>
       </a>
-      <a href="<%= reviewHref('all', 1, reviewKind) %>" class="review-status-tab <%= approvalStatus === 'all' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'all' ? 'true' : 'false' %>" data-review-status-tab data-status="all">
-        All <span class="review-status-count" data-review-status-count data-status="all"><%= totalCount %></span>
+      <a href="<%= reviewHref('all', 1, reviewKind) %>" class="filter-tab review-status-tab <%= approvalStatus === 'all' ? 'active' : '' %>" aria-selected="<%= approvalStatus === 'all' ? 'true' : 'false' %>" data-review-status-tab data-status="all">
+        All <span class="filter-count review-status-count" data-review-status-count data-status="all"><%= totalCount %></span>
       </a>
     </div>
     <div class="knowledge-toolbar-actions">
@@ -138,7 +138,13 @@
                   <span class="review-method-note"><%= item.method_label %></span>
                 <% } %>
                 <% if (item.open_passage_href) { %>
-                  <a href="<%= item.open_passage_href %>" class="btn-secondary btn-sm"><%= item.open_passage_label %></a>
+                  <a
+                    href="<%= item.open_passage_href %>"
+                    class="btn-secondary btn-sm review-preview-trigger"
+                    data-review-preview-trigger="1"
+                    data-review-preview-url="<%= item.preview_passage_href %>"
+                    data-review-preview-title="<%= item.claim_title %>"
+                    data-review-preview-document="<%= item.document_title || ('Document #' + item.document_id) %>"><%= item.open_passage_label %></a>
                 <% } %>
               </div>
             </div>
@@ -180,7 +186,7 @@
                 <% } %>
               </div>
 
-              <div class="review-extraction-actions">
+              <div class="review-extraction-actions" data-review-action-rail>
                 <div class="review-extraction-decisions">
                   <% if (item.approval_status !== 'approved') { %>
                     <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/confirm" class="inline-form" data-review-action-form="1" data-review-action="approve">
@@ -237,6 +243,45 @@
       <% } %>
     <% } %>
   </section>
+</div>
+
+<div class="modal-overlay is-hidden" id="review-preview-modal" role="dialog" aria-modal="true" aria-labelledby="review-preview-modal-title">
+  <div class="modal-dialog review-preview-modal-dialog">
+    <div class="modal-header">
+      <div class="review-preview-modal-heading">
+        <p class="kg-panel-eyebrow">Passage Preview</p>
+        <h3 id="review-preview-modal-title">Document preview</h3>
+      </div>
+      <button type="button" class="modal-close" id="review-preview-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body review-preview-modal-body">
+      <div class="review-preview-meta" id="review-preview-meta"></div>
+      <div class="review-preview-layout">
+        <section class="review-preview-panel">
+          <div class="review-preview-panel-header">
+            <h4>Original document</h4>
+            <span class="review-preview-page-label" id="review-preview-page-label"></span>
+          </div>
+          <div class="review-preview-image-wrap" id="review-preview-image-wrap">
+            <p class="muted">Loading image preview…</p>
+          </div>
+        </section>
+        <section class="review-preview-panel">
+          <div class="review-preview-panel-header">
+            <h4>Transcript context</h4>
+            <span class="review-preview-transcript-label" id="review-preview-transcript-label"></span>
+          </div>
+          <div class="review-preview-transcript" id="review-preview-transcript">
+            <p class="muted">Loading transcript preview…</p>
+          </div>
+          <p class="review-preview-passage-note" id="review-preview-passage-note"></p>
+        </section>
+      </div>
+      <div class="review-preview-footer">
+        <a href="#" class="btn-secondary btn-sm" id="review-preview-document-link" target="_blank" rel="noopener">Open full document</a>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="/js/review-extractions.js"></script>

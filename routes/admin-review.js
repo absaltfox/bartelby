@@ -6,6 +6,8 @@ const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 const { asyncHandler } = require('../utils/async-handler');
+const { normalizeDocumentAssets } = require('../utils/document-assets');
+const { buildComparisonPages } = require('../utils/document-services');
 
 router.use(requireAdmin);
 
@@ -44,6 +46,13 @@ function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
     citations: db.citationsAsync || db.citations || null
+  };
+}
+
+function documentStores() {
+  return {
+    documents: db.documentsAsync || db.documents || null,
+    transcripts: db.transcriptsAsync || db.transcripts || null
   };
 }
 
@@ -201,6 +210,131 @@ function buildDocumentHref(citation, status, page, reviewKind) {
   return `/documents/${citation.document_id}?${params.toString()}`;
 }
 
+function buildPreviewHref(citation) {
+  if (!citation || !citation.id) return null;
+  return knowledgePath(`/review-extractions/${citation.id}/preview`);
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function findComparisonPageForOffset(comparisonPages, startOffset, endOffset) {
+  if (!Array.isArray(comparisonPages) || comparisonPages.length === 0) {
+    return null;
+  }
+
+  if (Number.isInteger(startOffset)) {
+    const exactMatch = comparisonPages.find((page) => startOffset >= page.startOffset && startOffset < page.endOffset);
+    if (exactMatch) return exactMatch;
+
+    const overlappingMatch = comparisonPages.find((page) => {
+      return Number.isInteger(endOffset)
+        && endOffset > page.startOffset
+        && startOffset < page.endOffset;
+    });
+    if (overlappingMatch) return overlappingMatch;
+  }
+
+  return comparisonPages[0];
+}
+
+function findHighlightRange(pageText, citation, page) {
+  const pageContent = String(pageText || '');
+  if (!pageContent) {
+    return { start: null, end: null };
+  }
+
+  if (page && Number.isInteger(citation.passage_start) && Number.isInteger(citation.passage_end)) {
+    const start = citation.passage_start - page.startOffset;
+    const end = citation.passage_end - page.startOffset;
+    if (start >= 0 && end > start && end <= pageContent.length) {
+      return { start, end };
+    }
+  }
+
+  const passageText = String(citation.passage_text || '').trim();
+  if (!passageText) {
+    return { start: null, end: null };
+  }
+
+  const directIndex = pageContent.indexOf(passageText);
+  if (directIndex >= 0) {
+    return {
+      start: directIndex,
+      end: directIndex + passageText.length
+    };
+  }
+
+  const compactPassage = passageText.replace(/\s+/g, ' ').trim();
+  if (!compactPassage) {
+    return { start: null, end: null };
+  }
+
+  const compactMatch = new RegExp(escapeRegExp(compactPassage).replace(/\s+/g, '\\s+'), 'i').exec(pageContent);
+  if (compactMatch) {
+    return {
+      start: compactMatch.index,
+      end: compactMatch.index + compactMatch[0].length
+    };
+  }
+
+  return { start: null, end: null };
+}
+
+function buildPreviewPayload(citation, document, transcript) {
+  const normalizedDocument = normalizeDocumentAssets(document);
+  const comparisonPages = buildComparisonPages(normalizedDocument, transcript);
+  const focusPage = findComparisonPageForOffset(comparisonPages, citation.passage_start, citation.passage_end);
+  const fallbackPage = comparisonPages[0] || null;
+  const previewPage = focusPage || fallbackPage;
+  const documentParams = new URLSearchParams();
+  documentParams.set('transcript', String(transcript.id));
+  if (Number.isInteger(citation.passage_start) && Number.isInteger(citation.passage_end) && citation.passage_end > citation.passage_start) {
+    documentParams.set('highlightStart', String(citation.passage_start));
+    documentParams.set('highlightEnd', String(citation.passage_end));
+  }
+  const documentHref = `/documents/${normalizedDocument.id}?${documentParams.toString()}`;
+
+  if (!previewPage) {
+    return {
+      documentTitle: normalizedDocument.title || `Document #${normalizedDocument.id}`,
+      documentHref,
+      transcriptId: transcript.id,
+      transcriptVersion: transcript.version,
+      pageCount: 0,
+      focusPageNumber: null,
+      pageText: '',
+      highlightStart: null,
+      highlightEnd: null,
+      imagePath: null,
+      passageText: String(citation.passage_text || '').trim() || null
+    };
+  }
+
+  const highlightRange = findHighlightRange(previewPage.transcriptText, citation, previewPage);
+  const pageCount = comparisonPages.length || 1;
+
+  return {
+    documentTitle: normalizedDocument.title || `Document #${normalizedDocument.id}`,
+    documentHref,
+    transcriptId: transcript.id,
+    transcriptVersion: transcript.version,
+    pageCount,
+    focusPageNumber: previewPage.pageNumber,
+    pageLabel: pageCount > 1 ? `Page ${previewPage.pageNumber} of ${pageCount}` : 'Document page',
+    pageText: previewPage.transcriptText || '',
+    highlightStart: Number.isInteger(highlightRange.start) ? clampNumber(highlightRange.start, 0, previewPage.transcriptText.length) : null,
+    highlightEnd: Number.isInteger(highlightRange.end) ? clampNumber(highlightRange.end, 0, previewPage.transcriptText.length) : null,
+    imagePath: previewPage.imagePath || null,
+    passageText: String(citation.passage_text || '').trim() || null
+  };
+}
+
 function buildReviewItem(citation, status, page, reviewKind) {
   const citationStatus = citation.approval_status || CITATION_APPROVAL_STATUSES.PENDING;
   const kind = citation.date_expression_id
@@ -231,7 +365,8 @@ function buildReviewItem(citation, status, page, reviewKind) {
         ? 'Reviewed by a human'
         : null,
     open_passage_href: buildDocumentHref(citation, status, page, reviewKind),
-    open_passage_label: hasPassageSpan(citation) ? 'Open Passage' : 'Open Document',
+    preview_passage_href: buildPreviewHref(citation),
+    open_passage_label: hasPassageSpan(citation) ? 'Preview Passage' : 'Preview Document',
     claim_title: '',
     claim_detail: '',
     claim_meta: '',
@@ -281,7 +416,7 @@ function buildReviewItem(citation, status, page, reviewKind) {
     } else {
       addReviewNote(
         item,
-        `Primary citation is missing the ${missingSides.join(' and ')} mention${missingSides.length > 1 ? 's' : ''}. Use Open Passage before approving.`,
+        `Primary citation is missing the ${missingSides.join(' and ')} mention${missingSides.length > 1 ? 's' : ''}. Use Preview Passage before approving.`,
         'warn'
       );
     }
@@ -308,7 +443,7 @@ function buildReviewItem(citation, status, page, reviewKind) {
     } else if (supportAdded) {
       addReviewNote(item, 'Primary date snippet does not name the subject. Review supporting subject mention before approving.', 'warn');
     } else {
-      addReviewNote(item, 'Primary date snippet does not name the subject entity. Use Open Passage before approving.', 'warn');
+      addReviewNote(item, 'Primary date snippet does not name the subject entity. Use Preview Passage before approving.', 'warn');
     }
 
     return item;
@@ -330,7 +465,7 @@ function buildReviewItem(citation, status, page, reviewKind) {
     if (supportAdded) {
       addReviewNote(item, 'Primary snippet does not name the entity directly. Review supporting subject mention before approving.', 'warn');
     } else {
-      addReviewNote(item, 'Primary snippet does not clearly name the entity. Use Open Passage before approving.', 'warn');
+      addReviewNote(item, 'Primary snippet does not clearly name the entity. Use Preview Passage before approving.', 'warn');
     }
   }
   return item;
@@ -477,6 +612,48 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
     confirmed: req.query.confirmed || null,
     rejected: req.query.rejected || null,
     deleted: req.query.deleted || null
+  });
+}));
+
+router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const docs = documentStores();
+  const id = parseId(req.params.id);
+
+  if (!id) {
+    return res.status(400).json({ ok: false, error: 'Invalid extraction citation id.' });
+  }
+
+  if (!stores.citations || typeof stores.citations.getById !== 'function') {
+    return res.status(503).json({ ok: false, error: 'Citation preview is not wired yet.' });
+  }
+  if (!docs.documents || typeof docs.documents.getById !== 'function' || !docs.transcripts || typeof docs.transcripts.getById !== 'function') {
+    return res.status(503).json({ ok: false, error: 'Document preview is not wired yet.' });
+  }
+
+  const citation = await stores.citations.getById(id);
+  if (!citation) {
+    return res.status(404).json({ ok: false, error: 'Citation not found.' });
+  }
+
+  if (!citation.document_id || !citation.transcript_id) {
+    return res.status(422).json({ ok: false, error: 'This citation does not have document preview data.' });
+  }
+
+  const [document, transcript] = await Promise.all([
+    docs.documents.getById(citation.document_id),
+    docs.transcripts.getById(citation.transcript_id)
+  ]);
+
+  if (!document || !transcript) {
+    return res.status(404).json({ ok: false, error: 'The source document or transcript is no longer available.' });
+  }
+
+  const preview = buildPreviewPayload(citation, document, transcript);
+  return res.json({
+    ok: true,
+    citationId: id,
+    preview
   });
 }));
 

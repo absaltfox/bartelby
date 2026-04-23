@@ -1,4 +1,4 @@
-const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, parseStoredPageSegments, extractPageSegmentsFromMarkedContent, findBoundaryNear, splitTranscriptBySegments } = require('../utils/document-services');
+const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages } = require('../utils/document-services');
 const express = require('express');
 const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
@@ -51,61 +51,6 @@ router.use(optionalAuth);
 
 
 
-
-function getTranscriptPageSegments(transcript, pageCount) {
-  const storedSegments = parseStoredPageSegments(transcript && transcript.page_segments);
-  if (storedSegments && storedSegments.length > 0) {
-    return storedSegments;
-  }
-
-  const markerSegments = extractPageSegmentsFromMarkedContent(transcript && transcript.content);
-  if (markerSegments && markerSegments.length > 0) {
-    return markerSegments;
-  }
-
-  if (pageCount > 1) {
-    return Array.from({ length: pageCount }, function(_, index) {
-      return { pageNumber: index + 1, charLength: 0 };
-    });
-  }
-
-  return null;
-}
-
-function buildComparisonPages(document, transcript) {
-  const metadata = document && document.metadata ? document.metadata : {};
-  const imagePaths = [document.image_path].concat(Array.isArray(metadata.additional_pages) ? metadata.additional_pages : [])
-    .filter(Boolean);
-
-  if (imagePaths.length === 0) {
-    return [];
-  }
-
-  const cleanContent = stripPageMarkers((transcript && transcript.content) || '');
-  const segments = splitTranscriptBySegments(
-    cleanContent,
-    getTranscriptPageSegments(transcript, imagePaths.length),
-    imagePaths.length
-  );
-  const pageMap = new Map(segments.map(segment => [segment.pageNumber, segment]));
-
-  return imagePaths.map((imagePath, index) => {
-    const pageNumber = index + 1;
-    const segment = pageMap.get(pageNumber) || {
-      text: '',
-      startOffset: 0,
-      endOffset: 0
-    };
-
-    return {
-      pageNumber,
-      imagePath,
-      transcriptText: segment.text,
-      startOffset: segment.startOffset,
-      endOffset: segment.endOffset
-    };
-  });
-}
 
 function parseMultiValueFilter(value) {
   if (!value) return [];
