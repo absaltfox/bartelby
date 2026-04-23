@@ -86,6 +86,32 @@ function normalizeForMatching(value) {
   return expanded.join(' ');
 }
 
+/**
+ * Synchronous, Map-scoped entity resolution.
+ * Replaces the async DB-hitting resolveEntity for use inside an extraction run.
+ * mentionToEntityId maps normalised name strings → entity IDs for entities
+ * created in the current extraction run only.
+ */
+function resolveEntityInScope(mention, normalized, entityType, mentionToEntityId) {
+  if (!mentionToEntityId || mentionToEntityId.size === 0) return null;
+
+  const candidate = normalizeComparable(normalized || mention);
+  if (!candidate) return null;
+
+  // Exact normalised match
+  if (mentionToEntityId.has(candidate)) {
+    return { entityId: mentionToEntityId.get(candidate), matchType: 'scope_canonical' };
+  }
+
+  // Fuzzy: expand abbreviations + strip honorifics, then try again
+  const expanded = normalizeForMatching(normalized || mention);
+  if (expanded !== candidate && mentionToEntityId.has(expanded)) {
+    return { entityId: mentionToEntityId.get(expanded), matchType: 'scope_fuzzy' };
+  }
+
+  return null;
+}
+
 async function resolveEntity(mention, normalized, entityType) {
   const { entities, entityAliases } = require('../database/db');
   const candidate = normalizeComparable(normalized || mention);
@@ -221,6 +247,7 @@ module.exports = {
   normalizeForMatching,
   expandAbbreviations,
   stripHonorifics,
+  resolveEntityInScope,
   resolveEntity,
   suggestMerges,
   mergeEntities
