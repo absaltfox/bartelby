@@ -115,8 +115,7 @@ async function materializeExtractionResult({
     preExistingCitationIds = await graphMaintenance.getPreExistingCitationIds(transcript.id);
   }
 
-  const { resolveEntity } = require('./entity-resolution');
-  const { ensureEntityAuthority } = require('./authority-resolution');
+  const { resolveEntityInScope, normalizeComparable, normalizeForMatching } = require('./entity-resolution');
   const mentionToEntityId = new Map();
   let entityCount = 0;
   let relationshipCount = 0;
@@ -128,7 +127,7 @@ async function materializeExtractionResult({
       const entityType = String(ext.type || 'topic').trim() || 'topic';
       if (!normalized) continue;
 
-      const resolved = await resolveEntity(mention, normalized, entityType);
+      const resolved = resolveEntityInScope(mention, normalized, entityType, mentionToEntityId);
       let entityId = resolved?.entityId || null;
       if (!entityId) {
         entityId = await entities.create({
@@ -149,14 +148,10 @@ async function materializeExtractionResult({
         }
       }
 
-      await ensureEntityAuthority(entityId, {
-        mention,
-        normalized,
-        entityType
-      });
-
-      mentionToEntityId.set(mention.toLowerCase(), entityId);
-      mentionToEntityId.set(normalized.toLowerCase(), entityId);
+      mentionToEntityId.set(normalizeComparable(mention), entityId);
+      mentionToEntityId.set(normalizeComparable(normalized), entityId);
+      mentionToEntityId.set(normalizeForMatching(mention), entityId);
+      mentionToEntityId.set(normalizeForMatching(normalized), entityId);
 
       const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
       const spanEnd = Number.isInteger(ext.span_end)

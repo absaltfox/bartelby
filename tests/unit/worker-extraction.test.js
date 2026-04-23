@@ -1,5 +1,26 @@
 'use strict';
 
+describe('resolveEntityInScope within extraction', () => {
+  it('does not resolve entities across document boundaries', async () => {
+    const { resolveEntityInScope } = require('../../utils/entity-resolution');
+
+    const emptyScope = new Map();
+    // Simulate a name that would have matched in the old global DB search
+    const result = resolveEntityInScope('Alice Reed', 'Alice Reed', 'person', emptyScope);
+    expect(result).toBeNull(); // empty scope → always creates new entity
+  });
+
+  it('resolveEntityInScope deduplicates within the same extraction run', () => {
+    const { resolveEntityInScope } = require('../../utils/entity-resolution');
+    const scope = new Map();
+    scope.set('alice reed', 7);
+    scope.set('alice', 7);
+
+    const result = resolveEntityInScope('Alice Reed', 'Alice Reed', 'person', scope);
+    expect(result).toEqual({ entityId: 7, matchType: 'scope_canonical' });
+  });
+});
+
 describe('extraction worker cycle', () => {
   afterEach(() => {
     jest.resetModules();
@@ -86,7 +107,9 @@ describe('extraction worker cycle', () => {
       runExtraction: jest.fn(extractionImpl)
     }));
     jest.doMock('../../utils/entity-resolution', () => ({
-      resolveEntity: jest.fn(async () => null)
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
     }));
 
     const worker = require('../../utils/worker-extraction');
@@ -257,7 +280,9 @@ describe('extraction batch polling', () => {
       parseBatchManifest: jest.fn(() => [{ customId: 'extract-7', documentId: 7, transcriptId: 5 }])
     }));
     jest.doMock('../../utils/entity-resolution', () => ({
-      resolveEntity: jest.fn(async () => null)
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
     }));
 
     const worker = require('../../utils/worker-extraction');
@@ -377,7 +402,9 @@ describe('extraction batch polling', () => {
       parseBatchManifest: jest.fn(() => [{ customId: 'extract-8', documentId: 8, transcriptId: 6 }])
     }));
     jest.doMock('../../utils/entity-resolution', () => ({
-      resolveEntity: jest.fn(async () => null)
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
     }));
 
     const worker = require('../../utils/worker-extraction');
