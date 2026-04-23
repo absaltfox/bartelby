@@ -12,6 +12,7 @@ const {
   pollRunningExtractionBatches
 } = require('./worker-extraction');
 const { runAuthorityResolutionWorkerCycle } = require('./worker-authority-resolution');
+const { runAuthoritySuggestionWorkerCycle } = require('./worker-authority-suggestion');
 // runScheduledAnalytics holds its own module-level concurrency lock;
 // importing it here keeps the worker thin and avoids duplicating lock state.
 const { runScheduledAnalytics } = require('./analytics');
@@ -22,6 +23,7 @@ let extractionBatchPollBusy = false;
 let importBusy = false;
 let extractionBusy = false;
 let authorityResolutionBusy = false;
+let authoritySuggestionBusy = false;
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
@@ -32,6 +34,7 @@ function startWorker() {
   setInterval(tickGroupingJobs, 5000);
   setInterval(tickExtractionJobs, 5000);
   setInterval(tickAuthorityResolutionJobs, 5000);
+  setInterval(tickAuthoritySuggestionJobs, BATCH_POLL_MS);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningGroupingBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
@@ -142,6 +145,18 @@ async function tickExtractionJobs() {
     console.error('[worker] extraction worker cycle failed:', err.message);
   } finally {
     extractionBusy = false;
+  }
+}
+
+async function tickAuthoritySuggestionJobs() {
+  if (authoritySuggestionBusy) return;
+  authoritySuggestionBusy = true;
+  try {
+    await runAuthoritySuggestionWorkerCycle();
+  } catch (err) {
+    console.error('[worker] authority suggestion worker cycle failed:', err.message);
+  } finally {
+    authoritySuggestionBusy = false;
   }
 }
 

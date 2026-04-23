@@ -305,6 +305,24 @@ async function materializeExtractionResult({
       entity_count: entityCount,
       relationship_count: relationshipCount
     });
+
+    // Post-extraction: queue a scoped authority suggestion job if the document
+    // belongs to a collection and no suggestion job is already pending/running.
+    try {
+      const { authoritySuggestionJobsAsync, documentCollectionsAsync } = require('../database/db');
+      const memberships = await documentCollectionsAsync.getByDocumentId(doc.id);
+      for (const membership of memberships) {
+        const alreadyQueued = await authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(
+          membership.collection_id
+        );
+        if (!alreadyQueued) {
+          await authoritySuggestionJobsAsync.create({ collection_id: membership.collection_id });
+        }
+      }
+    } catch (triggerErr) {
+      // Non-fatal — log but don't fail the extraction job
+      console.error('[worker-extraction] failed to queue authority suggestion job:', triggerErr.message);
+    }
   }
 
   return { entityCount, relationshipCount };
