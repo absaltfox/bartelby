@@ -65,3 +65,56 @@ describe('cropPageStrip error handling', () => {
     await expect(cropPageStrip(Buffer.from('not an image'))).rejects.toThrow();
   });
 });
+
+describe('grouping preflight helpers', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  it('builds an evenly spaced sample for large imports', () => {
+    const { buildEvenlySpacedSampleIndices } = require('../../utils/grouping-llm');
+    expect(buildEvenlySpacedSampleIndices(20, 8)).toEqual([0, 3, 5, 8, 11, 14, 16, 19]);
+  });
+
+  it('recommends the top region when it clearly detects more folios', async () => {
+    jest.doMock('../../utils/storage', () => ({
+      sanitizeTempName: (name) => name
+    }));
+    jest.doMock('../../utils/temp-assets', () => ({
+      tempAssetExists: async () => true,
+      readTempAsset: async () => makeTestImage(200, 400)
+    }));
+    jest.doMock('../../database/db', () => ({
+      settingsAsync: { get: async () => 'openai' },
+      usersAsync: { findById: async () => null }
+    }));
+    jest.doMock('../../utils/provider-access', () => ({
+      resolveProviderSelectionAsync: async () => ({ runtimeConfig: {} })
+    }));
+    jest.doMock('../../utils/llm', () => ({
+      createProvider: async () => ({
+        generateGroupingSuggestion: async (imageContents, options) => {
+          const pageNumbers = options.pageNumbers;
+          if (String(imageContents[0]?.text || '').includes('(bottom)')) {
+            return pageNumbers.map((page) => ({ page, number: null }));
+          }
+          return pageNumbers.map((page, index) => ({ page, number: index + 1 }));
+        }
+      })
+    }));
+
+    const { recommendGroupingCropRegion } = require('../../utils/grouping-llm');
+    const result = await recommendGroupingCropRegion(
+      'openai',
+      Array.from({ length: 12 }, (_, index) => `page-${index + 1}.png`),
+      'system',
+      null
+    );
+
+    expect(result.recommendedCropRegion).toBe('top');
+    expect(result.confidence).toBe('strong');
+    expect(result.sampledPages).toHaveLength(8);
+    expect(result.scores.top.detectedCount).toBeGreaterThan(result.scores.bottom.detectedCount);
+  });
+});

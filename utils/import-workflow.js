@@ -22,6 +22,7 @@ function parseGroupingState(raw) {
         .map((group) => ({
           label: String(group.label || '').trim() || null,
           source: group.source === 'ai' ? 'ai' : 'manual',
+          confidence: normalizeGroupingConfidence(group.confidence),
           pages: Array.isArray(group.pages) ? sanitizeTempFiles(group.pages) : []
         }))
         .filter((group) => group.pages.length >= 2)
@@ -29,6 +30,11 @@ function parseGroupingState(raw) {
   } catch (err) {
     return null;
   }
+}
+
+function normalizeGroupingConfidence(value) {
+  if (value === 'high' || value === 'medium' || value === 'low') return value;
+  return null;
 }
 
 function buildTranscriptPageSegments(results) {
@@ -174,6 +180,9 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
     let expectedNumber = 2;
     let cursor = index + 1;
     let unreadableGapPending = false;
+    let unreadableGapCount = 0;
+    let numberingRecoveryCount = 0;
+    let repeatedNumberCount = 0;
 
     while (cursor < tempFiles.length) {
       const detectedNumber = annotationMap.get(cursor + 1);
@@ -196,6 +205,7 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
         expectedNumber = detectedNumber + 1;
         cursor += 1;
         unreadableGapPending = false;
+        numberingRecoveryCount += 1;
         continue;
       }
 
@@ -206,6 +216,7 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
       ) {
         pages.push(cursor);
         cursor += 1;
+        repeatedNumberCount += 1;
         continue;
       }
 
@@ -217,6 +228,7 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
         pages.push(cursor);
         cursor += 1;
         unreadableGapPending = true;
+        unreadableGapCount += 1;
         continue;
       }
 
@@ -224,9 +236,18 @@ function buildGroupsFromAnnotations(annotations, tempFiles) {
     }
 
     if (explicitMatches >= 2) {
+      const anomalyCount = unreadableGapCount + numberingRecoveryCount + repeatedNumberCount;
+      let confidence = 'low';
+      if (anomalyCount === 0 && explicitMatches >= 3) {
+        confidence = 'high';
+      } else if (anomalyCount <= 1) {
+        confidence = 'medium';
+      }
+
       groups.push({
         pageIndices: pages,
-        label: `Document (pages ${pages.map((page) => page + 1).join(', ')})`
+        label: `Document (pages ${pages.map((page) => page + 1).join(', ')})`,
+        confidence
       });
       index = cursor;
       continue;

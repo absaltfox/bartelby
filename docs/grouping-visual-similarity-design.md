@@ -9,7 +9,10 @@ significant fraction of pages may remain ungrouped.
 
 The current number-based pass is intentionally conservative but does tolerate a
 single unreadable page inside an otherwise anchored sequence, including a
-one-number jump such as `1, 2, unreadable, 4`.
+one-number jump such as `1, 2, unreadable, 4`. The current UI also exposes an
+optional retry with alternate crop regions (`bottom` or `both`) and surfaces
+confidence tiers on suggested groups so users can judge how strongly a sequence
+was anchored.
 
 ## Approach Options
 

@@ -7,6 +7,7 @@ describe('import api hardening', () => {
   let tempAssetsMock;
   let dbMock;
   let storageMock;
+  let groupingLlmMock;
 
   function buildApp() {
     jest.resetModules();
@@ -28,6 +29,19 @@ describe('import api hardening', () => {
       copyTempAssetToUpload: jest.fn(async () => ({ url: '/uploads/uploaded.png' })),
       promoteQueuedTempAssets: jest.fn(async (files) => (Array.isArray(files) ? files : [files]).map(String)),
       deleteTempAssets: jest.fn(async () => {})
+    };
+
+    groupingLlmMock = {
+      recommendGroupingCropRegion: jest.fn(async () => ({
+        recommendedCropRegion: 'top',
+        confidence: 'strong',
+        scores: {
+          top: { score: 6, detectedCount: 3 },
+          bottom: { score: 1, detectedCount: 0 }
+        },
+        sampledPages: [1, 3, 5, 7],
+        summary: 'Top edge is strongly preferred in the sample.'
+      }))
     };
 
     dbMock = {
@@ -76,6 +90,7 @@ describe('import api hardening', () => {
       supportsBatchProvider: jest.fn(() => false)
     }));
     jest.doMock('../../utils/temp-assets', () => tempAssetsMock);
+    jest.doMock('../../utils/grouping-llm', () => groupingLlmMock);
     jest.doMock('../../database/db', () => dbMock);
     jest.doMock('../../middleware/upload', () => ({
       withCsrf: (middleware) => [middleware, (req, res, next) => next()]
@@ -137,7 +152,9 @@ describe('import api hardening', () => {
       .send({
         tempFiles: ['page-1.png', 'page-2.png'],
         provider: 'openai',
-        credentialSource: 'user:5'
+        credentialSource: 'user:5',
+        cropRegion: 'top',
+        fallbackCropRegion: 'both'
       });
 
     expect(res.status).toBe(200);
@@ -147,8 +164,36 @@ describe('import api hardening', () => {
       payload: expect.objectContaining({
         tempFiles: ['page-1.png'],
         provider: 'openai',
-        credentialSource: 'user:5'
+        credentialSource: 'user:5',
+        cropRegion: 'top',
+        fallbackCropRegion: 'both'
       })
+    }));
+  });
+
+  it('runs grouping preflight without promoting temp assets', async () => {
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/grouping-preflight')
+      .send({
+        tempFiles: ['page-1.png', 'page-2.png'],
+        provider: 'openai',
+        credentialSource: 'user:5'
+      });
+
+    expect(res.status).toBe(200);
+    expect(tempAssetsMock.promoteQueuedTempAssets).not.toHaveBeenCalled();
+    expect(groupingLlmMock.recommendGroupingCropRegion).toHaveBeenCalledWith(
+      'openai',
+      ['page-1.png'],
+      'user:5',
+      1
+    );
+    expect(res.body).toEqual(expect.objectContaining({
+      success: true,
+      recommendedCropRegion: 'top',
+      confidence: 'strong'
     }));
   });
 

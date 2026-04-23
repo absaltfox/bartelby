@@ -56,7 +56,9 @@ describe('grouping pipeline integration', () => {
 
     expect(groups).toHaveLength(2);
     expect(groups[0].pageIndices).toEqual([0, 1, 2]);
+    expect(groups[0].confidence).toBe('high');
     expect(groups[1].pageIndices).toEqual([3, 4]);
+    expect(groups[1].confidence).toBe('medium');
   });
 
   it('buildGroupsFromAnnotations handles single-page documents (ungrouped)', () => {

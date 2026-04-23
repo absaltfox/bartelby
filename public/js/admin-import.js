@@ -84,9 +84,15 @@ document.addEventListener('DOMContentLoaded', function() {
   let anyAiQueued      = false;
   let autoGroupingRequested = false;
   let autoGroupingCompleted = false;
+  let autoGroupingInProgress = false;
   let groupingStateSaveTimer = null;
   let isSyncingCollectionSelection = false;
   let currentWizardFlow = 'single';
+  let lastGroupingCropRegion = 'top';
+  let lastGroupingFallbackRegion = '';
+  let currentPageIndex = 0;
+  let activeGroupId = null;
+  let pageGroupingStatusTimer = null;
 
   const pagesProviderSelect    = document.getElementById('pages-provider');
   const pagesCredentialSelect  = document.getElementById('pages-credential');
@@ -229,6 +235,25 @@ document.addEventListener('DOMContentLoaded', function() {
   const groupingModelOk       = document.getElementById('grouping-model-ok');
   const groupingProviderSelect = document.getElementById('grouping-provider-select');
   const groupingCredentialSelect = document.getElementById('grouping-credential-select');
+  const groupingCropRegionSelect = document.getElementById('grouping-crop-region-select');
+  const groupingFallbackRegionSelect = document.getElementById('grouping-fallback-region-select');
+  const groupingFallbackHint = document.getElementById('grouping-fallback-hint');
+  const groupingRecommendBtn = document.getElementById('grouping-recommend-btn');
+  const groupingRecommendationPanel = document.getElementById('grouping-recommendation-panel');
+  const groupingRecommendationStatus = document.getElementById('grouping-recommendation-status');
+  const groupingRecommendationResult = document.getElementById('grouping-recommendation-result');
+  const groupingRecommendationRegion = document.getElementById('grouping-recommendation-region');
+  const groupingRecommendationConfidence = document.getElementById('grouping-recommendation-confidence');
+  const groupingRecommendationSummary = document.getElementById('grouping-recommendation-summary');
+  const autoGroupLockHint = document.getElementById('auto-group-lock-hint');
+  const selectAllPagesBtn = document.getElementById('select-all-pages');
+  const deselectAllPagesBtn = document.getElementById('deselect-all-pages');
+  const groupSelectedBtn = document.getElementById('group-selected');
+  const suggestGroupsBtn = document.getElementById('suggest-groups-btn');
+  const submitAllBtn = document.getElementById('submit-all-btn');
+  const pageSessionSummary = document.getElementById('page-session-summary');
+  const pageGroupingStatus = document.getElementById('page-grouping-status');
+  let groupingPreflightInProgress = false;
 
   // Multi-document queue (PDF groups)
   let lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
@@ -368,6 +393,292 @@ document.addEventListener('DOMContentLoaded', function() {
       .some(cb => cb.dataset.autoGroup === '1');
   }
 
+  function normalizeGroupingCropRegion(value, fallback) {
+    return ['top', 'bottom', 'both'].includes(value) ? value : fallback;
+  }
+
+  function confidenceLabel(confidence) {
+    if (confidence === 'high') return 'High confidence';
+    if (confidence === 'medium') return 'Medium confidence';
+    if (confidence === 'low') return 'Low confidence';
+    if (confidence === 'strong') return 'Strong signal';
+    if (confidence === 'moderate') return 'Moderate signal';
+    if (confidence === 'uncertain') return 'Uncertain';
+    return '';
+  }
+
+  function getPageThumbs() {
+    return Array.from(document.querySelectorAll('.page-thumb'));
+  }
+
+  function getPageThumbByIndex(index) {
+    return getPageThumbs()[index] || null;
+  }
+
+  function getGroupForFilename(filename) {
+    return pageGroups.find((group) => group.pages.includes(filename)) || null;
+  }
+
+  function getCurrentPageFilename() {
+    return allTempFiles[currentPageIndex] || null;
+  }
+
+  function getActiveGroup() {
+    return pageGroups.find((group) => group.id === activeGroupId) || null;
+  }
+
+  function sortGroupPages(group) {
+    group.pages.sort((left, right) => allTempFiles.indexOf(left) - allTempFiles.indexOf(right));
+  }
+
+  function clearGroupingStatus() {
+    clearTimeout(pageGroupingStatusTimer);
+    if (!pageGroupingStatus) return;
+    pageGroupingStatus.textContent = '';
+    pageGroupingStatus.classList.add('is-hidden');
+  }
+
+  function setGroupingStatus(message) {
+    if (!pageGroupingStatus) return;
+    clearTimeout(pageGroupingStatusTimer);
+    pageGroupingStatus.textContent = message;
+    pageGroupingStatus.classList.remove('is-hidden');
+    pageGroupingStatusTimer = setTimeout(() => {
+      pageGroupingStatus.classList.add('is-hidden');
+    }, 2600);
+  }
+
+  function renderPageSessionSummary() {
+    if (!pageSessionSummary) return;
+    const currentFilename = getCurrentPageFilename();
+    const currentGroup = currentFilename ? getGroupForFilename(currentFilename) : null;
+    const activeGroup = getActiveGroup();
+    const currentGroupText = currentGroup ? `in ${currentGroup.label}` : 'ungrouped';
+    const activeGroupText = activeGroup ? activeGroup.label : 'none';
+    pageSessionSummary.textContent = `Current page: ${currentPageIndex + 1} of ${allTempFiles.length} (${currentGroupText}). Active group: ${activeGroupText}.`;
+  }
+
+  function scrollCurrentPageIntoView() {
+    const thumb = getPageThumbByIndex(currentPageIndex);
+    if (thumb) thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
+
+  function setCurrentPage(index, opts = {}) {
+    if (!allTempFiles.length) return;
+    const bounded = Math.max(0, Math.min(allTempFiles.length - 1, index));
+    currentPageIndex = bounded;
+    const currentFilename = getCurrentPageFilename();
+    if (opts.adoptGroupFromPage && currentFilename) {
+      const currentGroup = getGroupForFilename(currentFilename);
+      if (currentGroup) activeGroupId = currentGroup.id;
+    }
+    if (opts.scroll !== false) scrollCurrentPageIntoView();
+    applyGroupColors();
+    if (!document.getElementById('zoom-overlay').classList.contains('is-hidden')) {
+      zoomIndex = currentPageIndex;
+      renderZoom();
+    }
+  }
+
+  function isModalOpen() {
+    return !!(
+      (groupingModelModal && !groupingModelModal.classList.contains('is-hidden')) ||
+      (groupingResetModal && !groupingResetModal.classList.contains('is-hidden'))
+    );
+  }
+
+  function isTypingTarget(target) {
+    if (!target || !(target instanceof HTMLElement)) return false;
+    return !!target.closest('input, textarea, select, button, [contenteditable="true"]');
+  }
+
+  function moveCurrentPage(delta) {
+    if (!allTempFiles.length) return;
+    setCurrentPage(currentPageIndex + delta, { scroll: true });
+  }
+
+  function detachPageFromGroups(filename, keepGroupId) {
+    let removedFrom = null;
+    pageGroups.forEach((group) => {
+      if (keepGroupId && group.id === keepGroupId) return;
+      if (!group.pages.includes(filename)) return;
+      removedFrom = group.label;
+      group.pages = group.pages.filter((page) => page !== filename);
+    });
+    pageGroups = pageGroups.filter((group) => group.pages.length > 0);
+    if (activeGroupId && !getActiveGroup()) activeGroupId = null;
+    return removedFrom;
+  }
+
+  function createGroupFromCurrentPage() {
+    const filename = getCurrentPageFilename();
+    if (!filename) return;
+    const pageNumber = currentPageIndex + 1;
+    const removedFrom = detachPageFromGroups(filename);
+    groupIdCounter++;
+    const newGroup = {
+      id: groupIdCounter,
+      colorIndex: pageGroups.length % GROUP_COLORS,
+      pages: [filename],
+      label: `Document (pages ${pageNumber})`,
+      source: 'manual',
+      confidence: null
+    };
+    pageGroups.push(newGroup);
+    activeGroupId = newGroup.id;
+    sortGroupPages(newGroup);
+    applyGroupColors();
+    scheduleGroupingStateSave();
+    setGroupingStatus(removedFrom
+      ? `Moved page ${pageNumber} from ${removedFrom} into ${newGroup.label}.`
+      : `Started ${newGroup.label} with page ${pageNumber}.`);
+  }
+
+  function addCurrentPageToActiveGroup() {
+    const filename = getCurrentPageFilename();
+    const activeGroup = getActiveGroup();
+    if (!filename || !activeGroup) {
+      setGroupingStatus('No active group. Start one with N first.');
+      return;
+    }
+
+    const pageNumber = currentPageIndex + 1;
+    const currentGroup = getGroupForFilename(filename);
+    if (currentGroup && currentGroup.id === activeGroup.id) {
+      setGroupingStatus(`Page ${pageNumber} is already in ${activeGroup.label}.`);
+      return;
+    }
+
+    const removedFrom = detachPageFromGroups(filename, activeGroup.id);
+    if (!activeGroup.pages.includes(filename)) {
+      activeGroup.pages.push(filename);
+      sortGroupPages(activeGroup);
+    }
+
+    applyGroupColors();
+    scheduleGroupingStateSave();
+    setGroupingStatus(removedFrom
+      ? `Moved page ${pageNumber} from ${removedFrom} into ${activeGroup.label}.`
+      : `Added page ${pageNumber} to ${activeGroup.label}.`);
+  }
+
+  function endActiveGroup() {
+    const activeGroup = getActiveGroup();
+    if (!activeGroup) {
+      setGroupingStatus('There is no active group to end.');
+      return;
+    }
+    activeGroupId = null;
+    applyGroupColors();
+    setGroupingStatus(`Ended ${activeGroup.label}.`);
+  }
+
+  function recommendationRegionLabel(region) {
+    if (region === 'top') return 'Top edge recommended';
+    if (region === 'bottom') return 'Bottom edge recommended';
+    return 'No strong region recommendation';
+  }
+
+  function updateGroupingModalBusyState() {
+    const disabled = groupingPreflightInProgress;
+    [
+      groupingProviderSelect,
+      groupingCredentialSelect,
+      groupingCropRegionSelect,
+      groupingFallbackRegionSelect,
+      groupingModelOk,
+      groupingModelCancel,
+      groupingModelClose,
+      groupingRecommendBtn
+    ].forEach((element) => {
+      if (element) element.disabled = disabled;
+    });
+  }
+
+  function resetGroupingRecommendationUI() {
+    setHidden(groupingRecommendationPanel, true);
+    setHidden(groupingRecommendationResult, true);
+    if (groupingRecommendationStatus) groupingRecommendationStatus.textContent = '';
+    if (groupingRecommendationRegion) groupingRecommendationRegion.textContent = '';
+    if (groupingRecommendationSummary) groupingRecommendationSummary.textContent = '';
+    if (groupingRecommendationConfidence) {
+      groupingRecommendationConfidence.textContent = '';
+      groupingRecommendationConfidence.className = 'page-group-confidence';
+    }
+  }
+
+  function renderGroupingRecommendation(result) {
+    if (!groupingRecommendationPanel) return;
+    setHidden(groupingRecommendationPanel, false);
+    setHidden(groupingRecommendationResult, false);
+    if (groupingRecommendationStatus) groupingRecommendationStatus.textContent = `Checked ${result.sampledPages.length} sampled page${result.sampledPages.length !== 1 ? 's' : ''}.`;
+    if (groupingRecommendationRegion) {
+      groupingRecommendationRegion.textContent = recommendationRegionLabel(result.recommendedCropRegion);
+    }
+    if (groupingRecommendationConfidence) {
+      groupingRecommendationConfidence.textContent = confidenceLabel(result.confidence);
+      groupingRecommendationConfidence.className = `page-group-confidence page-group-confidence--${result.confidence === 'strong' ? 'high' : (result.confidence === 'moderate' ? 'medium' : 'low')}`;
+    }
+    if (groupingRecommendationSummary) {
+      groupingRecommendationSummary.textContent = result.summary || '';
+    }
+  }
+
+  function updateGroupingFallbackHint() {
+    if (!groupingFallbackHint) return;
+    const cropRegion = normalizeGroupingCropRegion(
+      groupingCropRegionSelect ? groupingCropRegionSelect.value : 'top',
+      'top'
+    );
+    const fallbackCropRegion = normalizeGroupingCropRegion(
+      groupingFallbackRegionSelect ? groupingFallbackRegionSelect.value : '',
+      ''
+    );
+    const pageCount = allTempFiles.length;
+    const sizeLabel = pageCount >= 100 ? 'large' : (pageCount >= 40 ? 'mid-sized' : 'smaller');
+    const base = cropRegion === 'both'
+      ? 'Primary pass reads both the top and bottom page edges, which sends more image strips per request.'
+      : 'Primary pass reads a narrow strip from the selected page edge.';
+
+    if (!fallbackCropRegion) {
+      groupingFallbackHint.textContent = `${base} No automatic retry will run if no groups are detected.`;
+      return;
+    }
+
+    const fallbackCost = fallbackCropRegion === 'both'
+      ? 'The fallback retry checks both edges, so it is the most expensive retry option.'
+      : 'The fallback retry checks one alternate edge if the first pass finds no groups.';
+    groupingFallbackHint.textContent = `${base} This ${sizeLabel} import has ${pageCount} page${pageCount !== 1 ? 's' : ''}; enabling the ${fallbackCropRegion} fallback may trigger a second full auto-group pass. ${fallbackCost}`;
+  }
+
+  function setAutoGroupingLock(locked) {
+    autoGroupingInProgress = !!locked;
+
+    const pageGrid = document.getElementById('page-grid');
+    const pageGroupsContainer = document.getElementById('page-groups');
+    if (pageGrid) pageGrid.classList.toggle('is-disabled', autoGroupingInProgress);
+    if (pageGroupsContainer) pageGroupsContainer.classList.toggle('is-disabled', autoGroupingInProgress);
+    if (stepPagesCollectionContainer) stepPagesCollectionContainer.classList.toggle('is-disabled', autoGroupingInProgress);
+
+    [selectAllPagesBtn, deselectAllPagesBtn, groupSelectedBtn, submitAllBtn].forEach((button) => {
+      if (button) button.disabled = autoGroupingInProgress;
+    });
+
+    if (stepPagesCollectionSearch) stepPagesCollectionSearch.disabled = autoGroupingInProgress;
+    if (stepPagesSelectVisibleBtn) stepPagesSelectVisibleBtn.disabled = autoGroupingInProgress;
+    if (stepPagesClearSelectionsBtn) stepPagesClearSelectionsBtn.disabled = autoGroupingInProgress;
+    if (stepPagesShowSelectedOnly) stepPagesShowSelectedOnly.disabled = autoGroupingInProgress;
+
+    document.querySelectorAll('.page-collection-cb').forEach((cb) => {
+      cb.disabled = autoGroupingInProgress;
+    });
+
+    setHidden(autoGroupLockHint, !autoGroupingInProgress);
+    updateStepPagesCollectionListUI();
+    updateSuggestGroupsAvailability();
+    renderGroups();
+  }
+
   function shouldAutoSuggestGroups() {
     return !!(
       (
@@ -379,14 +690,16 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function updateSuggestGroupsAvailability() {
-    const suggestBtn = document.getElementById('suggest-groups-btn');
+    const suggestBtn = suggestGroupsBtn;
     if (!suggestBtn) return;
 
     const canSuggest = !!(!isManualMode() && providerSelect && allTempFiles.length >= 2);
     const canShowButton = !!(canSuggest && shouldAutoSuggestGroups());
     setHidden(suggestBtn, !canShowButton);
-    suggestBtn.disabled = !canShowButton || autoGroupingCompleted;
-    suggestBtn.textContent = autoGroupingCompleted ? 'Auto-grouped' : 'Auto-group';
+    suggestBtn.disabled = !canShowButton || autoGroupingCompleted || autoGroupingInProgress;
+    suggestBtn.textContent = autoGroupingInProgress
+      ? 'Auto-grouping...'
+      : (autoGroupingCompleted ? 'Auto-grouped' : 'Auto-group');
   }
 
   function getCurrentPageManagerDocumentCount() {
@@ -501,6 +814,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .map((group) => ({
           label: group.label || null,
           source: group.source === 'ai' ? 'ai' : 'manual',
+          confidence: group.confidence || null,
           pages: Array.isArray(group.pages) ? group.pages.slice() : []
         }))
         .filter((group) => group.pages.length >= 2)
@@ -559,7 +873,8 @@ document.addEventListener('DOMContentLoaded', function() {
         colorIndex: 0,
         pages: filenames,
         label: group.label || `Document (pages ${filenames.map((f) => allTempFiles.indexOf(f) + 1).join(', ')})`,
-        source: group.source === 'ai' ? 'ai' : 'manual'
+        source: group.source === 'ai' ? 'ai' : 'manual',
+        confidence: group.confidence || null
       });
     });
 
@@ -774,12 +1089,15 @@ document.addEventListener('DOMContentLoaded', function() {
       div.innerHTML = `
         <img src="${getTempPreviewUrl(p.filename)}" alt="Page ${p.pageNumber}">
         <span class="page-label">Page ${p.pageNumber}</span>
+        <span class="page-membership-label">Ungrouped</span>
         <div class="page-check"></div>
         <button type="button" class="page-zoom-btn" title="Zoom in">&#128269;</button>
       `;
       // Toggle selection (but not on zoom button)
       div.addEventListener('click', (e) => {
         if (e.target.closest('.page-zoom-btn')) return;
+        if (autoGroupingInProgress) return;
+        setCurrentPage(allTempFiles.indexOf(p.filename), { scroll: false, adoptGroupFromPage: true });
         div.classList.toggle('selected');
       });
       // Zoom button
@@ -790,24 +1108,33 @@ document.addEventListener('DOMContentLoaded', function() {
       grid.appendChild(div);
     });
     pageGroups = [];
+    groupIdCounter = 0;
     autoGroupingRequested = false;
     autoGroupingCompleted = false;
+    activeGroupId = null;
+    currentPageIndex = 0;
+    clearGroupingStatus();
+    setAutoGroupingLock(false);
     lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
     renderGroups();
     updateSubmitButton();
     updateSuggestGroupsAvailability();
     updateBatchOption();
+    setCurrentPage(0, { scroll: false });
   }
 
-  document.getElementById('select-all-pages').addEventListener('click', () => {
+  selectAllPagesBtn.addEventListener('click', () => {
+    if (autoGroupingInProgress) return;
     document.querySelectorAll('.page-thumb').forEach(t => t.classList.add('selected'));
   });
 
-  document.getElementById('deselect-all-pages').addEventListener('click', () => {
+  deselectAllPagesBtn.addEventListener('click', () => {
+    if (autoGroupingInProgress) return;
     document.querySelectorAll('.page-thumb').forEach(t => t.classList.remove('selected'));
   });
 
-  document.getElementById('group-selected').addEventListener('click', () => {
+  groupSelectedBtn.addEventListener('click', () => {
+    if (autoGroupingInProgress) return;
     const selected = Array.from(document.querySelectorAll('.page-thumb.selected'));
     if (selected.length === 0) { showError('Select at least one page to create a group.'); return; }
 
@@ -819,23 +1146,37 @@ document.addEventListener('DOMContentLoaded', function() {
 
     groupIdCounter++;
     const colorIndex = pageGroups.length % GROUP_COLORS;
-    pageGroups.push({ id: groupIdCounter, colorIndex, pages: filenames, label: `Document (pages ${pageNums.join(', ')})`, source: 'manual' });
+    pageGroups.push({
+      id: groupIdCounter,
+      colorIndex,
+      pages: filenames,
+      label: `Document (pages ${pageNums.join(', ')})`,
+      source: 'manual',
+      confidence: null
+    });
+    activeGroupId = groupIdCounter;
 
     applyGroupColors();
     scheduleGroupingStateSave();
 
     renderGroups();
     updateSubmitButton();
+    setGroupingStatus(`Started ${pageGroups[pageGroups.length - 1].label} from selected pages.`);
     hideError();
   });
 
   function applyGroupColors() {
     // Clear all group styling from thumbs
     document.querySelectorAll('.page-thumb').forEach(el => {
-      el.classList.remove('grouped', 'selected');
+      el.classList.remove('grouped', 'selected', 'current-page');
       delete el.dataset.groupId;
       delete el.dataset.groupColor;
       delete el.dataset.groupLabel;
+      const membership = el.querySelector('.page-membership-label');
+      if (membership) {
+        membership.textContent = 'Ungrouped';
+        membership.classList.remove('page-membership-label--grouped');
+      }
     });
     // Re-apply with consistent color indices
     pageGroups.forEach((g, idx) => {
@@ -847,11 +1188,19 @@ document.addEventListener('DOMContentLoaded', function() {
           el.dataset.groupId = g.id;
           el.dataset.groupColor = g.colorIndex;
           el.dataset.groupLabel = 'Group ' + (idx + 1);
+          const membership = el.querySelector('.page-membership-label');
+          if (membership) {
+            membership.textContent = `Group ${idx + 1}`;
+            membership.classList.add('page-membership-label--grouped');
+          }
         }
       });
     });
+    const currentThumb = getPageThumbByIndex(currentPageIndex);
+    if (currentThumb) currentThumb.classList.add('current-page');
     renderGroups();
     updateSubmitButton();
+    renderPageSessionSummary();
   }
 
   function renderGroups() {
@@ -859,26 +1208,40 @@ document.addEventListener('DOMContentLoaded', function() {
     container.innerHTML = '';
     pageGroups.forEach((g, idx) => {
       const div = document.createElement('div');
-      div.className = 'page-group-card';
+      div.className = `page-group-card${activeGroupId === g.id ? ' page-group-card--active' : ''}`;
       div.dataset.groupColor = g.colorIndex;
+      if (g.confidence) div.dataset.groupConfidence = g.confidence;
       const thumbs = g.pages.map(f =>
         `<img src="${getTempPreviewUrl(f)}" class="group-thumb" alt="">`
       ).join('');
+      const confidenceBadge = g.source === 'ai' && g.confidence
+        ? `<span class="page-group-confidence page-group-confidence--${g.confidence}">${confidenceLabel(g.confidence)}</span>`
+        : '';
       div.innerHTML = `
         <div class="page-group-header">
           <strong>${g.label}</strong>
+          ${confidenceBadge}
           <span class="page-group-count">${g.pages.length} page${g.pages.length !== 1 ? 's' : ''}</span>
-          <button type="button" class="btn-danger btn-sm" data-group-id="${g.id}">Ungroup</button>
+          <button type="button" class="btn-danger btn-sm" data-group-id="${g.id}" ${autoGroupingInProgress ? 'disabled' : ''}>Ungroup</button>
         </div>
         <div class="page-group-thumbs">${thumbs}</div>
       `;
+      div.addEventListener('click', (event) => {
+        if (event.target.closest('.btn-danger')) return;
+        activeGroupId = g.id;
+        applyGroupColors();
+        setGroupingStatus(`Active group set to ${g.label}.`);
+      });
       div.querySelector('.btn-danger').addEventListener('click', () => ungroupPages(g.id));
       container.appendChild(div);
     });
   }
 
   function ungroupPages(groupId) {
+    if (autoGroupingInProgress) return;
+    const group = pageGroups.find((entry) => entry.id === groupId);
     pageGroups = pageGroups.filter(g => g.id !== groupId);
+    if (activeGroupId === groupId) activeGroupId = null;
     if (!hasAiGeneratedGroups()) {
       autoGroupingRequested = false;
       autoGroupingCompleted = false;
@@ -886,6 +1249,7 @@ document.addEventListener('DOMContentLoaded', function() {
     applyGroupColors();
     scheduleGroupingStateSave();
     updateSuggestGroupsAvailability();
+    if (group) setGroupingStatus(`Removed ${group.label}.`);
   }
 
   function updateSubmitButton() {
@@ -914,14 +1278,19 @@ document.addEventListener('DOMContentLoaded', function() {
   function openZoom(filename, pageNumber) {
     zoomIndex = allTempFiles.indexOf(filename);
     if (zoomIndex < 0) zoomIndex = 0;
+    setCurrentPage(zoomIndex, { scroll: false, adoptGroupFromPage: true });
     renderZoom();
     document.getElementById('zoom-overlay').classList.remove('is-hidden');
   }
 
   function renderZoom() {
     const filename = allTempFiles[zoomIndex];
+    const currentGroup = getGroupForFilename(filename);
+    const activeGroup = getActiveGroup();
+    const groupText = currentGroup ? currentGroup.label : 'Ungrouped';
+    const activeText = activeGroup ? ` • Active: ${activeGroup.label}` : '';
     document.getElementById('zoom-image').src = getTempPreviewUrl(filename);
-    document.getElementById('zoom-label').textContent = `Page ${zoomIndex + 1} of ${allTempFiles.length}`;
+    document.getElementById('zoom-label').textContent = `Page ${zoomIndex + 1} of ${allTempFiles.length} • ${groupText}${activeText}`;
     document.getElementById('zoom-prev').disabled = zoomIndex === 0;
     document.getElementById('zoom-next').disabled = zoomIndex === allTempFiles.length - 1;
   }
@@ -938,20 +1307,55 @@ document.addEventListener('DOMContentLoaded', function() {
 
   document.getElementById('zoom-prev').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (zoomIndex > 0) { zoomIndex--; renderZoom(); }
+    if (zoomIndex > 0) {
+      zoomIndex--;
+      setCurrentPage(zoomIndex, { scroll: true });
+    }
   });
 
   document.getElementById('zoom-next').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (zoomIndex < allTempFiles.length - 1) { zoomIndex++; renderZoom(); }
+    if (zoomIndex < allTempFiles.length - 1) {
+      zoomIndex++;
+      setCurrentPage(zoomIndex, { scroll: true });
+    }
   });
 
-  // Keyboard navigation in zoom
+  // Keyboard navigation and page-review shortcuts
   document.addEventListener('keydown', (e) => {
-    if (document.getElementById('zoom-overlay').classList.contains('is-hidden')) return;
-    if (e.key === 'Escape') document.getElementById('zoom-overlay').classList.add('is-hidden');
-    if (e.key === 'ArrowLeft' && zoomIndex > 0) { zoomIndex--; renderZoom(); }
-    if (e.key === 'ArrowRight' && zoomIndex < allTempFiles.length - 1) { zoomIndex++; renderZoom(); }
+    const zoomOpen = !document.getElementById('zoom-overlay').classList.contains('is-hidden');
+    if (zoomOpen && e.key === 'Escape') {
+      document.getElementById('zoom-overlay').classList.add('is-hidden');
+      return;
+    }
+    if (autoGroupingInProgress || groupingPreflightInProgress || isModalOpen() || isTypingTarget(e.target)) return;
+    if (!allTempFiles.length) return;
+
+    const key = (e.key || '').toLowerCase();
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      moveCurrentPage(-1);
+      return;
+    }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      moveCurrentPage(1);
+      return;
+    }
+    if (key === 'n') {
+      e.preventDefault();
+      createGroupFromCurrentPage();
+      return;
+    }
+    if (key === 'a') {
+      e.preventDefault();
+      addCurrentPageToActiveGroup();
+      return;
+    }
+    if (key === 'e') {
+      e.preventDefault();
+      endActiveGroup();
+    }
   });
 
   // ── AI-Assisted Document Grouping ────────────────────────────────
@@ -968,8 +1372,39 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
+  function refreshGroupingFallbackOptions() {
+    if (!groupingFallbackRegionSelect || !groupingCropRegionSelect) return;
+    const primaryRegion = normalizeGroupingCropRegion(groupingCropRegionSelect.value, 'top');
+    const previous = groupingFallbackRegionSelect.value || lastGroupingFallbackRegion || '';
+    const options = [
+      { value: '', label: 'Do not retry' },
+      { value: 'top', label: 'Retry with top edge' },
+      { value: 'bottom', label: 'Retry with bottom edge' },
+      { value: 'both', label: 'Retry with top and bottom edges' }
+    ].filter((option) => option.value === '' || option.value !== primaryRegion);
+
+    groupingFallbackRegionSelect.innerHTML = '';
+    options.forEach((option) => {
+      const opt = document.createElement('option');
+      opt.value = option.value;
+      opt.textContent = option.label;
+      groupingFallbackRegionSelect.appendChild(opt);
+    });
+
+    groupingFallbackRegionSelect.value = options.some((option) => option.value === previous)
+      ? previous
+      : '';
+    updateGroupingFallbackHint();
+  }
+
   if (groupingProviderSelect) {
     groupingProviderSelect.addEventListener('change', refreshGroupingCredentialOptions);
+  }
+  if (groupingCropRegionSelect) {
+    groupingCropRegionSelect.addEventListener('change', refreshGroupingFallbackOptions);
+  }
+  if (groupingFallbackRegionSelect) {
+    groupingFallbackRegionSelect.addEventListener('change', updateGroupingFallbackHint);
   }
 
   function showGroupingModelModal() {
@@ -994,22 +1429,89 @@ document.addEventListener('DOMContentLoaded', function() {
       ? pagesCredentialSelect.value
       : (credentialSelect ? credentialSelect.value : 'system');
     if (defaultCred && groupingCredentialSelect) groupingCredentialSelect.value = defaultCred;
+    if (groupingCropRegionSelect) groupingCropRegionSelect.value = lastGroupingCropRegion || 'top';
+    refreshGroupingFallbackOptions();
+    if (groupingFallbackRegionSelect) {
+      groupingFallbackRegionSelect.value = lastGroupingFallbackRegion || '';
+      updateGroupingFallbackHint();
+    }
+    groupingPreflightInProgress = false;
+    updateGroupingModalBusyState();
+    resetGroupingRecommendationUI();
 
     groupingModelModal.classList.remove('is-hidden');
   }
 
   function hideGroupingModelModal() {
+    if (groupingPreflightInProgress) return;
     if (groupingModelModal) groupingModelModal.classList.add('is-hidden');
   }
 
   if (groupingModelClose)  groupingModelClose.addEventListener('click', hideGroupingModelModal);
   if (groupingModelCancel) groupingModelCancel.addEventListener('click', hideGroupingModelModal);
 
-  async function runGroupingWithProvider(selectedProvider, selectedCredential) {
-    const btn = document.getElementById('suggest-groups-btn');
+  if (groupingRecommendBtn) {
+    groupingRecommendBtn.addEventListener('click', async () => {
+      if (groupingPreflightInProgress) return;
+
+      groupingPreflightInProgress = true;
+      updateGroupingModalBusyState();
+      setHidden(groupingRecommendationPanel, false);
+      setHidden(groupingRecommendationResult, true);
+      if (groupingRecommendationStatus) {
+        groupingRecommendationStatus.textContent = `Checking up to 8 sampled pages for page-number placement...`;
+      }
+
+      try {
+        const selectedProvider = groupingProviderSelect ? groupingProviderSelect.value : null;
+        const selectedCredential = groupingCredentialSelect ? groupingCredentialSelect.value : 'system';
+        const response = await fetch(`${apiBase}/grouping-preflight`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+          body: JSON.stringify({
+            tempFiles: allTempFiles,
+            provider: selectedProvider,
+            credentialSource: selectedCredential
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to recommend a crop region');
+
+        renderGroupingRecommendation(data);
+        if (data.recommendedCropRegion && groupingCropRegionSelect) {
+          groupingCropRegionSelect.value = data.recommendedCropRegion;
+        }
+        refreshGroupingFallbackOptions();
+        if (groupingFallbackRegionSelect) {
+          const availableFallbacks = Array.from(groupingFallbackRegionSelect.options).map((option) => option.value);
+          if (data.recommendedCropRegion === 'top') {
+            if (availableFallbacks.includes('bottom')) groupingFallbackRegionSelect.value = 'bottom';
+          } else if (data.recommendedCropRegion === 'bottom') {
+            if (availableFallbacks.includes('top')) groupingFallbackRegionSelect.value = 'top';
+          } else if (!groupingFallbackRegionSelect.value && availableFallbacks.includes('both')) {
+            groupingFallbackRegionSelect.value = 'both';
+          }
+        }
+        updateGroupingFallbackHint();
+      } catch (err) {
+        setHidden(groupingRecommendationPanel, false);
+        setHidden(groupingRecommendationResult, true);
+        if (groupingRecommendationStatus) groupingRecommendationStatus.textContent = err.message;
+      } finally {
+        groupingPreflightInProgress = false;
+        updateGroupingModalBusyState();
+      }
+    });
+  }
+
+  async function runGroupingWithProvider(selectedProvider, selectedCredential, cropRegion, fallbackCropRegion) {
+    const btn = suggestGroupsBtn;
     btn.disabled = true;
     autoGroupingRequested = true;
-    btn.textContent = 'Analyzing pages...';
+    setAutoGroupingLock(true);
+    lastGroupingCropRegion = cropRegion || 'top';
+    lastGroupingFallbackRegion = fallbackCropRegion || '';
+    btn.textContent = 'Auto-grouping...';
 
     // Show processing screen immediately — don't wait for the server round-trip
     {
@@ -1036,7 +1538,9 @@ document.addEventListener('DOMContentLoaded', function() {
         body: JSON.stringify({
           tempFiles: allTempFiles,
           provider: selectedProvider,
-          credentialSource: selectedCredential
+          credentialSource: selectedCredential,
+          cropRegion: cropRegion || 'top',
+          fallbackCropRegion: fallbackCropRegion || null
         })
       });
 
@@ -1050,15 +1554,16 @@ document.addEventListener('DOMContentLoaded', function() {
       await pollGroupingJob(data.importJobId);
 
     } catch (err) {
+      setAutoGroupingLock(false);
       showError(err.message);
       showStep('pages');
       updateSuggestGroupsAvailability();
     }
   }
 
-  document.getElementById('suggest-groups-btn').addEventListener('click', () => {
+  suggestGroupsBtn.addEventListener('click', () => {
     if (allTempFiles.length < 2) { showError('Need at least 2 pages to auto-group a PDF.'); return; }
-    if (autoGroupingCompleted) { return; }
+    if (autoGroupingCompleted || autoGroupingInProgress) { return; }
     hideError();
     showGroupingModelModal();
   });
@@ -1067,8 +1572,21 @@ document.addEventListener('DOMContentLoaded', function() {
     groupingModelOk.addEventListener('click', () => {
       const selectedProvider = groupingProviderSelect ? groupingProviderSelect.value : null;
       const selectedCredential = groupingCredentialSelect ? groupingCredentialSelect.value : 'system';
+      const cropRegion = normalizeGroupingCropRegion(
+        groupingCropRegionSelect ? groupingCropRegionSelect.value : 'top',
+        'top'
+      );
+      const fallbackCropRegion = normalizeGroupingCropRegion(
+        groupingFallbackRegionSelect ? groupingFallbackRegionSelect.value : '',
+        ''
+      );
       hideGroupingModelModal();
-      runGroupingWithProvider(selectedProvider, selectedCredential);
+      runGroupingWithProvider(
+        selectedProvider,
+        selectedCredential,
+        cropRegion,
+        fallbackCropRegion && fallbackCropRegion !== cropRegion ? fallbackCropRegion : null
+      );
     });
   }
 
@@ -1089,6 +1607,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const groups = job.pages; // the groups array was saved into 'pages' field
 
             if (!groups || groups.length === 0) {
+              setAutoGroupingLock(false);
               showError('No document groups were detected. The pages may not have visible archival page numbers.');
               showStep('pages');
               updateSuggestGroupsAvailability();
@@ -1109,13 +1628,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 colorIndex: 0,
                 pages: filenames,
                 label: g.label || `Document (pages ${pageNums.join(', ')})`,
-                source: 'ai'
+                source: 'ai',
+                confidence: g.confidence || null
               });
             });
 
             applyGroupColors();
             autoGroupingCompleted = true;
             scheduleGroupingStateSave();
+            setAutoGroupingLock(false);
             
             showStep('pages');
             updateSuggestGroupsAvailability();
@@ -1123,12 +1644,14 @@ document.addEventListener('DOMContentLoaded', function() {
           } else if (job.status === 'failed') {
             clearInterval(interval);
             progressWrap.classList.add('is-hidden');
+            setAutoGroupingLock(false);
             showStep('pages');
             throw new Error(job.error || 'Grouping failed');
           }
         } catch (err) {
           clearInterval(interval);
           progressWrap.classList.add('is-hidden');
+          setAutoGroupingLock(false);
           showStep('pages');
           showError(err.message);
           updateSuggestGroupsAvailability();

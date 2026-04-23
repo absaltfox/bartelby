@@ -444,6 +444,39 @@ router.post('/groupings', express.json(), asyncHandler(async (req, res) => {
   }
 }));
 
+// ── API: Sample a few pages and recommend the best crop region ────────────
+router.post('/grouping-preflight', express.json(), asyncHandler(async (req, res) => {
+  const { tempFiles } = req.body;
+  if (!Array.isArray(tempFiles) || tempFiles.length < 2) {
+    return res.status(400).json({ error: 'Need at least 2 pages to evaluate grouping regions' });
+  }
+
+  try {
+    const defaultProvider = await settingsAsync.get('default_provider');
+    const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const sanitized = require('../utils/temp-assets').sanitizeTempFiles(tempFiles);
+    if (sanitized.length === 0) {
+      return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
+    }
+
+    const { recommendGroupingCropRegion } = require('../utils/grouping-llm');
+    const result = await recommendGroupingCropRegion(
+      providerName,
+      sanitized,
+      credentialSource,
+      req.user?.id || null
+    );
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('Grouping preflight error:', err);
+    res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Failed to evaluate page-number regions' });
+  }
+}));
+
 // ── API: AI-suggested page groupings ──────────────────────────────────────
 // Crops the top ~15% of each page image (where archival numbers typically
 // appear), then sends the tiny strips to the cheapest available vision model
@@ -458,6 +491,10 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
     const cropRegion = ['top', 'bottom', 'both'].includes(req.body.cropRegion) ? req.body.cropRegion : 'top';
+    const fallbackCropRegion = ['top', 'bottom', 'both'].includes(req.body.fallbackCropRegion)
+      && req.body.fallbackCropRegion !== cropRegion
+      ? req.body.fallbackCropRegion
+      : null;
     // Validate temp files exist but don't promote to S3 here — the worker does that
     // to avoid blocking the HTTP response for large page sets.
     const sanitized = require('../utils/temp-assets').sanitizeTempFiles(tempFiles);
@@ -473,7 +510,8 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
         tempFiles: sanitized,
         provider: providerName,
         credentialSource,
-        cropRegion
+        cropRegion,
+        fallbackCropRegion
       }
     });
 

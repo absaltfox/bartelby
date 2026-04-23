@@ -15,8 +15,8 @@ describe('import workflow helpers', () => {
     const parsed = parseGroupingState({
       collectionIds: ['5', 'bad', '5'],
       groups: [
-        { label: ' Document A ', source: 'manual', pages: [' page-1 ', 'page-2'] },
-        { label: 'Short', source: 'ai', pages: ['single-page'] }
+        { label: ' Document A ', source: 'manual', confidence: 'high', pages: [' page-1 ', 'page-2'] },
+        { label: 'Short', source: 'ai', confidence: 'low', pages: ['single-page'] }
       ]
     });
 
@@ -26,6 +26,7 @@ describe('import workflow helpers', () => {
         {
           label: 'Document A',
           source: 'manual',
+          confidence: 'high',
           pages: ['page-1', 'page-2']
         }
       ]
@@ -70,8 +71,8 @@ describe('import workflow helpers', () => {
     ], ['a', 'b', 'c', 'd', 'e', 'f']);
 
     expect(groups).toEqual([
-      { pageIndices: [0, 1, 2, 3], label: 'Document (pages 1, 2, 3, 4)' },
-      { pageIndices: [4, 5], label: 'Document (pages 5, 6)' }
+      { pageIndices: [0, 1, 2, 3], label: 'Document (pages 1, 2, 3, 4)', confidence: 'medium' },
+      { pageIndices: [4, 5], label: 'Document (pages 5, 6)', confidence: 'medium' }
     ]);
   });
 
@@ -136,6 +137,7 @@ describe('import workflow helpers', () => {
     // one-step numbering jump on the next page to account for the missed folio.
     expect(groups).toHaveLength(1);
     expect(groups[0].pageIndices).toEqual([0, 1, 2, 3]);
+    expect(groups[0].confidence).toBe('low');
   });
 
   it('does not bridge a numbering jump without an unreadable page', () => {
@@ -152,6 +154,7 @@ describe('import workflow helpers', () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].pageIndices).toEqual([0, 1]);
+    expect(groups[0].confidence).toBe('medium');
   });
 
   it('does not bridge more than one missing folio number after an unreadable page', () => {
@@ -169,5 +172,23 @@ describe('import workflow helpers', () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].pageIndices).toEqual([0, 1]);
+    expect(groups[0].confidence).toBe('medium');
+  });
+
+  it('marks uninterrupted sequences as high confidence', () => {
+    jest.doMock('../../utils/temp-assets', () => ({
+      sanitizeTempFiles: (pages) => pages || []
+    }));
+
+    const { buildGroupsFromAnnotations } = require('../../utils/import-workflow');
+    const groups = buildGroupsFromAnnotations([
+      { page: 1, number: 1 },
+      { page: 2, number: 2 },
+      { page: 3, number: 3 },
+      { page: 4, number: 4 }
+    ], ['a', 'b', 'c', 'd']);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].confidence).toBe('high');
   });
 });

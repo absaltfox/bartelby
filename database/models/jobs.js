@@ -926,6 +926,14 @@ const importJobsAsync = {
     await saveDatabase();
   },
 
+  async updatePayload(id, payload) {
+    await runAsyncWithoutSave("UPDATE import_jobs SET submit_payload = ? WHERE id = ?", [
+      payload ? JSON.stringify(payload) : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
   async delete(id) {
     return await runAsync("DELETE FROM import_jobs WHERE id = ?", [id]);
   },

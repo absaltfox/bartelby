@@ -57,7 +57,7 @@ async function buildGroupingManifest(tempFiles, opts = {}) {
         allImageContents.push({
           pageIndex: i,
           contents: [
-            { type: 'text', text: `Image ${pageNum}:` },
+            { type: 'text', text: `Image ${pageNum} (${cropRegion}):` },
             { type: 'image', image: stripped, mimeType: mimeTypeFromFilename(safeName, 'image/png') }
           ]
         });

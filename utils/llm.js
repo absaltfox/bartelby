@@ -389,10 +389,10 @@ async function createProvider(name, runtimeConfig = {}) {
     transcribeDocument(imageBuffer, mimeType, opts = {}) {
       return provider.transcribeDocument(imageBuffer, mimeType, opts, runtimeConfig);
     },
-    async generateGroupingSuggestion(imageContents, startIndex, batchSize) {
+    async generateGroupingSuggestion(imageContents, startIndexOrOpts, batchSize) {
       const cheapModel = await getCheapVisionModelInstance(name, runtimeConfig);
       if (!cheapModel) throw new Error('Could not create model instance for grouping suggestion');
-      return generateGroupingSuggestion(cheapModel, imageContents, startIndex, batchSize);
+      return generateGroupingSuggestion(cheapModel, imageContents, startIndexOrOpts, batchSize);
     }
   };
 }
@@ -477,7 +477,31 @@ Respond ONLY with a valid JSON array — no markdown fences, no commentary — i
 
 Where "page" is the image number (starting from the offset I give you) and "number" is the archival page number you detected (as an integer), or null if no page number is visible.`;
 
-async function generateGroupingSuggestion(modelInstance, imageContents, startIndex, batchSize) {
+function normalizeGroupingPromptContext(startIndexOrOpts, batchSize) {
+  if (startIndexOrOpts && typeof startIndexOrOpts === 'object' && !Array.isArray(startIndexOrOpts)) {
+    const pageNumbers = Array.isArray(startIndexOrOpts.pageNumbers)
+      ? startIndexOrOpts.pageNumbers
+          .map((value) => parseInt(value, 10))
+          .filter(Number.isInteger)
+      : [];
+    if (pageNumbers.length > 0) {
+      return {
+        pageNumbers,
+        prompt: `These are images/pages numbered ${pageNumbers.join(', ')}. For each image, detect any archival page number. Return a JSON array and use the same image/page number labels in the "page" field.`
+      };
+    }
+  }
+
+  const startIndex = Number.isInteger(startIndexOrOpts) ? startIndexOrOpts : 0;
+  const safeBatchSize = Number.isInteger(batchSize) && batchSize > 0 ? batchSize : 0;
+  return {
+    pageNumbers: null,
+    prompt: `These are images ${startIndex + 1} through ${startIndex + safeBatchSize}. For each image, detect any archival page number. Return a JSON array.`
+  };
+}
+
+async function generateGroupingSuggestion(modelInstance, imageContents, startIndexOrOpts, batchSize) {
+  const promptContext = normalizeGroupingPromptContext(startIndexOrOpts, batchSize);
   const { text } = await generateText({
     model: modelInstance,
     system: GROUPING_PROMPT,
@@ -486,7 +510,7 @@ async function generateGroupingSuggestion(modelInstance, imageContents, startInd
         role: 'user',
         content: [
           ...imageContents,
-          { type: 'text', text: `These are images ${startIndex + 1} through ${startIndex + batchSize}. For each image, detect any archival page number. Return a JSON array.` }
+          { type: 'text', text: promptContext.prompt }
         ]
       }
     ],

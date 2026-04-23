@@ -146,6 +146,14 @@
       <!-- Groups appear here -->
     </div>
 
+    <div class="page-session-bar" id="page-session-bar">
+      <p class="page-session-summary" id="page-session-summary" aria-live="polite"></p>
+      <p class="field-hint page-hotkey-hint" id="page-hotkey-hint">
+        Shortcuts: <code>N</code> new group, <code>A</code> add to active group, <code>E</code> end group, <code>&larr;</code>/<code>&rarr;</code> move pages.
+      </p>
+      <p class="field-hint page-grouping-status is-hidden" id="page-grouping-status" aria-live="polite"></p>
+    </div>
+
     <div class="ai-queue-note import-batch-note is-hidden" id="batch-transcription-option">
       <label class="mode-option import-batch-option">
         <input type="checkbox" id="use-batch-transcription">
@@ -166,6 +174,9 @@
         Submit All for Transcription
       </button>
     </div>
+    <p id="auto-group-lock-hint" class="field-hint field-hint--mt-sm is-hidden">
+      Auto-grouping is running. Manual grouping controls will unlock when the suggestions are ready.
+    </p>
   </div>
 
   <div id="zoom-overlay" class="zoom-overlay is-hidden">
@@ -354,9 +365,42 @@
         <label for="grouping-credential-select">Credentials</label>
         <select id="grouping-credential-select" class="form-control"></select>
       </div>
+      <div class="form-group">
+        <label for="grouping-crop-region-select">Page number location</label>
+        <select id="grouping-crop-region-select" class="form-control">
+          <option value="top">Top edge only (Recommended)</option>
+          <option value="bottom">Bottom edge only</option>
+          <option value="both">Top and bottom edges</option>
+        </select>
+        <p class="field-hint field-hint--mt-sm">The primary pass reads narrow strips from the selected page edge.</p>
+      </div>
+      <div class="form-actions form-actions--spaced">
+        <button type="button" class="btn-secondary" id="grouping-recommend-btn">Recommend Best Region</button>
+      </div>
+      <div id="grouping-recommendation-panel" class="grouping-recommendation-panel is-hidden">
+        <p id="grouping-recommendation-status" class="field-hint"></p>
+        <div id="grouping-recommendation-result" class="grouping-recommendation-result is-hidden">
+          <p class="grouping-recommendation-topline">
+            <strong id="grouping-recommendation-region"></strong>
+            <span id="grouping-recommendation-confidence" class="page-group-confidence"></span>
+          </p>
+          <p id="grouping-recommendation-summary" class="field-hint field-hint--mt-sm"></p>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="grouping-fallback-region-select">If no groups are found</label>
+        <select id="grouping-fallback-region-select" class="form-control">
+          <option value="">Do not retry</option>
+          <option value="bottom">Retry with bottom edge</option>
+          <option value="both">Retry with top and bottom edges</option>
+        </select>
+      </div>
+      <p id="grouping-fallback-hint" class="field-hint field-hint--mt-sm">
+        Large imports may take longer if a fallback retry is enabled.
+      </p>
       <div class="form-actions form-actions--spaced">
         <button type="button" class="btn-secondary" id="grouping-model-cancel">Cancel</button>
-        <button type="button" class="btn-primary" id="grouping-model-ok">OK</button>
+        <button type="button" class="btn-primary" id="grouping-model-ok">Start Auto-group</button>
       </div>
     </div>
   </div>

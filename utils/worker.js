@@ -264,6 +264,17 @@ async function tickImportRenderJobs() {
 }
 
 let groupingBusy = false;
+
+function normalizeGroupingCropRegion(value, fallback = 'top') {
+  return ['top', 'bottom', 'both'].includes(value) ? value : fallback;
+}
+
+function normalizeFallbackGroupingCropRegion(value, cropRegion) {
+  const normalized = ['top', 'bottom', 'both'].includes(value) ? value : null;
+  if (!normalized || normalized === cropRegion) return null;
+  return normalized;
+}
+
 async function tickGroupingJobs() {
   if (groupingBusy) return;
   groupingBusy = true;
@@ -287,7 +298,8 @@ async function tickGroupingJobs() {
     const { buildGroupingManifest, resolveGroupingRuntime, submitGroupingBatch } = require('./grouping-batches');
     const { supportsBatchProvider } = require('./transcription-batches');
 
-    const cropRegion = payload.cropRegion || 'top';
+    const cropRegion = normalizeGroupingCropRegion(payload.cropRegion, 'top');
+    const fallbackCropRegion = normalizeFallbackGroupingCropRegion(payload.fallbackCropRegion, cropRegion);
     const runtime = await resolveGroupingRuntime(
       payload.provider, payload.credentialSource, job.user_id
     );
@@ -320,13 +332,13 @@ async function tickGroupingJobs() {
 
     // Synchronous fallback for non-batch providers
     const { runDocumentGrouping } = require('./grouping-llm');
-    const groupingResult = await runDocumentGrouping(
+    const runGroupingPass = async (activeCropRegion) => await runDocumentGrouping(
       payload.provider,
       payload.tempFiles,
       payload.credentialSource,
       job.user_id,
       {
-        cropRegion,
+        cropRegion: activeCropRegion,
         onProgress: async ({ processedPages, totalPages }) => {
           try {
             await importJobsAsync.updateProgress(job.id, {
@@ -337,6 +349,12 @@ async function tickGroupingJobs() {
         }
       }
     );
+
+    let groupingResult = await runGroupingPass(cropRegion);
+    if (groupingResult.groups.length === 0 && fallbackCropRegion) {
+      console.log(`[worker] grouping job ${job.id}: retrying with ${fallbackCropRegion} crop region after empty result`);
+      groupingResult = await runGroupingPass(fallbackCropRegion);
+    }
 
     await importJobsAsync.markDone(job.id, groupingResult.groups);
     console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
@@ -374,6 +392,10 @@ async function pollRunningGroupingBatches() {
     for (const job of jobs) {
       try {
         const payload = JSON.parse(job.submit_payload || '{}');
+        const cropRegion = normalizeGroupingCropRegion(payload.cropRegion, 'top');
+        const fallbackCropRegion = payload.fallbackTriggered
+          ? null
+          : normalizeFallbackGroupingCropRegion(payload.fallbackCropRegion, cropRegion);
         const runtime = await resolveGroupingRuntime(
           payload.provider, payload.credentialSource, job.user_id
         );
@@ -430,6 +452,38 @@ async function pollRunningGroupingBatches() {
         const annotations = parseGroupingBatchResults(batchResults);
         const tempFiles = payload.tempFiles || [];
         const groups = buildGroupsFromAnnotations(annotations, tempFiles);
+
+        if (groups.length === 0 && fallbackCropRegion) {
+          const nextPayload = {
+            ...payload,
+            cropRegion: fallbackCropRegion,
+            fallbackTriggered: true
+          };
+          await importJobsAsync.updatePayload(job.id, nextPayload);
+
+          const { buildGroupingManifest, submitGroupingBatch } = require('./grouping-batches');
+          const manifest = await buildGroupingManifest(tempFiles, { cropRegion: fallbackCropRegion });
+          if (manifest.requests.length === 0) {
+            await importJobsAsync.markDone(job.id, []);
+            console.log(`[worker] grouping batch job ${job.id}: no pages to process on ${fallbackCropRegion} fallback`);
+            continue;
+          }
+
+          const batchResult = await submitGroupingBatch(job, manifest, runtime);
+          if (batchResult) {
+            await importJobsAsync.markRunningBatch(job.id, {
+              batch_remote_id: batchResult.batch_remote_id,
+              batch_remote_status: batchResult.batch_remote_status,
+              batch_manifest: manifest.requests.map((request) => ({
+                customId: request.customId,
+                startIndex: request.startIndex,
+                batchSize: request.batchSize
+              }))
+            });
+            console.log(`[worker] grouping batch job ${job.id}: retrying with ${fallbackCropRegion} crop region after empty result`);
+            continue;
+          }
+        }
 
         await importJobsAsync.markDone(job.id, groups);
         console.log(`[worker] grouping batch job ${job.id}: complete (${groups.length} groups from ${annotations.length} annotations)`);

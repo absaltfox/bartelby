@@ -6899,6 +6899,31 @@ main { flex: 1; padding: 32px 0; }
   margin-top: 20px;
 }
 
+.page-session-bar {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.page-session-summary {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.page-hotkey-hint,
+.page-grouping-status {
+  margin: 0;
+}
+
+.page-grouping-status {
+  color: var(--accent-dark);
+}
+
 .page-thumb {
   position: relative;
   border: 2px solid var(--border);
@@ -6916,6 +6941,11 @@ main { flex: 1; padding: 32px 0; }
 .page-thumb.selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-mid);
+}
+
+.page-thumb.current-page {
+  border-color: var(--accent-dark);
+  box-shadow: 0 0 0 3px rgba(124, 77, 46, 0.18);
 }
 
 .page-thumb.grouped {
@@ -6961,6 +6991,19 @@ main { flex: 1; padding: 32px 0; }
   font-size: 0.78rem;
   color: var(--ink-muted);
   margin-top: 4px;
+}
+
+.page-membership-label {
+  display: block;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.page-membership-label--grouped {
+  color: var(--group-color, var(--accent-dark));
+  font-weight: 600;
 }
 
 .page-check {
@@ -7103,6 +7146,10 @@ main { flex: 1; padding: 32px 0; }
   margin-bottom: 12px;
 }
 
+.page-group-card--active {
+  box-shadow: 0 0 0 3px rgba(124, 77, 46, 0.12);
+}
+
 .page-group-card[data-group-color="0"] { --group-color: #2d8659; }
 .page-group-card[data-group-color="1"] { --group-color: #4a7fc4; }
 .page-group-card[data-group-color="2"] { --group-color: #b5611e; }
@@ -7116,7 +7163,61 @@ main { flex: 1; padding: 32px 0; }
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.page-group-confidence {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background: rgba(124, 77, 46, 0.09);
+  color: var(--ink-soft);
+}
+
+.page-group-confidence--high {
+  background: rgba(45, 134, 89, 0.12);
+  color: #1d5f3f;
+}
+
+.page-group-confidence--medium {
+  background: rgba(196, 139, 30, 0.16);
+  color: #8f6211;
+}
+
+.page-group-confidence--low {
+  background: rgba(196, 83, 74, 0.14);
+  color: #8c312a;
+}
+
+.grouping-recommendation-panel {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.grouping-recommendation-topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.grouping-recommendation-topline strong {
+  color: var(--ink);
+}
+
+.grouping-recommendation-result .field-hint {
+  margin-bottom: 0;
 }
 
 .page-group-count {
