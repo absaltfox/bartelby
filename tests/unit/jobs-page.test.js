@@ -17,9 +17,24 @@ function flushPending(pending) {
 }
 
 describe('jobs-page.js', () => {
-  it('polls manage transcription logs from the collection jobs API root', async () => {
-    const logElement = { textContent: '(no log yet)' };
-    const row = { dataset: { id: '17', type: 'transcription', status: 'running' } };
+  it('loads manage transcription logs lazily from the collection jobs API root', async () => {
+    const logElement = { textContent: '(no log yet)', dataset: {} };
+    const toggleBtn = {
+      dataset: { id: '17', type: 'transcription' },
+      addEventListener: jest.fn((event, handler) => {
+        if (event === 'click') toggleBtn._click = handler;
+      }),
+      closest: jest.fn(() => ({ dataset: { type: 'transcription' } }))
+    };
+    const logRow = {
+      classList: {
+        _hidden: true,
+        contains: jest.fn(() => logRow.classList._hidden),
+        toggle: jest.fn(() => {
+          logRow.classList._hidden = !logRow.classList._hidden;
+        })
+      }
+    };
     const tbody = { querySelector: jest.fn() };
     const pending = [];
     const fetchMock = jest.fn(async (url) => {
@@ -55,21 +70,15 @@ describe('jobs-page.js', () => {
         }
       },
       document: {
-        addEventListener: jest.fn((event, handler) => {
-          if (event === 'DOMContentLoaded') handler();
-        }),
+        addEventListener: jest.fn(),
         querySelector: jest.fn(() => null),
         querySelectorAll: jest.fn((selector) => {
           if (selector === '.import-progress-bar[data-progress]') return [];
-          if (selector === '.toggle-log-btn') return [];
+          if (selector === '.toggle-log-btn') return [toggleBtn];
           if (selector === '.retry-btn') return [];
           if (selector === '.delete-job-btn') return [];
           if (selector === '.job-cb') return [];
           if (selector === '.filter-tab') return [];
-          if (selector === 'form[data-filter-sidebar="1"]') return [];
-          if (selector === '.job-row[data-status="running"][data-type="transcription"], .job-row[data-status="running"][data-type="extraction"]') {
-            return [row];
-          }
           return [];
         }),
         getElementById: jest.fn((id) => {
@@ -85,6 +94,7 @@ describe('jobs-page.js', () => {
           }
           if (id === 'jobs-tbody') return tbody;
           if (id === 'job-log-17') return logElement;
+          if (id === 'log-row-17') return logRow;
           return null;
         })
       },
@@ -105,6 +115,7 @@ describe('jobs-page.js', () => {
     context.window.fetch = fetchMock;
 
     loadJobsPageScript(context);
+    await toggleBtn._click();
     await flushPending(pending);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);

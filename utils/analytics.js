@@ -47,8 +47,12 @@ function countUnknownWords(text) {
 const { resolvePythonBin } = require('./python-runtime');
 const config = require('../config');
 const { collectDocumentAssetPaths, computeStorageBytes } = require('./analytics-storage');
-const WORKER_LEASE_OWNER = `pid:${process.pid}`;
-const DEFAULT_WORKER_LEASE_STALE_SECONDS = 2 * 60 * 60;
+const {
+  DEFAULT_BATCH_FINALIZATION_STALE_SECONDS,
+  getFinalizationOwner
+} = require('./finalization-claims');
+const WORKER_LEASE_OWNER = getFinalizationOwner('analytics-lease');
+const DEFAULT_WORKER_LEASE_STALE_SECONDS = DEFAULT_BATCH_FINALIZATION_STALE_SECONDS;
 const ANALYTICS_SWEEP_LEASE = 'analytics:sweep';
 
 function getRawDb() {

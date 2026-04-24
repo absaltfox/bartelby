@@ -226,17 +226,23 @@ If using Cloudflare DNS for your domain, set the proxy status to **DNS only** (g
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│   Browser    │────▶│   Fly.io (Docker) │────▶│  Turso (libsql)  │
-│              │◀────│   Express + EJS   │◀────│  SQLite on edge  │
-└─────────────┘     │   + BG Worker     │     └──────────────────┘
-                    │                    │
-                    │                    │────▶┌──────────────────┐
-                    │                    │◀────│  Cloudflare R2   │
-                    └──────────────────┘     │  S3-compatible   │
-                                              └──────────────────┘
+│   Browser    │────▶│  Web Role        │────▶│  Turso (libsql)  │
+│              │◀────│  Express + EJS   │◀────│  SQLite on edge  │
+└─────────────┘     └──────────────────┘     └──────────────────┘
+                             ▲
+                             │
+                    ┌──────────────────┐     ┌──────────────────┐
+                    │  Worker Role     │────▶│  Cloudflare R2   │
+                    │  BG polling loop │◀────│  S3-compatible   │
+                    └──────────────────┘     └──────────────────┘
 ```
 
-- **Fly.io** runs the single `node server.js` process which includes both the Express web server and the background transcription worker polling loop
+- Bartelby can run as a single `node server.js` process, but the preferred
+  production topology is to use separate web and worker roles from the same
+  image.
+- Web roles should run with `DISABLE_BACKGROUND_WORKER=1`.
+- Worker roles should run the same image without that flag so `startWorker()`
+  is enabled.
 - **Turso** stores all application data (documents, transcripts, users, settings, jobs)
 - **R2** stores uploaded document images, served back through the app's `/uploads/:filename` proxy route
 
@@ -255,6 +261,36 @@ Fly.io has a **hard spending limit** you can set in the dashboard under Billing 
 ---
 
 ## Operations
+
+### Production topologies
+
+#### Simple single-process deployment
+
+- Run one `node server.js` container.
+- Keep `DISABLE_BACKGROUND_WORKER` unset.
+- This is fine for smaller installs and the easiest way to get started.
+
+#### Split web/worker deployment
+
+- Run at least one **web** container with `DISABLE_BACKGROUND_WORKER=1`.
+- Run at least one **worker** container from the same image with
+  `DISABLE_BACKGROUND_WORKER` unset.
+- Route public HTTP traffic only to the web role.
+- This is the preferred production topology when extraction, import, or
+  analytics work can affect page responsiveness.
+
+On Fly specifically, this maps naturally to separate process groups. On Docker
+Compose or other schedulers, it maps to separate services using the same image.
+The checked-in [fly.toml](/Users/mleblanc/Documents/code/transcriber/fly.toml)
+defines `web` and `worker` process groups, routes `http_service` traffic only
+to `web`, and relies on `FLY_PROCESS_GROUP=web` to keep the web role from
+starting the in-process worker loop.
+
+To ensure Fly is actually running one machine for each role:
+
+```bash
+fly scale count web=1 worker=1
+```
 
 ### Viewing logs
 
@@ -329,7 +365,12 @@ The `DATABASE_DRIVER=turso` env var is set but the URL secret is missing. Run `f
 Check that `STORAGE_DRIVER=s3` is set and all S3 secrets are configured. The app proxies S3 files through its own `/uploads/` route, so R2 doesn't need to be publicly accessible.
 
 **Background worker not running**
-Ensure `min_machines_running = 1` in `fly.toml`. If `auto_stop_machines` stops the machine, the worker stops too. With `min_machines_running = 1`, at least one machine stays alive.
+If you are using the single-process topology, ensure the app machine stays up.
+If you are using split web/worker roles, verify the worker role is running and
+that `DISABLE_BACKGROUND_WORKER` is only set on the web role.
 
 **Machine keeps stopping**
-Fly's auto-stop only stops machines with no active HTTP connections. The background worker doesn't count as an HTTP connection. Set `auto_stop_machines = "off"` if the worker must run continuously regardless of traffic.
+Fly's auto-stop only stops machines with no active HTTP connections. A separate
+worker role does not receive HTTP traffic, so do not rely on the web service's
+request-based keepalive semantics for it. Keep at least one worker alive if
+jobs must continue processing continuously.

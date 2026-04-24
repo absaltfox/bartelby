@@ -481,6 +481,27 @@ const documentsAsync = {
     `, [...ids, limit, offset]);
   },
 
+  async getByCollectionId(collectionId, limit = 25, offset = 0) {
+    return await allAsync(`
+      SELECT d.*,
+             (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) AS transcript_count
+      FROM documents d
+      INNER JOIN document_collections dc ON dc.document_id = d.id
+      WHERE dc.collection_id = ?
+      ORDER BY d.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [collectionId, limit, offset]);
+  },
+
+  async getCountByCollectionId(collectionId) {
+    const row = await getAsync(`
+      SELECT COUNT(*) AS count
+      FROM document_collections
+      WHERE collection_id = ?
+    `, [collectionId]);
+    return row ? Number(row.count || 0) : 0;
+  },
+
   async getCount(opts = {}) {
     const { userId, isAdmin, accessAll } = opts;
 

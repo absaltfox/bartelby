@@ -8,12 +8,16 @@ const {
   makeExtractionLogger,
   resolveRuntimeConfig
 } = require('./worker-runtime');
+const {
+  getFinalizationOwner,
+  isLostFinalizationClaimError,
+  parseFinalizationStaleSeconds
+} = require('./finalization-claims');
 
-const EXTRACTION_BATCH_FINALIZATION_OWNER = `pid:${process.pid}`;
-const EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS = Number.parseInt(
-  process.env.EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS || '',
-  10
-) || (2 * 60 * 60);
+const EXTRACTION_BATCH_FINALIZATION_OWNER = getFinalizationOwner('extraction-finalization');
+const EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
+  'EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS'
+);
 
 function normalizeEvidenceText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -558,6 +562,12 @@ async function pollRunningExtractionBatches() {
         console.error('[worker-extraction] failed to queue authority suggestion job after batch:', triggerErr.message);
       }
     } catch (err) {
+      if (isLostFinalizationClaimError(err)) {
+        console.warn(`[worker] extraction batch finalization ownership changed for job ${job.id}:`, err.message);
+        await logLine(`WARN: ${err.message} Another worker is resuming finalization.`);
+        continue;
+      }
+
       // Finalization errors are NOT safe to retry — entities/relationships
       // created before the error are already committed.  Re-running would
       // duplicate them.  Always mark failed to break the loop.

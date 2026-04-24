@@ -253,6 +253,40 @@ const documentCollectionsAsync = {
     `, [collectionId]);
   },
 
+  async countByCollectionId(collectionId) {
+    const row = await getAsync(`
+      SELECT COUNT(*) AS count
+      FROM document_collections
+      WHERE collection_id = ?
+    `, [collectionId]);
+    return row ? Number(row.count || 0) : 0;
+  },
+
+  async hasDocumentInCollection(collectionId, documentId) {
+    const row = await getAsync(`
+      SELECT 1
+      FROM document_collections
+      WHERE collection_id = ? AND document_id = ?
+      LIMIT 1
+    `, [collectionId, documentId]);
+    return !!row;
+  },
+
+  async getCollectionsForDocumentIds(documentIds) {
+    const ids = [...new Set((documentIds || []).map(Number).filter(Number.isInteger))];
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT
+        dc.document_id,
+        c.*
+      FROM document_collections dc
+      INNER JOIN collections c ON c.id = dc.collection_id
+      WHERE dc.document_id IN (${placeholders})
+      ORDER BY dc.document_id, c.name
+    `, ids);
+  },
+
   async setForDocument(documentId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
     await withExclusiveLock(async () => {
@@ -342,6 +376,15 @@ const userCollectionAccessAsync = {
       WHERE uca.collection_id = ?
       ORDER BY u.username
     `, [collectionId]);
+  },
+
+  async countByCollectionId(collectionId) {
+    const row = await getAsync(`
+      SELECT COUNT(*) AS count
+      FROM user_collection_access
+      WHERE collection_id = ?
+    `, [collectionId]);
+    return row ? Number(row.count || 0) : 0;
   },
 
   async setForUser(userId, collectionIds) {

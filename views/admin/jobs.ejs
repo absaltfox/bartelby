@@ -199,7 +199,7 @@
                   <% if (job.error) { %>
                     <div class="job-error">Error: <%= job.error %></div>
                   <% } %>
-                  <pre class="job-log" id="job-log-<%= job.id %>"><%= job.log || '(no log yet)' %></pre>
+                  <pre class="job-log" id="job-log-<%= job.id %>" data-log-loaded="false">(open log to load)</pre>
                 </td>
               </tr>
             <% } %>

@@ -21,12 +21,10 @@ router.get('/', asyncHandler(async (req, res) => {
   let allDocs, totalCount;
 
   if (collectionFilter) {
-    // Filter by collection
-    const docIds = (await documentCollectionsAsync.getByCollectionId(collectionFilter)).map(d => d.document_id);
-    totalCount = docIds.length;
-    allDocs = docIds.length > 0
-      ? await documentsAsync.getByIds(docIds, limit, offset)
-      : [];
+    [totalCount, allDocs] = await Promise.all([
+      documentsAsync.getCountByCollectionId(collectionFilter),
+      documentsAsync.getByCollectionId(collectionFilter, limit, offset)
+    ]);
   } else {
     totalCount = await documentsAsync.getCount({ isAdmin: true });
     allDocs = await documentsAsync.getAll(limit, offset, { isAdmin: true });
@@ -38,10 +36,26 @@ router.get('/', asyncHandler(async (req, res) => {
     ...normalizeDocumentAssets(doc),
     collections: []
   }));
-
-  for (const doc of docsWithCollections) {
-    doc.collections = await documentCollectionsAsync.getByDocumentId(doc.id);
-  }
+  const collectionRows = await documentCollectionsAsync.getCollectionsForDocumentIds(docsWithCollections.map((doc) => doc.id));
+  const collectionsByDocumentId = collectionRows.reduce((acc, row) => {
+    if (!acc[row.document_id]) acc[row.document_id] = [];
+    acc[row.document_id].push({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      created_by: row.created_by,
+      created_at: row.created_at,
+      is_public: row.is_public,
+      is_world_public: row.is_world_public,
+      allow_export: row.allow_export,
+      preview_document_id: row.preview_document_id,
+      auto_group_pages: row.auto_group_pages
+    });
+    return acc;
+  }, {});
+  docsWithCollections.forEach((doc) => {
+    doc.collections = collectionsByDocumentId[doc.id] || [];
+  });
 
   res.render('admin/documents', {
     pageTitle: 'Documents',

@@ -11,6 +11,10 @@ function boolEnv(name, fallback = false) {
   return /^(1|true|yes|on)$/i.test(raw);
 }
 
+function flyProcessGroup() {
+  return String(process.env.FLY_PROCESS_GROUP || '').trim().toLowerCase();
+}
+
 const config = {
   app: {
     rootDir,
@@ -23,7 +27,7 @@ const config = {
   runtime: {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '3000', 10),
-    startWorker: !boolEnv('DISABLE_BACKGROUND_WORKER', false)
+    startWorker: !boolEnv('DISABLE_BACKGROUND_WORKER', false) && flyProcessGroup() !== 'web'
   },
   session: {
     store: process.env.SESSION_STORE || 'memory',

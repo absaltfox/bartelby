@@ -11,6 +11,10 @@ const {
   CITATION_APPROVAL_STATUSES,
   deriveCitationApproval
 } = require('../utils/knowledge-approval');
+const {
+  DEFAULT_BATCH_FINALIZATION_STALE_SECONDS,
+  parseFinalizationStaleSeconds
+} = require('../utils/finalization-claims');
 
 let db = null;
 
@@ -254,6 +258,37 @@ MIGRATIONS.push(`
   );
   CREATE INDEX IF NOT EXISTS idx_authority_suggestion_jobs_status ON authority_suggestion_jobs(status);
   CREATE INDEX IF NOT EXISTS idx_authority_suggestion_jobs_collection ON authority_suggestion_jobs(collection_id)
+`);
+
+// v61 — performance indexes and append-only job log storage
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_document_collections_collection_document
+    ON document_collections(collection_id, document_id);
+  CREATE INDEX IF NOT EXISTS idx_user_collection_access_collection_user
+    ON user_collection_access(collection_id, user_id);
+  CREATE INDEX IF NOT EXISTS idx_import_jobs_user_created_at
+    ON import_jobs(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_transcription_jobs_status_created_at
+    ON transcription_jobs(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_transcription_jobs_created_at
+    ON transcription_jobs(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_import_jobs_status_created_at
+    ON import_jobs(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at
+    ON import_jobs(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_extraction_jobs_status_created_at
+    ON extraction_jobs(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_extraction_jobs_created_at
+    ON extraction_jobs(created_at DESC);
+  CREATE TABLE IF NOT EXISTS job_log_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_type TEXT NOT NULL,
+    job_id INTEGER NOT NULL,
+    line TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_job_log_entries_job
+    ON job_log_entries(job_type, job_id, id);
 `);
 
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
@@ -527,16 +562,23 @@ async function initializeSchema() {
     console.log(`[db] Marked ${staleTranscriptionCount} stale transcription job(s) as failed`);
   }
 
-  // Any in-flight transcription batch finalization claim belongs to a process
-  // that no longer exists after startup recovery. Clear the claim so another
-  // worker can resume safely.
+  const transcriptionBatchFinalizationStaleSeconds = parseFinalizationStaleSeconds(
+    'BATCH_FINALIZATION_STALE_SECONDS',
+    DEFAULT_BATCH_FINALIZATION_STALE_SECONDS
+  );
+
+  // Only clear genuinely stale batch finalization claims at startup. Fly can
+  // overlap old and new processes during deploys or machine handoff, so
+  // unconditionally clearing active claims can cause a live worker to lose its
+  // durable lock mid-finalization.
   const staleTxBatchFinalizationClaims = await get(`
     SELECT COUNT(*) as count
     FROM transcription_jobs
     WHERE status = 'running'
       AND job_kind = 'batch'
       AND batch_finalization_claimed_at IS NOT NULL
-  `);
+      AND batch_finalization_claimed_at < datetime('now', ?)
+  `, [`-${transcriptionBatchFinalizationStaleSeconds} seconds`]);
   const staleTxBatchFinalizationClaimCount = staleTxBatchFinalizationClaims?.count || 0;
   if (staleTxBatchFinalizationClaimCount > 0) {
     await db.run(`
@@ -546,7 +588,8 @@ async function initializeSchema() {
       WHERE status = 'running'
         AND job_kind = 'batch'
         AND batch_finalization_claimed_at IS NOT NULL
-    `);
+        AND batch_finalization_claimed_at < datetime('now', ?)
+    `, [`-${transcriptionBatchFinalizationStaleSeconds} seconds`]);
     console.log(`[db] Cleared ${staleTxBatchFinalizationClaimCount} stale transcription batch finalization claim(s)`);
   }
 
@@ -587,13 +630,19 @@ async function initializeSchema() {
     console.log(`[db] Marked ${staleExtractionCount} stale extraction job(s) as failed`);
   }
 
+  const extractionBatchFinalizationStaleSeconds = parseFinalizationStaleSeconds(
+    'EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS',
+    DEFAULT_BATCH_FINALIZATION_STALE_SECONDS
+  );
+
   const staleExtractionBatchFinalizationClaims = await getAsync(`
     SELECT COUNT(*) as count
     FROM extraction_jobs
     WHERE status = 'running'
       AND job_kind = 'batch'
       AND batch_finalization_claimed_at IS NOT NULL
-  `);
+      AND batch_finalization_claimed_at < datetime('now', ?)
+  `, [`-${extractionBatchFinalizationStaleSeconds} seconds`]);
   const staleExtractionBatchFinalizationClaimCount = staleExtractionBatchFinalizationClaims?.count || 0;
   if (staleExtractionBatchFinalizationClaimCount > 0) {
     await db.run(`
@@ -603,7 +652,8 @@ async function initializeSchema() {
       WHERE status = 'running'
         AND job_kind = 'batch'
         AND batch_finalization_claimed_at IS NOT NULL
-    `);
+        AND batch_finalization_claimed_at < datetime('now', ?)
+    `, [`-${extractionBatchFinalizationStaleSeconds} seconds`]);
     console.log(`[db] Cleared ${staleExtractionBatchFinalizationClaimCount} stale extraction batch finalization claim(s)`);
   }
 

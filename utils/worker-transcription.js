@@ -10,12 +10,16 @@ const {
   makeJobLogger,
   resolveRuntimeConfig
 } = require('./worker-runtime');
+const {
+  getFinalizationOwner,
+  isLostFinalizationClaimError,
+  parseFinalizationStaleSeconds
+} = require('./finalization-claims');
 
-const BATCH_FINALIZATION_OWNER = `pid:${process.pid}`;
-const BATCH_FINALIZATION_STALE_SECONDS = Number.parseInt(
-  process.env.BATCH_FINALIZATION_STALE_SECONDS || '',
-  10
-) || (2 * 60 * 60);
+const BATCH_FINALIZATION_OWNER = getFinalizationOwner('transcription-finalization');
+const BATCH_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
+  'BATCH_FINALIZATION_STALE_SECONDS'
+);
 
 async function processSingleJob(job, logLine) {
   const {
@@ -386,6 +390,12 @@ async function pollRunningTranscriptionBatches() {
 
       await finalizeBatchJob(job, pollResult, logLine, BATCH_FINALIZATION_OWNER);
     } catch (err) {
+      if (isLostFinalizationClaimError(err)) {
+        console.warn(`[worker] transcription batch finalization ownership changed for job ${job.id}:`, err.message);
+        await logLine(`WARN: ${err.message} Another worker is resuming finalization.`);
+        continue;
+      }
+
       // Finalization errors are NOT safe to retry — transcriptions
       // persisted before the error are already committed.  Re-running
       // would duplicate them.  Always mark failed to break the loop.

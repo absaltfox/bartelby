@@ -394,8 +394,8 @@ describe('extraction batch polling', () => {
     const worker = require('../../utils/worker-extraction');
     await worker.pollRunningExtractionBatches();
 
-    expect(claimBatchFinalization).toHaveBeenCalledWith(71, expect.stringMatching(/^pid:/), expect.any(Number));
-    expect(heartbeatBatchFinalizationClaim).toHaveBeenCalledWith(71, expect.stringMatching(/^pid:/));
+    expect(claimBatchFinalization).toHaveBeenCalledWith(71, expect.stringMatching(/^extraction-finalization:/), expect.any(Number));
+    expect(heartbeatBatchFinalizationClaim).toHaveBeenCalledWith(71, expect.stringMatching(/^extraction-finalization:/));
     expect(savePartialResults).toHaveBeenCalled();
     expect(markDone).toHaveBeenCalledWith(71, {
       entity_count: 0,
@@ -520,6 +520,107 @@ describe('extraction batch polling', () => {
     expect(savePartialResults).not.toHaveBeenCalled();
     expect(markDone).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it('does not fail the job when another worker takes over finalization mid-stream', async () => {
+    const appendLog = jest.fn(async () => {});
+    const claimBatchFinalization = jest.fn(async () => true);
+    const heartbeatBatchFinalizationClaim = jest.fn(async () => false);
+    const markDone = jest.fn(async () => {});
+    const markFailed = jest.fn(async () => {});
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => jest.fn(async (line) => appendLog(line))),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'vertex',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs: {
+        getRunningBatches: jest.fn(async () => [{
+          id: 73,
+          job_kind: 'batch',
+          status: 'running',
+          provider: 'vertex',
+          model: 'default',
+          batch_remote_id: 'remote-e3',
+          batch_remote_status: 'running',
+          batch_manifest: JSON.stringify({
+            requests: [{ customId: 'extract-9', documentId: 9, transcriptId: 7 }]
+          }),
+          batch_completed_count: 0,
+          batch_failed_count: 0,
+          entity_count: 0,
+          relationship_count: 0
+        }]),
+        appendLog,
+        updateBatchProgress: jest.fn(async () => {}),
+        savePartialResults: jest.fn(async () => {}),
+        getPartialResults: jest.fn(async () => []),
+        claimBatchFinalization,
+        heartbeatBatchFinalizationClaim,
+        markDone,
+        markFailed
+      },
+      transcriptsAsync: {
+        getById: jest.fn(async () => ({ id: 7, content: 'Alice met Bob in Boston.' }))
+      },
+      documentsAsync: {
+        getById: jest.fn(async () => ({ id: 9, metadata: {} }))
+      },
+      entities: { create: jest.fn(async () => 1) },
+      entityAliases: { createIfMissing: jest.fn(async () => {}) },
+      dateExpressions: { createIfMissing: jest.fn(async () => {}) },
+      relationships: { findExisting: jest.fn(async () => null), create: jest.fn(async () => 2) },
+      citations: { create: jest.fn(async () => {}) },
+      relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
+      graphMaintenance: {
+        resetTranscriptExtraction: jest.fn(async () => ({
+          deletedCitations: 0,
+          deletedRelationships: 0,
+          deletedEntities: 0
+        }))
+      }
+    }));
+    jest.doMock('../../utils/extraction-batches', () => ({
+      pollExtractionBatch: jest.fn(async () => ({
+        state: 'completed',
+        remoteStatus: 'completed',
+        completedCount: 1,
+        failedCount: 0,
+        itemResults: [{
+          customId: 'extract-9',
+          ok: true,
+          result: {
+            entities: [],
+            relationships: [],
+            dates: [],
+            paradata: {}
+          }
+        }]
+      })),
+      parseBatchManifest: jest.fn(() => [{ customId: 'extract-9', documentId: 9, transcriptId: 7 }])
+    }));
+    jest.doMock('../../utils/entity-resolution', () => ({
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
+    }));
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.pollRunningExtractionBatches();
+
+    expect(claimBatchFinalization).toHaveBeenCalled();
+    expect(markDone).not.toHaveBeenCalled();
+    expect(markFailed).not.toHaveBeenCalled();
+    expect(appendLog).toHaveBeenCalledWith(expect.stringContaining('WARN: Lost extraction finalization claim'));
   });
 
   function makeBatchPollingMocks({ collectionMemberships = [], alreadyQueued = false } = {}) {

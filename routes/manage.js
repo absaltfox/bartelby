@@ -16,6 +16,7 @@ const { requireAdminOrManager, requireCollectionRole } = require('../middleware/
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
+const PAGE_SIZE = 50;
 
 function getImportApiRouter() {
   return require('./import-api');
@@ -59,10 +60,33 @@ function decorateManageImportJob(job, collectionId) {
 }
 
 async function getVisibleManageImportJobs(userId, collectionId) {
-  const jobs = await importJobsAsync.getByUserId(userId);
-  return jobs
-    .map((job) => decorateManageImportJob(job, collectionId))
-    .filter(Boolean);
+  return await importJobsAsync.getVisibleByUserAndCollection(userId, collectionId);
+}
+
+function buildStatusCounts(jobs = []) {
+  return jobs.reduce((counts, job) => {
+    counts.total += 1;
+    if (job.status === 'queued') {
+      counts.queued += 1;
+    } else if (job.status === 'running' || job.status === 'processing') {
+      counts.running += 1;
+    } else if (job.status === 'done') {
+      counts.done += 1;
+    } else if (job.status === 'failed') {
+      counts.failed += 1;
+    }
+    return counts;
+  }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+}
+
+function mergeStatusCounts(...maps) {
+  return maps.reduce((acc, map) => ({
+    total: acc.total + Number(map?.total || 0),
+    queued: acc.queued + Number(map?.queued || 0),
+    running: acc.running + Number(map?.running || 0),
+    done: acc.done + Number(map?.done || 0),
+    failed: acc.failed + Number(map?.failed || 0)
+  }), { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -94,11 +118,11 @@ router.get('/collections/:collectionId/documents', requireCollectionRole('manage
   const limit = 25;
   const offset = (page - 1) * limit;
 
-  const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
-  const totalCount = docIds.length;
-  const docs = docIds.length > 0
-    ? (await documentsAsync.getByIds(docIds, limit, offset)).map(normalizeDocumentAssets)
-    : [];
+  const [totalCount, docsRaw] = await Promise.all([
+    documentsAsync.getCountByCollectionId(collectionId),
+    documentsAsync.getByCollectionId(collectionId, limit, offset)
+  ]);
+  const docs = docsRaw.map(normalizeDocumentAssets);
 
   const totalPages = Math.ceil(totalCount / limit);
 
@@ -162,9 +186,10 @@ router.post('/collections/:collectionId/documents/move', express.json(), require
 
   // Verify every submitted doc ID actually belongs to the source collection,
   // preventing a manager from moving documents they don't own via forged IDs.
-  const sourceEntries = await documentCollectionsAsync.getByCollectionId(fromCollectionId);
-  const sourceDocIds = new Set(sourceEntries.map(dc => dc.document_id));
-  const validDocIds = docIds.filter(id => sourceDocIds.has(id));
+  const membershipChecks = await Promise.all(
+    docIds.map(async (id) => [id, await documentCollectionsAsync.hasDocumentInCollection(fromCollectionId, id)])
+  );
+  const validDocIds = membershipChecks.filter(([, allowed]) => allowed).map(([id]) => id);
   if (validDocIds.length === 0) {
     return res.status(400).json({ error: 'None of the specified documents belong to this collection' });
   }
@@ -194,8 +219,7 @@ router.post('/collections/:collectionId/documents/:docId/delete', requireCollect
   const doc = await documentsAsync.getById(docId);
   if (!doc) return res.redirect(`/manage/collections/${collectionId}/documents?error=not_found`);
 
-  const collectionEntries = await documentCollectionsAsync.getByCollectionId(collectionId);
-  if (!collectionEntries.some((entry) => entry.document_id === docId)) {
+  if (!await documentCollectionsAsync.hasDocumentInCollection(collectionId, docId)) {
     return res.redirect(`/manage/collections/${collectionId}/documents?error=not_found`);
   }
 
@@ -216,41 +240,44 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
 
   const filter = req.query.filter || 'all';
   const typeFilter = req.query.type || 'all';
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
+  const fetchLimit = offset + PAGE_SIZE;
 
-  const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
-
-  const [tJobsRaw, iJobs] = await Promise.all([
-    transcriptionJobsAsync.getByDocumentIds(docIds),
-    getVisibleManageImportJobs(req.user.id, collectionId)
+  const [transcriptionCounts, importJobsAll, filteredTranscriptionJobs, filteredImportJobs] = await Promise.all([
+    transcriptionJobsAsync.getCountsByCollectionId(collectionId),
+    importJobsAsync.getVisibleByUserAndCollection(req.user.id, collectionId),
+    typeFilter === 'import'
+      ? []
+      : transcriptionJobsAsync.getSummariesByCollectionId(collectionId, { statusFilter: filter, limit: fetchLimit }),
+    typeFilter === 'transcription'
+      ? []
+      : importJobsAsync.getVisibleByUserAndCollection(req.user.id, collectionId, { statusFilter: filter })
   ]);
-  const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobsTagged = iJobs;
 
-  let jobs = [...iJobsTagged, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  const counts = {
-    total: jobs.length,
-    queued: jobs.filter(j => j.status === 'queued').length,
-    running: jobs.filter(j => j.status === 'running' || j.status === 'processing').length,
-    done: jobs.filter(j => j.status === 'done').length,
-    failed: jobs.filter(j => j.status === 'failed').length
-  };
-
+  const importCounts = buildStatusCounts(importJobsAll);
+  const counts = mergeStatusCounts(transcriptionCounts, importCounts);
   const typeCounts = {
-    import: iJobsTagged.length,
-    transcription: tJobs.length
+    import: importCounts.total,
+    transcription: transcriptionCounts.total
   };
 
-  if (typeFilter !== 'all') {
-    jobs = jobs.filter(j => j.job_type === typeFilter);
+  let jobs = [];
+  if (typeFilter === 'import') {
+    jobs = filteredImportJobs;
+  } else if (typeFilter === 'transcription') {
+    jobs = filteredTranscriptionJobs;
+  } else {
+    jobs = [...filteredImportJobs, ...filteredTranscriptionJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }
-  if (filter !== 'all') {
-    if (filter === 'running') {
-      jobs = jobs.filter(j => j.status === 'running' || j.status === 'processing');
-    } else {
-      jobs = jobs.filter(j => j.status === filter);
-    }
-  }
+
+  const filteredTotal = typeFilter === 'import'
+    ? filteredImportJobs.length
+    : typeFilter === 'transcription'
+      ? await transcriptionJobsAsync.getCountByCollectionId(collectionId, filter)
+      : filteredImportJobs.length + await transcriptionJobsAsync.getCountByCollectionId(collectionId, filter);
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
+  jobs = jobs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(offset, offset + PAGE_SIZE);
 
   res.render('manage/jobs', {
     pageTitle: `Jobs — ${collection.name}`,
@@ -259,16 +286,18 @@ router.get('/collections/:collectionId/jobs', requireCollectionRole('manager'), 
     filter,
     typeFilter,
     counts,
-    typeCounts
+    typeCounts,
+    page,
+    totalPages,
+    filteredTotal
   });
 }));
 
 // ── Jobs API: single transcription job (log viewing + polling) ─────────────────
 router.get('/collections/:collectionId/jobs/api/:id', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
-  const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
-  const job = await transcriptionJobsAsync.getById(parseInt(req.params.id));
-  if (!job || !docIds.includes(job.document_id)) return res.status(404).json({ error: 'Not found' });
+  const job = await transcriptionJobsAsync.getByIdForCollection(parseInt(req.params.id), collectionId);
+  if (!job) return res.status(404).json({ error: 'Not found' });
   res.json(job);
 }));
 
@@ -286,23 +315,14 @@ router.post('/collections/:collectionId/jobs/api/import/:id/retry', requireColle
 // ── Jobs API: collection-scoped job list (for AJAX polling) ────────────────────
 router.get('/collections/:collectionId/jobs/api', requireCollectionRole('manager'), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.collectionId);
-  const docIds = (await documentCollectionsAsync.getByCollectionId(collectionId)).map(dc => dc.document_id);
-
-  const [tJobsRaw, iJobsRaw] = await Promise.all([
-    transcriptionJobsAsync.getByDocumentIds(docIds),
-    getVisibleManageImportJobs(req.user.id, collectionId)
+  const [transcriptionCounts, importCounts, tJobs, iJobs] = await Promise.all([
+    transcriptionJobsAsync.getCountsByCollectionId(collectionId),
+    importJobsAsync.getVisibleCountsByUserAndCollection(req.user.id, collectionId),
+    transcriptionJobsAsync.getActiveByCollectionId(collectionId),
+    importJobsAsync.getVisibleByUserAndCollection(req.user.id, collectionId, { activeOnly: true })
   ]);
-  const tJobs = tJobsRaw.map(j => ({ ...j, job_type: 'transcription' }));
-  const iJobs = iJobsRaw;
   const jobs = [...iJobs, ...tJobs].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-  const counts = {
-    total: jobs.length,
-    queued: jobs.filter(j => j.status === 'queued').length,
-    running: jobs.filter(j => j.status === 'running' || j.status === 'processing').length,
-    done: jobs.filter(j => j.status === 'done').length,
-    failed: jobs.filter(j => j.status === 'failed').length
-  };
+  const counts = mergeStatusCounts(transcriptionCounts, importCounts);
 
   res.json({ jobs, counts });
 }));

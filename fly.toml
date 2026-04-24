@@ -14,13 +14,17 @@ primary_region = 'iad'
   TRUST_PROXY = "1"
   FLY_MACHINES_ENABLED = "true"
 
+[processes]
+  web = "node server.js"
+  worker = "node server.js"
+
 [http_service]
   internal_port = 3000
   force_https = true
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
-  processes = ['app']
+  processes = ['web']
 
   [http_service.concurrency]
     type = "requests"
@@ -38,3 +42,10 @@ primary_region = 'iad'
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
+  processes = ['web']
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  processes = ['worker']

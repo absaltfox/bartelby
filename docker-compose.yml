@@ -1,5 +1,8 @@
 services:
   app:
+    # Default local Docker topology: a single process that serves HTTP and runs
+    # background work. For a split web/worker shape, run the same image twice
+    # and set DISABLE_BACKGROUND_WORKER=1 on the web-facing service only.
     build: .
     ports:
       - "${PORT:-3000}:3000"

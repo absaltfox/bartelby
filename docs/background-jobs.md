@@ -42,8 +42,10 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 
 ## Worker Loop Architecture (`utils/worker.js`)
 
-`startWorker()` registers a set of `setInterval` ticks on startup (when
-`START_WORKER=true` in config):
+`startWorker()` registers a set of `setInterval` ticks on startup when the app
+is running with background work enabled. In practice that means
+`DISABLE_BACKGROUND_WORKER` is not set to a truthy value, so
+`config.runtime.startWorker` remains `true`.
 
 | Tick | Interval | Concurrency guard |
 |------|----------|-------------------|
@@ -63,13 +65,32 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 Each tick is guarded by a module-level `busy` flag so overlapping invocations of
 the same tick do not stack up. Ticks that encounter no work return immediately.
 
+## Deployment Topology
+
+Bartelby supports two runtime shapes:
+
+- **Single-process app role** — one `node server.js` process serves HTTP and
+  runs the worker loop. This is the simplest option for local development and
+  small installs.
+- **Split web/worker roles** — web instances run with
+  `DISABLE_BACKGROUND_WORKER=1`, while worker instances run the same image
+  without that flag. This is the preferred production topology when background
+  work can affect page responsiveness.
+
+Because job state is stored durably in the database, split roles work across
+Fly, Docker Compose, and other container schedulers without introducing a
+separate queue service.
+
 For batch finalization, the in-memory poller flags are not enough on their own
 because Fly can briefly run overlapping app processes during deployments or
 machine handoff. Completed transcription and extraction batches are therefore
 claimed durably in their job tables using
 `batch_finalization_claimed_at` / `batch_finalization_claimed_by` before any
-documents are materialized. Only the process that wins that claim may finalize
-the batch.
+documents are materialized. The claim owner must be unique per app instance,
+not just per PID, because containerized web and worker roles often both run as
+PID 1. Only the process that wins that claim may finalize the batch, and
+startup recovery only clears claims that are older than the configured stale
+window.
 
 ---
 

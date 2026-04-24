@@ -1,6 +1,7 @@
 // Shared jobs-page behavior for admin and manage job screens.
 (function() {
   'use strict';
+  var logPollTimers = {};
 
   function getCsrfToken() {
     var meta = document.querySelector('meta[name="csrf-token"]');
@@ -149,7 +150,8 @@
 
     var html = '<div class="job-actions">';
     if (job.job_type !== 'import') {
-      html += '<button class="btn-secondary btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) + '">Log</button> ';
+      html += '<button class="btn-secondary btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) +
+              '" data-type="' + escapeHtml(job.job_type || 'transcription') + '">Log</button> ';
     }
     if (canEdit && isAdmin) {
       html += '<button class="btn-secondary btn-sm edit-job-btn" data-id="' + escapeHtml(String(job.id)) +
@@ -168,12 +170,7 @@
     actionsCell.innerHTML = html;
 
     // Re-attach event listeners for newly created buttons
-    actionsCell.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var logRow = document.getElementById('log-row-' + btn.dataset.id);
-        if (logRow) logRow.classList.toggle('is-hidden');
-      });
-    });
+    if (config) initToggleLogs(config, actionsCell);
     if (config) {
       actionsCell.querySelectorAll('.edit-job-btn').forEach(function(btn) {
         btn.addEventListener('click', function() { openEditJobModal(btn, config); });
@@ -326,13 +323,71 @@
     }
   }
 
-  function initToggleLogs() {
-    document.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+  function stopLogPolling(jobId) {
+    if (logPollTimers[jobId]) {
+      clearInterval(logPollTimers[jobId]);
+      delete logPollTimers[jobId];
+    }
+  }
+
+  async function loadJobLog(jobId, type, config, options) {
+    var logEl = document.getElementById('job-log-' + jobId);
+    if (!logEl) return null;
+    if (!options || !options.silent) {
+      logEl.textContent = 'Loading...';
+    }
+
+    try {
+      var r = await fetch(getJobApiBase(config, type) + jobId);
+      if (!r.ok) {
+        if (!options || !options.silent) logEl.textContent = 'Failed to load log.';
+        return null;
+      }
+      var job = await r.json();
+      logEl.textContent = job.log || '(no log yet)';
+      logEl.dataset.logLoaded = 'true';
+      return job;
+    } catch (err) {
+      if (!options || !options.silent) logEl.textContent = 'Failed to load log.';
+      return null;
+    }
+  }
+
+  function ensureLogPolling(jobId, type, config) {
+    stopLogPolling(jobId);
+    logPollTimers[jobId] = window.setInterval(async function() {
+      var logRow = document.getElementById('log-row-' + jobId);
+      if (!logRow || logRow.classList.contains('is-hidden')) {
+        stopLogPolling(jobId);
+        return;
+      }
+      var job = await loadJobLog(jobId, type, config, { silent: true });
+      if (!job || !isActiveStatus(job.status)) {
+        stopLogPolling(jobId);
+      }
+    }, 5000);
+  }
+
+  function initToggleLogs(config, scope) {
+    var root = scope || document;
+    root.querySelectorAll('.toggle-log-btn').forEach(function(btn) {
+      btn.addEventListener('click', async function() {
         var id = btn.dataset.id;
+        var type = btn.dataset.type || ((btn.closest('.job-row') || {}).dataset || {}).type || 'transcription';
         var row = document.getElementById('log-row-' + id);
         if (!row) return;
+
+        var willOpen = row.classList.contains('is-hidden');
         row.classList.toggle('is-hidden');
+        if (!willOpen) {
+          stopLogPolling(id);
+          return;
+        }
+
+        var job = await loadJobLog(id, type, config);
+        if (job && isActiveStatus(job.status)) {
+          ensureLogPolling(id, type, config);
+        }
       });
     });
   }
@@ -514,23 +569,6 @@
     updateBulkUI();
   }
 
-  function initLogPolling(config) {
-    document.querySelectorAll('.job-row[data-status="running"][data-type="transcription"], .job-row[data-status="running"][data-type="extraction"]').forEach(function(row) {
-      var id = row.dataset.id;
-      var type = row.dataset.type || 'transcription';
-      var logEl = document.getElementById('job-log-' + id);
-      if (!logEl) return;
-      window.setInterval(async function() {
-        try {
-          var r = await fetch(getJobApiBase(config, type) + id);
-          if (!r.ok) return;
-          var job = await r.json();
-          logEl.textContent = job.log || '(no log yet)';
-        } catch (err) {}
-      }, 5000);
-    });
-  }
-
   function initPolling(config) {
     var pollUrl = config.pollUrl || config.activePollUrl;
     var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
@@ -591,12 +629,11 @@
   var config = getConfig();
   if (!config) return;
 
-  initToggleLogs();
+  initToggleLogs(config);
   initRetryButtons(config);
   initDeleteButtons(config);
   initEditButtons(config);
   initEditJobModal(config);
   initBulkActions(config);
-  initLogPolling(config);
   initPolling(config);
 })();

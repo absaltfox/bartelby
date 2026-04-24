@@ -51,6 +51,9 @@ metadata and graph relationships that are built from them over time.
 ### Production
 
 - Designed for Docker and Fly.io
+- Can run as a single `node server.js` process for smaller installs
+- Can also split into separate web and worker roles from the same image by
+  setting `DISABLE_BACKGROUND_WORKER=1` on web instances only
 - Uses Turso as the database backend
 - Uses Cloudflare R2 or another S3-compatible store for uploads
 - Can launch ephemeral Fly Machines for large PDF processing and BERTopic
@@ -103,6 +106,11 @@ Current job families:
 Workers claim jobs atomically, mark them running, and persist logs and status
 as they progress. This makes the app safer under restarts and compatible with
 multi-instance deployment.
+
+For lighter deployments, Bartelby can run the web server and worker loop in one
+Node process. For production deployments under load, the preferred topology is
+to run separate web and worker roles from the same image so background polling
+does not compete with interactive page requests.
 
 Important behavior:
 

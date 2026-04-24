@@ -32,6 +32,7 @@ describe('jobs page UI contracts', () => {
   let adminAgent;
   let managerAgent;
   let collectionId;
+  let adminJobId;
 
   beforeAll(async () => {
     jest.resetModules();
@@ -61,7 +62,7 @@ describe('jobs page UI contracts', () => {
       image_path: '/uploads/jobs-contract.png',
       metadata: {}
     });
-    await db.transcriptionJobsAsync.create({
+    adminJobId = await db.transcriptionJobsAsync.create({
       document_id: docId,
       provider: 'openai',
       model: null,
@@ -69,6 +70,7 @@ describe('jobs page UI contracts', () => {
       initiated_by: 'test',
       image_path: '/uploads/jobs-contract.png'
     });
+    await db.transcriptionJobsAsync.appendLog(adminJobId, 'admin jobs log line\n');
 
     const managerId = await db.usersAsync.create({
       username: 'jobs_manager',
@@ -89,6 +91,24 @@ describe('jobs page UI contracts', () => {
       createdBy: null
     });
     await db.userCollectionAccessAsync.grant(managerId, collectionId, 'manager');
+    const collectionDocId = await db.documentsAsync.create({
+      title: 'Manage jobs contract document',
+      description: null,
+      date_created: null,
+      image_path: '/uploads/manage-jobs-contract.png',
+      metadata: {}
+    });
+    await db.documentCollectionsAsync.add(collectionDocId, collectionId);
+    for (let i = 0; i < 51; i++) {
+      await db.transcriptionJobsAsync.create({
+        document_id: collectionDocId,
+        provider: 'openai',
+        model: null,
+        temperature: 0.2,
+        initiated_by: 'test',
+        image_path: '/uploads/manage-jobs-contract.png'
+      });
+    }
     await db.importJobsAsync.create({
       original_name: 'jobs-contract.pdf',
       file_path: '/tmp/jobs-contract.pdf',
@@ -109,6 +129,8 @@ describe('jobs page UI contracts', () => {
     expect(res.text).toContain('data-job-cell="subject"');
     expect(res.text).toContain('"apiBasesByType":{"transcription":"/admin/jobs/api/"');
     expect(res.text).toContain('"pollUrl":"/admin/jobs/api/all"');
+    expect(res.text).toContain('(open log to load)');
+    expect(res.text).not.toContain('admin jobs log line');
   });
 
   it('renders the manage jobs page with named subject cells and collection-scoped endpoints', async () => {
@@ -118,5 +140,13 @@ describe('jobs page UI contracts', () => {
     expect(res.text).toContain('data-job-cell="subject"');
     expect(res.text).toContain(`"apiBasesByType":{"transcription":"/manage/collections/${collectionId}/jobs/api/"`);
     expect(res.text).toContain(`"pollUrl":"/manage/collections/${collectionId}/jobs/api"`);
+    expect(res.text).toContain('Page 1 of 2');
+  });
+
+  it('serves hydrated logs from the job detail endpoint', async () => {
+    const res = await adminAgent.get(`/admin/jobs/api/${adminJobId}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.log).toContain('admin jobs log line');
   });
 });

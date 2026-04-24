@@ -15,7 +15,112 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all,
 // at a time on the same connection.
 let _exclusiveLockBusy = false;
 const _exclusiveLockQueue = [];
-const DEFAULT_BATCH_FINALIZATION_STALE_SECONDS = 2 * 60 * 60;
+const { DEFAULT_BATCH_FINALIZATION_STALE_SECONDS } = require('../../utils/finalization-claims');
+const DEFAULT_PAGE_SIZE = 50;
+
+function sortJobsByCreatedAtDesc(a, b) {
+  return new Date(b.created_at) - new Date(a.created_at);
+}
+
+function normalizeStatusFilter(statusFilter = 'all') {
+  const normalized = String(statusFilter || 'all').toLowerCase();
+  return ['all', 'queued', 'running', 'done', 'failed'].includes(normalized)
+    ? normalized
+    : 'all';
+}
+
+function matchesStatusFilter(status, statusFilter) {
+  const normalized = normalizeStatusFilter(statusFilter);
+  if (normalized === 'all') return true;
+  if (normalized === 'running') {
+    return status === 'running' || status === 'processing';
+  }
+  return status === normalized;
+}
+
+function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction']) {
+  const normalized = String(typeFilter || 'all').toLowerCase();
+  return allowed.includes(normalized) ? normalized : 'all';
+}
+
+function createStatusCounts() {
+  return { total: 0, queued: 0, running: 0, done: 0, failed: 0 };
+}
+
+function addStatusCount(target, status, count) {
+  const numericCount = Number(count || 0);
+  target.total += numericCount;
+  if (status === 'queued') {
+    target.queued += numericCount;
+  } else if (status === 'running' || status === 'processing') {
+    target.running += numericCount;
+  } else if (status === 'done') {
+    target.done += numericCount;
+  } else if (status === 'failed') {
+    target.failed += numericCount;
+  }
+}
+
+function buildCountMap(rows = []) {
+  const counts = createStatusCounts();
+  rows.forEach((row) => addStatusCount(counts, row.status, row.count));
+  return counts;
+}
+
+function mergeCountMaps(...maps) {
+  return maps.reduce((acc, map) => {
+    if (!map) return acc;
+    acc.total += Number(map.total || 0);
+    acc.queued += Number(map.queued || 0);
+    acc.running += Number(map.running || 0);
+    acc.done += Number(map.done || 0);
+    acc.failed += Number(map.failed || 0);
+    return acc;
+  }, createStatusCounts());
+}
+
+function normalizeJobSummary(row, jobType) {
+  return {
+    ...row,
+    job_type: jobType
+  };
+}
+
+function appendLegacyLog(existingLog, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return existingLog || '';
+  }
+  return `${existingLog || ''}${lines.map((row) => row.line || '').join('')}`;
+}
+
+function parseImportJobPayload(job) {
+  if (!job?.submit_payload) return null;
+  try {
+    return typeof job.submit_payload === 'string'
+      ? JSON.parse(job.submit_payload)
+      : job.submit_payload;
+  } catch (err) {
+    return null;
+  }
+}
+
+function decorateManageImportJob(job, collectionId) {
+  const payload = parseImportJobPayload(job);
+  const authorizedCollectionIds = Array.isArray(payload?.authorizedCollectionIds)
+    ? payload.authorizedCollectionIds.map(Number).filter(Number.isInteger)
+    : [];
+
+  if (authorizedCollectionIds.length > 0 && !authorizedCollectionIds.includes(collectionId)) {
+    return null;
+  }
+
+  return {
+    ...job,
+    job_type: 'import',
+    scope: authorizedCollectionIds.includes(collectionId) ? 'collection' : 'user',
+    scope_label: authorizedCollectionIds.includes(collectionId) ? null : 'Your import job'
+  };
+}
 
 async function withExclusiveLock(fn) {
   if (process.env.DATABASE_DRIVER === 'turso') {
@@ -44,6 +149,42 @@ async function withExclusiveLock(fn) {
       _exclusiveLockBusy = false;
     }
   }
+}
+
+function appendJobLogEntrySync(jobType, jobId, text) {
+  if (!text) return;
+  runWithoutSave(`
+    INSERT INTO job_log_entries (job_type, job_id, line)
+    VALUES (?, ?, ?)
+  `, [jobType, jobId, text]);
+  saveDatabase();
+}
+
+async function appendJobLogEntry(jobType, jobId, text) {
+  if (!text) return;
+  await runAsyncWithoutSave(`
+    INSERT INTO job_log_entries (job_type, job_id, line)
+    VALUES (?, ?, ?)
+  `, [jobType, jobId, text]);
+  await saveDatabase();
+}
+
+async function getAppendedJobLog(jobType, jobId) {
+  return await allAsync(`
+    SELECT line
+    FROM job_log_entries
+    WHERE job_type = ? AND job_id = ?
+    ORDER BY id ASC
+  `, [jobType, jobId]);
+}
+
+async function hydrateJobLog(row, jobType) {
+  if (!row) return row;
+  const lines = await getAppendedJobLog(jobType, row.id);
+  return {
+    ...row,
+    log: appendLegacyLog(row.log, lines)
+  };
 }
 
 const transcriptionJobs = {
@@ -114,8 +255,7 @@ const transcriptionJobs = {
   },
 
   appendLog(id, text) {
-    runWithoutSave("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
-    saveDatabase();
+    appendJobLogEntrySync('transcription', id, text);
   },
 
   markDone(id) {
@@ -139,6 +279,7 @@ const transcriptionJobs = {
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL
       WHERE id = ?
+        AND status != 'done'
     `, [error || 'Unknown error', id]);
     saveDatabase();
   },
@@ -349,8 +490,7 @@ const transcriptionJobsAsync = {
   },
 
   async appendLog(id, text) {
-    await runAsyncWithoutSave("UPDATE transcription_jobs SET log = log || ? WHERE id = ?", [text, id]);
-    await saveDatabase();
+    await appendJobLogEntry('transcription', id, text);
   },
 
   async markDone(id) {
@@ -397,12 +537,13 @@ const transcriptionJobsAsync = {
   },
 
   async getById(id) {
-    return await getAsync(`
+    const row = await getAsync(`
       SELECT j.*, d.title as document_title
       FROM transcription_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
       WHERE j.id = ?
     `, [id]);
+    return await hydrateJobLog(row, 'transcription');
   },
 
   async getPendingForDocument(docId) {
@@ -473,6 +614,121 @@ const transcriptionJobsAsync = {
          OR tjd.document_id IN (${placeholders})
       ORDER BY j.created_at DESC
     `, [...docIds, ...docIds]);
+  },
+
+  async getCountByCollectionId(collectionId, statusFilter = 'all') {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const rows = await allAsync(`
+      SELECT j.status, COUNT(DISTINCT j.id) AS count
+      FROM transcription_jobs j
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
+      WHERE EXISTS (
+        SELECT 1
+        FROM document_collections dc
+        WHERE dc.collection_id = ?
+          AND (dc.document_id = j.document_id OR dc.document_id = tjd.document_id)
+      )
+      GROUP BY j.status
+    `, [collectionId]);
+    const counts = buildCountMap(rows);
+    return normalizedStatus === 'all'
+      ? counts.total
+      : normalizedStatus === 'running'
+        ? counts.running
+        : counts[normalizedStatus] || 0;
+  },
+
+  async getCountsByCollectionId(collectionId) {
+    const rows = await allAsync(`
+      SELECT j.status, COUNT(DISTINCT j.id) AS count
+      FROM transcription_jobs j
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
+      WHERE EXISTS (
+        SELECT 1
+        FROM document_collections dc
+        WHERE dc.collection_id = ?
+          AND (dc.document_id = j.document_id OR dc.document_id = tjd.document_id)
+      )
+      GROUP BY j.status
+    `, [collectionId]);
+    return buildCountMap(rows);
+  },
+
+  async getSummariesByCollectionId(collectionId, { statusFilter = 'all', limit = null } = {}) {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const params = [collectionId];
+    let limitClause = '';
+    if (Number.isInteger(limit) && limit > 0) {
+      params.push(limit);
+      limitClause = 'LIMIT ?';
+    }
+
+    const rows = await allAsync(`
+      SELECT DISTINCT
+        j.id,
+        j.created_at,
+        j.status,
+        j.document_id,
+        j.started_at,
+        j.completed_at,
+        j.error,
+        j.provider,
+        j.model,
+        d.title AS document_title,
+        j.job_kind,
+        j.batch_display_name,
+        j.batch_document_count,
+        j.batch_page_count,
+        j.batch_completed_count,
+        j.batch_failed_count,
+        j.batch_remote_status
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
+      WHERE EXISTS (
+        SELECT 1
+        FROM document_collections dc
+        WHERE dc.collection_id = ?
+          AND (dc.document_id = j.document_id OR dc.document_id = tjd.document_id)
+      )
+        ${normalizedStatus === 'all'
+          ? ''
+          : normalizedStatus === 'running'
+            ? "AND j.status IN ('queued', 'running')"
+            : 'AND j.status = ?'}
+      ORDER BY j.created_at DESC
+      ${limitClause}
+    `, normalizedStatus === 'all'
+      ? params
+      : normalizedStatus === 'running'
+        ? params
+        : [collectionId, normalizedStatus, ...(limitClause ? [limit] : [])]);
+
+    return rows.map((row) => normalizeJobSummary(row, 'transcription'));
+  },
+
+  async getActiveByCollectionId(collectionId) {
+    return await this.getSummariesByCollectionId(collectionId, {
+      statusFilter: 'running'
+    });
+  },
+
+  async getByIdForCollection(id, collectionId) {
+    const row = await getAsync(`
+      SELECT j.*, d.title AS document_title
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      LEFT JOIN transcription_job_documents tjd ON tjd.job_id = j.id
+      WHERE j.id = ?
+        AND EXISTS (
+          SELECT 1
+          FROM document_collections dc
+          WHERE dc.collection_id = ?
+            AND (dc.document_id = j.document_id OR dc.document_id = tjd.document_id)
+        )
+      LIMIT 1
+    `, [id, collectionId]);
+    return await hydrateJobLog(row, 'transcription');
   },
 
   async getActiveByDocumentIds(docIds) {
@@ -774,6 +1030,59 @@ const importJobsAsync = {
     return await allAsync('SELECT * FROM import_jobs WHERE user_id = ? ORDER BY created_at DESC', [userId]);
   },
 
+  async getSummaryByUserId(userId, { statusFilter = 'all', activeOnly = false } = {}) {
+    const normalizedStatus = activeOnly ? 'running' : normalizeStatusFilter(statusFilter);
+    const rows = await allAsync(`
+      SELECT
+        id,
+        created_at,
+        status,
+        started_at,
+        completed_at,
+        error,
+        COALESCE(job_kind, 'render') AS job_kind,
+        original_name,
+        page_count,
+        pages_rendered,
+        submitted,
+        submit_payload,
+        user_id
+      FROM import_jobs
+      WHERE user_id = ?
+        ${normalizedStatus === 'all'
+          ? ''
+          : normalizedStatus === 'running'
+            ? "AND status IN ('queued', 'processing', 'running')"
+            : 'AND status = ?'}
+      ORDER BY created_at DESC
+    `, normalizedStatus === 'all'
+      ? [userId]
+      : normalizedStatus === 'running'
+        ? [userId]
+        : [userId, normalizedStatus]);
+    return rows.map((row) => normalizeJobSummary(row, 'import'));
+  },
+
+  async getVisibleByUserAndCollection(userId, collectionId, { statusFilter = 'all', activeOnly = false } = {}) {
+    const rows = await this.getSummaryByUserId(userId, { statusFilter, activeOnly });
+    return rows
+      .map((job) => decorateManageImportJob(job, collectionId))
+      .filter(Boolean);
+  },
+
+  async getVisibleCountByUserAndCollection(userId, collectionId, statusFilter = 'all') {
+    const rows = await this.getVisibleByUserAndCollection(userId, collectionId, { statusFilter });
+    return rows.length;
+  },
+
+  async getVisibleCountsByUserAndCollection(userId, collectionId) {
+    const rows = await this.getVisibleByUserAndCollection(userId, collectionId);
+    return rows.reduce((counts, row) => {
+      addStatusCount(counts, row.status, 1);
+      return counts;
+    }, createStatusCounts());
+  },
+
   async claimNextQueuedSubmission() {
     const job = await withExclusiveLock(async () => {
       const j = await getAsync(`
@@ -946,6 +1255,16 @@ const importJobsAsync = {
     await saveDatabase();
   },
 
+  async getTimedOutProcessingJobs(timeoutMinutes) {
+    return await allAsync(`
+      SELECT id
+      FROM import_jobs
+      WHERE status = 'processing'
+        AND COALESCE(job_kind, 'render') = 'render'
+        AND COALESCE(started_at, created_at) < datetime('now', ?)
+    `, [`-${timeoutMinutes} minutes`]);
+  },
+
   async requeueStaleJobs() {
     const thresholdMs = parseInt(process.env.WORKER_HEARTBEAT_TIMEOUT_MS, 10) || 300000;
     const thresholdSeconds = Math.floor(thresholdMs / 1000);
@@ -971,153 +1290,227 @@ const importJobsAsync = {
 };
 
 const adminJobsAsync = {
+  async getTranscriptionCounts(statusFilter = 'all') {
+    const counts = buildCountMap(await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM transcription_jobs
+      GROUP BY status
+    `));
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    return normalizedStatus === 'all'
+      ? counts
+      : normalizedStatus === 'running'
+        ? counts.running
+        : counts[normalizedStatus] || 0;
+  },
+
+  async getImportCounts(statusFilter = 'all') {
+    const counts = buildCountMap(await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM import_jobs
+      GROUP BY status
+    `));
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    return normalizedStatus === 'all'
+      ? counts
+      : normalizedStatus === 'running'
+        ? counts.running
+        : counts[normalizedStatus] || 0;
+  },
+
+  async getExtractionCounts(statusFilter = 'all') {
+    const counts = buildCountMap(await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM extraction_jobs
+      GROUP BY status
+    `));
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    return normalizedStatus === 'all'
+      ? counts
+      : normalizedStatus === 'running'
+        ? counts.running
+        : counts[normalizedStatus] || 0;
+  },
+
+  async getTranscriptionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const params = [];
+    let statusClause = '';
+    if (normalizedStatus === 'running') {
+      statusClause = "WHERE j.status IN ('queued', 'running')";
+    } else if (normalizedStatus !== 'all') {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalizedStatus);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id,
+        j.created_at,
+        j.status,
+        j.document_id,
+        j.started_at,
+        j.completed_at,
+        j.error,
+        j.provider,
+        j.model,
+        d.title AS document_title,
+        j.job_kind,
+        j.batch_display_name,
+        j.batch_document_count,
+        j.batch_page_count,
+        j.batch_completed_count,
+        j.batch_failed_count,
+        j.batch_remote_status
+      FROM transcription_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      ${statusClause}
+      ORDER BY j.created_at DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => normalizeJobSummary(row, 'transcription'));
+  },
+
+  async getImportSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const params = [];
+    let statusClause = '';
+    if (normalizedStatus === 'running') {
+      statusClause = "WHERE status IN ('queued', 'processing', 'running')";
+    } else if (normalizedStatus !== 'all') {
+      statusClause = 'WHERE status = ?';
+      params.push(normalizedStatus);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        id,
+        created_at,
+        status,
+        started_at,
+        completed_at,
+        error,
+        COALESCE(job_kind, 'render') AS job_kind,
+        original_name,
+        page_count,
+        pages_rendered,
+        submitted
+      FROM import_jobs
+      ${statusClause}
+      ORDER BY created_at DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => normalizeJobSummary(row, 'import'));
+  },
+
+  async getExtractionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const params = [];
+    let statusClause = '';
+    if (normalizedStatus === 'running') {
+      statusClause = "WHERE j.status IN ('queued', 'running')";
+    } else if (normalizedStatus !== 'all') {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalizedStatus);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id,
+        j.created_at,
+        j.status,
+        j.document_id,
+        j.started_at,
+        j.completed_at,
+        j.error,
+        j.provider,
+        j.model,
+        d.title AS document_title,
+        j.job_kind,
+        j.batch_display_name,
+        j.batch_document_count,
+        j.batch_completed_count,
+        j.batch_failed_count,
+        j.batch_remote_status
+      FROM extraction_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      ${statusClause}
+      ORDER BY j.created_at DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => normalizeJobSummary(row, 'extraction'));
+  },
+
   // Overall + per-type counts (no filter applied — used for tab badges)
   async getCounts() {
-    const row = await getAsync(`
-      SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued,
-        SUM(CASE WHEN status IN ('running','processing') THEN 1 ELSE 0 END) AS running,
-        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN job_type = 'import' THEN 1 ELSE 0 END) AS import_count,
-        SUM(CASE WHEN job_type = 'transcription' THEN 1 ELSE 0 END) AS transcription_count,
-        SUM(CASE WHEN job_type = 'extraction' THEN 1 ELSE 0 END) AS extraction_count
-      FROM (
-        SELECT status, 'transcription' AS job_type FROM transcription_jobs
-        UNION ALL
-        SELECT status, 'import' AS job_type FROM import_jobs
-        UNION ALL
-        SELECT status, 'extraction' AS job_type FROM extraction_jobs
-      )
-    `);
+    const [transcriptionCounts, importCounts, extractionCounts] = await Promise.all([
+      this.getTranscriptionCounts(),
+      this.getImportCounts(),
+      this.getExtractionCounts()
+    ]);
     return {
-      counts: {
-        total: row.total || 0,
-        queued: row.queued || 0,
-        running: row.running || 0,
-        done: row.done || 0,
-        failed: row.failed || 0
-      },
+      counts: mergeCountMaps(transcriptionCounts, importCounts, extractionCounts),
       typeCounts: {
-        import: row.import_count || 0,
-        transcription: row.transcription_count || 0,
-        extraction: row.extraction_count || 0
+        import: importCounts.total,
+        transcription: transcriptionCounts.total,
+        extraction: extractionCounts.total
       }
     };
   },
 
   // Total count for the current filter combination (for page count)
   async getFilteredCount(statusFilter, typeFilter) {
-    const statusCond = statusFilter === 'all' ? '1=1'
-      : statusFilter === 'running' ? "status IN ('running','processing')"
-      : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
-    const typeCond = typeFilter === 'all' ? '1=1'
-      : "job_type = '" + (
-        typeFilter === 'import'
-          ? 'import'
-          : typeFilter === 'extraction'
-            ? 'extraction'
-            : 'transcription'
-      ) + "'";
-    const row = await getAsync(`
-      SELECT COUNT(*) AS n FROM (
-        SELECT status, 'transcription' AS job_type FROM transcription_jobs
-        UNION ALL
-        SELECT status, 'import' AS job_type FROM import_jobs
-        UNION ALL
-        SELECT status, 'extraction' AS job_type FROM extraction_jobs
-      ) WHERE ${statusCond} AND ${typeCond}
-    `);
-    return row ? (row.n || 0) : 0;
+    const normalizedType = normalizeTypeFilter(typeFilter);
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    if (normalizedType === 'transcription') {
+      return await this.getTranscriptionCounts(normalizedStatus);
+    }
+    if (normalizedType === 'import') {
+      return await this.getImportCounts(normalizedStatus);
+    }
+    if (normalizedType === 'extraction') {
+      return await this.getExtractionCounts(normalizedStatus);
+    }
+    const [transcriptionCount, importCount, extractionCount] = await Promise.all([
+      this.getTranscriptionCounts(normalizedStatus),
+      this.getImportCounts(normalizedStatus),
+      this.getExtractionCounts(normalizedStatus)
+    ]);
+    return transcriptionCount + importCount + extractionCount;
   },
 
   // Paginated combined job list
   async getPage(limit, offset, statusFilter, typeFilter) {
-    const statusCond = statusFilter === 'all' ? '1=1'
-      : statusFilter === 'running' ? "status IN ('running','processing')"
-      : "status = '" + statusFilter.replace(/[^a-z]/g, '') + "'";
-    const typeCond = typeFilter === 'all' ? '1=1'
-      : "job_type = '" + (
-        typeFilter === 'import'
-          ? 'import'
-          : typeFilter === 'extraction'
-            ? 'extraction'
-            : 'transcription'
-      ) + "'";
-    return await allAsync(`
-      SELECT * FROM (
-        SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
-               j.document_id, j.started_at, j.completed_at, j.error, j.log,
-               j.provider, j.model, d.title AS document_title,
-               j.job_kind, j.batch_display_name, j.batch_document_count,
-               j.batch_page_count, j.batch_completed_count, j.batch_failed_count,
-               j.batch_remote_status,
-               NULL AS original_name, NULL AS page_count, NULL AS pages_rendered, NULL AS submitted
-        FROM transcription_jobs j
-        LEFT JOIN documents d ON j.document_id = d.id
-        UNION ALL
-        SELECT id, created_at, status, 'import' AS job_type,
-               NULL AS document_id, started_at, completed_at, error, NULL AS log,
-               NULL AS provider, NULL AS model, NULL AS document_title,
-               COALESCE(job_kind, 'render') AS job_kind, NULL AS batch_display_name, 1 AS batch_document_count,
-               0 AS batch_page_count, 0 AS batch_completed_count, 0 AS batch_failed_count,
-               NULL AS batch_remote_status,
-               original_name, page_count, pages_rendered, submitted
-        FROM import_jobs
-        UNION ALL
-        SELECT j.id, j.created_at, j.status, 'extraction' AS job_type,
-               j.document_id, j.started_at, j.completed_at, j.error, j.log,
-               j.provider, j.model, d.title AS document_title,
-               j.job_kind, j.batch_display_name, j.batch_document_count,
-               0 AS batch_page_count, j.batch_completed_count, j.batch_failed_count,
-               j.batch_remote_status,
-               NULL AS original_name, NULL AS page_count, NULL AS pages_rendered, NULL AS submitted
-        FROM extraction_jobs j
-        LEFT JOIN documents d ON j.document_id = d.id
-      ) combined
-      WHERE ${statusCond} AND ${typeCond}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    const fetchLimit = Math.max(Number(limit || DEFAULT_PAGE_SIZE) + Number(offset || 0), DEFAULT_PAGE_SIZE);
+    const normalizedType = normalizeTypeFilter(typeFilter);
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+
+    const jobsByType = await Promise.all([
+      normalizedType === 'all' || normalizedType === 'transcription'
+        ? this.getTranscriptionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'import'
+        ? this.getImportSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'extraction'
+        ? this.getExtractionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : []
+    ]);
+
+    return jobsByType
+      .flat()
+      .sort(sortJobsByCreatedAtDesc)
+      .slice(offset, offset + limit);
   },
 
-  // Active jobs only (for AJAX polling — avoids full table scan)
+  // Active jobs only (for AJAX polling — avoids historical scans)
   async getActive() {
-    return await allAsync(`
-      SELECT j.id, j.created_at, j.status, 'transcription' AS job_type,
-             j.document_id, j.started_at, j.completed_at, j.error,
-             j.provider, d.title AS document_title,
-             j.job_kind, j.batch_display_name, j.batch_document_count,
-             j.batch_page_count, j.batch_completed_count, j.batch_failed_count,
-             j.batch_remote_status,
-             NULL AS original_name, NULL AS page_count, NULL AS pages_rendered
-      FROM transcription_jobs j
-      LEFT JOIN documents d ON j.document_id = d.id
-      WHERE j.status IN ('queued','running')
-      UNION ALL
-      SELECT id, created_at, status, 'import' AS job_type,
-             NULL AS document_id, started_at, completed_at, error,
-             NULL AS provider, NULL AS document_title,
-             COALESCE(job_kind, 'render') AS job_kind, NULL AS batch_display_name, 1 AS batch_document_count,
-             0 AS batch_page_count, 0 AS batch_completed_count, 0 AS batch_failed_count,
-             NULL AS batch_remote_status,
-             original_name, page_count, pages_rendered
-      FROM import_jobs
-      WHERE status IN ('processing','queued')
-      UNION ALL
-      SELECT j.id, j.created_at, j.status, 'extraction' AS job_type,
-             j.document_id, j.started_at, j.completed_at, j.error,
-             j.provider, d.title AS document_title,
-             j.job_kind, j.batch_display_name, j.batch_document_count,
-             0 AS batch_page_count, j.batch_completed_count, j.batch_failed_count,
-             j.batch_remote_status,
-             NULL AS original_name, NULL AS page_count, NULL AS pages_rendered
-      FROM extraction_jobs j
-      LEFT JOIN documents d ON j.document_id = d.id
-      WHERE j.status IN ('queued','running')
-      ORDER BY created_at DESC
-    `);
+    const [transcriptionJobs, importJobs, extractionJobs] = await Promise.all([
+      this.getTranscriptionSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getImportSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 })
+    ]);
+    return [...transcriptionJobs, ...importJobs, ...extractionJobs].sort(sortJobsByCreatedAtDesc);
   }
 };
 
@@ -1234,12 +1627,13 @@ const extractionJobs = {
   },
 
   async getById(id) {
-    return await getAsync(`
+    const row = await getAsync(`
       SELECT j.*, d.title AS document_title
       FROM extraction_jobs j
       LEFT JOIN documents d ON d.id = j.document_id
       WHERE j.id = ?
     `, [id]);
+    return await hydrateJobLog(row, 'extraction');
   },
 
   async savePartialResults(id, results) {
@@ -1258,8 +1652,7 @@ const extractionJobs = {
   },
 
   async appendLog(id, text) {
-    await runAsyncWithoutSave('UPDATE extraction_jobs SET log = log || ? WHERE id = ?', [text, id]);
-    await saveDatabase();
+    await appendJobLogEntry('extraction', id, text);
   },
 
   async markDone(id, { entity_count, relationship_count } = {}) {
@@ -1290,6 +1683,7 @@ const extractionJobs = {
           batch_finalization_claimed_by = NULL,
           completed_at = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND status != 'done'
     `, [error || 'Unknown error', id]);
     await saveDatabase();
   },
@@ -1521,10 +1915,11 @@ const authorityResolutionJobs = {
   },
 
   async getById(id) {
-    return await getAsync(`
+    const row = await getAsync(`
       SELECT * FROM authority_resolution_jobs
       WHERE id = ?
     `, [id]);
+    return await hydrateJobLog(row, 'authority_resolution');
   },
 
   async getAll() {
@@ -1571,8 +1966,7 @@ const authorityResolutionJobs = {
   },
 
   async appendLog(id, text) {
-    await runAsyncWithoutSave('UPDATE authority_resolution_jobs SET log = log || ? WHERE id = ?', [text, id]);
-    await saveDatabase();
+    await appendJobLogEntry('authority_resolution', id, text);
   },
 
   async updateProgress(id, { processedCount, resolvedCount }) {
@@ -1661,7 +2055,8 @@ const authoritySuggestionJobs = {
   },
 
   async getById(id) {
-    return await getAsync('SELECT * FROM authority_suggestion_jobs WHERE id = ?', [id]);
+    const row = await getAsync('SELECT * FROM authority_suggestion_jobs WHERE id = ?', [id]);
+    return await hydrateJobLog(row, 'authority_suggestion');
   },
 
   async hasPendingOrRunningForCollection(collection_id) {
@@ -1697,11 +2092,7 @@ const authoritySuggestionJobs = {
   },
 
   async appendLog(id, text) {
-    await runAsyncWithoutSave(
-      'UPDATE authority_suggestion_jobs SET log = log || ? WHERE id = ?',
-      [text, id]
-    );
-    await saveDatabase();
+    await appendJobLogEntry('authority_suggestion', id, text);
   },
 
   async markDone(id, { entityCount, candidateCount, suggestionCount, autoApprovedCount } = {}) {
