@@ -169,6 +169,112 @@ describe('extraction worker cycle', () => {
   });
 });
 
+describe('extraction worker cycle - attempt logging', () => {
+  afterEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+  });
+
+  it('logs 1-based attempt number for batch extraction submission', async () => {
+    const logLine = jest.fn(async () => {});
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => logLine),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'openai',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs: {
+        claimNextQueued: jest.fn(async () => ({
+          id: 100,
+          attempts: 0,
+          job_kind: 'batch',
+          batch_document_count: 3,
+          provider_key_scope: null
+        })),
+        updateBatchRemote: jest.fn(async () => {}),
+        markFailed: jest.fn(async () => {})
+      },
+      userApiKeysAsync: { markUsed: jest.fn(async () => {}) }
+    }));
+
+    jest.doMock('../../utils/extraction-batches', () => ({
+      submitExtractionBatch: jest.fn(async () => ({ remoteId: 'remote-1', remoteStatus: 'running' }))
+    }));
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.runExtractionWorkerCycle();
+
+    expect(logLine.mock.calls[0][0]).toContain('attempt 1');
+  });
+
+  it('logs 1-based attempt number for single extraction', async () => {
+    const logLine = jest.fn(async () => {});
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => logLine),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'openai',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs: {
+        claimNextQueued: jest.fn(async () => ({
+          id: 101,
+          attempts: 0,
+          job_kind: 'single',
+          document_id: 7,
+          transcript_id: 5,
+          provider_key_scope: null,
+          reset_existing: 0
+        })),
+        markDone: jest.fn(async () => {}),
+        markFailed: jest.fn(async () => {})
+      },
+      transcriptsAsync: { getById: jest.fn(async () => ({ id: 5, content: 'test content' })) },
+      documentsAsync: { getById: jest.fn(async () => ({ id: 7, metadata: {} })) },
+      entities: { create: jest.fn(async () => 1) },
+      entityAliases: { createIfMissing: jest.fn(async () => {}) },
+      dateExpressions: { createIfMissing: jest.fn(async () => {}) },
+      relationships: { findExisting: jest.fn(async () => null), create: jest.fn(async () => 2) },
+      citations: { create: jest.fn(async () => {}) },
+      relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
+      graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
+      documentCollectionsAsync: { getByDocumentId: jest.fn(async () => []) },
+      authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: jest.fn(async () => true), create: jest.fn(async () => {}) }
+    }));
+
+    jest.doMock('../../utils/extraction-llm', () => ({
+      runExtraction: jest.fn(async () => ({ entities: [], relationships: [], dates: [], paradata: {} }))
+    }));
+    jest.doMock('../../utils/entity-resolution', () => ({
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
+    }));
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.runExtractionWorkerCycle();
+
+    expect(logLine.mock.calls[0][0]).toContain('attempt 1');
+  });
+});
+
 describe('extraction batch polling', () => {
   afterEach(() => {
     jest.resetModules();
@@ -414,5 +520,211 @@ describe('extraction batch polling', () => {
     expect(savePartialResults).not.toHaveBeenCalled();
     expect(markDone).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  function makeBatchPollingMocks({ collectionMemberships = [], alreadyQueued = false } = {}) {
+    const appendLog = jest.fn(async () => {});
+    const authoritySuggestionCreate = jest.fn(async () => {});
+    const hasPendingOrRunning = jest.fn(async () => alreadyQueued);
+    const getByDocumentId = jest.fn(async () => collectionMemberships);
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => jest.fn(async (line) => appendLog(line))),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'openai',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    const extractionJobs = {
+      getRunningBatches: jest.fn(async () => [{
+        id: 80,
+        job_kind: 'batch',
+        status: 'running',
+        provider: 'openai',
+        model: 'default',
+        batch_remote_id: 'remote-80',
+        batch_remote_status: 'running',
+        batch_manifest: JSON.stringify({
+          requests: [{ customId: 'extract-doc-7-tx-5', documentId: 7, transcriptId: 5 }]
+        }),
+        batch_completed_count: 0,
+        batch_failed_count: 0,
+        entity_count: 0,
+        relationship_count: 0
+      }]),
+      appendLog,
+      updateBatchProgress: jest.fn(async () => {}),
+      savePartialResults: jest.fn(async () => {}),
+      getPartialResults: jest.fn(async () => []),
+      claimBatchFinalization: jest.fn(async () => true),
+      heartbeatBatchFinalizationClaim: jest.fn(async () => true),
+      markDone: jest.fn(async () => {}),
+      markFailed: jest.fn(async () => {})
+    };
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs,
+      transcriptsAsync: { getById: jest.fn(async () => ({ id: 5, content: 'Alice met Bob.' })) },
+      documentsAsync: { getById: jest.fn(async () => ({ id: 7, metadata: {} })) },
+      entities: { create: jest.fn(async () => 1) },
+      entityAliases: { createIfMissing: jest.fn(async () => {}) },
+      dateExpressions: { createIfMissing: jest.fn(async () => {}) },
+      relationships: { findExisting: jest.fn(async () => null), create: jest.fn(async () => 2) },
+      citations: { create: jest.fn(async () => {}) },
+      relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
+      graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
+      documentCollectionsAsync: { getByDocumentId },
+      authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
+    }));
+
+    jest.doMock('../../utils/extraction-batches', () => ({
+      pollExtractionBatch: jest.fn(async () => ({
+        state: 'completed',
+        remoteStatus: 'completed',
+        completedCount: 1,
+        failedCount: 0,
+        itemResults: [{ customId: 'extract-doc-7-tx-5', ok: true, result: { entities: [], relationships: [], dates: [], paradata: {} } }]
+      })),
+      parseBatchManifest: jest.fn(() => [{ customId: 'extract-doc-7-tx-5', documentId: 7, transcriptId: 5 }])
+    }));
+
+    jest.doMock('../../utils/entity-resolution', () => ({
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
+    }));
+
+    return { extractionJobs, authoritySuggestionCreate, hasPendingOrRunning, getByDocumentId };
+  }
+
+  it('queues authority suggestion jobs for collections after successful batch finalization', async () => {
+    const { authoritySuggestionCreate, hasPendingOrRunning, getByDocumentId } = makeBatchPollingMocks({
+      collectionMemberships: [{ collection_id: 42 }],
+      alreadyQueued: false
+    });
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.pollRunningExtractionBatches();
+
+    expect(getByDocumentId).toHaveBeenCalledWith(7);
+    expect(hasPendingOrRunning).toHaveBeenCalledWith(42);
+    expect(authoritySuggestionCreate).toHaveBeenCalledWith({ collection_id: 42 });
+  });
+
+  it('skips authority suggestion when one is already pending for the collection', async () => {
+    const { authoritySuggestionCreate } = makeBatchPollingMocks({
+      collectionMemberships: [{ collection_id: 42 }],
+      alreadyQueued: true
+    });
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.pollRunningExtractionBatches();
+
+    expect(authoritySuggestionCreate).not.toHaveBeenCalled();
+  });
+
+  it('queues authority suggestion once per collection across multiple documents in a batch', async () => {
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => jest.fn(async () => {})),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'openai',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    const authoritySuggestionCreate = jest.fn(async () => {});
+    const hasPendingOrRunning = jest.fn(async () => false);
+    // Both documents belong to the same collection
+    const getByDocumentId = jest.fn(async () => [{ collection_id: 99 }]);
+
+    const extractionJobs = {
+      getRunningBatches: jest.fn(async () => [{
+        id: 81,
+        job_kind: 'batch',
+        status: 'running',
+        provider: 'openai',
+        model: 'default',
+        batch_remote_id: 'remote-81',
+        batch_remote_status: 'running',
+        batch_manifest: JSON.stringify({
+          requests: [
+            { customId: 'extract-doc-7-tx-5', documentId: 7, transcriptId: 5 },
+            { customId: 'extract-doc-8-tx-6', documentId: 8, transcriptId: 6 }
+          ]
+        }),
+        batch_completed_count: 0,
+        batch_failed_count: 0,
+        entity_count: 0,
+        relationship_count: 0
+      }]),
+      appendLog: jest.fn(async () => {}),
+      updateBatchProgress: jest.fn(async () => {}),
+      savePartialResults: jest.fn(async () => {}),
+      getPartialResults: jest.fn(async () => []),
+      claimBatchFinalization: jest.fn(async () => true),
+      heartbeatBatchFinalizationClaim: jest.fn(async () => true),
+      markDone: jest.fn(async () => {}),
+      markFailed: jest.fn(async () => {})
+    };
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs,
+      transcriptsAsync: {
+        getById: jest.fn(async (id) => ({ id, content: 'test content' }))
+      },
+      documentsAsync: {
+        getById: jest.fn(async (id) => ({ id, metadata: {} }))
+      },
+      entities: { create: jest.fn(async () => 1) },
+      entityAliases: { createIfMissing: jest.fn(async () => {}) },
+      dateExpressions: { createIfMissing: jest.fn(async () => {}) },
+      relationships: { findExisting: jest.fn(async () => null), create: jest.fn(async () => 2) },
+      citations: { create: jest.fn(async () => {}) },
+      relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
+      graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
+      documentCollectionsAsync: { getByDocumentId },
+      authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
+    }));
+
+    jest.doMock('../../utils/extraction-batches', () => ({
+      pollExtractionBatch: jest.fn(async () => ({
+        state: 'completed',
+        remoteStatus: 'completed',
+        completedCount: 2,
+        failedCount: 0,
+        itemResults: [
+          { customId: 'extract-doc-7-tx-5', ok: true, result: { entities: [], relationships: [], dates: [], paradata: {} } },
+          { customId: 'extract-doc-8-tx-6', ok: true, result: { entities: [], relationships: [], dates: [], paradata: {} } }
+        ]
+      })),
+      parseBatchManifest: jest.fn(() => [
+        { customId: 'extract-doc-7-tx-5', documentId: 7, transcriptId: 5 },
+        { customId: 'extract-doc-8-tx-6', documentId: 8, transcriptId: 6 }
+      ])
+    }));
+
+    jest.doMock('../../utils/entity-resolution', () => ({
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
+    }));
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.pollRunningExtractionBatches();
+
+    // Both documents share collection 99 — suggestion job should only be created once
+    expect(authoritySuggestionCreate).toHaveBeenCalledTimes(1);
+    expect(authoritySuggestionCreate).toHaveBeenCalledWith({ collection_id: 99 });
   });
 });

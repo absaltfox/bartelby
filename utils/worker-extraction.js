@@ -532,6 +532,31 @@ async function pollRunningExtractionBatches() {
       }
 
       await finalizeExtractionBatchJob(job, pollResult, logLine, EXTRACTION_BATCH_FINALIZATION_OWNER);
+
+      // Post-batch: queue authority suggestion jobs for every collection that
+      // contains a document from this batch, mirroring the single-job path in
+      // materializeExtractionResult.  Non-fatal — log but don't fail the job.
+      try {
+        const { authoritySuggestionJobsAsync, documentCollectionsAsync } = require('../database/db');
+        const { parseBatchManifest } = require('./extraction-batches');
+        const manifest = parseBatchManifest(job);
+        const seenCollections = new Set();
+        for (const entry of manifest) {
+          const memberships = await documentCollectionsAsync.getByDocumentId(entry.documentId);
+          for (const membership of memberships) {
+            if (seenCollections.has(membership.collection_id)) continue;
+            seenCollections.add(membership.collection_id);
+            const alreadyQueued = await authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(
+              membership.collection_id
+            );
+            if (!alreadyQueued) {
+              await authoritySuggestionJobsAsync.create({ collection_id: membership.collection_id });
+            }
+          }
+        }
+      } catch (triggerErr) {
+        console.error('[worker-extraction] failed to queue authority suggestion job after batch:', triggerErr.message);
+      }
     } catch (err) {
       // Finalization errors are NOT safe to retry — entities/relationships
       // created before the error are already committed.  Re-running would
@@ -567,12 +592,12 @@ async function runExtractionWorkerCycle() {
     const logLine = logLineForJob(job);
 
     if (job.job_kind === 'batch') {
-      await logLine(`Starting extraction batch job for ${job.batch_document_count || 0} document(s) (attempt ${job.attempts})`);
+      await logLine(`Starting extraction batch job for ${job.batch_document_count || 0} document(s) (attempt ${job.attempts + 1})`);
       await processExtractionBatchSubmission(job, logLine);
       return;
     }
 
-    await logLine(`Starting extraction for document ${job.document_id}, transcript ${job.transcript_id} (attempt ${job.attempts})`);
+    await logLine(`Starting extraction for document ${job.document_id}, transcript ${job.transcript_id} (attempt ${job.attempts + 1})`);
 
     const transcript = await transcriptsAsync.getById(job.transcript_id);
     if (!transcript) throw new Error(`Transcript ${job.transcript_id} not found`);
