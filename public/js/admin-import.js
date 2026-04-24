@@ -11,6 +11,47 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function buildPageSessionSummary(state) {
+  const totalPages = Number.isFinite(state && state.totalPages) && state.totalPages > 0
+    ? state.totalPages
+    : 0;
+  const currentPageNumber = Number.isFinite(state && state.currentPageNumber) && totalPages > 0
+    ? Math.min(totalPages, Math.max(1, state.currentPageNumber))
+    : 0;
+  const selectionText = state && state.isSelected ? 'selected' : 'not selected';
+  const groupingText = state && state.currentGroupLabel
+    ? `in ${state.currentGroupLabel}`
+    : 'ungrouped';
+  const activeGroupText = state && state.activeGroupLabel
+    ? state.activeGroupLabel
+    : 'none';
+
+  return `Current page: ${currentPageNumber} of ${totalPages} (${selectionText}, ${groupingText}). Active group: ${activeGroupText}.`;
+}
+
+function buildPageSessionCues(state) {
+  const cues = [];
+
+  cues.push({
+    tone: state && state.isSelected ? 'selected' : 'neutral',
+    text: state && state.isSelected ? 'Selected in grid' : 'Not selected'
+  });
+
+  cues.push({
+    tone: state && state.currentGroupLabel ? 'group' : 'neutral',
+    text: state && state.currentGroupLabel ? `In ${state.currentGroupLabel}` : 'Ungrouped'
+  });
+
+  if (state && state.activeGroupLabel) {
+    cues.push({
+      tone: 'active',
+      text: `Active group: ${state.activeGroupLabel}`
+    });
+  }
+
+  return cues;
+}
+
 function getCsrfToken() {
   var meta = document.querySelector('meta[name="csrf-token"]');
   return meta ? meta.getAttribute('content') : '';
@@ -102,6 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
   let currentPageIndex = 0;
   let activeGroupId = null;
   let pageGroupingStatusTimer = null;
+  let selectedPageFilenames = new Set();
 
   const pagesProviderSelect    = document.getElementById('pages-provider');
   const pagesCredentialSelect  = document.getElementById('pages-credential');
@@ -261,7 +303,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const suggestGroupsBtn = document.getElementById('suggest-groups-btn');
   const submitAllBtn = document.getElementById('submit-all-btn');
   const pageSessionSummary = document.getElementById('page-session-summary');
+  const pageSessionCues = document.getElementById('page-session-cues');
   const pageGroupingStatus = document.getElementById('page-grouping-status');
+  const zoomOverlay = document.getElementById('zoom-overlay');
+  const zoomPanel = document.getElementById('zoom-panel');
+  const zoomImageFrame = document.getElementById('zoom-image-frame');
   let groupingPreflightInProgress = false;
 
   // Multi-document queue (PDF groups)
@@ -432,8 +478,50 @@ document.addEventListener('DOMContentLoaded', function() {
     return allTempFiles[currentPageIndex] || null;
   }
 
+  function isPageSelected(filename) {
+    return !!(filename && selectedPageFilenames.has(filename));
+  }
+
   function getActiveGroup() {
     return pageGroups.find((group) => group.id === activeGroupId) || null;
+  }
+
+  function isZoomOpen() {
+    return !!(zoomOverlay && !zoomOverlay.classList.contains('is-hidden'));
+  }
+
+  function closeZoom() {
+    if (!zoomOverlay) return;
+    zoomOverlay.classList.add('is-hidden');
+    zoomOverlay.setAttribute('aria-hidden', 'true');
+  }
+
+  function openZoomForIndex(index) {
+    if (!zoomOverlay) return;
+    zoomIndex = index;
+    if (zoomIndex < 0) zoomIndex = 0;
+    setCurrentPage(zoomIndex, { scroll: false, adoptGroupFromPage: true });
+    renderZoom();
+    zoomOverlay.classList.remove('is-hidden');
+    zoomOverlay.setAttribute('aria-hidden', 'false');
+    if (zoomPanel && typeof zoomPanel.focus === 'function') {
+      zoomPanel.focus();
+    }
+  }
+
+  function togglePageSelection(filename, forceSelected) {
+    if (!filename) return;
+    const shouldSelect = typeof forceSelected === 'boolean'
+      ? forceSelected
+      : !selectedPageFilenames.has(filename);
+
+    if (shouldSelect) {
+      selectedPageFilenames.add(filename);
+    } else {
+      selectedPageFilenames.delete(filename);
+    }
+
+    applyGroupColors();
   }
 
   function sortGroupPages(group) {
@@ -462,9 +550,44 @@ document.addEventListener('DOMContentLoaded', function() {
     const currentFilename = getCurrentPageFilename();
     const currentGroup = currentFilename ? getGroupForFilename(currentFilename) : null;
     const activeGroup = getActiveGroup();
-    const currentGroupText = currentGroup ? `in ${currentGroup.label}` : 'ungrouped';
-    const activeGroupText = activeGroup ? activeGroup.label : 'none';
-    pageSessionSummary.textContent = `Current page: ${currentPageIndex + 1} of ${allTempFiles.length} (${currentGroupText}). Active group: ${activeGroupText}.`;
+    pageSessionSummary.textContent = buildPageSessionSummary({
+      currentPageNumber: currentPageIndex + 1,
+      totalPages: allTempFiles.length,
+      isSelected: isPageSelected(currentFilename),
+      currentGroupLabel: currentGroup ? currentGroup.label : '',
+      activeGroupLabel: activeGroup ? activeGroup.label : ''
+    });
+  }
+
+  function renderPageSessionCues() {
+    if (!pageSessionCues) return;
+    const currentFilename = getCurrentPageFilename();
+    const currentGroup = currentFilename ? getGroupForFilename(currentFilename) : null;
+    const activeGroup = getActiveGroup();
+    const cues = buildPageSessionCues({
+      isSelected: isPageSelected(currentFilename),
+      currentGroupLabel: currentGroup ? currentGroup.label : '',
+      activeGroupLabel: activeGroup ? activeGroup.label : ''
+    });
+
+    pageSessionCues.innerHTML = cues.map((cue) => (
+      `<span class="page-session-cue page-session-cue--${escapeHtml(cue.tone)}">${escapeHtml(cue.text)}</span>`
+    )).join('');
+  }
+
+  function syncZoomImageFrame() {
+    if (!zoomImageFrame) return;
+    const currentFilename = getCurrentPageFilename();
+    const currentGroup = currentFilename ? getGroupForFilename(currentFilename) : null;
+
+    zoomImageFrame.classList.toggle('is-selected', isPageSelected(currentFilename));
+    zoomImageFrame.classList.toggle('is-grouped', !!currentGroup);
+
+    if (currentGroup) {
+      zoomImageFrame.dataset.groupColor = String(currentGroup.colorIndex);
+    } else {
+      delete zoomImageFrame.dataset.groupColor;
+    }
   }
 
   function scrollCurrentPageIntoView() {
@@ -483,7 +606,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (opts.scroll !== false) scrollCurrentPageIntoView();
     applyGroupColors();
-    if (!document.getElementById('zoom-overlay').classList.contains('is-hidden')) {
+    if (isZoomOpen()) {
       zoomIndex = currentPageIndex;
       renderZoom();
     }
@@ -1102,17 +1225,17 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="page-check"></div>
         <button type="button" class="page-zoom-btn" title="Zoom in">&#128269;</button>
       `;
-      // Toggle selection (but not on zoom button)
+      // Toggle multi-select state directly on the grid tile.
       div.addEventListener('click', (e) => {
         if (e.target.closest('.page-zoom-btn')) return;
         if (autoGroupingInProgress) return;
         setCurrentPage(allTempFiles.indexOf(p.filename), { scroll: false, adoptGroupFromPage: true });
-        div.classList.toggle('selected');
+        togglePageSelection(p.filename);
       });
       // Zoom button
       div.querySelector('.page-zoom-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        openZoom(p.filename, p.pageNumber);
+        openZoomForIndex(allTempFiles.indexOf(p.filename));
       });
       grid.appendChild(div);
     });
@@ -1122,7 +1245,9 @@ document.addEventListener('DOMContentLoaded', function() {
     autoGroupingCompleted = false;
     activeGroupId = null;
     currentPageIndex = 0;
+    selectedPageFilenames = new Set();
     clearGroupingStatus();
+    closeZoom();
     setAutoGroupingLock(false);
     lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
     renderGroups();
@@ -1134,21 +1259,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
   selectAllPagesBtn.addEventListener('click', () => {
     if (autoGroupingInProgress) return;
-    document.querySelectorAll('.page-thumb').forEach(t => t.classList.add('selected'));
+    selectedPageFilenames = new Set(allTempFiles);
+    applyGroupColors();
   });
 
   deselectAllPagesBtn.addEventListener('click', () => {
     if (autoGroupingInProgress) return;
-    document.querySelectorAll('.page-thumb').forEach(t => t.classList.remove('selected'));
+    selectedPageFilenames = new Set();
+    applyGroupColors();
   });
 
   groupSelectedBtn.addEventListener('click', () => {
     if (autoGroupingInProgress) return;
-    const selected = Array.from(document.querySelectorAll('.page-thumb.selected'));
-    if (selected.length === 0) { showError('Select at least one page to create a group.'); return; }
+    const filenames = allTempFiles.filter((filename) => selectedPageFilenames.has(filename));
+    if (filenames.length === 0) { showError('Select at least one page to create a group.'); return; }
 
-    const filenames = selected.map(el => el.dataset.filename);
-    const pageNums  = selected.map(el => el.dataset.page);
+    const pageNums = filenames.map((filename) => allTempFiles.indexOf(filename) + 1);
 
     pageGroups.forEach(g => { g.pages = g.pages.filter(f => !filenames.includes(f)); });
     pageGroups = pageGroups.filter(g => g.pages.length > 0);
@@ -1164,6 +1290,7 @@ document.addEventListener('DOMContentLoaded', function() {
       confidence: null
     });
     activeGroupId = groupIdCounter;
+    filenames.forEach((filename) => selectedPageFilenames.delete(filename));
 
     applyGroupColors();
     scheduleGroupingStateSave();
@@ -1205,11 +1332,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
       });
     });
+    selectedPageFilenames.forEach((filename) => {
+      const el = document.querySelector(`.page-thumb[data-filename="${filename}"]`);
+      if (el) el.classList.add('selected');
+    });
     const currentThumb = getPageThumbByIndex(currentPageIndex);
     if (currentThumb) currentThumb.classList.add('current-page');
     renderGroups();
     updateSubmitButton();
     renderPageSessionSummary();
+    renderPageSessionCues();
+    syncZoomImageFrame();
   }
 
   function renderGroups() {
@@ -1284,33 +1417,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
   let zoomIndex = 0;
 
-  function openZoom(filename, pageNumber) {
-    zoomIndex = allTempFiles.indexOf(filename);
-    if (zoomIndex < 0) zoomIndex = 0;
-    setCurrentPage(zoomIndex, { scroll: false, adoptGroupFromPage: true });
-    renderZoom();
-    document.getElementById('zoom-overlay').classList.remove('is-hidden');
-  }
-
   function renderZoom() {
     const filename = allTempFiles[zoomIndex];
-    const currentGroup = getGroupForFilename(filename);
-    const activeGroup = getActiveGroup();
-    const groupText = currentGroup ? currentGroup.label : 'Ungrouped';
-    const activeText = activeGroup ? ` • Active: ${activeGroup.label}` : '';
     document.getElementById('zoom-image').src = getTempPreviewUrl(filename);
-    document.getElementById('zoom-label').textContent = `Page ${zoomIndex + 1} of ${allTempFiles.length} • ${groupText}${activeText}`;
+    document.getElementById('zoom-label').textContent = `Page ${zoomIndex + 1} of ${allTempFiles.length}`;
     document.getElementById('zoom-prev').disabled = zoomIndex === 0;
     document.getElementById('zoom-next').disabled = zoomIndex === allTempFiles.length - 1;
+    renderPageSessionSummary();
+    renderPageSessionCues();
+    syncZoomImageFrame();
   }
 
-  document.getElementById('zoom-close').addEventListener('click', () => {
-    document.getElementById('zoom-overlay').classList.add('is-hidden');
-  });
+  document.getElementById('zoom-close').addEventListener('click', closeZoom);
 
   document.getElementById('zoom-overlay').addEventListener('click', (e) => {
-    if (e.target === document.getElementById('zoom-overlay')) {
-      document.getElementById('zoom-overlay').classList.add('is-hidden');
+    if (e.target === zoomOverlay) {
+      closeZoom();
     }
   });
 
@@ -1332,11 +1454,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Keyboard navigation and page-review shortcuts
   document.addEventListener('keydown', (e) => {
-    const zoomOpen = !document.getElementById('zoom-overlay').classList.contains('is-hidden');
+    const zoomOpen = isZoomOpen();
     if (zoomOpen && e.key === 'Escape') {
-      document.getElementById('zoom-overlay').classList.add('is-hidden');
+      closeZoom();
       return;
     }
+    if (!zoomOpen) return;
     if (autoGroupingInProgress || groupingPreflightInProgress || isModalOpen() || isTypingTarget(e.target)) return;
     if (!allTempFiles.length) return;
 
@@ -1931,8 +2054,10 @@ document.addEventListener('DOMContentLoaded', function() {
       tempPreviewAssets = {};
       autoGroupingRequested = false;
       autoGroupingCompleted = false;
+      selectedPageFilenames = new Set();
       importJobId = null;
       lastPageCollectionIds = getSelectedCollectionIds('.page-collection-cb');
+      closeZoom();
     }
     documentQueue = [];
     currentQueueIndex = -1;

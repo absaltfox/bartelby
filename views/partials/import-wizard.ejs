@@ -146,14 +146,6 @@
       <!-- Groups appear here -->
     </div>
 
-    <div class="page-session-bar" id="page-session-bar">
-      <p class="page-session-summary" id="page-session-summary" aria-live="polite"></p>
-      <p class="field-hint page-hotkey-hint" id="page-hotkey-hint">
-        Shortcuts: <code>N</code> new group, <code>A</code> add to active group, <code>E</code> end group, <code>&larr;</code>/<code>&rarr;</code> move pages.
-      </p>
-      <p class="field-hint page-grouping-status is-hidden" id="page-grouping-status" aria-live="polite"></p>
-    </div>
-
     <div class="ai-queue-note import-batch-note is-hidden" id="batch-transcription-option">
       <label class="mode-option import-batch-option">
         <input type="checkbox" id="use-batch-transcription">
@@ -179,13 +171,35 @@
     </p>
   </div>
 
-  <div id="zoom-overlay" class="zoom-overlay is-hidden">
-    <img id="zoom-image" src="" alt="Zoomed page">
-    <button type="button" class="zoom-close" id="zoom-close">&times;</button>
-    <div class="zoom-nav">
-      <button type="button" class="zoom-prev" id="zoom-prev">&lsaquo;</button>
-      <span id="zoom-label" class="zoom-label"></span>
-      <button type="button" class="zoom-next" id="zoom-next">&rsaquo;</button>
+  <div id="zoom-overlay" class="zoom-overlay is-hidden" aria-hidden="true">
+    <div class="zoom-panel" id="zoom-panel" role="dialog" aria-modal="true" aria-labelledby="zoom-title" tabindex="-1">
+      <div class="zoom-panel-header">
+        <div class="zoom-panel-heading">
+          <p class="zoom-eyebrow">Grouping Preview</p>
+          <h3 id="zoom-title">Review pages with keyboard shortcuts</h3>
+        </div>
+        <button type="button" class="zoom-close" id="zoom-close" aria-label="Close preview">&times;</button>
+      </div>
+
+      <div class="zoom-stage">
+        <div class="zoom-image-frame" id="zoom-image-frame">
+          <img id="zoom-image" src="" alt="Zoomed page">
+        </div>
+        <div class="zoom-nav">
+          <button type="button" class="zoom-prev" id="zoom-prev">&lsaquo;</button>
+          <span id="zoom-label" class="zoom-label"></span>
+          <button type="button" class="zoom-next" id="zoom-next">&rsaquo;</button>
+        </div>
+      </div>
+
+      <div class="page-session-bar page-session-bar--preview" id="page-session-bar">
+        <p class="page-session-summary" id="page-session-summary" aria-live="polite"></p>
+        <div class="page-session-cues" id="page-session-cues" aria-live="polite"></div>
+        <p class="field-hint page-hotkey-hint" id="page-hotkey-hint">
+          Shortcuts: <code>N</code> new group, <code>A</code> add to active group, <code>E</code> end group, <code>&larr;</code>/<code>&rarr;</code> move pages.
+        </p>
+        <p class="field-hint page-grouping-status is-hidden" id="page-grouping-status" aria-live="polite"></p>
+      </div>
     </div>
   </div>
 </div>

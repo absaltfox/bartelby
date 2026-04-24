@@ -65,9 +65,11 @@ metadata and graph relationships that are built from them over time.
 1. A user uploads a document.
 2. The import pipeline renders or extracts page images.
 3. The user reviews or groups pages and can assign collections from the subset
-   they are authorized to import into. In the PDF page organizer, this review
-   step supports both AI-assisted auto-group suggestions and a keyboard-driven
-   manual review flow built around a current page and an active group.
+   they are authorized to import into. In the PDF import flow, the thumbnail
+   organizer supports persistent multi-page selection while the enhanced page
+   preview provides the keyboard-driven manual review flow built around a
+   current page and an active group, alongside AI-assisted auto-group
+   suggestions.
 4. A transcription job is queued or submitted as a provider batch job.
 5. The resulting transcript is stored as the best transcript for the document.
 
