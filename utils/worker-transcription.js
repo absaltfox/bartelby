@@ -174,11 +174,36 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
     }
   }
 
-  let completedDocs = 0;
-  let failedDocs = 0;
+  // Resume from checkpoint: load document IDs already materialized by a prior
+  // finalization attempt so we never create duplicate transcripts if the claim
+  // expired and a second worker restarts finalization.
+  const processedDocIdsArray = await transcriptionJobsAsync.getPartialResults(job.id);
+  const processedDocIds = new Set(
+    (processedDocIdsArray || []).map((entry) => entry.documentId || entry)
+  );
+
+  let completedDocs = job.batch_completed_count || 0;
+  let failedDocs = job.batch_failed_count || 0;
   const extractionManifest = []; // collect {documentId, transcriptId} for batch extraction
 
+  // Rebuild the extraction manifest from already-processed documents so that
+  // extraction queueing at the end covers all documents, not just those
+  // materialized in this run.
+  for (const entry of processedDocIdsArray || []) {
+    if (entry.documentId && entry.transcriptId) {
+      extractionManifest.push({
+        customId: `extract-doc-${entry.documentId}-tx-${entry.transcriptId}`,
+        documentId: entry.documentId,
+        transcriptId: entry.transcriptId
+      });
+    }
+  }
+
   for (const [documentId, docManifest] of groupedByDocument.entries()) {
+    if (processedDocIds.has(documentId)) {
+      continue;
+    }
+
     const stillClaimed = await transcriptionJobsAsync.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
     if (!stillClaimed) {
       throw new Error(`Lost finalization claim for batch job ${job.id}.`);
@@ -198,6 +223,10 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
         missingPages.length > 0 ? `missing pages ${missingPages.join(', ')}` : null
       ].filter(Boolean).join(' | ');
       await logLine(`Document ${documentId} did not complete successfully${detail ? `: ${detail}` : ''}`);
+      processedDocIds.add(documentId);
+      await transcriptionJobsAsync.savePartialResults(job.id,
+        Array.from(processedDocIds).map((id) => (typeof id === 'object' ? id : { documentId: id }))
+      );
       continue;
     }
 
@@ -217,12 +246,21 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
       logLine,
       skipExtractionJob: true
     });
-    extractionManifest.push({
+    const extractionEntry = {
       customId: `extract-doc-${documentId}-tx-${persisted.transcriptId}`,
       documentId,
       transcriptId: persisted.transcriptId
-    });
+    };
+    extractionManifest.push(extractionEntry);
     completedDocs += 1;
+
+    // Checkpoint after each document so a resumed finalization skips documents
+    // that were already materialized, preventing duplicate transcripts.
+    processedDocIds.add(documentId);
+    await transcriptionJobsAsync.savePartialResults(job.id,
+      extractionManifest.map((e) => ({ documentId: e.documentId, transcriptId: e.transcriptId }))
+    );
+
     await logLine(`Document ${documentId} materialized from batch (${orderedResults.length} page${orderedResults.length !== 1 ? 's' : ''})`);
   }
 
@@ -236,11 +274,21 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
     const errorMessage = `Batch completed with ${failedDocs} failed document${failedDocs !== 1 ? 's' : ''}.`;
     await logLine(errorMessage);
     await transcriptionJobsAsync.markFailed(job.id, errorMessage);
+    await transcriptionJobsAsync.clearPartialResults(job.id);
     return;
   }
 
   await logLine(`Batch complete. ${completedDocs} document${completedDocs !== 1 ? 's' : ''} imported from provider batch.`);
-  await transcriptionJobsAsync.markDone(job.id);
+  const transitioned = await transcriptionJobsAsync.markDone(job.id);
+  await transcriptionJobsAsync.clearPartialResults(job.id);
+
+  // Only queue extraction jobs if this worker was the one that actually
+  // transitioned the job to done.  If another worker already marked it done
+  // (stale-claim overlap), skip to avoid duplicate extraction jobs.
+  if (!transitioned) {
+    await logLine('Skipping extraction queueing — another worker already completed this batch.');
+    return;
+  }
 
   // Queue a single batch extraction job for all completed documents
   if (extractionManifest.length > 0) {

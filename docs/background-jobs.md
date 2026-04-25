@@ -165,7 +165,8 @@ drains in-flight HTTP requests and then calls `flushDatabase()` in
 On the next startup, `initializeSchema()` identifies stale jobs:
 
 - **`import_jobs` (render, `processing`, no `machine_id`)** → marked `failed`
-- **`import_jobs` (submit, `running`)** → re-queued to `queued`
+- **`import_jobs` (submit, `running`)** → marked `failed`
+- **`import_jobs` (grouping, `processing`, no `batch_remote_id`)** → marked `failed`
 - **`transcription_jobs` (`running`, not a batch)** → marked `failed`
 - **`transcription_jobs` (`running`, batch finalization claimed)** → claim cleared so finalization can resume
 - **`extraction_jobs` (`running`, batch finalization claimed)** → claim cleared so finalization can resume

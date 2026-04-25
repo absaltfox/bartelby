@@ -202,9 +202,19 @@ describe('transcription batch polling', () => {
         updateBatchProgress,
         claimBatchFinalization,
         heartbeatBatchFinalizationClaim,
+        getPartialResults: jest.fn(async () => []),
+        savePartialResults: jest.fn(async () => {}),
+        clearPartialResults: jest.fn(async () => {}),
         markDone,
         markFailed
+      },
+      extractionJobsAsync: {
+        create: jest.fn(async () => 1),
+        createBatch: jest.fn(async () => 1)
       }
+    }));
+    jest.doMock('../../utils/extraction-batches', () => ({
+      supportsExtractionBatchProvider: jest.fn(() => false)
     }));
     jest.doMock('../../utils/transcription-batches', () => ({
       pollTranscriptionBatch: jest.fn(async () => ({
@@ -275,6 +285,9 @@ describe('transcription batch polling', () => {
         updateBatchProgress,
         claimBatchFinalization,
         heartbeatBatchFinalizationClaim: jest.fn(async () => true),
+        getPartialResults: jest.fn(async () => []),
+        savePartialResults: jest.fn(async () => {}),
+        clearPartialResults: jest.fn(async () => {}),
         markDone: jest.fn(async () => {}),
         markFailed: jest.fn(async () => {})
       }
@@ -342,6 +355,9 @@ describe('transcription batch polling', () => {
         updateBatchProgress: jest.fn(async () => {}),
         claimBatchFinalization,
         heartbeatBatchFinalizationClaim: jest.fn(async () => false),
+        getPartialResults: jest.fn(async () => []),
+        savePartialResults: jest.fn(async () => {}),
+        clearPartialResults: jest.fn(async () => {}),
         markDone: jest.fn(async () => {}),
         markFailed: jest.fn(async () => {})
       }

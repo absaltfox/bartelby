@@ -495,16 +495,19 @@ async function initializeSchema() {
   `);
   const staleSubmitImportCount = staleSubmitImports?.count || 0;
   if (staleSubmitImportCount > 0) {
+    // Mark failed rather than requeuing — in a multi-worker topology another
+    // instance may still be actively processing the job.  Requeuing would let
+    // a second worker claim and re-process it, causing duplicate documents and
+    // transcription jobs.  Failed submission jobs can be retried manually.
     await db.run(`
       UPDATE import_jobs
-      SET status = 'queued',
-          error = NULL,
-          started_at = NULL,
-          completed_at = NULL
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
       WHERE status = 'running'
         AND COALESCE(job_kind, 'render') = 'submit'
     `);
-    console.log(`[db] Requeued ${staleSubmitImportCount} stale import submission job(s)`);
+    console.log(`[db] Marked ${staleSubmitImportCount} stale import submission job(s) as failed`);
   }
 
   const staleGroupingImports = await get(`
@@ -516,17 +519,18 @@ async function initializeSchema() {
   `);
   const staleGroupingImportCount = staleGroupingImports?.count || 0;
   if (staleGroupingImportCount > 0) {
+    // Mark failed rather than requeuing — same multi-worker race as submission
+    // jobs: another instance may still be actively processing.
     await db.run(`
       UPDATE import_jobs
-      SET status = 'queued',
-          error = NULL,
-          started_at = NULL,
-          completed_at = NULL
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
       WHERE status = 'processing'
         AND COALESCE(job_kind, 'render') = 'grouping'
         AND batch_remote_id IS NULL
     `);
-    console.log(`[db] Requeued ${staleGroupingImportCount} stale grouping job(s)`);
+    console.log(`[db] Marked ${staleGroupingImportCount} stale grouping job(s) as failed`);
   }
 
   // Stale grouping batch jobs — provider may have completed while we were down.
@@ -695,6 +699,7 @@ async function initializeSchema() {
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
+    || staleGroupingImportCount > 0
     || staleTranscriptionCount > 0
     || staleTxBatchFinalizationClaimCount > 0
     || staleExtractionCount > 0

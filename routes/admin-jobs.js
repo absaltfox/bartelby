@@ -41,7 +41,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const offset = (page - 1) * PAGE_SIZE;
 
   const [{ counts, typeCounts }, filteredTotal, jobs, configuredProviders] = await Promise.all([
-    adminJobsAsync.getCounts(),
+    adminJobsAsync.getCounts(filter, typeFilter),
     adminJobsAsync.getFilteredCount(filter, typeFilter),
     adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter),
     listConfiguredProviders()
@@ -127,8 +127,10 @@ router.post('/api/bulk/delete', express.json(), asyncHandler(async (req, res) =>
 
 // API: active jobs + global counts (for AJAX polling — does not scan historical done/failed rows)
 router.get('/api/all', asyncHandler(async (req, res) => {
+  const filter = req.query.filter || 'all';
+  const typeFilter = req.query.type || 'all';
   const [{ counts, typeCounts }, jobs] = await Promise.all([
-    adminJobsAsync.getCounts(),
+    adminJobsAsync.getCounts(filter, typeFilter),
     adminJobsAsync.getActive()
   ]);
   res.json({ jobs, counts, typeCounts });

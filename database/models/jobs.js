@@ -494,15 +494,17 @@ const transcriptionJobsAsync = {
   },
 
   async markDone(id) {
-    await runAsyncWithoutSave(`
+    const result = await runAsyncWithoutSave(`
       UPDATE transcription_jobs
       SET status = 'done',
           completed_at = CURRENT_TIMESTAMP,
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL
       WHERE id = ?
+        AND status != 'done'
     `, [id]);
     await saveDatabase();
+    return !!(result && result.changes);
   },
 
   async markFailed(id, error) {
@@ -1337,7 +1339,7 @@ const adminJobsAsync = {
     const params = [];
     let statusClause = '';
     if (normalizedStatus === 'running') {
-      statusClause = "WHERE j.status IN ('queued', 'running')";
+      statusClause = "WHERE j.status IN ('running', 'processing')";
     } else if (normalizedStatus !== 'all') {
       statusClause = 'WHERE j.status = ?';
       params.push(normalizedStatus);
@@ -1376,7 +1378,7 @@ const adminJobsAsync = {
     const params = [];
     let statusClause = '';
     if (normalizedStatus === 'running') {
-      statusClause = "WHERE status IN ('queued', 'processing', 'running')";
+      statusClause = "WHERE status IN ('processing', 'running')";
     } else if (normalizedStatus !== 'all') {
       statusClause = 'WHERE status = ?';
       params.push(normalizedStatus);
@@ -1408,7 +1410,7 @@ const adminJobsAsync = {
     const params = [];
     let statusClause = '';
     if (normalizedStatus === 'running') {
-      statusClause = "WHERE j.status IN ('queued', 'running')";
+      statusClause = "WHERE j.status IN ('running', 'processing')";
     } else if (normalizedStatus !== 'all') {
       statusClause = 'WHERE j.status = ?';
       params.push(normalizedStatus);
@@ -1442,18 +1444,36 @@ const adminJobsAsync = {
   },
 
   // Overall + per-type counts (no filter applied — used for tab badges)
-  async getCounts() {
+  async getCounts(statusFilter = 'all', typeFilter = 'all') {
+    const normalizedType = normalizeTypeFilter(typeFilter);
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+
     const [transcriptionCounts, importCounts, extractionCounts] = await Promise.all([
       this.getTranscriptionCounts(),
       this.getImportCounts(),
       this.getExtractionCounts()
     ]);
+
+    // Status tab counts: scoped to typeFilter (shows the breakdown for the selected type)
+    let statusCounts;
+    if (normalizedType === 'transcription') statusCounts = transcriptionCounts;
+    else if (normalizedType === 'import') statusCounts = importCounts;
+    else if (normalizedType === 'extraction') statusCounts = extractionCounts;
+    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts);
+
+    // Type tab counts: scoped to statusFilter (shows how many of each type match the current status)
+    const getCount = (countMap) => {
+      if (normalizedStatus === 'all') return countMap.total;
+      if (normalizedStatus === 'running') return countMap.running;
+      return countMap[normalizedStatus] || 0;
+    };
+
     return {
-      counts: mergeCountMaps(transcriptionCounts, importCounts, extractionCounts),
+      counts: statusCounts,
       typeCounts: {
-        import: importCounts.total,
-        transcription: transcriptionCounts.total,
-        extraction: extractionCounts.total
+        import: getCount(importCounts),
+        transcription: getCount(transcriptionCounts),
+        extraction: getCount(extractionCounts)
       }
     };
   },

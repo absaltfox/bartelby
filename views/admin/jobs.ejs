@@ -175,7 +175,7 @@
               </td>
               <td class="job-actions-cell" data-job-cell="actions">
                 <div class="job-actions">
-                  <% if (!isImport) { %>
+                  <% if (!isImport || isImportSubmit) { %>
                     <button type="button" class="btn-secondary btn-sm toggle-log-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Log</button>
                   <% } %>
                   <% if (isImport && !isImportGrouping && job.status === 'done' && !job.submitted) { %>
@@ -193,7 +193,7 @@
                 </div>
               </td>
             </tr>
-            <% if (!isImport) { %>
+            <% if (!isImport || isImportSubmit) { %>
               <tr class="log-row is-hidden" id="log-row-<%= job.id %>">
                 <td colspan="7">
                   <% if (job.error) { %>

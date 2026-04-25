@@ -109,7 +109,7 @@
     return config.apiBase + '/';
   }
 
-  function updateFilterTabCounts(countMap, pageBaseUrl) {
+  function updateFilterTabCounts(countMap, pageBaseUrl, typeCounts) {
     document.querySelectorAll('.filter-tab').forEach(function(tab) {
       var href = tab.getAttribute('href') || '';
       var badge = tab.querySelector('.filter-count');
@@ -119,6 +119,13 @@
           badge.textContent = countMap[key];
         }
       });
+      if (typeCounts && tab.classList.contains('filter-tab-type')) {
+        Object.keys(typeCounts).forEach(function(key) {
+          if (href.indexOf('type=' + key) !== -1) {
+            badge.textContent = typeCounts[key];
+          }
+        });
+      }
     });
   }
 
@@ -149,7 +156,7 @@
     var isAdmin = config && config.mode === 'admin';
 
     var html = '<div class="job-actions">';
-    if (job.job_type !== 'import') {
+    if (job.job_type !== 'import' || job.job_kind === 'submit') {
       html += '<button class="btn-secondary btn-sm toggle-log-btn" data-id="' + escapeHtml(String(job.id)) +
               '" data-type="' + escapeHtml(job.job_type || 'transcription') + '">Log</button> ';
     }
@@ -344,7 +351,7 @@
         return null;
       }
       var job = await r.json();
-      logEl.textContent = job.log || '(no log yet)';
+      logEl.textContent = job.log || job.error || '(no log yet)';
       logEl.dataset.logLoaded = 'true';
       return job;
     } catch (err) {
@@ -574,8 +581,13 @@
     var hasActive = document.querySelector('.status-queued, .status-running, .status-processing');
     if (!hasActive || !pollUrl) return;
 
+    var pollParams = [];
+    if (config.filter && config.filter !== 'all') pollParams.push('filter=' + config.filter);
+    if (config.typeFilter && config.typeFilter !== 'all') pollParams.push('type=' + config.typeFilter);
+    var pollUrlWithFilters = pollUrl + (pollParams.length ? '?' + pollParams.join('&') : '');
+
     function pollJobs() {
-      fetch(pollUrl)
+      fetch(pollUrlWithFilters)
         .then(function(r) { return r.json(); })
         .then(function(data) {
           updateFilterTabCounts({
@@ -584,7 +596,7 @@
             running: data.counts.running,
             done: data.counts.done,
             failed: data.counts.failed
-          }, config.pageBaseUrl);
+          }, config.pageBaseUrl, data.typeCounts);
 
           var jobs = data.jobs || [];
           if (config.typeFilter !== 'all') {
