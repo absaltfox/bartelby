@@ -35,6 +35,7 @@ const {
 } = require('../database/db');
 const { withCsrf } = require('../middleware/upload');
 const { asyncHandler } = require('../utils/async-handler');
+const { stripReservedMetadataKeys } = require('../utils/metadata-keys');
 
 const MAX_TEMP_FILE_INPUTS = 5000;
 
@@ -265,7 +266,11 @@ router.post('/save-document', express.json(), asyncHandler(async (req, res) => {
 
     await deleteTempAssets(collectTempCleanupFiles(files, importJobPreviewMap));
 
-    const docMetadata = { ...(metadata || {}) };
+    // Drop client-supplied reserved keys (e.g. additional_pages) before
+    // merging in the server-derived values; otherwise a manager/admin can
+    // smuggle arbitrary /uploads/<file> paths into the document and bypass
+    // the per-document access check in server.js /uploads/:filename.
+    const docMetadata = stripReservedMetadataKeys(metadata);
     if (additionalPages.length > 0) {
       docMetadata.additional_pages = additionalPages;
     }
