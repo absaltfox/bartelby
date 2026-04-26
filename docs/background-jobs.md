@@ -81,6 +81,8 @@ Because job state is stored durably in the database, split roles work across
 Fly, Docker Compose, and other container schedulers without introducing a
 separate queue service.
 
+Worker images must have `pdftoppm` (poppler-utils) installed; the PDF render job throws at boot in production if it is absent (see `DEPLOY.md` § Worker runtime requirements).
+
 For batch finalization, the in-memory poller flags are not enough on their own
 because Fly can briefly run overlapping app processes during deployments or
 machine handoff. Completed transcription and extraction batches are therefore

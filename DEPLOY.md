@@ -324,6 +324,14 @@ fly scale vm shared-cpu-2x
   planned but blocked on the pdfjs-dist / @xenova/transformers upgrade,
   which clears the residual `tar` chain and the `protobufjs` criticals.
 
+### Worker runtime requirements
+
+- `pdftoppm` (from `poppler-utils`) MUST be present on every worker image.
+  The PDF rendering job aborts at boot in production if it is missing,
+  because the pdfjs-dist fallback is vulnerable to malicious-PDF JS
+  execution (GHSA-wgrm-67xf-hhpq). The provided `Dockerfile` installs
+  `poppler-utils`; verify this if you maintain a fork of the image.
+
 ### Updating
 
 ```bash

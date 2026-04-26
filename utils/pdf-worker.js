@@ -84,6 +84,17 @@ function hasPdftoppm() {
   }
 }
 
+// Production guardrail: the pdfjs-dist fallback is for dev only. If a
+// production worker lacks pdftoppm, fail at module load rather than silently
+// rendering uploaded PDFs through a known-vulnerable path
+// (GHSA-wgrm-67xf-hhpq). See docs/background-jobs.md and DEPLOY.md.
+if (process.env.NODE_ENV === 'production' && !hasPdftoppm()) {
+  throw new Error(
+    'pdf-worker: pdftoppm (poppler-utils) is required in production. '
+    + 'Install it in the worker image (Dockerfile) or unset NODE_ENV=production.'
+  );
+}
+
 function hasPdfimages() {
   try {
     execFileSync('pdfimages', ['-v'], { stdio: 'pipe' });
