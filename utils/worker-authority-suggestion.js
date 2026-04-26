@@ -13,13 +13,13 @@ function makeLogger(jobId, authoritySuggestionJobsAsync) {
 }
 
 /**
- * Build the embed function from @xenova/transformers.
+ * Build the embed function from @huggingface/transformers (v3+).
  * Returns async (texts: string[]) => number[][]
  */
 async function makeEmbedFn() {
-  const { pipeline } = require('@xenova/transformers');
+  const { pipeline } = require('@huggingface/transformers');
   const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-    quantized: true
+    dtype: 'q8'
   });
   return async function embed(texts) {
     const results = await embedder(texts, { pooling: 'mean', normalize: true });
@@ -168,3 +168,4 @@ async function runAuthoritySuggestionWorkerCycle() {
 }
 
 module.exports = { runAuthoritySuggestionWorkerCycle };
+module.exports.__testables = { makeEmbedFn };

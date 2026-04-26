@@ -7,8 +7,8 @@ process.env.DATABASE_DRIVER = 'sqljs';
 process.env.STORAGE_DRIVER = 'local';
 process.env.BOOTSTRAP_ADMIN_TOKEN = 'test-bootstrap-token-for-jest';
 
-// Mock @xenova/transformers to avoid downloading the model in CI
-jest.mock('@xenova/transformers', () => ({
+// Mock @huggingface/transformers to avoid downloading the model in CI
+jest.mock('@huggingface/transformers', () => ({
   pipeline: jest.fn().mockResolvedValue(
     // Fake embedder: returns a deterministic float32 array based on string content
     async function fakeEmbedder(texts) {
