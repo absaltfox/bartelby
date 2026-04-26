@@ -315,6 +315,15 @@ fly scale memory 1024
 fly scale vm shared-cpu-2x
 ```
 
+### Pre-deploy checks
+
+- Run `npm test` (which invokes `npm run test:hygiene` first) and confirm a
+  clean pass before promoting a build.
+- Run `npm audit --omit=dev` and triage any new high/critical advisory
+  before release. A production-only audit gate inside `test:hygiene` is
+  planned but blocked on the pdfjs-dist / @xenova/transformers upgrade,
+  which clears the residual `tar` chain and the `protobufjs` criticals.
+
 ### Updating
 
 ```bash
