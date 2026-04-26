@@ -321,8 +321,47 @@ fly scale vm shared-cpu-2x
   clean pass before promoting a build.
 - Run `npm audit --omit=dev` and triage any new high/critical advisory
   before release. A production-only audit gate inside `test:hygiene` is
-  planned but blocked on the pdfjs-dist / @xenova/transformers upgrade,
-  which clears the residual `tar` chain and the `protobufjs` criticals.
+  planned but blocked on the pdfjs-dist upgrade, which clears the
+  residual `tar` chain. See "Known open advisories" below for current
+  baseline and mitigations.
+
+### Known open advisories
+
+`npm audit --omit=dev` currently reports **3 high, 0 critical**. None of
+them are practically exploitable in the current production
+configuration; each has a documented mitigation. Reviewers checking the
+audit output before a release should expect this baseline and not treat
+it as a release blocker.
+
+- **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
+  Reachable only through the dev-only `renderWithPdfjs` fallback in
+  [`utils/pdf-worker.js`](./utils/pdf-worker.js). Production workers
+  fail at module load if `pdftoppm` is absent (see "Worker runtime
+  requirements" below), so the fallback path never runs in production.
+  The fallback also passes `isEvalSupported: false`,
+  `disableFontFace: true`, and `useSystemFonts: false` to neutralise
+  the documented exploitation path even when it does run in dev.
+  Upgrading past `pdfjs-dist@3.11.174` requires investigating a prior
+  4.x rendering regression and is tracked as a follow-up.
+
+- **`tar` (high, six advisories) via `@mapbox/node-pre-gyp`.**
+  Reached only at `npm install` time through the `canvas` →
+  `@mapbox/node-pre-gyp` → `tar` chain. The vulnerable code paths
+  involve extracting attacker-controlled tarballs, which the
+  application never does at runtime; only npm itself extracts the
+  pinned, integrity-checked dependency tarballs at install. This
+  chain clears automatically once `pdfjs-dist` (which pulls in
+  `canvas`) is upgraded.
+
+Pre-merge work on this baseline:
+
+- Closed `protobufjs <7.5.5` (critical, GHSA-xq3m-2v4x-88gg, four
+  advisories) by migrating from `@xenova/transformers` 2.x to
+  `@huggingface/transformers` 3.8.1, whose `onnxruntime-web` no
+  longer pulls `onnx-proto`/`protobufjs`. See
+  [`utils/worker-authority-suggestion.js`](./utils/worker-authority-suggestion.js).
+- Closed `fast-xml-parser` (moderate) via non-breaking
+  `npm audit fix`.
 
 ### Worker runtime requirements
 
