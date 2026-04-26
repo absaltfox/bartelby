@@ -6,6 +6,7 @@ const { requireAuth, optionalAuth, requireDocumentRole } = require('../middlewar
 const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
 const { aiTranscriptionLimiter } = require('../utils/rate-limiters');
+const { METADATA_RESERVED_KEYS } = require('../utils/metadata-keys');
 
 // ── Metadata safety constants ───────────────────────────────────────────────
 //
@@ -14,19 +15,15 @@ const { aiTranscriptionLimiter } = require('../utils/rate-limiters');
 // Keys NOT in this set are silently ignored (not treated as errors) so that
 // future UI additions don't break older server versions in reverse.
 //
-// METADATA_RESERVED_KEYS are system-managed fields.  Attempts to overwrite
-// these via the form endpoint are rejected with a 400 so attackers cannot
-// inject array values (e.g. additional_pages) that feed into filesystem paths.
+// METADATA_RESERVED_KEYS comes from utils/metadata-keys.js so all entry points
+// (form here, JSON in routes/import-api.js) share one definition. The form
+// endpoint rejects any submission that targets a reserved key with a 400.
 const METADATA_FIELD_ALLOW_LIST = new Set([
   'author',
   'location',
   'document_type',
   'language',
   'source'
-]);
-
-const METADATA_RESERVED_KEYS = new Set([
-  'additional_pages'
 ]);
 
 // Maximum character length for any single metadata field value.

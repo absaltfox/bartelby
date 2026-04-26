@@ -84,6 +84,17 @@ function hasPdftoppm() {
   }
 }
 
+// Production guardrail: the pdfjs-dist fallback is for dev only. If a
+// production worker lacks pdftoppm, fail at module load rather than silently
+// rendering uploaded PDFs through a known-vulnerable path
+// (GHSA-wgrm-67xf-hhpq). See docs/background-jobs.md and DEPLOY.md.
+if (process.env.NODE_ENV === 'production' && !hasPdftoppm()) {
+  throw new Error(
+    'pdf-worker: pdftoppm (poppler-utils) is required in production. '
+    + 'Install it in the worker image (Dockerfile) or unset NODE_ENV=production.'
+  );
+}
+
 function hasPdfimages() {
   try {
     execFileSync('pdfimages', ['-v'], { stdio: 'pipe' });
@@ -354,8 +365,16 @@ async function renderWithPdfjs(pdfBuffer, dbJobId) {
   const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
   const { createCanvas } = require('canvas');
 
+  // Defense-in-depth: pdfjs-dist 3.11.174 is vulnerable to malicious-PDF JS
+  // execution (GHSA-wgrm-67xf-hhpq). Disabling eval, font-face, and system
+  // fonts neutralises the documented exploitation path even before the
+  // upgrade in Phase 4 lands. Production also requires pdftoppm (Phase 2),
+  // so this fallback should only ever fire in dev.
   const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(pdfBuffer)
+    data: new Uint8Array(pdfBuffer),
+    isEvalSupported: false,
+    disableFontFace: true,
+    useSystemFonts: false
   }).promise;
 
   await reportProgress(dbJobId, pdf.numPages, 0);
@@ -480,6 +499,7 @@ async function processIpcJob(msg, options = {}) {
 
 module.exports = {
   __testables: {
-    processIpcJob
+    processIpcJob,
+    renderWithPdfjs
   }
 };

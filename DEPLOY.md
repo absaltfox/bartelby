@@ -315,6 +315,23 @@ fly scale memory 1024
 fly scale vm shared-cpu-2x
 ```
 
+### Pre-deploy checks
+
+- Run `npm test` (which invokes `npm run test:hygiene` first) and confirm a
+  clean pass before promoting a build.
+- Run `npm audit --omit=dev` and triage any new high/critical advisory
+  before release. A production-only audit gate inside `test:hygiene` is
+  planned but blocked on the pdfjs-dist / @xenova/transformers upgrade,
+  which clears the residual `tar` chain and the `protobufjs` criticals.
+
+### Worker runtime requirements
+
+- `pdftoppm` (from `poppler-utils`) MUST be present on every worker image.
+  The PDF rendering job aborts at boot in production if it is missing,
+  because the pdfjs-dist fallback is vulnerable to malicious-PDF JS
+  execution (GHSA-wgrm-67xf-hhpq). The provided `Dockerfile` installs
+  `poppler-utils`; verify this if you maintain a fork of the image.
+
 ### Updating
 
 ```bash
