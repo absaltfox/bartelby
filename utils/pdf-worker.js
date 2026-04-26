@@ -354,8 +354,16 @@ async function renderWithPdfjs(pdfBuffer, dbJobId) {
   const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
   const { createCanvas } = require('canvas');
 
+  // Defense-in-depth: pdfjs-dist 3.11.174 is vulnerable to malicious-PDF JS
+  // execution (GHSA-wgrm-67xf-hhpq). Disabling eval, font-face, and system
+  // fonts neutralises the documented exploitation path even before the
+  // upgrade in Phase 4 lands. Production also requires pdftoppm (Phase 2),
+  // so this fallback should only ever fire in dev.
   const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(pdfBuffer)
+    data: new Uint8Array(pdfBuffer),
+    isEvalSupported: false,
+    disableFontFace: true,
+    useSystemFonts: false
   }).promise;
 
   await reportProgress(dbJobId, pdf.numPages, 0);
@@ -480,6 +488,7 @@ async function processIpcJob(msg, options = {}) {
 
 module.exports = {
   __testables: {
-    processIpcJob
+    processIpcJob,
+    renderWithPdfjs
   }
 };
