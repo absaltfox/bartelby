@@ -83,6 +83,12 @@ separate queue service.
 
 Worker images must have `pdftoppm` (poppler-utils) installed; the PDF render job throws at boot in production if it is absent (see `DEPLOY.md` § Worker runtime requirements).
 
+Fly Machine PDF render jobs send heartbeat updates from the standalone worker
+and treat render progress as liveness. During the long `pdftoppm` rasterization
+step, the worker polls the generated PNG files in its temp directory and updates
+`import_jobs.pages_rendered` so the admin Jobs UI can show that image rendering
+is still moving before the final page assets are uploaded.
+
 For batch finalization, the in-memory poller flags are not enough on their own
 because Fly can briefly run overlapping app processes during deployments or
 machine handoff. Completed transcription and extraction batches are therefore

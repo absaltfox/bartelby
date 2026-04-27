@@ -913,10 +913,10 @@ const importJobs = {
 
   updateProgress(id, { page_count, pages_rendered }) {
     if (page_count != null) {
-      runWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
+      runWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP), last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", [page_count, id]);
     }
     if (pages_rendered != null) {
-      runWithoutSave("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
+      runWithoutSave("UPDATE import_jobs SET pages_rendered = ?, last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", [pages_rendered, id]);
     }
     // Don't call saveDatabase() on every progress tick — it's expensive for sql.js.
     // The in-memory DB is already updated; it'll be persisted on markDone/markFailed.
@@ -1001,10 +1001,10 @@ const importJobsAsync = {
 
   async updateProgress(id, { page_count, pages_rendered }) {
     if (page_count != null) {
-      await runAsyncWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id = ?", [page_count, id]);
+      await runAsyncWithoutSave("UPDATE import_jobs SET page_count = ?, started_at = COALESCE(started_at, CURRENT_TIMESTAMP), last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", [page_count, id]);
     }
     if (pages_rendered != null) {
-      await runAsyncWithoutSave("UPDATE import_jobs SET pages_rendered = ? WHERE id = ?", [pages_rendered, id]);
+      await runAsyncWithoutSave("UPDATE import_jobs SET pages_rendered = ?, last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?", [pages_rendered, id]);
     }
   },
 

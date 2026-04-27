@@ -52,4 +52,27 @@ describe('pdf worker ipc mode', () => {
 
     processOnSpy.mockRestore();
   });
+
+  it('sorts generated poppler page files numerically', () => {
+    const processOnSpy = jest.spyOn(process, 'on').mockImplementation(() => process);
+    const pdfWorker = require('../../utils/pdf-worker');
+
+    const files = [
+      'prefix-10.png',
+      'prefix-2.png',
+      'prefix-1.png',
+      'prefix-11.png',
+      'prefix-3.png'
+    ].sort(pdfWorker.__testables.compareNumericFilename);
+
+    expect(files).toEqual([
+      'prefix-1.png',
+      'prefix-2.png',
+      'prefix-3.png',
+      'prefix-10.png',
+      'prefix-11.png'
+    ]);
+
+    processOnSpy.mockRestore();
+  });
 });

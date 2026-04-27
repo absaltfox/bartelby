@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const sharp = require('sharp');
 const storage = require('./storage');
 const { readTempAsset, deleteTempAssets } = require('./temp-assets');
@@ -16,6 +16,7 @@ const isStandalone = process.env.PDF_WORKER_MODE === '1';
 const PREVIEW_MAX_WIDTH = 960;
 const PREVIEW_QUALITY = 72;
 const PAGE_PROCESSING_CONCURRENCY = 4;
+const RASTER_PROGRESS_INTERVAL_MS = 5000;
 
 // ── Progress reporting ──────────────────────────────────────────────────
 
@@ -125,6 +126,25 @@ function makePageAssetNames(prefix, pageNumber) {
   };
 }
 
+function compareNumericFilename(a, b) {
+  const aParts = path.basename(a).match(/\d+/g) || [];
+  const bParts = path.basename(b).match(/\d+/g) || [];
+  const count = Math.max(aParts.length, bParts.length);
+  for (let i = 0; i < count; i++) {
+    const aValue = aParts[i] == null ? -1 : parseInt(aParts[i], 10);
+    const bValue = bParts[i] == null ? -1 : parseInt(bParts[i], 10);
+    if (aValue !== bValue) return aValue - bValue;
+  }
+  return path.basename(a).localeCompare(path.basename(b));
+}
+
+function collectGeneratedPngs(outDir, prefix) {
+  return fs.readdirSync(outDir)
+    .filter((filename) => filename.startsWith(prefix) && filename.endsWith('.png'))
+    .sort(compareNumericFilename)
+    .map((filename) => path.join(outDir, filename));
+}
+
 async function buildPageAssetsFromBuffer(sourceBuffer, pageNumber, prefix) {
   const { filename, previewFilename } = makePageAssetNames(prefix, pageNumber);
   const image = sharp(sourceBuffer, { failOn: 'none' }).rotate();
@@ -232,21 +252,15 @@ async function extractEmbeddedPageImages(pdfPath, dbJobId, prefix) {
     await reportProgress(dbJobId, pageCount, 0);
 
     const tempPrefix = path.join(path.dirname(pdfPath), `${prefix}_embedded`);
-    const filenamesOutput = execFileSync(
-      'pdfimages',
-      ['-png', '-p', '-print-filenames', pdfPath, tempPrefix],
-      {
-        stdio: 'pipe',
-        encoding: 'utf8',
-        timeout: isStandalone ? 30 * 60 * 1000 : 10 * 60 * 1000,
-        maxBuffer: 20 * 1024 * 1024
-      }
-    );
+    const tempPrefixBase = path.basename(tempPrefix);
+    execFileSync('pdfimages', ['-png', '-p', pdfPath, tempPrefix], {
+      stdio: 'pipe',
+      encoding: 'utf8',
+      timeout: isStandalone ? 30 * 60 * 1000 : 10 * 60 * 1000,
+      maxBuffer: 20 * 1024 * 1024
+    });
 
-    extractedFiles = String(filenamesOutput || '')
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+    extractedFiles = collectGeneratedPngs(path.dirname(pdfPath), tempPrefixBase);
 
     if (extractedFiles.length !== rows.length) {
       return null;
@@ -295,9 +309,88 @@ async function extractEmbeddedPageImages(pdfPath, dbJobId, prefix) {
   }
 }
 
-async function renderRasterizedOutputs(outputFiles, dbJobId, prefix) {
+function runPdftoppmWithProgress({ pdfPath, outPrefix, outDir, prefix, dbJobId, pageCount, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const output = [];
+    let settled = false;
+    let lastReported = 0;
+    let progressBusy = false;
+    let progressTimer = null;
+    let timeoutTimer = null;
+
+    function appendOutput(chunk) {
+      if (!chunk) return;
+      output.push(String(chunk));
+      if (output.length > 40) output.splice(0, output.length - 40);
+    }
+
+    async function pollProgress() {
+      if (settled || progressBusy || !pageCount) return;
+      progressBusy = true;
+      try {
+        const rendered = collectGeneratedPngs(outDir, prefix).length;
+        if (rendered !== lastReported) {
+          lastReported = rendered;
+          await reportProgress(dbJobId, pageCount, Math.min(rendered, pageCount));
+        }
+      } catch (err) {
+        console.warn(`PDF worker: failed to poll pdftoppm progress (${err.message})`);
+      } finally {
+        progressBusy = false;
+      }
+    }
+
+    function cleanupTimers() {
+      if (progressTimer) clearInterval(progressTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      progressTimer = null;
+      timeoutTimer = null;
+    }
+
+    progressTimer = setInterval(() => {
+      pollProgress().catch(() => {});
+    }, RASTER_PROGRESS_INTERVAL_MS);
+    timeoutTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanupTimers();
+      child.kill('SIGTERM');
+      reject(new Error(`pdftoppm timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', appendOutput);
+    child.stderr.on('data', appendOutput);
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      cleanupTimers();
+      reject(err);
+    });
+    child.on('close', async (code, signal) => {
+      if (settled) return;
+      cleanupTimers();
+      try {
+        await pollProgress();
+      } catch {}
+      settled = true;
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = output.join('').trim();
+      reject(new Error(`pdftoppm exited with ${signal || `code ${code}`}${detail ? `: ${detail}` : ''}`));
+    });
+  });
+}
+
+async function renderRasterizedOutputs(outputFiles, dbJobId, prefix, { reportProgressUpdates = true } = {}) {
   const pageCount = outputFiles.length;
-  await reportProgress(dbJobId, pageCount, 0);
+  if (reportProgressUpdates) {
+    await reportProgress(dbJobId, pageCount, 0);
+  }
   let completed = 0;
 
   const pages = await processWithConcurrency(
@@ -312,10 +405,16 @@ async function renderRasterizedOutputs(outputFiles, dbJobId, prefix) {
 
       const page = await buildPageAssetsFromBuffer(sourceBuffer, pageNumber, prefix);
       completed += 1;
-      await reportProgress(dbJobId, pageCount, completed);
+      if (reportProgressUpdates) {
+        await reportProgress(dbJobId, pageCount, completed);
+      }
       return page;
     }
   );
+
+  if (!reportProgressUpdates && pageCount > 0) {
+    await reportProgress(dbJobId, pageCount, pageCount);
+  }
 
   return pages.sort((a, b) => a.pageNumber - b.pageNumber);
 }
@@ -344,18 +443,19 @@ async function renderWithPdftoppm(pdfBuffer, dbJobId) {
     // Render all pages at 200 DPI as PNG
     // Ephemeral machines get 180 min; local fork gets 30 min
     const timeoutMs = isStandalone ? 180 * 60 * 1000 : 30 * 60 * 1000;
-    execFileSync('pdftoppm', ['-png', '-r', '200', pdfPath, outPrefix], {
-      stdio: 'pipe',
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: timeoutMs
+    await runPdftoppmWithProgress({
+      pdfPath,
+      outPrefix,
+      outDir,
+      prefix,
+      dbJobId,
+      pageCount,
+      timeoutMs
     });
 
-    const outputFiles = fs.readdirSync(outDir)
-      .filter(f => f.startsWith(prefix) && f.endsWith('.png'))
-      .sort()
-      .map((filename) => path.join(outDir, filename));
+    const outputFiles = collectGeneratedPngs(outDir, prefix);
 
-    return renderRasterizedOutputs(outputFiles, dbJobId, prefix);
+    return renderRasterizedOutputs(outputFiles, dbJobId, prefix, { reportProgressUpdates: false });
   } finally {
     try { fs.unlinkSync(pdfPath); } catch {}
   }
@@ -434,8 +534,12 @@ async function runStandalone() {
   }
 
   const s3TempKey = job.file_path; // e.g. "import_42.pdf"
+  const heartbeatInterval = setInterval(() => {
+    importJobsAsync.updateHeartbeat(jobId).catch(() => {});
+  }, 30000);
 
   try {
+    await importJobsAsync.updateHeartbeat(jobId);
     // Read PDF from S3
     console.log(`[standalone] Reading PDF from S3: temp/${s3TempKey}`);
     const pdfBuffer = await storage.getTempObject(s3TempKey);
@@ -450,6 +554,7 @@ async function runStandalone() {
     // Clean up the source PDF from S3
     try { await storage.deleteTempObject(s3TempKey); } catch (e) {}
 
+    clearInterval(heartbeatInterval);
     process.exit(0);
   } catch (err) {
     console.error(`[standalone] Import job ${jobId} failed:`, err);
@@ -460,6 +565,7 @@ async function runStandalone() {
     }
     // Clean up source PDF
     try { await storage.deleteTempObject(s3TempKey); } catch (e) {}
+    clearInterval(heartbeatInterval);
     process.exit(1);
   }
 }
@@ -500,6 +606,8 @@ async function processIpcJob(msg, options = {}) {
 module.exports = {
   __testables: {
     processIpcJob,
-    renderWithPdfjs
+    renderWithPdfjs,
+    collectGeneratedPngs,
+    compareNumericFilename
   }
 };
