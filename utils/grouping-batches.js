@@ -138,10 +138,12 @@ async function resolveGroupingRuntime(providerName, credentialSource, userId) {
   const resolvedProvider = providerName || defaultProvider || 'openai';
   const user = userId ? await usersAsync.findById(userId) : null;
   const selection = await resolveProviderSelectionAsync(user, resolvedProvider, credentialSource);
+  const cfg = await settingsAsync.getAll();
   const modelInstance = await getCheapVisionModelInstance(resolvedProvider, selection.runtimeConfig);
   return {
     provider: resolvedProvider,
     runtimeConfig: selection.runtimeConfig,
+    cfg,
     modelInstance,
     apiKey: selection.runtimeConfig?.apiKey || selection.runtimeConfig?.api_key
   };
@@ -356,7 +358,7 @@ async function submitVertexGroupingBatch(job, manifest, runtime) {
     buildVertexAssetObjectName
   } = require('./vertex-batch');
 
-  const vertexConfig = resolveVertexBatchConfig(runtime.runtimeConfig, runtime);
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
   assertVertexBatchConfig(vertexConfig);
 
   const partPaths = buildVertexBatchPartPaths(vertexConfig, {
