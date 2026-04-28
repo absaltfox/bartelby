@@ -126,6 +126,11 @@ const collectionsAsync = {
     `);
   },
 
+  async getCount() {
+    const row = await getAsync('SELECT COUNT(*) AS n FROM collections');
+    return Number(row?.n || 0);
+  },
+
   async getAllWithThumbnails() {
     return await allAsync(`
       SELECT c.*,

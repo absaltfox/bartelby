@@ -351,6 +351,16 @@ const usersAsync = {
     return row ? row.count : 0;
   },
 
+  async getActiveCount() {
+    const row = await getAsync("SELECT COUNT(*) AS n FROM users WHERE status = 'active'");
+    return Number(row?.n || 0);
+  },
+
+  async getPendingCount() {
+    const row = await getAsync("SELECT COUNT(*) AS n FROM users WHERE status = 'pending'");
+    return Number(row?.n || 0);
+  },
+
   async getPending() {
     return await allAsync("SELECT id, username, email, created_at FROM users WHERE status = 'pending' ORDER BY created_at");
   },
