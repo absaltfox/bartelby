@@ -491,6 +491,11 @@ const authorityLinkSuggestions = {
     return result.lastInsertRowid;
   },
 
+  async countPending() {
+    const row = await getAsync(`SELECT COUNT(*) AS n FROM authority_link_suggestions WHERE status = 'pending'`);
+    return Number(row?.n || 0);
+  },
+
   async list(status = 'pending', limit = 100, opts = {}) {
     const params = [];
     let statusClause = '';

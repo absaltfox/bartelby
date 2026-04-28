@@ -1783,6 +1783,21 @@ const extractionJobs = {
     `);
   },
 
+  async getStatusCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS n
+      FROM extraction_jobs
+      GROUP BY status
+    `);
+    const out = { total: 0, queued: 0, running: 0, done: 0, failed: 0 };
+    for (const r of rows) {
+      const n = Number(r.n) || 0;
+      out.total += n;
+      if (r.status in out) out[r.status] = n;
+    }
+    return out;
+  },
+
   async getByDocumentId(documentId) {
     return await allAsync(`
       SELECT j.*, d.title AS document_title
