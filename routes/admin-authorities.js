@@ -133,14 +133,17 @@ router.get('/', asyncHandler(async (req, res) => {
   }
 
   if (!q && stores.authorities) {
-    rows = await stores.authorities.getAll(PAGE_SIZE, offset);
-    const totalCount = await stores.authorities.getCount();
-    const suggestionCount = stores.authorityLinkSuggestions
-      ? (await stores.authorityLinkSuggestions.list('pending', 1000)).length
-      : 0;
-    const jobCounts = stores.authorityResolutionJobs && stores.authorityResolutionJobs.getCounts
-      ? await stores.authorityResolutionJobs.getCounts()
-      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 };
+    const [pageRows, totalCount, suggestionCount, jobCounts] = await Promise.all([
+      stores.authorities.getAll(PAGE_SIZE, offset),
+      stores.authorities.getCount(),
+      stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.countPending
+        ? stores.authorityLinkSuggestions.countPending()
+        : 0,
+      stores.authorityResolutionJobs && stores.authorityResolutionJobs.getCounts
+        ? stores.authorityResolutionJobs.getCounts()
+        : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
+    ]);
+    rows = pageRows;
 
     return res.render('admin/authorities', {
       pageTitle: 'Authorities',
@@ -165,8 +168,8 @@ router.get('/', asyncHandler(async (req, res) => {
     currentPage: page,
     totalPages: Math.max(1, Math.ceil(rows.length / PAGE_SIZE)),
     totalCount: rows.length,
-    suggestionCount: stores.authorityLinkSuggestions
-      ? (await stores.authorityLinkSuggestions.list('pending', 1000)).length
+    suggestionCount: stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.countPending
+      ? await stores.authorityLinkSuggestions.countPending()
       : 0,
     authorityJobCounts: stores.authorityResolutionJobs && stores.authorityResolutionJobs.getCounts
       ? await stores.authorityResolutionJobs.getCounts()
