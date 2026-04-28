@@ -40,13 +40,17 @@ router.get('/', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  const [{ counts, typeCounts }, filteredTotal, jobs, configuredProviders] = await Promise.all([
+  const [{ counts, typeCounts }, jobs, configuredProviders] = await Promise.all([
     adminJobsAsync.getCounts(filter, typeFilter),
-    adminJobsAsync.getFilteredCount(filter, typeFilter),
     adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter),
     listConfiguredProviders()
   ]);
 
+  // counts is the per-status COUNT map already scoped to typeFilter, so the
+  // page total is just counts.total (status='all') or counts[filter]. This
+  // avoids 3 redundant COUNT round-trips per page hit and also fixes a latent
+  // bug where getFilteredCount returned a stringified count map for status='all'.
+  const filteredTotal = filter === 'all' ? counts.total : (counts[filter] || 0);
   const totalPages = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE));
 
   res.render('admin/jobs', {
