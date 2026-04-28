@@ -142,6 +142,63 @@ const collectionsAsync = {
     `);
   },
 
+  // Single-roundtrip variant of getAllWithThumbnails + per-collection grants +
+  // per-collection documents.  Used by the admin collections list view to
+  // avoid an N+1 over Turso (each collection previously cost three serial
+  // round-trips: grants, document_collections, documents).
+  async getAdminListView() {
+    const collections = await allAsync(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) AS document_count,
+             COALESCE(
+               (SELECT d.image_path FROM documents d WHERE d.id = c.preview_document_id),
+               (SELECT d.image_path FROM documents d
+                INNER JOIN document_collections dc ON d.id = dc.document_id
+                WHERE dc.collection_id = c.id
+                ORDER BY d.created_at DESC LIMIT 1)
+             ) AS thumbnail
+      FROM collections c
+      ORDER BY c.name
+    `);
+
+    if (collections.length === 0) return [];
+
+    const grants = await allAsync(`
+      SELECT uca.collection_id, uca.role AS collection_role,
+             u.id, u.username, u.email
+      FROM user_collection_access uca
+      JOIN users u ON u.id = uca.user_id
+      WHERE u.status = 'active'
+    `);
+
+    const docs = await allAsync(`
+      SELECT dc.collection_id, d.id, d.title, d.image_path, d.created_at
+      FROM document_collections dc
+      JOIN documents d ON d.id = dc.document_id
+      ORDER BY d.created_at DESC
+    `);
+
+    const grantsByCollection = new Map();
+    for (const g of grants) {
+      const list = grantsByCollection.get(g.collection_id) || [];
+      list.push({ id: g.id, username: g.username, email: g.email, collection_role: g.collection_role });
+      grantsByCollection.set(g.collection_id, list);
+    }
+
+    const docsByCollection = new Map();
+    for (const d of docs) {
+      if (!docsByCollection.has(d.collection_id)) docsByCollection.set(d.collection_id, []);
+      const list = docsByCollection.get(d.collection_id);
+      if (list.length < 100) list.push({ id: d.id, title: d.title, image_path: d.image_path });
+    }
+
+    return collections.map((c) => ({
+      ...c,
+      grantedUsers: grantsByCollection.get(c.id) || [],
+      documents: docsByCollection.get(c.id) || []
+    }));
+  },
+
   async getById(id) {
     return await getAsync('SELECT * FROM collections WHERE id = ?', [id]);
   },
