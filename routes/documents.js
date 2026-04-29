@@ -64,22 +64,14 @@ router.get('/', asyncHandler(async (req, res) => {
     accessAll: user ? !!user.access_all : false
   };
 
-  // Get collections the user can see
+  // Get collections the user can see — visibility resolved in SQL.
   let allCollections;
   if (opts.isAdmin || opts.accessAll) {
-    allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
+    allCollections = (await collectionsAsync.getAllWithThumbnailsForAdmin()).map(normalizeCollectionAssets);
   } else if (user) {
-    const accessIds = await userCollectionAccessAsync.getIdsByUserId(user.id);
-    // Authenticated user: show public + all-users collections + ones they have access to
-    allCollections = (await collectionsAsync.getAllWithThumbnails()).filter(c => {
-      if (c.is_public || c.is_world_public) return true;
-      return accessIds.includes(c.id);
-    }).map(normalizeCollectionAssets);
+    allCollections = (await collectionsAsync.getAccessibleWithThumbnails(user.id)).map(normalizeCollectionAssets);
   } else {
-    // Unauthenticated visitor: only world-public collections
-    allCollections = (await collectionsAsync.getAllWithThumbnails()).filter(c => {
-      return !!c.is_world_public;
-    }).map(normalizeCollectionAssets);
+    allCollections = (await collectionsAsync.getWorldPublicWithThumbnails()).map(normalizeCollectionAssets);
   }
 
   // Total document count (accessible to this user)

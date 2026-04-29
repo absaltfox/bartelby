@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { transcriptsAsync, documentsAsync, collectionsAsync, userCollectionAccessAsync, graphAccess, citations } = require('../database/db');
+const { transcriptsAsync, documentsAsync, collectionsAsync, graphAccess, citations } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
@@ -22,10 +22,10 @@ function parseMultiValue(param) {
 }
 
 async function getAccessibleCollections(req, opts) {
-  const all = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
-  if (opts.isAdmin || opts.accessAll) return all;
-  const accessIds = await userCollectionAccessAsync.getIdsByUserId(req.user.id);
-  return all.filter(c => c.is_public || c.is_world_public || accessIds.includes(c.id));
+  if (opts.isAdmin || opts.accessAll) {
+    return (await collectionsAsync.getAllWithThumbnailsForAdmin()).map(normalizeCollectionAssets);
+  }
+  return (await collectionsAsync.getAccessibleWithThumbnails(req.user.id)).map(normalizeCollectionAssets);
 }
 
 router.get('/', asyncHandler(async (req, res) => {

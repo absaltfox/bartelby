@@ -22,11 +22,15 @@
     </a>
   <% } %>
 
-  <% collections.forEach(function(c) { %>
+  <% collections.forEach(function(c, idx) { %>
     <a href="/collections/<%= c.id %>" class="collection-card">
       <div class="collection-card-thumb">
           <% if (c.thumbnail) { %>
-            <img src="<%= c.thumbnail %>" alt="<%= c.name %>" data-hide-on-image-error>
+            <% if (idx === 0) { %>
+              <img src="<%= c.thumbnail %>" alt="<%= c.name %>" data-hide-on-image-error fetchpriority="high" decoding="async" width="400" height="300">
+            <% } else { %>
+              <img src="<%= c.thumbnail %>" alt="<%= c.name %>" data-hide-on-image-error loading="lazy" decoding="async" width="400" height="300">
+            <% } %>
           <% } %>
         <div class="collection-card-placeholder">&#128220;</div>
       </div>

@@ -32,6 +32,24 @@ function withExclusiveLockSync(fn) {
     throw err;
   }
 }
+
+// Shared SELECT skeleton for the public/auth/admin landing-page queries.
+// Each visibility variant appends its own WHERE clause and ORDER BY so the
+// filter runs in SQL instead of being applied in JS.
+function thumbnailsBaseSelect() {
+  return `
+    SELECT c.*,
+           (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) AS document_count,
+           COALESCE(
+             (SELECT d.image_path FROM documents d WHERE d.id = c.preview_document_id),
+             (SELECT d.image_path FROM documents d
+              INNER JOIN document_collections dc ON d.id = dc.document_id
+              WHERE dc.collection_id = c.id
+              ORDER BY d.created_at DESC LIMIT 1)
+           ) AS thumbnail
+    FROM collections c
+  `;
+}
 const collections = {
   getAll() {
     return all(`
@@ -145,6 +163,28 @@ const collectionsAsync = {
       FROM collections c
       ORDER BY c.name
     `);
+  },
+
+  // Visibility-aware list variants for the public landing page.  These push
+  // the admin/auth/anon visibility filter into SQL so the route does not
+  // load every collection and then filter in JS.
+  async getAllWithThumbnailsForAdmin() {
+    return await allAsync(`${thumbnailsBaseSelect()} ORDER BY c.name`);
+  },
+
+  async getWorldPublicWithThumbnails() {
+    return await allAsync(`${thumbnailsBaseSelect()} WHERE c.is_world_public = 1 ORDER BY c.name`);
+  },
+
+  async getAccessibleWithThumbnails(userId) {
+    return await allAsync(
+      `${thumbnailsBaseSelect()}
+       WHERE c.is_world_public = 1
+          OR c.is_public = 1
+          OR c.id IN (SELECT collection_id FROM user_collection_access WHERE user_id = ?)
+       ORDER BY c.name`,
+      [userId]
+    );
   },
 
   // Single-roundtrip variant of getAllWithThumbnails + per-collection grants +
