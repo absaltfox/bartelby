@@ -83,6 +83,36 @@ describe('grouping batch helpers', () => {
     ]);
   });
 
+  it('parseGroupingBatchResults offsets chunk-relative page labels', () => {
+    const { parseGroupingBatchResults } = require('../../utils/grouping-batches');
+
+    const batchResults = [
+      {
+        customId: 'grouping-batch-1',
+        ok: true,
+        text: '[{"page":1,"number":1},{"page":2,"number":2},{"page":25,"number":3}]'
+      },
+      {
+        customId: 'grouping-batch-2',
+        ok: true,
+        text: '[{"page":51,"number":1},{"page":52,"number":2}]'
+      }
+    ];
+    const manifest = [
+      { customId: 'grouping-batch-1', startIndex: 25, batchSize: 25 },
+      { customId: 'grouping-batch-2', startIndex: 50, batchSize: 25 }
+    ];
+
+    const annotations = parseGroupingBatchResults(batchResults, manifest);
+    expect(annotations).toEqual([
+      { page: 26, number: 1 },
+      { page: 27, number: 2 },
+      { page: 50, number: 3 },
+      { page: 51, number: 1 },
+      { page: 52, number: 2 }
+    ]);
+  });
+
   it('parseGroupingBatchResults handles failed batch items gracefully', () => {
     const { parseGroupingBatchResults } = require('../../utils/grouping-batches');
 

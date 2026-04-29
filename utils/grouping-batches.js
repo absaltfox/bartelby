@@ -94,8 +94,36 @@ async function buildGroupingManifest(tempFiles, opts = {}) {
  * Parse batch results back into the page annotation format that
  * buildGroupsFromAnnotations expects.
  */
-function parseGroupingBatchResults(batchResults) {
+function normalizeGroupingAnnotationPage(rawPage, request) {
+  const page = parseInt(rawPage, 10);
+  if (!Number.isInteger(page) || page < 1) return page;
+  if (!request) return page;
+
+  const startIndex = parseInt(request.startIndex, 10);
+  const batchSize = parseInt(request.batchSize, 10);
+  if (!Number.isInteger(startIndex) || !Number.isInteger(batchSize) || batchSize < 1) {
+    return page;
+  }
+
+  const absoluteStart = startIndex + 1;
+  const absoluteEnd = startIndex + batchSize;
+  if (page >= absoluteStart && page <= absoluteEnd) {
+    return page;
+  }
+  if (page >= 1 && page <= batchSize) {
+    return startIndex + page;
+  }
+  return page;
+}
+
+function parseGroupingBatchResults(batchResults, manifest = []) {
   const annotations = [];
+  const manifestByCustomId = new Map(
+    (Array.isArray(manifest) ? manifest : [])
+      .filter((request) => request?.customId)
+      .map((request) => [request.customId, request])
+  );
+
   for (const result of batchResults) {
     if (!result.ok || !result.text) {
       if (result.error) {
@@ -108,9 +136,10 @@ function parseGroupingBatchResults(batchResults) {
       const match = cleaned.match(/\[[\s\S]*\]/);
       if (!match) continue;
       const arr = JSON.parse(match[0]);
+      const request = manifestByCustomId.get(result.customId);
       for (const item of arr) {
         annotations.push({
-          page: item.page,
+          page: normalizeGroupingAnnotationPage(item.page, request),
           number: item.number != null ? parseInt(item.number, 10) || null : null
         });
       }

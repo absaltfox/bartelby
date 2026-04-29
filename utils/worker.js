@@ -492,7 +492,7 @@ async function pollRunningGroupingBatches() {
           error: pr.error
         }));
 
-        const annotations = parseGroupingBatchResults(batchResults);
+        const annotations = parseGroupingBatchResults(batchResults, parseBatchManifest(job));
         const tempFiles = payload.tempFiles || [];
         const groups = buildGroupsFromAnnotations(annotations, tempFiles);
 
