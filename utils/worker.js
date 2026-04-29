@@ -412,7 +412,7 @@ async function pollRunningGroupingBatches() {
         const batchRuntime = {
           apiKey: runtime.apiKey,
           model: runtime.modelInstance?.modelId,
-          cfg: runtime.runtimeConfig
+          cfg: runtime.cfg
         };
         const batchJob = { ...job, batch_remote_id: job.batch_remote_id };
 

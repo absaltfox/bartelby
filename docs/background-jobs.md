@@ -182,6 +182,15 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
+`initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip
+the recovery sweeps above and only run migrations + FTS5 setup. Ephemeral
+single-purpose processes (e.g. the standalone PDF render worker in
+`utils/pdf-worker.js`) MUST opt out, because their startup window can race a
+main worker that has just claimed an unrelated job. Without the opt-out,
+the grouping recovery sweep marks any in-flight grouping submission
+(`processing`, no `batch_remote_id`) as failed, even when a live worker is
+still uploading its inputs.
+
 ---
 
 ## Adding a New Worker Task

@@ -421,7 +421,8 @@ async function flushDatabase() {
   }
 }
 
-async function initializeSchema() {
+async function initializeSchema(options = {}) {
+  const { runStaleJobRecovery = true } = options;
   await initDatabase();
 
   const currentVersion = await db.getSchemaVersion();
@@ -462,10 +463,21 @@ async function initializeSchema() {
   // Skipped silently on SQLite builds without fts5 (e.g. default sql.js).
   await ensureFts5();
 
+  if (!runStaleJobRecovery) {
+    await migrateEncryptedSettings();
+    return db;
+  }
+
   // Recover from unclean shutdown: any jobs left in processing/running
   // can never complete (the process that was handling them is gone).
   // Skip jobs with a machine_id — they run on ephemeral Fly machines
   // and may still be processing on a separate VM.
+  //
+  // This block is gated on `runStaleJobRecovery` because ephemeral
+  // single-purpose processes (e.g. the standalone PDF render worker in
+  // utils/pdf-worker.js) must not sweep state owned by the main app
+  // process — doing so kills in-flight jobs of unrelated families. See
+  // docs/background-jobs.md § Graceful Shutdown and Stale Job Recovery.
   const staleRenderImports = await get(`
     SELECT COUNT(*) as count
     FROM import_jobs

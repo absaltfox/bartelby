@@ -522,9 +522,13 @@ async function runStandalone() {
 
   console.log(`[standalone] Starting PDF worker for import job ${jobId}`);
 
-  // Initialize database connection
+  // Initialize database connection. Skip stale-job recovery: this standalone
+  // process only owns its single render job, and the main app's recovery
+  // sweep racing other workers' in-flight jobs (e.g. grouping submissions
+  // with batch_remote_id still NULL) marks them failed mid-flight. See
+  // docs/background-jobs.md § Graceful Shutdown and Stale Job Recovery.
   const { initializeSchema, importJobsAsync } = require('../database/db');
-  await initializeSchema();
+  await initializeSchema({ runStaleJobRecovery: false });
   _importJobsAsync = importJobsAsync;
 
   const job = await importJobsAsync.getById(jobId);
