@@ -1669,6 +1669,8 @@ document.addEventListener('DOMContentLoaded', function() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
         body: JSON.stringify({
           tempFiles: allTempFiles,
+          importJobId,
+          collectionIds: getSelectedCollectionIds('.page-collection-cb'),
           provider: selectedProvider,
           credentialSource: selectedCredential,
           cropRegion: cropRegion || 'top',

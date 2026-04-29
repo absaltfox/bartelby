@@ -284,6 +284,39 @@ function normalizeFallbackGroupingCropRegion(value, cropRegion) {
   return normalized;
 }
 
+function buildGroupingStateFromGroups(groups, tempFiles, collectionIds = []) {
+  return {
+    collectionIds: Array.isArray(collectionIds)
+      ? collectionIds.map((id) => parseInt(id, 10)).filter(Number.isInteger)
+      : [],
+    groups: (Array.isArray(groups) ? groups : [])
+      .map((group) => {
+        const pages = (Array.isArray(group.pageIndices) ? group.pageIndices : [])
+          .map((idx) => tempFiles[idx])
+          .filter(Boolean);
+        return {
+          label: group.label || null,
+          source: 'ai',
+          confidence: group.confidence || null,
+          pages
+        };
+      })
+      .filter((group) => group.pages.length >= 2)
+  };
+}
+
+async function persistSourceGroupingState(importJobsAsync, payload, groups) {
+  const sourceImportJobId = parseInt(payload.sourceImportJobId, 10);
+  if (!Number.isInteger(sourceImportJobId)) return;
+
+  const groupingState = buildGroupingStateFromGroups(
+    groups,
+    payload.tempFiles || [],
+    payload.collectionIds || []
+  );
+  await importJobsAsync.updateGroupingState(sourceImportJobId, groupingState);
+}
+
 async function tickGroupingJobs() {
   if (groupingBusy) return;
   groupingBusy = true;
@@ -366,6 +399,7 @@ async function tickGroupingJobs() {
     }
 
     await importJobsAsync.markDone(job.id, groupingResult.groups);
+    await persistSourceGroupingState(importJobsAsync, payload, groupingResult.groups);
     console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
 
   } catch (err) {
@@ -495,6 +529,7 @@ async function pollRunningGroupingBatches() {
         }
 
         await importJobsAsync.markDone(job.id, groups);
+        await persistSourceGroupingState(importJobsAsync, payload, groups);
         console.log(`[worker] grouping batch job ${job.id}: complete (${groups.length} groups from ${annotations.length} annotations)`);
 
       } catch (err) {

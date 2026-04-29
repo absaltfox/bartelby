@@ -495,6 +495,19 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
   try {
     const defaultProvider = await settingsAsync.get('default_provider');
     const { provider: providerName = defaultProvider || 'openai', credentialSource = 'system' } = req.body;
+    const sourceImportJobId = parseInt(req.body.importJobId || req.body.sourceImportJobId, 10);
+    if (Number.isInteger(sourceImportJobId)) {
+      const sourceJob = await importJobsAsync.getById(sourceImportJobId);
+      if (!sourceJob) {
+        return res.status(404).json({ error: 'Source import job not found.' });
+      }
+      if (req.user?.role !== 'admin' && sourceJob.user_id !== req.user?.id) {
+        return res.status(403).json({ error: 'You do not have access to that import job.' });
+      }
+    }
+    const collectionIds = Array.isArray(req.body.collectionIds)
+      ? req.body.collectionIds.map((id) => parseInt(id, 10)).filter(Number.isInteger)
+      : [];
     const cropRegion = ['top', 'bottom', 'both'].includes(req.body.cropRegion) ? req.body.cropRegion : 'top';
     const fallbackCropRegion = ['top', 'bottom', 'both'].includes(req.body.fallbackCropRegion)
       && req.body.fallbackCropRegion !== cropRegion
@@ -513,6 +526,8 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
       user_id: req.user?.id || null,
       payload: {
         tempFiles: sanitized,
+        sourceImportJobId: Number.isInteger(sourceImportJobId) ? sourceImportJobId : null,
+        collectionIds,
         provider: providerName,
         credentialSource,
         cropRegion,

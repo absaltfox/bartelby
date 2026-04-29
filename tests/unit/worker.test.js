@@ -9,6 +9,7 @@ describe('background worker grouping jobs', () => {
   it('passes the requesting user id into queued grouping execution', async () => {
     const markDone = jest.fn(async () => {});
     const markFailed = jest.fn(async () => {});
+    const updateGroupingState = jest.fn(async () => {});
     const promoteQueuedTempAssets = jest.fn(async () => ['durable-1.png', 'durable-2.png']);
     const runDocumentGrouping = jest.fn(async () => ({
       groups: [{ pageIndices: [0, 1], label: 'Doc 1', confidence: 'high' }]
@@ -22,11 +23,14 @@ describe('background worker grouping jobs', () => {
           submit_payload: JSON.stringify({
             provider: 'openai',
             tempFiles: ['page-1.png', 'page-2.png'],
-            credentialSource: 'user:12'
+            credentialSource: 'user:12',
+            sourceImportJobId: 12,
+            collectionIds: [4]
           })
         })),
         markDone,
-        markFailed
+        markFailed,
+        updateGroupingState
       }
     }));
     jest.doMock('../../utils/temp-assets', () => ({
@@ -59,6 +63,15 @@ describe('background worker grouping jobs', () => {
       })
     );
     expect(markDone).toHaveBeenCalledWith(91, [{ pageIndices: [0, 1], label: 'Doc 1', confidence: 'high' }]);
+    expect(updateGroupingState).toHaveBeenCalledWith(12, {
+      collectionIds: [4],
+      groups: [{
+        label: 'Doc 1',
+        source: 'ai',
+        confidence: 'high',
+        pages: ['durable-1.png', 'durable-2.png']
+      }]
+    });
     expect(markFailed).not.toHaveBeenCalled();
   });
 
