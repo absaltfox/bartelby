@@ -136,11 +136,12 @@ function getTopicsStatus(row) {
 
 // Admin dashboard
 router.get('/', asyncHandler(async (req, res) => {
-  const docCount        = await documentsAsync.getCount({ isAdmin: true });
-  const pendingCount    = (await usersAsync.getPending()).length;
-  const collectionCount = (await collectionsAsync.getAll()).length;
-  const allUsers        = await usersAsync.getAll();
-  const userCount       = allUsers.filter(u => u.status === 'active').length;
+  const [docCount, pendingCount, collectionCount, userCount] = await Promise.all([
+    documentsAsync.getCount({ isAdmin: true }),
+    usersAsync.getPendingCount(),
+    collectionsAsync.getCount(),
+    usersAsync.getActiveCount()
+  ]);
 
   res.render('admin/index', {
     pageTitle: 'Admin',

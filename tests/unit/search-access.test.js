@@ -101,21 +101,35 @@ describe('citations.getByEntityId access scoping', () => {
 });
 
 // ── Test 2: getAccessibleCollections includes is_world_public collections ────
-// We test the filter logic directly by extracting it from routes/search.js source.
-// Since the function is not exported, we verify the source contains the fix,
-// then test the equivalent logic with a simple data set.
+// Visibility now lives in SQL inside collectionsAsync.getAccessibleWithThumbnails
+// (database/models/collections.js).  Routes/search.js calls that helper instead
+// of filtering in JS, so the regression guard reads from the model source.
 
 describe('getAccessibleCollections includes is_world_public', () => {
   const fs = require('fs');
   const path = require('path');
-  const src = fs.readFileSync(
+  const routeSrc = fs.readFileSync(
     path.join(__dirname, '../../routes/search.js'),
     'utf8'
   );
+  const modelSrc = fs.readFileSync(
+    path.join(__dirname, '../../database/models/collections.js'),
+    'utf8'
+  );
 
-  it('filter includes is_world_public check', () => {
-    // The function must check is_world_public in its filter
-    expect(src).toMatch(/is_world_public/);
+  it('search route delegates to the visibility-aware collection helpers', () => {
+    // The route must use getAllWithThumbnailsForAdmin for admin/accessAll and
+    // getAccessibleWithThumbnails for ordinary authenticated users — that's
+    // where the SQL visibility filter lives.
+    expect(routeSrc).toMatch(/getAllWithThumbnailsForAdmin/);
+    expect(routeSrc).toMatch(/getAccessibleWithThumbnails/);
+  });
+
+  it('getAccessibleWithThumbnails SQL filter includes is_world_public check', () => {
+    // The SQL clause must accept world-public collections without requiring an
+    // explicit user_collection_access row.
+    expect(modelSrc).toMatch(/getAccessibleWithThumbnails/);
+    expect(modelSrc).toMatch(/is_world_public\s*=\s*1/);
   });
 
   it('filter logic: world-public collection is visible to non-admin user without explicit access', () => {

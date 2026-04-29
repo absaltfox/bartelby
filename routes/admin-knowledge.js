@@ -33,24 +33,25 @@ function appendRedirectParams(basePath, params) {
 }
 
 async function buildKnowledgePageState() {
-  const [collections, extractionJobs, authorityCount, authoritySuggestions, authorityJobCounts] = await Promise.all([
+  const [collections, extractionCounts, authorityCount, authoritySuggestionCount, authorityJobCounts] = await Promise.all([
     collectionsAsync.getAll(),
-    extractionJobsAsync.getAll(),
+    extractionJobsAsync && extractionJobsAsync.getStatusCounts
+      ? extractionJobsAsync.getStatusCounts()
+      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 },
     authoritiesAsync && authoritiesAsync.getCount ? authoritiesAsync.getCount() : 0,
-    authorityLinkSuggestionsAsync && authorityLinkSuggestionsAsync.list ? authorityLinkSuggestionsAsync.list('pending', 1000) : [],
-    authorityResolutionJobsAsync && authorityResolutionJobsAsync.getCounts ? authorityResolutionJobsAsync.getCounts() : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
+    authorityLinkSuggestionsAsync && authorityLinkSuggestionsAsync.countPending
+      ? authorityLinkSuggestionsAsync.countPending()
+      : 0,
+    authorityResolutionJobsAsync && authorityResolutionJobsAsync.getCounts
+      ? authorityResolutionJobsAsync.getCounts()
+      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
   ]);
-  const extractionCounts = (extractionJobs || []).reduce((acc, job) => {
-    acc.total += 1;
-    acc[job.status || 'unknown'] = (acc[job.status || 'unknown'] || 0) + 1;
-    return acc;
-  }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
 
   return {
     collections: collections || [],
     extractionCounts,
     authorityCount: Number(authorityCount || 0),
-    authoritySuggestionCount: Array.isArray(authoritySuggestions) ? authoritySuggestions.length : 0,
+    authoritySuggestionCount: Number(authoritySuggestionCount || 0),
     authorityJobCounts
   };
 }

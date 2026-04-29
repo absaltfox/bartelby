@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { collectionsAsync, usersAsync, userCollectionAccessAsync, documentCollectionsAsync, documentsAsync } = require('../database/db');
+const { collectionsAsync, usersAsync, userCollectionAccessAsync } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
 const audit = require('../utils/audit-log');
@@ -12,30 +12,18 @@ router.use(requireAdmin);
 
 // List collections
 router.get('/', asyncHandler(async (req, res) => {
-  const allCollections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
+  const allCollections = (await collectionsAsync.getAdminListView()).map((c) => ({
+    ...normalizeCollectionAssets(c),
+    documents: (c.documents || []).map(normalizeDocumentAssets)
+  }));
 
-  // Attach per-collection user access list + documents for preview picker
-  const collectionsWithAccess = [];
-  for (const c of allCollections) {
-    const docIds = (await documentCollectionsAsync.getByCollectionId(c.id)).map(dc => dc.document_id);
-    const collectionDocs = docIds.length > 0
-      ? (await documentsAsync.getByIds(docIds, 100, 0)).map(normalizeDocumentAssets)
-      : [];
-    collectionsWithAccess.push({
-      ...c,
-      grantedUsers: await userCollectionAccessAsync.getByCollectionId(c.id),
-      documents: collectionDocs
-    });
-  }
-
-  // Non-admin, non-access_all active users (candidates for access grants)
-  const activeUsers = (await usersAsync.getAll()).filter(u =>
+  const activeUsers = (await usersAsync.getAll()).filter((u) =>
     u.status === 'active' && u.role !== 'admin' && !u.access_all
   );
 
   res.render('admin/collections', {
     pageTitle: 'Collections',
-    allCollections: collectionsWithAccess,
+    allCollections,
     activeUsers,
     saved: req.query.saved === '1',
     error: req.query.error || null,
