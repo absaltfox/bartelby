@@ -435,9 +435,85 @@ async function submitVertexGroupingBatch(job, manifest, runtime) {
   };
 }
 
+function extractVertexGroupingText(response) {
+  return (response?.candidates || [])
+    .flatMap((candidate) => candidate?.content?.parts || [])
+    .map((part) => part?.text || '')
+    .filter(Boolean)
+    .join('\n');
+}
+
+async function pollVertexGroupingBatch(job, runtime, manifest = []) {
+  const {
+    resolveVertexBatchConfig,
+    assertVertexBatchConfig,
+    buildVertexBatchPartPaths,
+    getVertexBatchJob,
+    downloadVertexBatchOutputs
+  } = require('./vertex-batch');
+
+  const vertexConfig = resolveVertexBatchConfig(runtime.cfg, runtime);
+  assertVertexBatchConfig(vertexConfig);
+
+  const batch = await getVertexBatchJob(vertexConfig, job.batch_remote_id);
+  const remoteStatus = batch?.state || 'JOB_STATE_PENDING';
+
+  if (remoteStatus !== 'JOB_STATE_SUCCEEDED') {
+    return {
+      state: ['JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_PAUSED'].includes(remoteStatus)
+        ? 'failed'
+        : 'running',
+      remoteStatus,
+      completedCount: Number(batch?.completionStats?.successfulCount || 0),
+      failedCount: Number(batch?.completionStats?.failedCount || 0),
+      pageResults: [],
+      error: batch?.error?.message || null
+    };
+  }
+
+  const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+    family: 'grouping',
+    jobId: job.id,
+    attempt: 1,
+    chunkIndex: 0,
+    totalChunks: 1
+  });
+
+  const outputLines = await downloadVertexBatchOutputs(vertexConfig, partPaths.outputPrefix);
+  const requests = Array.isArray(manifest) ? manifest : [];
+  const pageResults = outputLines.map((entry, index) => {
+    const customId = requests[index]?.customId || `grouping-batch-${index}`;
+    const status = String(entry?.status || '').trim();
+    if (!entry?.response || status) {
+      return {
+        customId,
+        ok: false,
+        text: null,
+        error: status || entry?.error?.message || 'Vertex grouping batch request failed.'
+      };
+    }
+    return {
+      customId,
+      ok: true,
+      text: extractVertexGroupingText(entry.response),
+      error: null
+    };
+  });
+
+  return {
+    state: 'succeeded',
+    remoteStatus,
+    completedCount: Number(batch?.completionStats?.successfulCount || pageResults.filter((item) => item.ok).length),
+    failedCount: Number(batch?.completionStats?.failedCount || pageResults.filter((item) => !item.ok).length),
+    pageResults,
+    error: null
+  };
+}
+
 module.exports = {
   buildGroupingManifest,
   parseGroupingBatchResults,
+  pollVertexGroupingBatch,
   resolveGroupingRuntime,
   submitGroupingBatch,
   DEFAULT_BATCH_SIZE

@@ -147,6 +147,7 @@ function parseBatchManifest(job) {
     const parsed = typeof job.batch_manifest === 'string'
       ? JSON.parse(job.batch_manifest)
       : job.batch_manifest;
+    if (Array.isArray(parsed)) return parsed;
     return Array.isArray(parsed?.requests) ? parsed.requests : [];
   } catch (err) {
     return [];

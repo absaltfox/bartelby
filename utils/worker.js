@@ -386,7 +386,7 @@ async function pollRunningGroupingBatches() {
     const jobs = await importJobsAsync.getRunningGroupingBatches();
     if (jobs.length === 0) return;
 
-    const { resolveGroupingRuntime, parseGroupingBatchResults } = require('./grouping-batches');
+    const { resolveGroupingRuntime, parseGroupingBatchResults, pollVertexGroupingBatch } = require('./grouping-batches');
     const { buildGroupsFromAnnotations } = require('./import-workflow');
     const {
       pollOpenAiBatch,
@@ -426,8 +426,8 @@ async function pollRunningGroupingBatches() {
         } else if (runtime.provider === 'vertex') {
           if (isVertexBatchRemoteId(job.batch_remote_id)) {
             const vertexManifest = parseBatchManifest(job);
-            pollResult = await pollVertexTranscriptionBatch(
-              batchJob, batchRuntime, GROUPING_PROMPT, vertexManifest, job.batch_remote_id
+            pollResult = await pollVertexGroupingBatch(
+              batchJob, { ...batchRuntime, provider: 'vertex' }, vertexManifest
             );
           } else {
             pollResult = await pollGeminiBatch(batchJob, batchRuntime, GROUPING_PROMPT, job.batch_remote_id);
@@ -453,7 +453,7 @@ async function pollRunningGroupingBatches() {
         const batchResults = pollResult.pageResults.map((pr) => ({
           customId: pr.customId,
           ok: pr.ok,
-          text: pr.result?.transcription || pr.result?.text ||
+          text: pr.text || pr.result?.transcription || pr.result?.text ||
             (pr.result?.paradata ? null : JSON.stringify(pr.result)),
           error: pr.error
         }));

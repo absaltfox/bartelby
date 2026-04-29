@@ -164,4 +164,66 @@ describe('grouping batch helpers', () => {
       batch_remote_status: 'JOB_STATE_PENDING'
     });
   });
+
+  it('polls Vertex grouping batches from the grouping output prefix', async () => {
+    const resolveVertexBatchConfig = jest.fn(() => ({
+      projectId: 'bartelby-493706',
+      location: 'global',
+      bucket: 'bartelby-vt-trans',
+      inputPrefix: 'input',
+      outputPrefix: 'output',
+      credentialsJson: '{}'
+    }));
+    const assertVertexBatchConfig = jest.fn();
+    const buildVertexBatchPartPaths = jest.fn(() => ({
+      outputPrefix: 'output/grouping/job-46/attempt-1/part-1-of-1'
+    }));
+    const getVertexBatchJob = jest.fn(async () => ({
+      state: 'JOB_STATE_SUCCEEDED',
+      completionStats: { successfulCount: 1, failedCount: 0 }
+    }));
+    const downloadVertexBatchOutputs = jest.fn(async () => [{
+      response: {
+        candidates: [{
+          content: {
+            parts: [{ text: '[{"page":1,"number":1},{"page":2,"number":2}]' }]
+          }
+        }]
+      }
+    }]);
+
+    jest.doMock('../../utils/vertex-batch', () => ({
+      resolveVertexBatchConfig,
+      assertVertexBatchConfig,
+      buildVertexBatchPartPaths,
+      getVertexBatchJob,
+      downloadVertexBatchOutputs
+    }));
+
+    const { parseGroupingBatchResults, pollVertexGroupingBatch } = require('../../utils/grouping-batches');
+    const result = await pollVertexGroupingBatch(
+      {
+        id: 46,
+        batch_remote_id: 'projects/bartelby-493706/locations/global/batchPredictionJobs/123'
+      },
+      { cfg: { vertex_batch_project_id: 'bartelby-493706' } },
+      [{ customId: 'grouping-batch-0', startIndex: 0, batchSize: 2 }]
+    );
+
+    expect(buildVertexBatchPartPaths).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      family: 'grouping',
+      jobId: 46
+    }));
+    expect(downloadVertexBatchOutputs).toHaveBeenCalledWith(expect.any(Object), 'output/grouping/job-46/attempt-1/part-1-of-1');
+    expect(result.pageResults).toEqual([{
+      customId: 'grouping-batch-0',
+      ok: true,
+      text: '[{"page":1,"number":1},{"page":2,"number":2}]',
+      error: null
+    }]);
+    expect(parseGroupingBatchResults(result.pageResults)).toEqual([
+      { page: 1, number: 1 },
+      { page: 2, number: 2 }
+    ]);
+  });
 });
