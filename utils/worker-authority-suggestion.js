@@ -15,15 +15,31 @@ function makeLogger(jobId, authoritySuggestionJobsAsync) {
 /**
  * Build the embed function from @huggingface/transformers (v3+).
  * Returns async (texts: string[]) => number[][]
+ *
+ * Memory note: each call processes texts in chunks of EMBED_CHUNK_SIZE so that
+ * peak memory stays bounded regardless of scope size. Worker nodes have OOM'd
+ * on full-corpus runs that embedded ~1k+ entities in a single call.
  */
+const EMBED_CHUNK_SIZE = 64;
+
 async function makeEmbedFn() {
   const { pipeline } = require('@huggingface/transformers');
   const embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
     dtype: 'q8'
   });
   return async function embed(texts) {
-    const results = await embedder(texts, { pooling: 'mean', normalize: true });
-    return results.map(r => Array.from(r.data));
+    const out = [];
+    for (let i = 0; i < texts.length; i += EMBED_CHUNK_SIZE) {
+      const chunk = texts.slice(i, i + EMBED_CHUNK_SIZE);
+      const tensor = await embedder(chunk, { pooling: 'mean', normalize: true });
+      // v3 returns a single batched Tensor with shape [N, D], not an array.
+      // tolist() unflattens that into a JS array of arrays.
+      const rows = typeof tensor.tolist === 'function'
+        ? tensor.tolist()
+        : Array.from(tensor).map((r) => Array.from(r.data || r));
+      for (const row of rows) out.push(row);
+    }
+    return out;
   };
 }
 

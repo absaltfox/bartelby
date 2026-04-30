@@ -312,15 +312,18 @@ async function materializeExtractionResult({
 
     // Post-extraction: queue a scoped authority suggestion job if the document
     // belongs to a collection and no suggestion job is already pending/running.
+    // documentCollectionsAsync.getByDocumentId returns rows from `collections`
+    // (SELECT c.*), so the collection's primary key is `id`, not `collection_id`.
     try {
       const { authoritySuggestionJobsAsync, documentCollectionsAsync } = require('../database/db');
       const memberships = await documentCollectionsAsync.getByDocumentId(doc.id);
       for (const membership of memberships) {
+        const collectionId = membership.id;
         const alreadyQueued = await authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(
-          membership.collection_id
+          collectionId
         );
         if (!alreadyQueued) {
-          await authoritySuggestionJobsAsync.create({ collection_id: membership.collection_id });
+          await authoritySuggestionJobsAsync.create({ collection_id: collectionId });
         }
       }
     } catch (triggerErr) {
@@ -540,6 +543,7 @@ async function pollRunningExtractionBatches() {
       // Post-batch: queue authority suggestion jobs for every collection that
       // contains a document from this batch, mirroring the single-job path in
       // materializeExtractionResult.  Non-fatal — log but don't fail the job.
+      // See materializeExtractionResult for why we read `membership.id`.
       try {
         const { authoritySuggestionJobsAsync, documentCollectionsAsync } = require('../database/db');
         const { parseBatchManifest } = require('./extraction-batches');
@@ -548,13 +552,14 @@ async function pollRunningExtractionBatches() {
         for (const entry of manifest) {
           const memberships = await documentCollectionsAsync.getByDocumentId(entry.documentId);
           for (const membership of memberships) {
-            if (seenCollections.has(membership.collection_id)) continue;
-            seenCollections.add(membership.collection_id);
+            const collectionId = membership.id;
+            if (seenCollections.has(collectionId)) continue;
+            seenCollections.add(collectionId);
             const alreadyQueued = await authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(
-              membership.collection_id
+              collectionId
             );
             if (!alreadyQueued) {
-              await authoritySuggestionJobsAsync.create({ collection_id: membership.collection_id });
+              await authoritySuggestionJobsAsync.create({ collection_id: collectionId });
             }
           }
         }

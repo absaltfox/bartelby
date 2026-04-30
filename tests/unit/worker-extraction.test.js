@@ -273,6 +273,70 @@ describe('extraction worker cycle - attempt logging', () => {
 
     expect(logLine.mock.calls[0][0]).toContain('attempt 1');
   });
+
+  it('queues a per-collection authority suggestion job after a single extraction completes', async () => {
+    const authoritySuggestionCreate = jest.fn(async () => {});
+    const hasPendingOrRunning = jest.fn(async () => false);
+    // Real shape: documentCollectionsAsync.getByDocumentId returns `collections.*`,
+    // so the collection's primary key is `id`.
+    const getByDocumentId = jest.fn(async () => [{ id: 42, name: 'Letters' }]);
+
+    jest.doMock('../../utils/worker-runtime', () => ({
+      MAX_RETRIES: 3,
+      COOLDOWN_MS: 0,
+      isTransientError: jest.fn(() => false),
+      sleep: jest.fn(async () => {}),
+      makeExtractionLogger: jest.fn(() => jest.fn(async () => {})),
+      resolveRuntimeConfig: jest.fn(async () => ({
+        providerName: 'openai',
+        temperature: 0.2,
+        runtimeConfig: {}
+      }))
+    }));
+
+    jest.doMock('../../database/db', () => ({
+      extractionJobs: {
+        claimNextQueued: jest.fn(async () => ({
+          id: 200,
+          attempts: 0,
+          job_kind: 'single',
+          document_id: 7,
+          transcript_id: 5,
+          provider_key_scope: null,
+          reset_existing: 0
+        })),
+        markDone: jest.fn(async () => {}),
+        markFailed: jest.fn(async () => {})
+      },
+      transcriptsAsync: { getById: jest.fn(async () => ({ id: 5, content: 'test content' })) },
+      documentsAsync: { getById: jest.fn(async () => ({ id: 7, metadata: {} })) },
+      entities: { create: jest.fn(async () => 1) },
+      entityAliases: { createIfMissing: jest.fn(async () => {}) },
+      dateExpressions: { createIfMissing: jest.fn(async () => {}) },
+      relationships: { findExisting: jest.fn(async () => null), create: jest.fn(async () => 2) },
+      citations: { create: jest.fn(async () => {}) },
+      relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
+      graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
+      documentCollectionsAsync: { getByDocumentId },
+      authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
+    }));
+
+    jest.doMock('../../utils/extraction-llm', () => ({
+      runExtraction: jest.fn(async () => ({ entities: [], relationships: [], dates: [], paradata: {} }))
+    }));
+    jest.doMock('../../utils/entity-resolution', () => ({
+      resolveEntityInScope: jest.fn(() => null),
+      normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
+      normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
+    }));
+
+    const worker = require('../../utils/worker-extraction');
+    await worker.runExtractionWorkerCycle();
+
+    expect(getByDocumentId).toHaveBeenCalledWith(7);
+    expect(hasPendingOrRunning).toHaveBeenCalledWith(42);
+    expect(authoritySuggestionCreate).toHaveBeenCalledWith({ collection_id: 42 });
+  });
 });
 
 describe('extraction batch polling', () => {
@@ -705,8 +769,10 @@ describe('extraction batch polling', () => {
   }
 
   it('queues authority suggestion jobs for collections after successful batch finalization', async () => {
+    // documentCollectionsAsync.getByDocumentId returns `collections.*` rows,
+    // so the collection's primary key is `id`, not `collection_id`.
     const { authoritySuggestionCreate, hasPendingOrRunning, getByDocumentId } = makeBatchPollingMocks({
-      collectionMemberships: [{ collection_id: 42 }],
+      collectionMemberships: [{ id: 42, name: 'Letters' }],
       alreadyQueued: false
     });
 
@@ -720,7 +786,7 @@ describe('extraction batch polling', () => {
 
   it('skips authority suggestion when one is already pending for the collection', async () => {
     const { authoritySuggestionCreate } = makeBatchPollingMocks({
-      collectionMemberships: [{ collection_id: 42 }],
+      collectionMemberships: [{ id: 42, name: 'Letters' }],
       alreadyQueued: true
     });
 
@@ -746,8 +812,9 @@ describe('extraction batch polling', () => {
 
     const authoritySuggestionCreate = jest.fn(async () => {});
     const hasPendingOrRunning = jest.fn(async () => false);
-    // Both documents belong to the same collection
-    const getByDocumentId = jest.fn(async () => [{ collection_id: 99 }]);
+    // Both documents belong to the same collection. getByDocumentId returns
+    // `collections.*` rows, so the collection id field is `id`.
+    const getByDocumentId = jest.fn(async () => [{ id: 99, name: 'Letters' }]);
 
     const extractionJobs = {
       getRunningBatches: jest.fn(async () => [{
