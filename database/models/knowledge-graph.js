@@ -425,8 +425,7 @@ const authorities = {
       throw new Error('Authority not found.');
     }
 
-    await runAsync('BEGIN');
-    try {
+    const runMerge = async () => {
       await runAsync('UPDATE entities SET authority_id = ? WHERE authority_id = ?', [keepId, mergeId]);
       await runAsync(`
         DELETE FROM authority_link_suggestions
@@ -439,10 +438,23 @@ const authorities = {
       `, [mergeId, keepId]);
       await runAsync('UPDATE authority_link_suggestions SET suggested_authority_id = ? WHERE suggested_authority_id = ?', [keepId, mergeId]);
       await runAsync('DELETE FROM authorities WHERE id = ?', [mergeId]);
-      await runAsync('COMMIT');
-    } catch (err) {
-      await runAsync('ROLLBACK');
-      throw err;
+    };
+
+    // Turso (libsql/HTTP) auto-commits each statement, so manual BEGIN/COMMIT
+    // produces a stray "cannot rollback - no transaction is active" error that
+    // masks any real failure. See database/models/collections.js for the same
+    // pattern.
+    if (process.env.DATABASE_DRIVER === 'turso') {
+      await runMerge();
+    } else {
+      await runAsync('BEGIN');
+      try {
+        await runMerge();
+        await runAsync('COMMIT');
+      } catch (err) {
+        await runAsync('ROLLBACK').catch(() => {});
+        throw err;
+      }
     }
 
     await saveDatabase();
@@ -541,8 +553,8 @@ const authorityLinkSuggestions = {
     if (!suggestion) {
       throw new Error('Authority suggestion not found.');
     }
-    await runAsync('BEGIN');
-    try {
+
+    const runApprove = async () => {
       await runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [suggestion.suggested_authority_id, suggestion.entity_id]);
       await runAsync(`
         UPDATE authority_link_suggestions
@@ -560,11 +572,25 @@ const authorityLinkSuggestions = {
           AND id != ?
           AND status = 'pending'
       `, [reviewedByUserId || null, suggestion.entity_id, id]);
-      await runAsync('COMMIT');
-    } catch (err) {
-      await runAsync('ROLLBACK');
-      throw err;
+    };
+
+    // Turso (libsql/HTTP) auto-commits each statement, so manual BEGIN/COMMIT
+    // produces a stray "cannot rollback - no transaction is active" error that
+    // masks any real failure. See database/models/collections.js for the same
+    // pattern.
+    if (process.env.DATABASE_DRIVER === 'turso') {
+      await runApprove();
+    } else {
+      await runAsync('BEGIN');
+      try {
+        await runApprove();
+        await runAsync('COMMIT');
+      } catch (err) {
+        await runAsync('ROLLBACK').catch(() => {});
+        throw err;
+      }
     }
+
     await saveDatabase();
   },
 
