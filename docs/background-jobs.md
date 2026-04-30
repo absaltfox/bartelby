@@ -32,6 +32,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Import – auto-grouping (LLM) | `import_jobs` (kind `grouping`) | `utils/worker.js::tickGroupingJobs` (submit) + `pollRunningGroupingBatches` (finalize) |
 | Knowledge graph extraction | `extraction_jobs` | `utils/worker-extraction.js` |
 | Authority resolution backfill | `authority_resolution_jobs` | `utils/worker-authority-resolution.js` |
+| Authority suggestion (cluster pipeline) | `authority_suggestion_jobs` | `utils/worker-authority-suggestion.js` |
 | Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
 > **Note:** Analytics do not use a DB-backed job record for the outer sweep;
@@ -55,6 +56,7 @@ is running with background work enabled. In practice that means
 | `tickGroupingJobs` | 5 s | `groupingBusy` boolean |
 | `tickExtractionJobs` | 5 s | `extractionBusy` boolean |
 | `tickAuthorityResolutionJobs` | 5 s | `authorityResolutionBusy` boolean |
+| `tickAuthoritySuggestionJobs` | `BATCH_POLL_MS` | `authoritySuggestionBusy` boolean |
 | `pollRunningBatches` (transcription) | `BATCH_POLL_MS` | `batchPollBusy` boolean |
 | `pollRunningGroupingBatches` | `BATCH_POLL_MS` | `groupingBatchPollBusy` boolean |
 | `pollRunningExtractionBatchesTick` | `BATCH_POLL_MS` | `extractionBatchPollBusy` boolean |
@@ -180,6 +182,7 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`extraction_jobs` (`running`, batch finalization claimed)** → claim cleared so finalization can resume
 - **`extraction_jobs` (`running`, not a batch)** → marked `failed`
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
+- **`authority_suggestion_jobs` (`running`)** → marked `failed`
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
 `initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip

@@ -708,6 +708,23 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleAuthorityResolutionCount} stale authority resolution job(s) as failed`);
   }
 
+  const staleAuthoritySuggestionJobs = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM authority_suggestion_jobs
+    WHERE status = 'running'
+  `);
+  const staleAuthoritySuggestionCount = staleAuthoritySuggestionJobs?.count || 0;
+  if (staleAuthoritySuggestionCount > 0) {
+    await db.run(`
+      UPDATE authority_suggestion_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleAuthoritySuggestionCount} stale authority suggestion job(s) as failed`);
+  }
+
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
@@ -719,6 +736,7 @@ async function initializeSchema(options = {}) {
     || staleExtractionBatchFinalizationClaimCount > 0
     || staleCompletedBatchCount > 0
     || staleAuthorityResolutionCount > 0
+    || staleAuthoritySuggestionCount > 0
   ) {
     await saveDatabase();
   }
