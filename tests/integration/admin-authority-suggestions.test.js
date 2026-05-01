@@ -218,4 +218,67 @@ describe('admin authority suggestions AJAX', () => {
       .send({});
     expect(res.status).toBe(404);
   });
+
+  it('POST /suggestions/bulk/approve approves a batch and reports collisions', async () => {
+    // Two entities, each with two pending suggestions; we'll bulk-approve all 4.
+    // Expectation: one wins per entity, the other is reported already_reviewed.
+    const e1 = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'bulk-e1',
+      description: null, properties: {}, authority_id: null
+    });
+    const e2 = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'bulk-e2',
+      description: null, properties: {}, authority_id: null
+    });
+    const ids = [];
+    for (const e of [e1, e2]) {
+      for (const tag of ['x', 'y']) {
+        const a = await db.authoritiesAsync.create({
+          authority_type: 'person', canonical_name: `bulk-auth-${e}-${tag}`,
+          description: null, properties: {}, external_source: null, external_key: null
+        });
+        const sid = await db.authorityLinkSuggestionsAsync.createIfMissing({
+          entity_id: e, suggested_authority_id: a,
+          confidence: 0.9, match_method: 'test', status: 'pending'
+        });
+        ids.push(sid);
+      }
+    }
+    expect(ids.length).toBe(4);
+
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/bulk/approve')
+      .set('x-csrf-token', csrf)
+      .send({ ids });
+    expect(res.status).toBe(200);
+
+    const succeeded = res.body.results.filter(r => r.success);
+    const collided  = res.body.results.filter(r => r.error === 'already_reviewed');
+    expect(succeeded.length).toBe(2);
+    expect(collided.length).toBe(2);
+    expect(res.body.removedIds.sort()).toEqual([...ids].sort());
+  });
+
+  it('POST /suggestions/bulk/approve returns 400 when ids is empty', async () => {
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/bulk/approve')
+      .set('x-csrf-token', csrf)
+      .send({ ids: [] });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /suggestions/bulk/approve returns 400 when ids exceeds 200', async () => {
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const tooMany = Array.from({ length: 201 }, (_, i) => i + 1);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/bulk/approve')
+      .set('x-csrf-token', csrf)
+      .send({ ids: tooMany });
+    expect(res.status).toBe(400);
+  });
 });
