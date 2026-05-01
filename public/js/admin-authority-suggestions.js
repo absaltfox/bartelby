@@ -200,6 +200,95 @@
     }
   }
 
+  function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.suggestion-cb:checked'))
+      .map(function(cb) { return parseInt(cb.value, 10); })
+      .filter(Number.isInteger);
+  }
+
+  function refreshBulkBar() {
+    var bar = document.getElementById('suggestions-bulk-actions');
+    var countEl = document.getElementById('suggestions-bulk-count');
+    if (!bar || !countEl) return;
+    var ids = getSelectedIds();
+    countEl.textContent = ids.length + ' selected';
+    bar.classList.toggle('is-hidden', ids.length === 0);
+    var approve = document.getElementById('suggestions-bulk-approve');
+    var reject  = document.getElementById('suggestions-bulk-reject');
+    if (approve) approve.disabled = ids.length === 0;
+    if (reject)  reject.disabled  = ids.length === 0;
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('.suggestion-cb:checked').forEach(function(cb) { cb.checked = false; });
+    var selectAll = document.getElementById('suggestions-select-all');
+    if (selectAll) selectAll.checked = false;
+    refreshBulkBar();
+  }
+
+  function showToast(message) {
+    var toast = document.getElementById('suggestions-toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.removeAttribute('hidden');
+    // Force reflow so the transition runs even if class is added immediately after removeAttribute.
+    void toast.offsetWidth;
+    toast.classList.add('is-visible');
+    setTimeout(function() {
+      toast.classList.remove('is-visible');
+      setTimeout(function() { toast.setAttribute('hidden', ''); }, 200);
+    }, 3000);
+  }
+
+  async function handleBulk(kind) {
+    var ids = getSelectedIds();
+    if (ids.length === 0) return;
+    var msg = kind === 'approve'
+      ? 'Approve ' + ids.length + ' suggestion(s)? Sibling pending suggestions for the same entity will be auto-rejected.'
+      : 'Reject ' + ids.length + ' suggestion(s)?';
+    if (!window.confirm(msg)) return;
+
+    var approveBtn = document.getElementById('suggestions-bulk-approve');
+    var rejectBtn  = document.getElementById('suggestions-bulk-reject');
+    if (approveBtn) approveBtn.disabled = true;
+    if (rejectBtn)  rejectBtn.disabled  = true;
+
+    var url = kind === 'approve'
+      ? '/admin/knowledge/authorities/suggestions/bulk/approve'
+      : '/admin/knowledge/authorities/suggestions/bulk/reject';
+
+    try {
+      var r = await postJSON(url, { ids: ids });
+      if (r.status !== 200 || !r.data) {
+        window.alert((r.data && r.data.error) || 'Bulk action failed.');
+        if (approveBtn) approveBtn.disabled = false;
+        if (rejectBtn)  rejectBtn.disabled  = false;
+        return;
+      }
+      var results = r.data.results || [];
+      var removedIds = r.data.removedIds || [];
+      removedIds.forEach(function(id) { fadeAndRemove(findCard(id)); });
+
+      var succeeded = results.filter(function(x) { return x.success; }).length;
+      var alreadyReviewed = results.filter(function(x) { return x.error === 'already_reviewed'; }).length;
+      var msgOut;
+      if (kind === 'approve') {
+        var siblingCount = removedIds.length - succeeded - alreadyReviewed;
+        msgOut = 'Approved ' + succeeded + ' of ' + results.length
+               + (alreadyReviewed > 0 ? ' (' + alreadyReviewed + ' already reviewed)' : '')
+               + (siblingCount > 0 ? '. Rejected ' + siblingCount + ' sibling suggestion(s).' : '.');
+      } else {
+        msgOut = 'Rejected ' + succeeded + ' of ' + results.length
+               + (alreadyReviewed > 0 ? ' (' + alreadyReviewed + ' already reviewed)' : '') + '.';
+      }
+      showToast(msgOut);
+    } catch (err) {
+      window.alert('Network error — bulk action failed.');
+    } finally {
+      clearSelection();
+    }
+  }
+
   function init() {
     var list = document.getElementById('suggestions-list');
     if (!list) return;
@@ -219,6 +308,29 @@
         if (event.target.closest('button')) loadMore();
       });
     }
+
+    var selectAll = document.getElementById('suggestions-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.suggestion-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
+        refreshBulkBar();
+      });
+    }
+
+    document.addEventListener('change', function(event) {
+      if (event.target && event.target.classList && event.target.classList.contains('suggestion-cb')) {
+        refreshBulkBar();
+      }
+    });
+
+    var bulkApprove = document.getElementById('suggestions-bulk-approve');
+    var bulkReject  = document.getElementById('suggestions-bulk-reject');
+    var bulkClear   = document.getElementById('suggestions-bulk-clear');
+    if (bulkApprove) bulkApprove.addEventListener('click', function() { handleBulk('approve'); });
+    if (bulkReject)  bulkReject.addEventListener('click',  function() { handleBulk('reject'); });
+    if (bulkClear)   bulkClear.addEventListener('click',   clearSelection);
+
+    refreshBulkBar();
   }
 
   if (document.readyState === 'loading') {
