@@ -127,6 +127,28 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   });
 }));
 
+router.get('/suggestions.json', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [], nextCursor: null });
+
+  const status = String(req.query.status || 'pending').trim();
+  const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 25, 100));
+
+  const beforeCreatedAt = req.query.beforeCreatedAt ? String(req.query.beforeCreatedAt) : null;
+  const beforeId = parseInt(req.query.beforeId, 10);
+  const cursor = beforeCreatedAt && Number.isInteger(beforeId)
+    ? { beforeCreatedAt, beforeId }
+    : null;
+
+  const suggestions = await stores.authorityLinkSuggestions.list(status, limit, { cursor });
+  const last = suggestions[suggestions.length - 1];
+  const nextCursor = suggestions.length === limit && last
+    ? { beforeCreatedAt: last.created_at, beforeId: last.id }
+    : null;
+
+  res.json({ suggestions, nextCursor });
+}));
+
 router.get('/', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const q = String(req.query.q || '').trim();
