@@ -9,6 +9,7 @@ const { asyncHandler } = require('../utils/async-handler');
 router.use(requireAdmin);
 
 const PAGE_SIZE = 25;
+const SUGGESTIONS_PAGE_SIZE = 25;
 
 function graphStores() {
   return {
@@ -108,13 +109,20 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const status = String(req.query.status || 'pending').trim();
   const suggestions = stores.authorityLinkSuggestions
-    ? await stores.authorityLinkSuggestions.list(status, 200)
+    ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE)
     : [];
+
+  const last = suggestions[suggestions.length - 1];
+  const nextCursor = suggestions.length === SUGGESTIONS_PAGE_SIZE && last
+    ? { beforeCreatedAt: last.created_at, beforeId: last.id }
+    : null;
 
   res.render('admin/authority-suggestions', {
     pageTitle: 'Authority Suggestions',
     suggestions: suggestions || [],
     status,
+    nextCursor,
+    pageSize: SUGGESTIONS_PAGE_SIZE,
     activeKnowledgePage: 'authority-suggestions'
   });
 }));
