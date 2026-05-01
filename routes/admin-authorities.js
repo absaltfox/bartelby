@@ -5,6 +5,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -147,6 +148,33 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
     : null;
 
   res.json({ suggestions, nextCursor });
+}));
+
+router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id.' });
+
+  const suggestion = await stores.authorityLinkSuggestions.getById(id);
+  if (!suggestion) return res.status(404).json({ error: 'Authority suggestion not found.' });
+  if (suggestion.status !== 'pending') {
+    return res.status(409).json({ error: 'Suggestion already reviewed.' });
+  }
+
+  const siblings = await stores.authorityLinkSuggestions.list('pending', 100, { entityId: suggestion.entity_id });
+  const removedSiblingIds = siblings.filter(s => s.id !== id).map(s => s.id);
+
+  await stores.authorityLinkSuggestions.approve(id, req.user.id);
+
+  audit.log('admin.authority_suggestion_approved', {
+    ...audit.reqContext(req),
+    suggestionId: id,
+    entityId: suggestion.entity_id,
+    suggestedAuthorityId: suggestion.suggested_authority_id,
+    removedSiblingIds
+  });
+
+  res.json({ success: true, suggestionId: id, removedSiblingIds });
 }));
 
 router.get('/', asyncHandler(async (req, res) => {

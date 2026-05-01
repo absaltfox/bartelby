@@ -101,4 +101,71 @@ describe('admin authority suggestions AJAX', () => {
     const secondIds = second.body.suggestions.map(r => r.id);
     for (const id of secondIds) expect(firstIds).not.toContain(id);
   });
+
+  it('POST /suggestions/:id/approve approves and returns removedSiblingIds', async () => {
+    // Seed an entity with two pending suggestions (target + sibling)
+    const authA = await db.authoritiesAsync.create({
+      authority_type: 'person', canonical_name: 'approve-target-auth',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const authB = await db.authoritiesAsync.create({
+      authority_type: 'person', canonical_name: 'approve-sibling-auth',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'approve-entity',
+      description: null, properties: {}, authority_id: null
+    });
+    const targetId = await db.authorityLinkSuggestionsAsync.createIfMissing({
+      entity_id: entityId, suggested_authority_id: authA,
+      confidence: 0.9, match_method: 'test', status: 'pending'
+    });
+    const siblingId = await db.authorityLinkSuggestionsAsync.createIfMissing({
+      entity_id: entityId, suggested_authority_id: authB,
+      confidence: 0.8, match_method: 'test', status: 'pending'
+    });
+
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+
+    const res = await agent
+      .post(`/admin/knowledge/authorities/suggestions/${targetId}/approve`)
+      .set('x-csrf-token', csrf)
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, suggestionId: targetId, removedSiblingIds: [siblingId] });
+
+    const target = await db.authorityLinkSuggestionsAsync.getById(targetId);
+    const sibling = await db.authorityLinkSuggestionsAsync.getById(siblingId);
+    expect(target.status).toBe('approved');
+    expect(sibling.status).toBe('rejected');
+
+    const entity = await db.entitiesAsync.getById(entityId);
+    expect(entity.authority_id).toBe(authA);
+  });
+
+  it('POST /suggestions/:id/approve returns 404 for unknown id', async () => {
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/9999999/approve')
+      .set('x-csrf-token', csrf)
+      .send({});
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /suggestions/:id/approve returns 409 for already-reviewed suggestion', async () => {
+    const { suggestionId } = await seedSuggestion(db, {
+      entityName: 'already-reviewed-ent',
+      authorityName: 'already-reviewed-auth',
+      status: 'rejected'
+    });
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post(`/admin/knowledge/authorities/suggestions/${suggestionId}/approve`)
+      .set('x-csrf-token', csrf)
+      .send({});
+    expect(res.status).toBe(409);
+  });
 });
