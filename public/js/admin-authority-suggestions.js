@@ -110,6 +110,96 @@
     }
   }
 
+  function statusBadgeClass(status) {
+    if (status === 'approved') return 'status-done';
+    if (status === 'rejected') return 'status-failed';
+    return 'status-running';
+  }
+
+  function renderCard(s, status) {
+    var checkbox = status === 'pending'
+      ? '<input type="checkbox" class="suggestion-cb" value="' + s.id + '">'
+      : '';
+    var actions = status === 'pending'
+      ? '<div class="job-actions">' +
+          '<button type="button" class="btn-primary btn-sm"   data-action="approve" data-suggestion-id="' + s.id + '">Approve</button>' +
+          '<button type="button" class="btn-secondary btn-sm" data-action="reject"  data-suggestion-id="' + s.id + '">Reject</button>' +
+          '<span class="inline-error" hidden></span>' +
+        '</div>'
+      : '';
+    var confidencePart = (s.confidence != null)
+      ? '<span>Confidence ' + Math.round(Number(s.confidence) * 100) + '%</span>'
+      : '';
+    var methodPart = s.match_method
+      ? '<span>' + escHtml(s.match_method) + '</span>'
+      : '';
+    return '<article class="knowledge-citation-card"' +
+                   ' data-suggestion-id="' + s.id + '"' +
+                   ' data-entity-id="' + s.entity_id + '">' +
+             '<div class="knowledge-citation-card-header">' +
+               checkbox +
+               '<div>' +
+                 '<strong><a href="/admin/knowledge/entities/' + s.entity_id + '">' + escHtml(s.entity_name) + '</a></strong>' +
+                 '<div class="graph-muted">' +
+                   '<span class="entity-type-badge entity-type-' + escHtml(s.entity_type) + '">' + escHtml(s.entity_type) + '</span>' +
+                   '<span class="status-badge ' + statusBadgeClass(s.status) + '">' + escHtml(s.status) + '</span>' +
+                   confidencePart +
+                   methodPart +
+                 '</div>' +
+               '</div>' +
+             '</div>' +
+             '<p>Suggested authority: <strong><a href="/admin/knowledge/authorities/' + s.suggested_authority_id + '">' + escHtml(s.suggested_authority_name) + '</a></strong></p>' +
+             actions +
+           '</article>';
+  }
+
+  async function loadMore() {
+    var loadMoreBlock = document.getElementById('suggestions-load-more');
+    if (!loadMoreBlock) return;
+    var btn = loadMoreBlock.querySelector('button');
+    if (!btn || btn.disabled) return;
+
+    var bootstrap = readBootstrap();
+    var beforeCreatedAt = loadMoreBlock.getAttribute('data-before-created-at');
+    var beforeId = loadMoreBlock.getAttribute('data-before-id');
+    var url = '/admin/knowledge/authorities/suggestions.json'
+            + '?status=' + encodeURIComponent(bootstrap.status)
+            + '&limit=' + encodeURIComponent(bootstrap.pageSize)
+            + '&beforeCreatedAt=' + encodeURIComponent(beforeCreatedAt)
+            + '&beforeId=' + encodeURIComponent(beforeId);
+
+    btn.disabled = true;
+    try {
+      var res = await fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var data = await res.json();
+      var list = document.getElementById('suggestions-list');
+      var html = '';
+      (data.suggestions || []).forEach(function(s) { html += renderCard(s, bootstrap.status); });
+      // Strip an empty-state placeholder if present.
+      var empty = list.querySelector('[data-empty-state]');
+      if (empty) empty.remove();
+      list.insertAdjacentHTML('beforeend', html);
+
+      if (data.nextCursor && data.nextCursor.beforeCreatedAt && Number.isInteger(Number(data.nextCursor.beforeId))) {
+        loadMoreBlock.setAttribute('data-before-created-at', data.nextCursor.beforeCreatedAt);
+        loadMoreBlock.setAttribute('data-before-id', String(data.nextCursor.beforeId));
+        btn.disabled = false;
+      } else {
+        loadMoreBlock.remove();
+      }
+    } catch (err) {
+      btn.disabled = false;
+      var errLine = loadMoreBlock.querySelector('.inline-error');
+      if (!errLine) {
+        errLine = document.createElement('div');
+        errLine.className = 'inline-error';
+        loadMoreBlock.insertBefore(errLine, btn);
+      }
+      errLine.textContent = 'Failed to load more — click again to retry.';
+    }
+  }
+
   function init() {
     var list = document.getElementById('suggestions-list');
     if (!list) return;
@@ -122,6 +212,13 @@
       if (btn.getAttribute('data-action') === 'approve') handleApprove(id);
       else if (btn.getAttribute('data-action') === 'reject') handleReject(id);
     });
+
+    var loadMoreBlock = document.getElementById('suggestions-load-more');
+    if (loadMoreBlock) {
+      loadMoreBlock.addEventListener('click', function(event) {
+        if (event.target.closest('button')) loadMore();
+      });
+    }
   }
 
   if (document.readyState === 'loading') {
