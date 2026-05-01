@@ -10,21 +10,40 @@
   </div>
 
   <div class="filter-tabs">
-    <a href="/admin/knowledge/authorities/suggestions?status=pending" class="filter-tab <%= status === 'pending' ? 'active' : '' %>">Pending</a>
+    <a href="/admin/knowledge/authorities/suggestions?status=pending"  class="filter-tab <%= status === 'pending'  ? 'active' : '' %>">Pending</a>
     <a href="/admin/knowledge/authorities/suggestions?status=approved" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>
     <a href="/admin/knowledge/authorities/suggestions?status=rejected" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">Rejected</a>
-    <a href="/admin/knowledge/authorities/suggestions?status=all" class="filter-tab <%= status === 'all' ? 'active' : '' %>">All</a>
+    <a href="/admin/knowledge/authorities/suggestions?status=all"      class="filter-tab <%= status === 'all'      ? 'active' : '' %>">All</a>
   </div>
 
-  <% if (!suggestions.length) { %>
-    <div class="empty-state">
-      <p>No authority suggestions were found for this filter.</p>
+  <% if (status === 'pending') { %>
+    <div class="suggestions-bulk-controls">
+      <label class="suggestions-select-all">
+        <input type="checkbox" id="suggestions-select-all"> Select all on page
+      </label>
+      <div id="suggestions-bulk-actions" class="bulk-actions is-hidden">
+        <span id="suggestions-bulk-count">0 selected</span>
+        <button type="button" id="suggestions-bulk-approve" class="btn-primary btn-sm">Approve selected</button>
+        <button type="button" id="suggestions-bulk-reject"  class="btn-secondary btn-sm">Reject selected</button>
+        <button type="button" id="suggestions-bulk-clear"   class="btn-link btn-sm">Clear</button>
+      </div>
     </div>
-  <% } else { %>
-    <div class="knowledge-citation-list">
+  <% } %>
+
+  <div id="suggestions-list" class="knowledge-citation-list">
+    <% if (!suggestions.length) { %>
+      <div class="empty-state" data-empty-state>
+        <p>No authority suggestions were found for this filter.</p>
+      </div>
+    <% } else { %>
       <% suggestions.forEach(function(suggestion) { %>
-        <article class="knowledge-citation-card">
+        <article class="knowledge-citation-card"
+                 data-suggestion-id="<%= suggestion.id %>"
+                 data-entity-id="<%= suggestion.entity_id %>">
           <div class="knowledge-citation-card-header">
+            <% if (status === 'pending') { %>
+              <input type="checkbox" class="suggestion-cb" value="<%= suggestion.id %>">
+            <% } %>
             <div>
               <strong><a href="/admin/knowledge/entities/<%= suggestion.entity_id %>"><%= suggestion.entity_name %></a></strong>
               <div class="graph-muted">
@@ -42,20 +61,30 @@
           <p>Suggested authority: <strong><a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a></strong></p>
           <% if (suggestion.status === 'pending') { %>
             <div class="job-actions">
-              <form method="POST" action="/admin/knowledge/entities/<%= suggestion.entity_id %>/authority-suggestions/<%= suggestion.id %>/approve" class="inline-form">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button type="submit" class="btn-primary btn-sm">Approve</button>
-              </form>
-              <form method="POST" action="/admin/knowledge/entities/<%= suggestion.entity_id %>/authority-suggestions/<%= suggestion.id %>/reject" class="inline-form">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button type="submit" class="btn-secondary btn-sm">Reject</button>
-              </form>
+              <button type="button" class="btn-primary btn-sm"   data-action="approve" data-suggestion-id="<%= suggestion.id %>">Approve</button>
+              <button type="button" class="btn-secondary btn-sm" data-action="reject"  data-suggestion-id="<%= suggestion.id %>">Reject</button>
+              <span class="inline-error" hidden></span>
             </div>
           <% } %>
         </article>
       <% }) %>
+    <% } %>
+  </div>
+
+  <% if (nextCursor) { %>
+    <div id="suggestions-load-more"
+         data-before-created-at="<%= nextCursor.beforeCreatedAt %>"
+         data-before-id="<%= nextCursor.beforeId %>">
+      <button type="button" class="btn-secondary">Load more</button>
     </div>
   <% } %>
+
+  <div id="suggestions-toast" class="toast" role="status" aria-live="polite" hidden></div>
 </div>
+
+<script type="application/json" id="suggestions-bootstrap">
+  <%- JSON.stringify({ status: status, pageSize: pageSize }) %>
+</script>
+<script src="/js/admin-authority-suggestions.js"></script>
 
 <%- include('../partials/footer') %>
