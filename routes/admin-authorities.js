@@ -193,6 +193,46 @@ router.post('/suggestions/bulk/approve', express.json(), asyncHandler(async (req
   res.json({ results, removedIds: Array.from(removedIds) });
 }));
 
+router.post('/suggestions/bulk/reject', express.json(), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const rawIds = Array.isArray(req.body.ids) ? req.body.ids : [];
+  const ids = rawIds.map(Number).filter(Number.isInteger);
+  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided.' });
+  if (ids.length > 200) return res.status(400).json({ error: 'Too many ids — limit 200 per request.' });
+
+  const results = [];
+  const removedIds = new Set();
+
+  for (const id of ids) {
+    try {
+      const s = await stores.authorityLinkSuggestions.getById(id);
+      if (!s) {
+        results.push({ id, success: false, error: 'not_found' });
+        continue;
+      }
+      if (s.status !== 'pending') {
+        results.push({ id, success: false, error: 'already_reviewed' });
+        removedIds.add(id);
+        continue;
+      }
+      await stores.authorityLinkSuggestions.reject(id, req.user.id);
+      results.push({ id, success: true });
+      removedIds.add(id);
+    } catch (err) {
+      results.push({ id, success: false, error: err.message });
+    }
+  }
+
+  audit.log('admin.authority_suggestions_bulk_rejected', {
+    ...audit.reqContext(req),
+    requested: ids.length,
+    succeeded: results.filter(r => r.success).length,
+    removedIds: Array.from(removedIds)
+  });
+
+  res.json({ results, removedIds: Array.from(removedIds) });
+}));
+
 router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);

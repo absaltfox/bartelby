@@ -281,4 +281,30 @@ describe('admin authority suggestions AJAX', () => {
       .send({ ids: tooMany });
     expect(res.status).toBe(400);
   });
+
+  it('POST /suggestions/bulk/reject rejects all and does not touch siblings', async () => {
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const seeded = await seedSuggestion(db, {
+        entityName: 'bulk-reject-ent-' + i,
+        authorityName: 'bulk-reject-auth-' + i
+      });
+      ids.push(seeded.suggestionId);
+    }
+
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/bulk/reject')
+      .set('x-csrf-token', csrf)
+      .send({ ids });
+    expect(res.status).toBe(200);
+    expect(res.body.results.every(r => r.success)).toBe(true);
+    expect(res.body.removedIds.sort()).toEqual([...ids].sort());
+
+    for (const id of ids) {
+      const row = await db.authorityLinkSuggestionsAsync.getById(id);
+      expect(row.status).toBe('rejected');
+    }
+  });
 });
