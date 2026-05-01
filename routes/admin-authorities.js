@@ -177,6 +177,29 @@ router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req,
   res.json({ success: true, suggestionId: id, removedSiblingIds });
 }));
 
+router.post('/suggestions/:id/reject', express.json(), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id.' });
+
+  const suggestion = await stores.authorityLinkSuggestions.getById(id);
+  if (!suggestion) return res.status(404).json({ error: 'Authority suggestion not found.' });
+  if (suggestion.status !== 'pending') {
+    return res.status(409).json({ error: 'Suggestion already reviewed.' });
+  }
+
+  await stores.authorityLinkSuggestions.reject(id, req.user.id);
+
+  audit.log('admin.authority_suggestion_rejected', {
+    ...audit.reqContext(req),
+    suggestionId: id,
+    entityId: suggestion.entity_id,
+    suggestedAuthorityId: suggestion.suggested_authority_id
+  });
+
+  res.json({ success: true, suggestionId: id });
+}));
+
 router.get('/', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const q = String(req.query.q || '').trim();

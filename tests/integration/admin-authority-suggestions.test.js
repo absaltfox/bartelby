@@ -168,4 +168,54 @@ describe('admin authority suggestions AJAX', () => {
       .send({});
     expect(res.status).toBe(409);
   });
+
+  it('POST /suggestions/:id/reject rejects without touching siblings', async () => {
+    const authA = await db.authoritiesAsync.create({
+      authority_type: 'person', canonical_name: 'reject-a',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const authB = await db.authoritiesAsync.create({
+      authority_type: 'person', canonical_name: 'reject-b',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'reject-entity',
+      description: null, properties: {}, authority_id: null
+    });
+    const targetId = await db.authorityLinkSuggestionsAsync.createIfMissing({
+      entity_id: entityId, suggested_authority_id: authA,
+      confidence: 0.9, match_method: 'test', status: 'pending'
+    });
+    const siblingId = await db.authorityLinkSuggestionsAsync.createIfMissing({
+      entity_id: entityId, suggested_authority_id: authB,
+      confidence: 0.8, match_method: 'test', status: 'pending'
+    });
+
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post(`/admin/knowledge/authorities/suggestions/${targetId}/reject`)
+      .set('x-csrf-token', csrf)
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, suggestionId: targetId });
+
+    const target = await db.authorityLinkSuggestionsAsync.getById(targetId);
+    const sibling = await db.authorityLinkSuggestionsAsync.getById(siblingId);
+    expect(target.status).toBe('rejected');
+    expect(sibling.status).toBe('pending');
+
+    const entity = await db.entitiesAsync.getById(entityId);
+    expect(entity.authority_id).toBeNull();
+  });
+
+  it('POST /suggestions/:id/reject returns 404 for unknown id', async () => {
+    const page = await agent.get('/admin/knowledge/authorities/suggestions');
+    const csrf = extractCsrfFromMeta(page.text);
+    const res = await agent
+      .post('/admin/knowledge/authorities/suggestions/9999998/reject')
+      .set('x-csrf-token', csrf)
+      .send({});
+    expect(res.status).toBe(404);
+  });
 });
