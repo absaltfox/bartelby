@@ -193,6 +193,39 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - Authorities can also be merged when two authority records represent the same
   subject
 
+### Review surface (admin)
+
+The `/admin/knowledge/authorities/suggestions` page renders 25 suggestions per
+server response and uses cursor pagination via
+`GET /admin/knowledge/authorities/suggestions.json` for "Load more" (params:
+`status`, `limit`, `beforeCreatedAt`, `beforeId`; response:
+`{ suggestions, nextCursor }`).
+
+Per-row actions are handled via JSON endpoints:
+
+- `POST /admin/knowledge/authorities/suggestions/:id/approve` →
+  `{ success, suggestionId, removedSiblingIds }`. Approve cascade-rejects all
+  other pending suggestions for the same entity; their ids are returned so the
+  client can fade them out of the list.
+- `POST /admin/knowledge/authorities/suggestions/:id/reject` →
+  `{ success, suggestionId }`. No sibling effect.
+
+Bulk actions are exposed at:
+
+- `POST /admin/knowledge/authorities/suggestions/bulk/approve`
+- `POST /admin/knowledge/authorities/suggestions/bulk/reject`
+
+Both accept `{ ids: [int...] }` (max 200) and return
+`{ results: [{ id, success, error?, removedSiblingIds? }], removedIds }`. Bulk
+processing is per-id; mid-batch cascade-reject collisions surface as
+`error: 'already_reviewed'` and are still included in `removedIds` so the
+client removes them.
+
+The legacy entity-detail endpoints in `routes/admin-entities.js`
+(`POST /admin/knowledge/entities/:id/authority-suggestions/:suggestionId/approve|reject`)
+are preserved for the entity-detail surface and continue to redirect to
+`/admin/knowledge/entities/:id`.
+
 ### Entity Detail
 
 - Entity detail pages show aliases, dates, citations, relationships, authority
