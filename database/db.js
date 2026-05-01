@@ -216,6 +216,7 @@ MIGRATIONS.push(`
   CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_status ON authority_link_suggestions(status);
   CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_entity ON authority_link_suggestions(entity_id);
   CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_authority ON authority_link_suggestions(suggested_authority_id);
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_status_created ON authority_link_suggestions(status, created_at DESC, id DESC);
 
   CREATE TABLE IF NOT EXISTS authority_resolution_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
