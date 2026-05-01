@@ -508,16 +508,21 @@ const authorityLinkSuggestions = {
     return Number(row?.n || 0);
   },
 
-  async list(status = 'pending', limit = 100, opts = {}) {
+  async list(status = 'pending', limit = 25, opts = {}) {
     const params = [];
-    let statusClause = '';
+    let where = '';
     if (status && status !== 'all') {
-      statusClause = 'WHERE als.status = ?';
+      where = 'WHERE als.status = ?';
       params.push(status);
     }
     if (Number.isInteger(Number(opts.entityId)) && Number(opts.entityId) > 0) {
-      statusClause += statusClause ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
+      where += where ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
       params.push(Number(opts.entityId));
+    }
+    if (opts.cursor && opts.cursor.beforeCreatedAt && Number.isInteger(Number(opts.cursor.beforeId))) {
+      const clause = '(als.created_at < ? OR (als.created_at = ? AND als.id < ?))';
+      where += where ? ' AND ' + clause : 'WHERE ' + clause;
+      params.push(opts.cursor.beforeCreatedAt, opts.cursor.beforeCreatedAt, Number(opts.cursor.beforeId));
     }
     params.push(limit);
     return await allAsync(`
@@ -531,8 +536,8 @@ const authorityLinkSuggestions = {
       FROM authority_link_suggestions als
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
-      ${statusClause}
-      ORDER BY als.created_at DESC
+      ${where}
+      ORDER BY als.created_at DESC, als.id DESC
       LIMIT ?
     `, params);
   },
