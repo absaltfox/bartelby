@@ -8826,3 +8826,46 @@ body.modal-open {
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
 }
+
+/* Authority Suggestions — AJAX feedback ------------------------------------ */
+.knowledge-citation-card.is-removing {
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+.knowledge-citation-card .inline-error {
+  display: inline-block;
+  margin-left: 0.75rem;
+  color: var(--color-error, #b91c1c);
+  font-size: 0.875rem;
+}
+.knowledge-citation-card .inline-error[hidden] { display: none; }
+
+.suggestions-bulk-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0 1rem;
+  flex-wrap: wrap;
+}
+.suggestions-select-all { display: inline-flex; align-items: center; gap: 0.4rem; }
+.bulk-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
+.bulk-actions.is-hidden { display: none; }
+
+.toast {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  padding: 0.6rem 1rem;
+  background: rgba(33, 33, 33, 0.92);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  z-index: 9999;
+}
+.toast.is-visible { opacity: 1; }
+.toast[hidden] { display: none; }
