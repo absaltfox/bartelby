@@ -53,6 +53,118 @@ beforeAll(async () => {
 }, 30_000);
 
 describe('authority layer integration', () => {
+  it('filters authorities by type and sorts by member counts', async () => {
+    const agent = request.agent(app);
+    await loginAsAdmin(agent, 'authorityadmin');
+
+    const personAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'person',
+      canonical_name: 'Authority List Person Sort High',
+      description: null,
+      properties: {}
+    });
+    const placeAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'place',
+      canonical_name: 'Authority List Place Filtered',
+      description: null,
+      properties: {}
+    });
+    await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Authority List Person Member A',
+      description: null,
+      properties: {},
+      authority_id: personAuthorityId
+    });
+    await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Authority List Person Member B',
+      description: null,
+      properties: {},
+      authority_id: personAuthorityId
+    });
+    await db.entitiesAsync.create({
+      entity_type: 'place',
+      canonical_name: 'Authority List Place Member',
+      description: null,
+      properties: {},
+      authority_id: placeAuthorityId
+    });
+
+    const typeRes = await agent.get('/admin/knowledge/authorities?type=person&q=Authority%20List');
+    expect(typeRes.status).toBe(200);
+    expect(typeRes.text).toContain('Authority List Person Sort High');
+    expect(typeRes.text).not.toContain('Authority List Place Filtered');
+
+    const sortRes = await agent.get('/admin/knowledge/authorities?q=Authority%20List&sort=members&direction=desc');
+    expect(sortRes.status).toBe(200);
+    expect(sortRes.text.indexOf('Authority List Person Sort High')).toBeLessThan(sortRes.text.indexOf('Authority List Place Filtered'));
+  });
+
+  it('bulk merges and deletes selected authorities from the authorities table', async () => {
+    const agent = request.agent(app);
+    await loginAsAdmin(agent, 'authorityadmin');
+
+    const keepAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'organization',
+      canonical_name: 'Authority Bulk Keep',
+      description: null,
+      properties: {}
+    });
+    const mergeAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'organization',
+      canonical_name: 'Authority Bulk Merge',
+      description: null,
+      properties: {}
+    });
+    const deleteAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'topic',
+      canonical_name: 'Authority Bulk Delete',
+      description: null,
+      properties: {}
+    });
+    const memberId = await db.entitiesAsync.create({
+      entity_type: 'organization',
+      canonical_name: 'Authority Bulk Member',
+      description: null,
+      properties: {},
+      authority_id: mergeAuthorityId
+    });
+
+    const page = await agent.get('/admin/knowledge/authorities?q=Authority%20Bulk');
+    const csrf = extractCsrfToken(page.text);
+
+    const mergeRes = await agent
+      .post('/admin/knowledge/authorities/bulk/merge')
+      .type('form')
+      .send({
+        _csrf: csrf,
+        returnTo: '/admin/knowledge/authorities?q=Authority%20Bulk',
+        authority_ids: [keepAuthorityId, mergeAuthorityId],
+        target_authority_id: keepAuthorityId
+      });
+    expect(mergeRes.status).toBe(302);
+    expect(mergeRes.headers.location).toContain('bulkMerged=1');
+
+    const movedMember = await db.entitiesAsync.getById(memberId);
+    expect(movedMember.authority_id).toBe(keepAuthorityId);
+    expect(await db.authoritiesAsync.getById(mergeAuthorityId)).toBeFalsy();
+
+    const deletePage = await agent.get('/admin/knowledge/authorities?q=Authority%20Bulk');
+    const deleteCsrf = extractCsrfToken(deletePage.text);
+    const deleteRes = await agent
+      .post('/admin/knowledge/authorities/bulk/delete')
+      .type('form')
+      .send({
+        _csrf: deleteCsrf,
+        returnTo: '/admin/knowledge/authorities?q=Authority%20Bulk',
+        authority_ids: [deleteAuthorityId]
+      });
+    expect(deleteRes.status).toBe(302);
+    expect(deleteRes.headers.location).toContain('bulkDeleted=1');
+    expect(await db.authoritiesAsync.getById(deleteAuthorityId)).toBeFalsy();
+  });
+
   it('aggregates authority-wide citations and neighbors in the public graph', async () => {
     const agent = request.agent(app);
     await loginAsAdmin(agent, 'authorityadmin');

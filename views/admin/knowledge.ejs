@@ -34,6 +34,12 @@
       <% } %>
     </div>
   <% } %>
+  <% if (queuedBackfill) { %>
+    <div class="alert alert-success">Queued <strong><%= queuedBackfill %></strong> authority backfill job<%= queuedBackfill !== 1 ? 's' : '' %>.</div>
+  <% } %>
+  <% if (suggestionJobQueued) { %>
+    <div class="alert alert-success">Authority suggestion job #<%= parseInt(suggestionJobQueued, 10) %> queued.</div>
+  <% } %>
 
   <div class="admin-stats">
     <div class="stat-card">
@@ -118,6 +124,42 @@
           </div>
           <div class="edit-actions">
             <button type="submit" class="btn-primary btn-sm">Queue Collection Re-extraction</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </section>
+
+  <section class="settings-section knowledge-overview-section">
+    <div class="knowledge-overview-header">
+      <div>
+        <p class="knowledge-section-label">Authority Maintenance</p>
+        <h2>Queue Authority Jobs</h2>
+        <p class="subtitle">Refresh cross-document identity work without changing extraction evidence.</p>
+      </div>
+    </div>
+
+    <div class="knowledge-admin-grid">
+      <section class="knowledge-task-card">
+        <p class="knowledge-card-label">Backfill</p>
+        <h3>Queue Authority Backfill</h3>
+        <p class="muted">Creates durable jobs for unresolved entities so Bartelby can attach them to existing authorities or create new authority records without re-running transcript extraction.</p>
+        <form method="POST" action="/admin/knowledge/authorities/backfill" class="edit-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="edit-actions">
+            <button type="submit" class="btn-primary btn-sm">Queue Authority Backfill</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="knowledge-task-card">
+        <p class="knowledge-card-label">Suggestions</p>
+        <h3>Run Authority Suggestions</h3>
+        <p class="muted">Runs the full-corpus authority suggestion pipeline, comparing unresolved entities against authority clusters and adding medium-confidence links to the review queue.</p>
+        <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs" class="edit-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="edit-actions">
+            <button type="submit" class="btn-secondary btn-sm">Run Authority Suggestions</button>
           </div>
         </form>
       </section>

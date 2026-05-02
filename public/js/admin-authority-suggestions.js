@@ -116,6 +116,10 @@
     return 'status-running';
   }
 
+  function matchMethodLabel(value) {
+    return String(value || '').replace(/_/g, ' ');
+  }
+
   function renderCard(s, status) {
     var checkbox = status === 'pending'
       ? '<input type="checkbox" class="suggestion-cb" value="' + s.id + '">'
@@ -130,12 +134,16 @@
     var confidencePart = (s.confidence != null)
       ? '<span>Confidence ' + Math.round(Number(s.confidence) * 100) + '%</span>'
       : '';
+    var exactNamePart = s.exact_name_match
+      ? '<span>Exact name</span>'
+      : '';
     var methodPart = s.match_method
-      ? '<span>' + escHtml(s.match_method) + '</span>'
+      ? '<span>' + escHtml(matchMethodLabel(s.match_method)) + '</span>'
       : '';
     return '<article class="knowledge-citation-card"' +
                    ' data-suggestion-id="' + s.id + '"' +
-                   ' data-entity-id="' + s.entity_id + '">' +
+                   ' data-entity-id="' + s.entity_id + '"' +
+                   ' data-exact-name-match="' + (s.exact_name_match ? '1' : '0') + '">' +
              '<div class="knowledge-citation-card-header">' +
                checkbox +
                '<div>' +
@@ -144,6 +152,7 @@
                    '<span class="entity-type-badge entity-type-' + escHtml(s.entity_type) + '">' + escHtml(s.entity_type) + '</span>' +
                    '<span class="status-badge ' + statusBadgeClass(s.status) + '">' + escHtml(s.status) + '</span>' +
                    confidencePart +
+                   exactNamePart +
                    methodPart +
                  '</div>' +
                '</div>' +
@@ -164,9 +173,14 @@
     var beforeId = loadMoreBlock.getAttribute('data-before-id');
     var url = '/admin/knowledge/authorities/suggestions.json'
             + '?status=' + encodeURIComponent(bootstrap.status)
+            + (bootstrap.nameSignal ? '&nameSignal=' + encodeURIComponent(bootstrap.nameSignal) : '')
             + '&limit=' + encodeURIComponent(bootstrap.pageSize)
             + '&beforeCreatedAt=' + encodeURIComponent(beforeCreatedAt)
             + '&beforeId=' + encodeURIComponent(beforeId);
+    var beforeExactNameMatch = loadMoreBlock.getAttribute('data-before-exact-name-match');
+    if (beforeExactNameMatch) {
+      url += '&beforeExactNameMatch=' + encodeURIComponent(beforeExactNameMatch);
+    }
 
     btn.disabled = true;
     try {
@@ -184,6 +198,11 @@
       if (data.nextCursor && data.nextCursor.beforeCreatedAt && Number.isInteger(Number(data.nextCursor.beforeId))) {
         loadMoreBlock.setAttribute('data-before-created-at', data.nextCursor.beforeCreatedAt);
         loadMoreBlock.setAttribute('data-before-id', String(data.nextCursor.beforeId));
+        if (data.nextCursor.beforeExactNameMatch != null) {
+          loadMoreBlock.setAttribute('data-before-exact-name-match', String(data.nextCursor.beforeExactNameMatch));
+        } else {
+          loadMoreBlock.removeAttribute('data-before-exact-name-match');
+        }
         btn.disabled = false;
       } else {
         loadMoreBlock.remove();
@@ -224,6 +243,21 @@
     var selectAll = document.getElementById('suggestions-select-all');
     if (selectAll) selectAll.checked = false;
     refreshBulkBar();
+  }
+
+  function selectExactNamesOnPage() {
+    var matched = 0;
+    document.querySelectorAll('.knowledge-citation-card').forEach(function(card) {
+      var cb = card.querySelector('.suggestion-cb');
+      if (!cb) return;
+      var isExact = card.getAttribute('data-exact-name-match') === '1';
+      cb.checked = isExact;
+      if (isExact) matched += 1;
+    });
+    var selectAll = document.getElementById('suggestions-select-all');
+    if (selectAll) selectAll.checked = false;
+    refreshBulkBar();
+    if (matched === 0) showToast('No exact-name suggestions on this page.');
   }
 
   function showToast(message) {
@@ -315,6 +349,11 @@
         document.querySelectorAll('.suggestion-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
         refreshBulkBar();
       });
+    }
+
+    var selectExact = document.getElementById('suggestions-select-exact');
+    if (selectExact) {
+      selectExact.addEventListener('click', selectExactNamesOnPage);
     }
 
     document.addEventListener('change', function(event) {

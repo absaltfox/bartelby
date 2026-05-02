@@ -6,6 +6,7 @@ const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
+const { normalizeComparable } = require('../utils/entity-resolution');
 
 router.use(requireAdmin);
 
@@ -28,6 +29,44 @@ function knowledgePath(pathname, queryString) {
   return '/admin/knowledge' + pathname + (queryString || '');
 }
 
+function suggestionsPath(params = {}) {
+  const query = new URLSearchParams();
+  query.set('status', params.status || 'pending');
+  if (params.nameSignal) query.set('nameSignal', params.nameSignal);
+  return knowledgePath('/authorities/suggestions', '?' + query.toString());
+}
+
+function normalizeReturnTo(value, fallbackPath) {
+  const candidate = String(value || '').trim();
+  if (!candidate || !candidate.startsWith('/admin')) return fallbackPath;
+  return candidate;
+}
+
+function appendRedirectParams(basePath, params) {
+  const url = new URL(basePath, 'http://localhost');
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  return url.pathname + url.search + url.hash;
+}
+
+function parseIdList(value) {
+  const raw = Array.isArray(value) ? value : (value != null ? [value] : []);
+  return [...new Set(raw.map((id) => parseInt(id, 10)).filter(Number.isInteger))];
+}
+
+function authorityListPath(params = {}) {
+  const query = new URLSearchParams();
+  if (params.q) query.set('q', params.q);
+  if (params.type) query.set('type', params.type);
+  if (params.sort && params.sort !== 'name') query.set('sort', params.sort);
+  if (params.direction && params.direction !== 'asc') query.set('direction', params.direction);
+  if (params.page && Number(params.page) > 1) query.set('page', String(params.page));
+  return knowledgePath('/authorities', query.toString() ? '?' + query.toString() : '');
+}
+
 function parseJsonMaybe(value) {
   if (!value || typeof value !== 'string') return value || {};
   try {
@@ -35,6 +74,23 @@ function parseJsonMaybe(value) {
   } catch {
     return {};
   }
+}
+
+function decorateSuggestionDisplay(suggestion) {
+  if (!suggestion) return suggestion;
+
+  const entityName = normalizeComparable(suggestion.entity_name);
+  const authorityName = normalizeComparable(suggestion.suggested_authority_name);
+  return {
+    ...suggestion,
+    exact_name_match: suggestion.exact_name_match != null
+      ? !!Number(suggestion.exact_name_match)
+      : (!!entityName && entityName === authorityName)
+  };
+}
+
+function decorateSuggestionsDisplay(suggestions) {
+  return (suggestions || []).map(decorateSuggestionDisplay);
 }
 
 async function buildAuthorityRows(authorities) {
@@ -54,6 +110,14 @@ async function buildAuthorityRows(authorities) {
       document_count: documentCount
     };
   }));
+}
+
+function normalizeAuthoritySort(value) {
+  return ['name', 'type', 'members', 'documents'].includes(value) ? value : 'name';
+}
+
+function normalizeSortDirection(value) {
+  return String(value || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
 }
 
 router.get('/api/search', asyncHandler(async (req, res) => {
@@ -89,7 +153,7 @@ router.post('/backfill', express.urlencoded({ extended: false }), asyncHandler(a
   }
 
   if (!unresolvedIds.length) {
-    return res.redirect(knowledgePath('/authorities?queuedBackfill=0'));
+    return res.redirect(knowledgePath('/?queuedBackfill=0'));
   }
 
   let queuedJobs = 0;
@@ -103,27 +167,39 @@ router.post('/backfill', express.urlencoded({ extended: false }), asyncHandler(a
     queuedJobs += 1;
   }
 
-  return res.redirect(knowledgePath(`/authorities?queuedBackfill=${queuedJobs}`));
+  return res.redirect(knowledgePath(`/?queuedBackfill=${queuedJobs}`));
 }));
 
 router.get('/suggestions', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const status = String(req.query.status || 'pending').trim();
+  const nameSignal = String(req.query.nameSignal || '').trim() === 'exact' ? 'exact' : null;
+  const orderExactFirst = status === 'pending' && !nameSignal;
   const suggestions = stores.authorityLinkSuggestions
-    ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE)
+    ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE, {
+      nameSignal,
+      orderExactFirst
+    })
     : [];
+  const displaySuggestions = decorateSuggestionsDisplay(suggestions);
 
-  const last = suggestions[suggestions.length - 1];
-  const nextCursor = suggestions.length === SUGGESTIONS_PAGE_SIZE && last
-    ? { beforeCreatedAt: last.created_at, beforeId: last.id }
+  const last = displaySuggestions[displaySuggestions.length - 1];
+  const nextCursor = displaySuggestions.length === SUGGESTIONS_PAGE_SIZE && last
+    ? {
+      beforeCreatedAt: last.created_at,
+      beforeId: last.id,
+      beforeExactNameMatch: orderExactFirst ? (last.exact_name_match ? 1 : 0) : null
+    }
     : null;
 
   res.render('admin/authority-suggestions', {
     pageTitle: 'Authority Suggestions',
-    suggestions: suggestions || [],
+    suggestions: displaySuggestions,
     status,
+    nameSignal,
     nextCursor,
     pageSize: SUGGESTIONS_PAGE_SIZE,
+    suggestionsPath,
     activeKnowledgePage: 'authority-suggestions'
   });
 }));
@@ -133,18 +209,29 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
   if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [], nextCursor: null });
 
   const status = String(req.query.status || 'pending').trim();
+  const nameSignal = String(req.query.nameSignal || '').trim() === 'exact' ? 'exact' : null;
+  const orderExactFirst = status === 'pending' && !nameSignal;
   const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 25, 100));
 
   const beforeCreatedAt = req.query.beforeCreatedAt ? String(req.query.beforeCreatedAt) : null;
   const beforeId = parseInt(req.query.beforeId, 10);
+  const beforeExactNameMatch = parseInt(req.query.beforeExactNameMatch, 10);
   const cursor = beforeCreatedAt && Number.isInteger(beforeId)
-    ? { beforeCreatedAt, beforeId }
+    ? { beforeCreatedAt, beforeId, beforeExactNameMatch }
     : null;
 
-  const suggestions = await stores.authorityLinkSuggestions.list(status, limit, { cursor });
+  const suggestions = decorateSuggestionsDisplay(await stores.authorityLinkSuggestions.list(status, limit, {
+    cursor,
+    nameSignal,
+    orderExactFirst
+  }));
   const last = suggestions[suggestions.length - 1];
   const nextCursor = suggestions.length === limit && last
-    ? { beforeCreatedAt: last.created_at, beforeId: last.id }
+    ? {
+      beforeCreatedAt: last.created_at,
+      beforeId: last.id,
+      beforeExactNameMatch: orderExactFirst ? (last.exact_name_match ? 1 : 0) : null
+    }
     : null;
 
   res.json({ suggestions, nextCursor });
@@ -286,61 +373,133 @@ router.post('/suggestions/:id/reject', express.json(), asyncHandler(async (req, 
 router.get('/', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const q = String(req.query.q || '').trim();
+  const typeFilter = String(req.query.type || '').trim();
+  const sort = normalizeAuthoritySort(String(req.query.sort || 'name').trim());
+  const direction = normalizeSortDirection(req.query.direction);
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  let rows = [];
-  if (stores.authorities) {
-    if (q) {
-      rows = await stores.authorities.search(q, 500);
-    }
-  }
-
-  if (!q && stores.authorities) {
-    const [pageRows, totalCount, suggestionCount, jobCounts] = await Promise.all([
-      stores.authorities.getAll(PAGE_SIZE, offset),
-      stores.authorities.getCount(),
+  const [rows, totalCount, authorityTypes, suggestionCount, jobCounts] = stores.authorities
+    ? await Promise.all([
+      stores.authorities.listWithStats
+        ? stores.authorities.listWithStats({ limit: PAGE_SIZE, offset, query: q, authorityType: typeFilter, sort, direction })
+        : stores.authorities.getAll(PAGE_SIZE, offset),
+      stores.authorities.getListCount
+        ? stores.authorities.getListCount({ query: q, authorityType: typeFilter })
+        : stores.authorities.getCount(typeFilter || null),
+      stores.authorities.getTypes ? stores.authorities.getTypes() : [],
       stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.countPending
         ? stores.authorityLinkSuggestions.countPending()
         : 0,
       stores.authorityResolutionJobs && stores.authorityResolutionJobs.getCounts
         ? stores.authorityResolutionJobs.getCounts()
         : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
-    ]);
-    rows = pageRows;
+    ])
+    : [[], 0, [], 0, { total: 0, queued: 0, running: 0, done: 0, failed: 0 }];
+  const authorities = rows.map((row) => ({
+    ...row,
+    member_count: Number(row.member_count || 0),
+    document_count: Number(row.document_count || 0)
+  }));
+  const currentUrl = authorityListPath({ q, type: typeFilter, sort, direction, page });
 
-    return res.render('admin/authorities', {
-      pageTitle: 'Authorities',
-      authorities: await buildAuthorityRows(rows),
-      q,
-      currentPage: page,
-      totalPages: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
-      totalCount,
-      suggestionCount,
-      authorityJobCounts: jobCounts,
-      queuedBackfill: parseInt(req.query.queuedBackfill, 10) || 0,
-      suggestionJobQueued: parseInt(req.query.suggestionJobQueued, 10) || 0,
-      activeKnowledgePage: 'authorities'
-    });
-  }
-
-  const builtRows = await buildAuthorityRows(rows.slice(offset, offset + PAGE_SIZE));
   res.render('admin/authorities', {
     pageTitle: 'Authorities',
-    authorities: builtRows,
+    authorities,
     q,
+    typeFilter,
+    sort,
+    direction,
+    authorityTypes,
+    currentUrl,
+    authorityListPath,
     currentPage: page,
-    totalPages: Math.max(1, Math.ceil(rows.length / PAGE_SIZE)),
-    totalCount: rows.length,
-    suggestionCount: stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.countPending
-      ? await stores.authorityLinkSuggestions.countPending()
-      : 0,
-    authorityJobCounts: stores.authorityResolutionJobs && stores.authorityResolutionJobs.getCounts
-      ? await stores.authorityResolutionJobs.getCounts()
-      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 },
-    queuedBackfill: parseInt(req.query.queuedBackfill, 10) || 0,
+    totalPages: Math.max(1, Math.ceil(totalCount / PAGE_SIZE)),
+    totalCount,
+    suggestionCount,
+    authorityJobCounts: jobCounts,
+    bulkDeleted: parseInt(req.query.bulkDeleted, 10) || 0,
+    bulkMerged: parseInt(req.query.bulkMerged, 10) || 0,
+    error: req.query.error || null,
     activeKnowledgePage: 'authorities'
   });
+}));
+
+router.post('/bulk/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const returnTo = normalizeReturnTo(req.body.returnTo, knowledgePath('/authorities'));
+  const ids = parseIdList(req.body.authority_ids);
+  if (!stores.authorities || ids.length === 0) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Select at least one authority to delete.' }));
+  }
+  if (ids.length > 200) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Select no more than 200 authorities at once.' }));
+  }
+
+  let deleted = 0;
+  for (const id of ids) {
+    const authority = await stores.authorities.getById(id);
+    if (!authority) continue;
+    await stores.authorities.delete(id);
+    deleted += 1;
+  }
+
+  audit.log('admin.authorities_bulk_deleted', {
+    ...audit.reqContext(req),
+    requested: ids.length,
+    deleted,
+    authorityIds: ids
+  });
+
+  return res.redirect(appendRedirectParams(returnTo, { bulkDeleted: deleted }));
+}));
+
+router.post('/bulk/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const returnTo = normalizeReturnTo(req.body.returnTo, knowledgePath('/authorities'));
+  const ids = parseIdList(req.body.authority_ids);
+  const targetAuthorityId = parseInt(req.body.target_authority_id, 10);
+  if (!stores.authorities || !Number.isInteger(targetAuthorityId)) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Choose an authority to keep before merging.' }));
+  }
+  if (ids.length === 0) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Select at least one authority to merge.' }));
+  }
+  if (ids.length > 200) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Select no more than 200 authorities at once.' }));
+  }
+
+  const target = await stores.authorities.getById(targetAuthorityId);
+  if (!target) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'The authority to keep was not found.' }));
+  }
+
+  const mergeIds = ids.filter((id) => id !== targetAuthorityId);
+  if (!mergeIds.length) {
+    return res.redirect(appendRedirectParams(returnTo, { error: 'Select at least one other authority to merge into the authority to keep.' }));
+  }
+
+  for (const id of mergeIds) {
+    const authority = await stores.authorities.getById(id);
+    if (!authority) {
+      return res.redirect(appendRedirectParams(returnTo, { error: 'One selected authority was not found.' }));
+    }
+    if (authority.authority_type !== target.authority_type) {
+      return res.redirect(appendRedirectParams(returnTo, { error: 'Bulk merge only supports authorities of the same type.' }));
+    }
+  }
+
+  for (const id of mergeIds) {
+    await stores.authorities.mergeAuthorities(targetAuthorityId, id);
+  }
+
+  audit.log('admin.authorities_bulk_merged', {
+    ...audit.reqContext(req),
+    targetAuthorityId,
+    mergedAuthorityIds: mergeIds
+  });
+
+  return res.redirect(appendRedirectParams(returnTo, { bulkMerged: mergeIds.length }));
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
@@ -406,7 +565,7 @@ router.post('/suggestion-jobs', express.urlencoded({ extended: false }), asyncHa
     collection_id: null,
     requested_by_user_id: req.user ? req.user.id : null
   });
-  return res.redirect(knowledgePath(`/authorities?suggestionJobQueued=${jobId}`));
+  return res.redirect(knowledgePath(`/?suggestionJobQueued=${jobId}`));
 }));
 
 // POST /admin/knowledge/authorities/suggestion-jobs/collection/:id — collection-scoped run

@@ -72,7 +72,9 @@ router.get('/', asyncHandler(async (req, res) => {
     queuedCount: parseInt(req.query.queuedCount, 10) || 0,
     queuedMode: req.query.queuedMode || null,
     skippedPending: parseInt(req.query.skippedPending, 10) || 0,
-    skippedNoTranscript: parseInt(req.query.skippedNoTranscript, 10) || 0
+    skippedNoTranscript: parseInt(req.query.skippedNoTranscript, 10) || 0,
+    queuedBackfill: parseInt(req.query.queuedBackfill, 10) || 0,
+    suggestionJobQueued: parseInt(req.query.suggestionJobQueued, 10) || 0
   });
 }));
 

@@ -71,7 +71,10 @@ does not create standalone date nodes for explorer use.
 - Triggered automatically after extraction completes for a collection's
   document, or manually from the admin UI (per-collection or full-corpus)
 - High-confidence pairs (≥ 0.92 cosine) are auto-approved; mid-confidence
-  (0.75–0.91) enter the pending review queue; below 0.75 are discarded
+  (0.75–0.91) enter the pending review queue; below 0.75 are discarded. Exact
+  canonical-name matches are surfaced as a review cue, but they do not override
+  embedding confidence because generic labels can refer to different subjects
+  in different document contexts.
 
 ### Authority Link Suggestions
 
@@ -188,6 +191,9 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 
 - The admin `Authorities` workspace lists authority clusters, member entities,
   document coverage, and pending authority-link suggestions
+- The authorities table supports filtering by authority type, sorting by type,
+  member count, and document count, and batch operations for deleting selected
+  authorities or merging selected authorities into a chosen same-type target
 - Authority detail pages show rolled-up aliases, citations, and relationships
   across the member entities
 - Authorities can also be merged when two authority records represent the same
@@ -198,8 +204,15 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 The `/admin/knowledge/authorities/suggestions` page renders 25 suggestions per
 server response and uses cursor pagination via
 `GET /admin/knowledge/authorities/suggestions.json` for "Load more" (params:
-`status`, `limit`, `beforeCreatedAt`, `beforeId`; response:
+`status`, `nameSignal`, `limit`, `beforeCreatedAt`, `beforeId`,
+`beforeExactNameMatch`; response:
 `{ suggestions, nextCursor }`).
+
+Pending suggestions default to sorting exact canonical-name matches first while
+preserving their original confidence. The `nameSignal=exact` filter narrows the
+queue to rows where the entity and suggested authority canonical names match
+case/trim-insensitively. This filter is a manual-review fast lane only; exact
+names do not auto-approve and do not override embedding confidence.
 
 Per-row actions are handled via JSON endpoints:
 

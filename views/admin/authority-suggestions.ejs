@@ -10,10 +10,11 @@
   </div>
 
   <div class="filter-tabs">
-    <a href="/admin/knowledge/authorities/suggestions?status=pending"  class="filter-tab <%= status === 'pending'  ? 'active' : '' %>">Pending</a>
-    <a href="/admin/knowledge/authorities/suggestions?status=approved" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>
-    <a href="/admin/knowledge/authorities/suggestions?status=rejected" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">Rejected</a>
-    <a href="/admin/knowledge/authorities/suggestions?status=all"      class="filter-tab <%= status === 'all'      ? 'active' : '' %>">All</a>
+    <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && !nameSignal ? 'active' : '' %>">Pending</a>
+    <a href="<%= suggestionsPath({ status: 'pending', nameSignal: 'exact' }) %>" class="filter-tab <%= status === 'pending' && nameSignal === 'exact' ? 'active' : '' %>">Exact names</a>
+    <a href="<%= suggestionsPath({ status: 'approved' }) %>" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>
+    <a href="<%= suggestionsPath({ status: 'rejected' }) %>" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">Rejected</a>
+    <a href="<%= suggestionsPath({ status: 'all' }) %>" class="filter-tab <%= status === 'all' ? 'active' : '' %>">All</a>
   </div>
 
   <% if (status === 'pending') { %>
@@ -21,6 +22,9 @@
       <label class="suggestions-select-all">
         <input type="checkbox" id="suggestions-select-all"> Select all on page
       </label>
+      <% if (!nameSignal) { %>
+        <button type="button" id="suggestions-select-exact" class="btn-secondary btn-sm">Select exact names on page</button>
+      <% } %>
       <div id="suggestions-bulk-actions" class="bulk-actions is-hidden">
         <span id="suggestions-bulk-count">0 selected</span>
         <button type="button" id="suggestions-bulk-approve" class="btn-primary btn-sm">Approve selected</button>
@@ -39,7 +43,8 @@
       <% suggestions.forEach(function(suggestion) { %>
         <article class="knowledge-citation-card"
                  data-suggestion-id="<%= suggestion.id %>"
-                 data-entity-id="<%= suggestion.entity_id %>">
+                 data-entity-id="<%= suggestion.entity_id %>"
+                 data-exact-name-match="<%= suggestion.exact_name_match ? '1' : '0' %>">
           <div class="knowledge-citation-card-header">
             <% if (status === 'pending') { %>
               <input type="checkbox" class="suggestion-cb" value="<%= suggestion.id %>">
@@ -52,8 +57,11 @@
                 <% if (suggestion.confidence != null) { %>
                   <span>Confidence <%= Math.round(Number(suggestion.confidence) * 100) %>%</span>
                 <% } %>
+                <% if (suggestion.exact_name_match) { %>
+                  <span>Exact name</span>
+                <% } %>
                 <% if (suggestion.match_method) { %>
-                  <span><%= suggestion.match_method %></span>
+                  <span><%= String(suggestion.match_method).replace(/_/g, ' ') %></span>
                 <% } %>
               </div>
             </div>
@@ -74,7 +82,8 @@
   <% if (nextCursor) { %>
     <div id="suggestions-load-more"
          data-before-created-at="<%= nextCursor.beforeCreatedAt %>"
-         data-before-id="<%= nextCursor.beforeId %>">
+         data-before-id="<%= nextCursor.beforeId %>"
+         <% if (nextCursor.beforeExactNameMatch != null) { %>data-before-exact-name-match="<%= nextCursor.beforeExactNameMatch %>"<% } %>>
       <button type="button" class="btn-secondary">Load more</button>
     </div>
   <% } %>
@@ -83,7 +92,7 @@
 </div>
 
 <script type="application/json" id="suggestions-bootstrap">
-  <%- JSON.stringify({ status: status, pageSize: pageSize }) %>
+  <%- JSON.stringify({ status: status, nameSignal: nameSignal || null, pageSize: pageSize }) %>
 </script>
 <script src="/js/admin-authority-suggestions.js"></script>
 

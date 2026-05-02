@@ -337,6 +337,111 @@ const authorities = {
     `, [limit, offset])).map(hydrateAuthority);
   },
 
+  async listWithStats({ limit = 50, offset = 0, query = '', authorityType = '', sort = 'name', direction = 'asc' } = {}) {
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    const typeFilter = String(authorityType || '').trim();
+    const params = [];
+    const clauses = [];
+    if (typeFilter) {
+      clauses.push('a.authority_type = ?');
+      params.push(typeFilter);
+    }
+    if (sanitized) {
+      const pattern = `%${sanitized}%`;
+      clauses.push(`(
+        a.canonical_name LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM entities e_search
+          WHERE e_search.authority_id = a.id
+            AND e_search.canonical_name LIKE ?
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM entities e_alias
+          INNER JOIN entity_aliases ea_search ON ea_search.entity_id = e_alias.id
+          WHERE e_alias.authority_id = a.id
+            AND ea_search.alias LIKE ?
+        )
+      )`);
+      params.push(pattern, pattern, pattern);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const sortColumns = {
+      name: 'a.canonical_name COLLATE NOCASE',
+      type: 'a.authority_type COLLATE NOCASE',
+      members: 'member_count',
+      documents: 'document_count'
+    };
+    const orderColumn = sortColumns[sort] || sortColumns.name;
+    const orderDirection = String(direction || '').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+    params.push(limit, offset);
+
+    return (await allAsync(`
+      SELECT
+        a.*,
+        COUNT(DISTINCT e.id) AS member_count,
+        COUNT(DISTINCT c.document_id) AS document_count
+      FROM authorities a
+      LEFT JOIN entities e ON e.authority_id = a.id
+      LEFT JOIN citations c ON c.entity_id = e.id AND c.approval_status = 'approved'
+      ${where}
+      GROUP BY a.id
+      ORDER BY ${orderColumn} ${orderDirection}, a.canonical_name COLLATE NOCASE ASC, a.id ASC
+      LIMIT ? OFFSET ?
+    `, params)).map(hydrateAuthority);
+  },
+
+  async getListCount({ query = '', authorityType = '' } = {}) {
+    const sanitized = String(query || '').replace(/['"]/g, '').trim();
+    const typeFilter = String(authorityType || '').trim();
+    const params = [];
+    const clauses = [];
+    if (typeFilter) {
+      clauses.push('a.authority_type = ?');
+      params.push(typeFilter);
+    }
+    if (sanitized) {
+      const pattern = `%${sanitized}%`;
+      clauses.push(`(
+        a.canonical_name LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM entities e_search
+          WHERE e_search.authority_id = a.id
+            AND e_search.canonical_name LIKE ?
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM entities e_alias
+          INNER JOIN entity_aliases ea_search ON ea_search.entity_id = e_alias.id
+          WHERE e_alias.authority_id = a.id
+            AND ea_search.alias LIKE ?
+        )
+      )`);
+      params.push(pattern, pattern, pattern);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const row = await getAsync(`
+      SELECT COUNT(*) AS count
+      FROM authorities a
+      ${where}
+    `, params);
+    return Number(row?.count || 0);
+  },
+
+  async getTypes() {
+    const rows = await allAsync(`
+      SELECT authority_type, COUNT(*) AS count
+      FROM authorities
+      GROUP BY authority_type
+      ORDER BY authority_type
+    `);
+    return rows.map((row) => ({
+      authority_type: row.authority_type,
+      count: Number(row.count || 0)
+    }));
+  },
+
   async getCount(authorityType = null) {
     const row = authorityType
       ? await getAsync('SELECT COUNT(*) AS count FROM authorities WHERE authority_type = ?', [authorityType])
@@ -424,6 +529,9 @@ const authorities = {
     if (!keep || !merge) {
       throw new Error('Authority not found.');
     }
+    if (keep.authority_type !== merge.authority_type) {
+      throw new Error('Authorities must have the same type to be merged.');
+    }
 
     const runMerge = async () => {
       await runAsync('UPDATE entities SET authority_id = ? WHERE authority_id = ?', [keepId, mergeId]);
@@ -462,7 +570,11 @@ const authorities = {
   },
 
   async delete(id) {
-    return await runAsync('DELETE FROM authorities WHERE id = ?', [id]);
+    await runAsync('UPDATE entities SET authority_id = NULL WHERE authority_id = ?', [id]);
+    await runAsync('DELETE FROM authority_link_suggestions WHERE suggested_authority_id = ?', [id]);
+    const result = await runAsync('DELETE FROM authorities WHERE id = ?', [id]);
+    await saveDatabase();
+    return result;
   }
 };
 
@@ -509,20 +621,37 @@ const authorityLinkSuggestions = {
   },
 
   async list(status = 'pending', limit = 25, opts = {}) {
+    const exactNameSql = "LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))";
     const params = [];
     let where = '';
     if (status && status !== 'all') {
       where = 'WHERE als.status = ?';
       params.push(status);
     }
+    if (opts.nameSignal === 'exact') {
+      where += where ? ` AND ${exactNameSql}` : `WHERE ${exactNameSql}`;
+    }
     if (Number.isInteger(Number(opts.entityId)) && Number(opts.entityId) > 0) {
       where += where ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
       params.push(Number(opts.entityId));
     }
     if (opts.cursor && opts.cursor.beforeCreatedAt && Number.isInteger(Number(opts.cursor.beforeId))) {
-      const clause = '(als.created_at < ? OR (als.created_at = ? AND als.id < ?))';
-      where += where ? ' AND ' + clause : 'WHERE ' + clause;
-      params.push(opts.cursor.beforeCreatedAt, opts.cursor.beforeCreatedAt, Number(opts.cursor.beforeId));
+      const beforeExactNameMatch = Number(opts.cursor.beforeExactNameMatch);
+      if (opts.orderExactFirst && Number.isInteger(beforeExactNameMatch)) {
+        const clause = `(
+          CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END < ?
+          OR (
+            CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END = ?
+            AND (als.created_at < ? OR (als.created_at = ? AND als.id < ?))
+          )
+        )`;
+        where += where ? ' AND ' + clause : 'WHERE ' + clause;
+        params.push(beforeExactNameMatch, beforeExactNameMatch, opts.cursor.beforeCreatedAt, opts.cursor.beforeCreatedAt, Number(opts.cursor.beforeId));
+      } else {
+        const clause = '(als.created_at < ? OR (als.created_at = ? AND als.id < ?))';
+        where += where ? ' AND ' + clause : 'WHERE ' + clause;
+        params.push(opts.cursor.beforeCreatedAt, opts.cursor.beforeCreatedAt, Number(opts.cursor.beforeId));
+      }
     }
     params.push(limit);
     return await allAsync(`
@@ -532,12 +661,13 @@ const authorityLinkSuggestions = {
         e.entity_type,
         e.authority_id AS current_authority_id,
         a.canonical_name AS suggested_authority_name,
-        a.authority_type AS suggested_authority_type
+        a.authority_type AS suggested_authority_type,
+        CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
       FROM authority_link_suggestions als
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
       ${where}
-      ORDER BY als.created_at DESC, als.id DESC
+      ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
       LIMIT ?
     `, params);
   },

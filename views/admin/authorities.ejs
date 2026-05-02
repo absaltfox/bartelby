@@ -9,11 +9,14 @@
     <p class="subtitle">Manage cross-document identity clusters that group extracted entities into shared people, places, organizations, and topics.</p>
   </div>
 
-  <% if (queuedBackfill) { %>
-    <div class="alert alert-success">Queued <strong><%= queuedBackfill %></strong> authority backfill job<%= queuedBackfill !== 1 ? 's' : '' %>.</div>
+  <% if (error) { %>
+    <div class="alert alert-error"><%= error %></div>
   <% } %>
-  <% if (suggestionJobQueued) { %>
-    <div class="alert alert-success">Authority suggestion job #<%= parseInt(suggestionJobQueued, 10) %> queued.</div>
+  <% if (bulkDeleted) { %>
+    <div class="alert alert-success">Deleted <strong><%= bulkDeleted %></strong> authorit<%= bulkDeleted === 1 ? 'y' : 'ies' %>.</div>
+  <% } %>
+  <% if (bulkMerged) { %>
+    <div class="alert alert-success">Merged <strong><%= bulkMerged %></strong> authorit<%= bulkMerged === 1 ? 'y' : 'ies' %> into the selected authority.</div>
   <% } %>
 
   <div class="admin-stats">
@@ -38,66 +41,100 @@
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <form method="GET" action="/admin/knowledge/authorities" class="admin-search-form">
       <input type="search" name="q" value="<%= q %>" placeholder="Search authorities, members, or aliases..." class="admin-search-input">
+      <select name="type" aria-label="Filter by authority type">
+        <option value="">All types</option>
+        <% authorityTypes.forEach(function(option) { %>
+          <option value="<%= option.authority_type %>" <%= typeFilter === option.authority_type ? 'selected' : '' %>><%= option.authority_type %> (<%= option.count %>)</option>
+        <% }) %>
+      </select>
+      <input type="hidden" name="sort" value="<%= sort %>">
+      <input type="hidden" name="direction" value="<%= direction %>">
       <button type="submit" class="btn-secondary btn-sm">Search</button>
-      <% if (q) { %>
+      <% if (q || typeFilter || sort !== 'name' || direction !== 'asc') { %>
         <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">Clear</a>
       <% } %>
-    </form>
-    <form method="POST" action="/admin/knowledge/authorities/backfill" class="inline-form">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button type="submit" class="btn-primary btn-sm">Queue Authority Backfill</button>
-    </form>
-    <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs" class="inline-form">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button type="submit" class="btn-secondary btn-sm">Run authority suggestion (full corpus)</button>
     </form>
   </div>
 
   <% if (authorities.length === 0) { %>
     <div class="empty-state">
-      <p>No authorities found<% if (q) { %> for "<%= q %>"<% } %>.</p>
+      <p>No authorities found<% if (q) { %> for "<%= q %>"<% } %><% if (typeFilter) { %> with type "<%= typeFilter %>"<% } %>.</p>
     </div>
   <% } else { %>
-    <div class="workflows-table-wrap">
-      <table class="workflows-table">
-        <thead>
-          <tr>
-            <th scope="col">Type</th>
-            <th scope="col">Authority</th>
-            <th scope="col">Members</th>
-            <th scope="col">Documents</th>
-            <th scope="col" class="col-actions">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% authorities.forEach(function(authority) { %>
+    <form method="POST" action="/admin/knowledge/authorities/bulk/merge" class="authority-bulk-form" data-authority-bulk-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="returnTo" value="<%= currentUrl %>">
+      <div class="suggestions-bulk-controls">
+        <label class="suggestions-select-all">
+          <input type="checkbox" id="authorities-select-all" data-authorities-select-all> Select all on page
+        </label>
+        <div class="bulk-actions is-hidden" data-authorities-bulk-actions>
+          <span data-authorities-bulk-count>0 selected</span>
+          <label class="inline-form">
+            Keep
+            <select name="target_authority_id" data-authorities-merge-target>
+              <option value="">Choose authority...</option>
+              <% authorities.forEach(function(authority) { %>
+                <option value="<%= authority.id %>"><%= authority.canonical_name %> (<%= authority.authority_type %>)</option>
+              <% }) %>
+            </select>
+          </label>
+          <button type="submit" class="btn-secondary btn-sm" data-authorities-bulk-merge>Merge selected into target</button>
+          <button type="submit" class="btn-danger btn-sm" formaction="/admin/knowledge/authorities/bulk/delete" data-authorities-bulk-delete>Delete selected</button>
+        </div>
+      </div>
+
+      <div class="workflows-table-wrap">
+        <table class="workflows-table">
+          <thead>
             <tr>
-              <td><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span></td>
-              <td>
-                <strong><a href="/admin/knowledge/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
-                <% if (authority.description) { %>
-                  <div class="muted"><%= authority.description %></div>
-                <% } %>
-              </td>
-              <td><%= authority.member_count || 0 %></td>
-              <td><%= authority.document_count || 0 %></td>
-              <td><a href="/admin/knowledge/authorities/<%= authority.id %>" class="btn-secondary btn-sm">Open</a></td>
+              <th scope="col">Select</th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'type', direction: sort === 'type' && direction === 'asc' ? 'desc' : 'asc' }) %>">Type<%= sort === 'type' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'name', direction: sort === 'name' && direction === 'asc' ? 'desc' : 'asc' }) %>">Authority<%= sort === 'name' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'members', direction: sort === 'members' && direction === 'desc' ? 'asc' : 'desc' }) %>">Members<%= sort === 'members' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'documents', direction: sort === 'documents' && direction === 'desc' ? 'asc' : 'desc' }) %>">Documents<%= sort === 'documents' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            <% authorities.forEach(function(authority) { %>
+              <tr>
+                <td><input type="checkbox" class="authority-cb" name="authority_ids" value="<%= authority.id %>" data-authority-checkbox></td>
+                <td><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span></td>
+                <td>
+                  <strong><a href="/admin/knowledge/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
+                  <% if (authority.description) { %>
+                    <div class="muted"><%= authority.description %></div>
+                  <% } %>
+                </td>
+                <td><%= authority.member_count || 0 %></td>
+                <td><%= authority.document_count || 0 %></td>
+                <td><a href="/admin/knowledge/authorities/<%= authority.id %>" class="btn-secondary btn-sm">Open</a></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </form>
 
     <% if (totalPages > 1) { %>
       <div class="pagination">
         <% if (currentPage > 1) { %>
-          <a href="/admin/knowledge/authorities?<%= q ? ('q=' + encodeURIComponent(q) + '&') : '' %>page=<%= currentPage - 1 %>" class="pagination-btn">&lsaquo; Prev</a>
+          <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: sort, direction: direction, page: currentPage - 1 }) %>" class="pagination-btn">&lsaquo; Prev</a>
         <% } else { %>
           <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
         <% } %>
         <span class="pagination-info">Page <%= currentPage %> of <%= totalPages %> <span class="muted">(<%= totalCount %> authorities)</span></span>
         <% if (currentPage < totalPages) { %>
-          <a href="/admin/knowledge/authorities?<%= q ? ('q=' + encodeURIComponent(q) + '&') : '' %>page=<%= currentPage + 1 %>" class="pagination-btn">Next &rsaquo;</a>
+          <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: sort, direction: direction, page: currentPage + 1 }) %>" class="pagination-btn">Next &rsaquo;</a>
         <% } else { %>
           <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
         <% } %>
@@ -106,4 +143,5 @@
   <% } %>
 </div>
 
+<script src="/js/admin-authorities.js"></script>
 <%- include('../partials/footer') %>

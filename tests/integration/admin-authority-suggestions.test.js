@@ -29,7 +29,7 @@ async function loginAsAdmin(agent) {
   expect(res.status).toBe(302);
 }
 
-async function seedSuggestion(db, { entityName, authorityName, status = 'pending' }) {
+async function seedSuggestion(db, { entityName, authorityName, status = 'pending', confidence = 0.85, matchMethod = 'test' }) {
   const authorityId = await db.authoritiesAsync.create({
     authority_type: 'person', canonical_name: authorityName,
     description: null, properties: {}, external_source: null, external_key: null
@@ -40,7 +40,7 @@ async function seedSuggestion(db, { entityName, authorityName, status = 'pending
   });
   const suggestionId = await db.authorityLinkSuggestionsAsync.createIfMissing({
     entity_id: entityId, suggested_authority_id: authorityId,
-    confidence: 0.85, match_method: 'test', status
+    confidence, match_method: matchMethod, status
   });
   return { entityId, authorityId, suggestionId };
 }
@@ -100,6 +100,94 @@ describe('admin authority suggestions AJAX', () => {
     const firstIds = first.body.suggestions.map(r => r.id);
     const secondIds = second.body.suggestions.map(r => r.id);
     for (const id of secondIds) expect(firstIds).not.toContain(id);
+  });
+
+  it('GET /suggestions.json reports exact names without changing embedding confidence', async () => {
+    const { suggestionId } = await seedSuggestion(db, {
+      entityName: 'Canadian Pacific Railway Company',
+      authorityName: 'Canadian Pacific Railway Company',
+      confidence: 0.83,
+      matchMethod: 'embedding'
+    });
+
+    const res = await agent
+      .get('/admin/knowledge/authorities/suggestions.json?status=pending&limit=100');
+    expect(res.status).toBe(200);
+
+    const row = res.body.suggestions.find(s => s.id === suggestionId);
+    expect(row).toBeTruthy();
+    expect(row.confidence).toBe(0.83);
+    expect(row.match_method).toBe('embedding');
+    expect(row.exact_name_match).toBe(true);
+  });
+
+  it('GET /suggestions.json?nameSignal=exact returns only exact-name suggestions', async () => {
+    const exact = await seedSuggestion(db, {
+      entityName: 'exact-filter-railway',
+      authorityName: ' exact-filter-railway ',
+      confidence: 0.83,
+      matchMethod: 'embedding'
+    });
+    const fuzzy = await seedSuggestion(db, {
+      entityName: 'exact-filter-school district',
+      authorityName: 'exact-filter-hope school district',
+      confidence: 0.88,
+      matchMethod: 'embedding'
+    });
+
+    const res = await agent
+      .get('/admin/knowledge/authorities/suggestions.json?status=pending&nameSignal=exact&limit=100');
+    expect(res.status).toBe(200);
+
+    const ids = res.body.suggestions.map(s => s.id);
+    expect(ids).toContain(exact.suggestionId);
+    expect(ids).not.toContain(fuzzy.suggestionId);
+
+    const row = res.body.suggestions.find(s => s.id === exact.suggestionId);
+    expect(row.confidence).toBe(0.83);
+    expect(row.match_method).toBe('embedding');
+    expect(row.exact_name_match).toBe(true);
+  });
+
+  it('GET /suggestions.json orders exact-name pending suggestions first by default', async () => {
+    const exact = await seedSuggestion(db, {
+      entityName: 'order-test-authority',
+      authorityName: 'order-test-authority',
+      confidence: 0.76,
+      matchMethod: 'embedding'
+    });
+    const fuzzy = await seedSuggestion(db, {
+      entityName: 'order-test-authority',
+      authorityName: 'order-test-authority branch',
+      confidence: 0.91,
+      matchMethod: 'embedding'
+    });
+
+    const res = await agent
+      .get('/admin/knowledge/authorities/suggestions.json?status=pending&limit=100');
+    expect(res.status).toBe(200);
+
+    const ids = res.body.suggestions.map(s => s.id);
+    expect(ids.indexOf(exact.suggestionId)).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf(fuzzy.suggestionId)).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf(exact.suggestionId)).toBeLessThan(ids.indexOf(fuzzy.suggestionId));
+  });
+
+  it('GET /suggestions renders exact-name fast-lane controls and labels', async () => {
+    await seedSuggestion(db, {
+      entityName: 'render-exact-authority',
+      authorityName: 'render-exact-authority',
+      confidence: 0.83,
+      matchMethod: 'embedding'
+    });
+
+    const res = await agent.get('/admin/knowledge/authorities/suggestions?status=pending');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Exact names');
+    expect(res.text).toContain('Select exact names on page');
+    expect(res.text).toContain('Exact name');
+    expect(res.text).toContain('Confidence 83%');
+    expect(res.text).toContain('embedding');
   });
 
   it('POST /suggestions/:id/approve approves and returns removedSiblingIds', async () => {
