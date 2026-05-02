@@ -8,6 +8,8 @@ process.env.STORAGE_DRIVER = 'local';
 process.env.BOOTSTRAP_ADMIN_TOKEN = 'test-bootstrap-token-for-jest';
 
 const request = require('supertest');
+const fs = require('fs');
+const path = require('path');
 
 function extractCsrfFromMeta(html) {
   const m = html.match(/name="csrf-token"\s+content="([^"]+)"/);
@@ -117,8 +119,95 @@ describe('admin authority suggestions AJAX', () => {
     const row = res.body.suggestions.find(s => s.id === suggestionId);
     expect(row).toBeTruthy();
     expect(row.confidence).toBe(0.83);
+    expect(row.confidence_label).toBe('Confidence 83%');
     expect(row.match_method).toBe('embedding');
+    expect(row.match_method_label).toBe('Method: embedding');
     expect(row.exact_name_match).toBe(true);
+  });
+
+  it('GET /suggestions.json includes compact review context', async () => {
+    const suggestedAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'organization', canonical_name: 'Context Review Authority',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const currentAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'organization', canonical_name: 'Current Context Authority',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'organization', canonical_name: 'Context Review Entity',
+      description: null, properties: {}, authority_id: currentAuthorityId
+    });
+    const memberId = await db.entitiesAsync.create({
+      entity_type: 'organization', canonical_name: 'Context Review Member',
+      description: null, properties: {}, authority_id: suggestedAuthorityId
+    });
+    const documentId = await db.documentsAsync.create({
+      title: 'Authority Suggestion Context Doc',
+      date_created: '1901-01-01',
+      description: null,
+      image_path: '/uploads/context-doc.png',
+      metadata: {}
+    });
+    const transcriptId = await db.transcriptsAsync.create({
+      document_id: documentId,
+      content: 'Context Review Entity appears with supporting authority evidence.',
+      transcriber: 'Test',
+      version: 1,
+      notes: null,
+      is_best: true
+    });
+    await db.citationsAsync.create({
+      entity_id: entityId,
+      relationship_id: null,
+      transcript_id: transcriptId,
+      document_id: documentId,
+      passage_start: 0,
+      passage_end: 59,
+      passage_text: 'Context Review Entity appears with supporting authority evidence.',
+      extraction_method: 'test',
+      extraction_model: 'jest',
+      confidence: 1,
+      approval_status: 'approved',
+      approval_method: 'manual'
+    });
+    await db.citationsAsync.create({
+      entity_id: memberId,
+      relationship_id: null,
+      transcript_id: transcriptId,
+      document_id: documentId,
+      passage_start: 0,
+      passage_end: 21,
+      passage_text: 'Context Review Member',
+      extraction_method: 'test',
+      extraction_model: 'jest',
+      confidence: 1,
+      approval_status: 'approved',
+      approval_method: 'manual'
+    });
+    const suggestionId = await db.authorityLinkSuggestionsAsync.createIfMissing({
+      entity_id: entityId,
+      suggested_authority_id: suggestedAuthorityId,
+      confidence: 0.82,
+      match_method: 'embedding',
+      status: 'pending'
+    });
+
+    const res = await agent
+      .get('/admin/knowledge/authorities/suggestions.json?status=pending&limit=100');
+    expect(res.status).toBe(200);
+
+    const row = res.body.suggestions.find(s => s.id === suggestionId);
+    expect(row).toBeTruthy();
+    expect(row.source_document_title).toBe('Authority Suggestion Context Doc');
+    expect(row.source_document_label).toBe('Authority Suggestion Context Doc');
+    expect(row.source_evidence_excerpt).toContain('supporting authority evidence');
+    expect(row.suggested_authority_member_count).toBe(1);
+    expect(row.suggested_authority_document_count).toBe(1);
+    expect(row.suggested_authority_stats_label).toBe('1 member, 1 document');
+    expect(row.current_authority_label).toBe('Currently linked to Current Context Authority');
+    expect(row.confidence_label).toBe('Confidence 82%');
+    expect(row.match_method_label).toBe('Method: embedding');
   });
 
   it('GET /suggestions.json?nameSignal=exact returns only exact-name suggestions', async () => {
@@ -145,7 +234,9 @@ describe('admin authority suggestions AJAX', () => {
 
     const row = res.body.suggestions.find(s => s.id === exact.suggestionId);
     expect(row.confidence).toBe(0.83);
+    expect(row.confidence_label).toBe('Confidence 83%');
     expect(row.match_method).toBe('embedding');
+    expect(row.match_method_label).toBe('Method: embedding');
     expect(row.exact_name_match).toBe(true);
   });
 
@@ -185,9 +276,25 @@ describe('admin authority suggestions AJAX', () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain('Exact names');
     expect(res.text).toContain('Select exact names on page');
+    expect(res.text).toContain('authority-suggestion-bulk-bar');
+    expect(res.text).toContain('authority-suggestion-card');
+    expect(res.text).toContain('Evidence');
+    expect(res.text).toContain('Suggested authority');
     expect(res.text).toContain('Exact name');
     expect(res.text).toContain('Confidence 83%');
-    expect(res.text).toContain('embedding');
+    expect(res.text).toContain('Method: embedding');
+  });
+
+  it('client renderCard includes polished sections and exact-name selection data', () => {
+    const script = fs.readFileSync(
+      path.join(__dirname, '../../public/js/admin-authority-suggestions.js'),
+      'utf8'
+    );
+    expect(script).toContain('authority-suggestion-card');
+    expect(script).toContain('authority-suggestion-context');
+    expect(script).toContain('authority-suggestion-meta-note');
+    expect(script).toContain('data-exact-name-match');
+    expect(script).toContain('Method: ');
   });
 
   it('POST /suggestions/:id/approve approves and returns removedSiblingIds', async () => {

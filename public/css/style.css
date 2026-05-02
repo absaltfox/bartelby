@@ -8827,7 +8827,7 @@ body.modal-open {
   border-radius: 4px;
 }
 
-/* Authority Suggestions — AJAX feedback ------------------------------------ */
+/* Authority Suggestions ----------------------------------------------------- */
 .knowledge-citation-card.is-removing {
   opacity: 0;
   transform: scale(0.98);
@@ -8845,13 +8845,171 @@ body.modal-open {
 .suggestions-bulk-controls {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.5rem 0 1rem;
+  gap: 10px 14px;
+  padding: 10px 12px;
   flex-wrap: wrap;
 }
-.suggestions-select-all { display: inline-flex; align-items: center; gap: 0.4rem; }
-.bulk-actions { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.authority-suggestion-bulk-bar {
+  position: sticky;
+  top: 10px;
+  z-index: 20;
+  margin: 0 0 16px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 254, 251, 0.96);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
+}
+
+.suggestions-select-all,
+.authority-suggestion-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  color: var(--ink-mid);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.suggestions-select-all input,
+.authority-suggestion-checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ink-mid);
+  cursor: pointer;
+}
+
+.bulk-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .bulk-actions.is-hidden { display: none; }
+
+.authority-suggestion-card {
+  display: grid;
+  gap: 18px;
+  padding: 20px 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.authority-suggestion-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.authority-suggestion-card-header--selectable {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.authority-suggestion-title-group {
+  min-width: 0;
+}
+
+.authority-suggestion-kicker,
+.authority-suggestion-section-label {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.authority-suggestion-kicker {
+  margin-bottom: 5px;
+}
+
+.authority-suggestion-title-group h2 {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 1.22rem;
+  line-height: 1.25;
+}
+
+.authority-suggestion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.authority-suggestion-meta-note,
+.authority-suggestion-signal {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.authority-suggestion-signal {
+  padding: 2px 8px;
+  border: 1px solid #bfd8c6;
+  border-radius: 999px;
+  background: var(--green-bg);
+  color: var(--green);
+  font-weight: 600;
+}
+
+.authority-suggestion-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.7fr);
+  gap: 18px 24px;
+  align-items: start;
+}
+
+.authority-suggestion-context-section {
+  min-width: 0;
+}
+
+.authority-suggestion-document,
+.authority-suggestion-authority {
+  margin: 4px 0 6px;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.authority-suggestion-evidence {
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 3px solid var(--border);
+  color: var(--ink-mid);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.authority-suggestion-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.authority-suggestion-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
 
 .toast {
   position: fixed;
@@ -8869,3 +9027,22 @@ body.modal-open {
 }
 .toast.is-visible { opacity: 1; }
 .toast[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .authority-suggestion-bulk-bar {
+    top: 6px;
+    align-items: flex-start;
+  }
+
+  .authority-suggestion-card {
+    padding: 16px;
+  }
+
+  .authority-suggestion-context {
+    grid-template-columns: 1fr;
+  }
+
+  .authority-suggestion-title-group h2 {
+    font-size: 1.08rem;
+  }
+}

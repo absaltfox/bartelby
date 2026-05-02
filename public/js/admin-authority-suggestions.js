@@ -117,47 +117,90 @@
   }
 
   function matchMethodLabel(value) {
-    return String(value || '').replace(/_/g, ' ');
+    var label = String(value || '').replace(/_/g, ' ').trim();
+    return label ? 'Method: ' + label : '';
+  }
+
+  function confidenceLabel(s) {
+    if (s.confidence_label) return s.confidence_label;
+    if (s.confidence == null || Number.isNaN(Number(s.confidence))) return '';
+    return 'Confidence ' + Math.round(Number(s.confidence) * 100) + '%';
+  }
+
+  function pluralizeCount(count, singular, plural) {
+    var n = Number(count || 0);
+    return n + ' ' + (n === 1 ? singular : (plural || singular + 's'));
+  }
+
+  function authorityStatsLabel(s) {
+    if (s.suggested_authority_stats_label) return s.suggested_authority_stats_label;
+    return [
+      pluralizeCount(s.suggested_authority_member_count, 'member'),
+      pluralizeCount(s.suggested_authority_document_count, 'document')
+    ].join(', ');
   }
 
   function renderCard(s, status) {
     var checkbox = status === 'pending'
-      ? '<input type="checkbox" class="suggestion-cb" value="' + s.id + '">'
+      ? '<input type="checkbox" class="suggestion-cb authority-suggestion-checkbox" value="' + s.id + '">'
       : '';
     var actions = status === 'pending'
-      ? '<div class="job-actions">' +
+      ? '<div class="authority-suggestion-card-footer">' +
           '<button type="button" class="btn-primary btn-sm"   data-action="approve" data-suggestion-id="' + s.id + '">Approve</button>' +
           '<button type="button" class="btn-secondary btn-sm" data-action="reject"  data-suggestion-id="' + s.id + '">Reject</button>' +
           '<span class="inline-error" hidden></span>' +
         '</div>'
       : '';
-    var confidencePart = (s.confidence != null)
-      ? '<span>Confidence ' + Math.round(Number(s.confidence) * 100) + '%</span>'
+    var confidence = confidenceLabel(s);
+    var confidencePart = confidence
+      ? '<span class="authority-suggestion-meta-note">' + escHtml(confidence) + '</span>'
       : '';
     var exactNamePart = s.exact_name_match
-      ? '<span>Exact name</span>'
+      ? '<span class="authority-suggestion-signal">Exact name</span>'
       : '';
-    var methodPart = s.match_method
-      ? '<span>' + escHtml(matchMethodLabel(s.match_method)) + '</span>'
+    var method = s.match_method_label || matchMethodLabel(s.match_method);
+    var methodPart = method
+      ? '<span class="authority-suggestion-meta-note">' + escHtml(method) + '</span>'
       : '';
-    return '<article class="knowledge-citation-card"' +
+    var currentAuthorityPart = s.current_authority_label
+      ? '<span class="authority-suggestion-meta-note">' + escHtml(s.current_authority_label) + '</span>'
+      : '';
+    var evidence = s.source_evidence_excerpt
+      ? '<blockquote class="authority-suggestion-evidence">' + escHtml(s.source_evidence_excerpt) + '</blockquote>'
+      : '<p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>';
+    return '<article class="knowledge-citation-card authority-suggestion-card"' +
                    ' data-suggestion-id="' + s.id + '"' +
                    ' data-entity-id="' + s.entity_id + '"' +
                    ' data-exact-name-match="' + (s.exact_name_match ? '1' : '0') + '">' +
-             '<div class="knowledge-citation-card-header">' +
+             '<div class="authority-suggestion-card-header ' + (status === 'pending' ? 'authority-suggestion-card-header--selectable' : '') + '">' +
                checkbox +
-               '<div>' +
-                 '<strong><a href="/admin/knowledge/entities/' + s.entity_id + '">' + escHtml(s.entity_name) + '</a></strong>' +
-                 '<div class="graph-muted">' +
+               '<div class="authority-suggestion-title-group">' +
+                 '<span class="authority-suggestion-kicker">Entity under review</span>' +
+                 '<h2><a href="/admin/knowledge/entities/' + s.entity_id + '">' + escHtml(s.entity_name) + '</a></h2>' +
+                 '<div class="authority-suggestion-meta">' +
                    '<span class="entity-type-badge entity-type-' + escHtml(s.entity_type) + '">' + escHtml(s.entity_type) + '</span>' +
                    '<span class="status-badge ' + statusBadgeClass(s.status) + '">' + escHtml(s.status) + '</span>' +
                    confidencePart +
                    exactNamePart +
                    methodPart +
+                   currentAuthorityPart +
                  '</div>' +
                '</div>' +
              '</div>' +
-             '<p>Suggested authority: <strong><a href="/admin/knowledge/authorities/' + s.suggested_authority_id + '">' + escHtml(s.suggested_authority_name) + '</a></strong></p>' +
+             '<div class="authority-suggestion-context">' +
+               '<section class="authority-suggestion-context-section" aria-label="Evidence context">' +
+                 '<span class="authority-suggestion-section-label">Evidence</span>' +
+                 '<p class="authority-suggestion-document">' + escHtml(s.source_document_label || 'Document context unavailable') + '</p>' +
+                 evidence +
+               '</section>' +
+               '<section class="authority-suggestion-context-section" aria-label="Suggested authority context">' +
+                 '<span class="authority-suggestion-section-label">Suggested authority</span>' +
+                 '<p class="authority-suggestion-authority">' +
+                   '<a href="/admin/knowledge/authorities/' + s.suggested_authority_id + '">' + escHtml(s.suggested_authority_name) + '</a>' +
+                 '</p>' +
+                 '<p class="authority-suggestion-empty">' + escHtml(authorityStatsLabel(s)) + '</p>' +
+               '</section>' +
+             '</div>' +
              actions +
            '</article>';
   }

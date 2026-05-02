@@ -76,16 +76,61 @@ function parseJsonMaybe(value) {
   }
 }
 
+function compactText(value, maxLength = 220) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return text.slice(0, Math.max(0, maxLength - 3)).trimEnd() + '...';
+}
+
+function pluralizeCount(count, singular, plural) {
+  const n = Number(count || 0);
+  return `${n} ${n === 1 ? singular : (plural || singular + 's')}`;
+}
+
+function formatConfidenceLabel(confidence) {
+  if (confidence == null || Number.isNaN(Number(confidence))) return null;
+  return `Confidence ${Math.round(Number(confidence) * 100)}%`;
+}
+
+function formatMatchMethodLabel(method) {
+  const label = String(method || '').replace(/_/g, ' ').trim();
+  return label ? `Method: ${label}` : null;
+}
+
 function decorateSuggestionDisplay(suggestion) {
   if (!suggestion) return suggestion;
 
   const entityName = normalizeComparable(suggestion.entity_name);
   const authorityName = normalizeComparable(suggestion.suggested_authority_name);
+  const exactNameMatch = suggestion.exact_name_match != null
+    ? !!Number(suggestion.exact_name_match)
+    : (!!entityName && entityName === authorityName);
+  const memberCount = Number(suggestion.suggested_authority_member_count || 0);
+  const documentCount = Number(suggestion.suggested_authority_document_count || 0);
+  const currentAuthorityId = Number(suggestion.current_authority_id);
+  const suggestedAuthorityId = Number(suggestion.suggested_authority_id);
+  let currentAuthorityLabel = null;
+  if (Number.isInteger(currentAuthorityId) && currentAuthorityId > 0) {
+    currentAuthorityLabel = currentAuthorityId === suggestedAuthorityId
+      ? 'Already linked to this authority'
+      : `Currently linked to ${suggestion.current_authority_name || 'another authority'}`;
+  }
+
   return {
     ...suggestion,
-    exact_name_match: suggestion.exact_name_match != null
-      ? !!Number(suggestion.exact_name_match)
-      : (!!entityName && entityName === authorityName)
+    exact_name_match: exactNameMatch,
+    confidence_label: formatConfidenceLabel(suggestion.confidence),
+    match_method_label: formatMatchMethodLabel(suggestion.match_method),
+    source_document_label: suggestion.source_document_title || 'Document context unavailable',
+    source_evidence_excerpt: compactText(suggestion.source_evidence_text, 220),
+    suggested_authority_member_count: memberCount,
+    suggested_authority_document_count: documentCount,
+    suggested_authority_stats_label: [
+      pluralizeCount(memberCount, 'member'),
+      pluralizeCount(documentCount, 'document')
+    ].join(', '),
+    current_authority_label: currentAuthorityLabel
   };
 }
 

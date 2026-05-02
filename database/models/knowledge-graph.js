@@ -660,12 +660,44 @@ const authorityLinkSuggestions = {
         e.canonical_name AS entity_name,
         e.entity_type,
         e.authority_id AS current_authority_id,
+        ca.canonical_name AS current_authority_name,
         a.canonical_name AS suggested_authority_name,
         a.authority_type AS suggested_authority_type,
+        (
+          SELECT d.title
+          FROM citations c_ctx
+          LEFT JOIN documents d ON d.id = c_ctx.document_id
+          WHERE c_ctx.entity_id = e.id
+            AND c_ctx.approval_status = 'approved'
+          ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
+          LIMIT 1
+        ) AS source_document_title,
+        (
+          SELECT c_ctx.passage_text
+          FROM citations c_ctx
+          WHERE c_ctx.entity_id = e.id
+            AND c_ctx.approval_status = 'approved'
+          ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
+          LIMIT 1
+        ) AS source_evidence_text,
+        (
+          SELECT COUNT(*)
+          FROM entities authority_member
+          WHERE authority_member.authority_id = a.id
+        ) AS suggested_authority_member_count,
+        (
+          SELECT COUNT(DISTINCT authority_citation.document_id)
+          FROM entities authority_member
+          INNER JOIN citations authority_citation
+            ON authority_citation.entity_id = authority_member.id
+           AND authority_citation.approval_status = 'approved'
+          WHERE authority_member.authority_id = a.id
+        ) AS suggested_authority_document_count,
         CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
       FROM authority_link_suggestions als
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
+      LEFT JOIN authorities ca ON ca.id = e.authority_id
       ${where}
       ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
       LIMIT ?

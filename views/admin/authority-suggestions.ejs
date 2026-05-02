@@ -18,9 +18,10 @@
   </div>
 
   <% if (status === 'pending') { %>
-    <div class="suggestions-bulk-controls">
-      <label class="suggestions-select-all">
-        <input type="checkbox" id="suggestions-select-all"> Select all on page
+    <div class="suggestions-bulk-controls authority-suggestion-bulk-bar">
+      <label class="suggestions-select-all authority-suggestion-select-all">
+        <input type="checkbox" id="suggestions-select-all">
+        <span>Select all on page</span>
       </label>
       <% if (!nameSignal) { %>
         <button type="button" id="suggestions-select-exact" class="btn-secondary btn-sm">Select exact names on page</button>
@@ -41,34 +42,58 @@
       </div>
     <% } else { %>
       <% suggestions.forEach(function(suggestion) { %>
-        <article class="knowledge-citation-card"
+        <article class="knowledge-citation-card authority-suggestion-card"
                  data-suggestion-id="<%= suggestion.id %>"
                  data-entity-id="<%= suggestion.entity_id %>"
                  data-exact-name-match="<%= suggestion.exact_name_match ? '1' : '0' %>">
-          <div class="knowledge-citation-card-header">
+          <div class="authority-suggestion-card-header <%= status === 'pending' ? 'authority-suggestion-card-header--selectable' : '' %>">
             <% if (status === 'pending') { %>
-              <input type="checkbox" class="suggestion-cb" value="<%= suggestion.id %>">
+              <input type="checkbox" class="suggestion-cb authority-suggestion-checkbox" value="<%= suggestion.id %>">
             <% } %>
-            <div>
-              <strong><a href="/admin/knowledge/entities/<%= suggestion.entity_id %>"><%= suggestion.entity_name %></a></strong>
-              <div class="graph-muted">
+            <div class="authority-suggestion-title-group">
+              <span class="authority-suggestion-kicker">Entity under review</span>
+              <h2><a href="/admin/knowledge/entities/<%= suggestion.entity_id %>"><%= suggestion.entity_name %></a></h2>
+              <div class="authority-suggestion-meta">
                 <span class="entity-type-badge entity-type-<%= suggestion.entity_type %>"><%= suggestion.entity_type %></span>
                 <span class="status-badge <%= suggestion.status === 'approved' ? 'status-done' : suggestion.status === 'rejected' ? 'status-failed' : 'status-running' %>"><%= suggestion.status %></span>
-                <% if (suggestion.confidence != null) { %>
-                  <span>Confidence <%= Math.round(Number(suggestion.confidence) * 100) %>%</span>
+                <% if (suggestion.confidence_label) { %>
+                  <span class="authority-suggestion-meta-note"><%= suggestion.confidence_label %></span>
                 <% } %>
                 <% if (suggestion.exact_name_match) { %>
-                  <span>Exact name</span>
+                  <span class="authority-suggestion-signal">Exact name</span>
                 <% } %>
-                <% if (suggestion.match_method) { %>
-                  <span><%= String(suggestion.match_method).replace(/_/g, ' ') %></span>
+                <% if (suggestion.match_method_label) { %>
+                  <span class="authority-suggestion-meta-note"><%= suggestion.match_method_label %></span>
+                <% } %>
+                <% if (suggestion.current_authority_label) { %>
+                  <span class="authority-suggestion-meta-note"><%= suggestion.current_authority_label %></span>
                 <% } %>
               </div>
             </div>
           </div>
-          <p>Suggested authority: <strong><a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a></strong></p>
+
+          <div class="authority-suggestion-context">
+            <section class="authority-suggestion-context-section" aria-label="Evidence context">
+              <span class="authority-suggestion-section-label">Evidence</span>
+              <p class="authority-suggestion-document"><%= suggestion.source_document_label %></p>
+              <% if (suggestion.source_evidence_excerpt) { %>
+                <blockquote class="authority-suggestion-evidence"><%= suggestion.source_evidence_excerpt %></blockquote>
+              <% } else { %>
+                <p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>
+              <% } %>
+            </section>
+
+            <section class="authority-suggestion-context-section" aria-label="Suggested authority context">
+              <span class="authority-suggestion-section-label">Suggested authority</span>
+              <p class="authority-suggestion-authority">
+                <a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a>
+              </p>
+              <p class="authority-suggestion-empty"><%= suggestion.suggested_authority_stats_label %></p>
+            </section>
+          </div>
+
           <% if (suggestion.status === 'pending') { %>
-            <div class="job-actions">
+            <div class="authority-suggestion-card-footer">
               <button type="button" class="btn-primary btn-sm"   data-action="approve" data-suggestion-id="<%= suggestion.id %>">Approve</button>
               <button type="button" class="btn-secondary btn-sm" data-action="reject"  data-suggestion-id="<%= suggestion.id %>">Reject</button>
               <span class="inline-error" hidden></span>
