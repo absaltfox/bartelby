@@ -622,6 +622,7 @@ const authorityLinkSuggestions = {
 
   async list(status = 'pending', limit = 25, opts = {}) {
     const exactNameSql = "LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))";
+    const includeContext = opts.includeContext === true;
     const params = [];
     let where = '';
     if (status && status !== 'all') {
@@ -654,15 +655,8 @@ const authorityLinkSuggestions = {
       }
     }
     params.push(limit);
-    return await allAsync(`
-      SELECT
-        als.*,
-        e.canonical_name AS entity_name,
-        e.entity_type,
-        e.authority_id AS current_authority_id,
-        ca.canonical_name AS current_authority_name,
-        a.canonical_name AS suggested_authority_name,
-        a.authority_type AS suggested_authority_type,
+    const contextColumns = includeContext
+      ? `,
         (
           SELECT d.title
           FROM citations c_ctx
@@ -692,15 +686,36 @@ const authorityLinkSuggestions = {
             ON authority_citation.entity_id = authority_member.id
            AND authority_citation.approval_status = 'approved'
           WHERE authority_member.authority_id = a.id
-        ) AS suggested_authority_document_count,
-        CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
-      FROM authority_link_suggestions als
+        ) AS suggested_authority_document_count`
+      : '';
+    return await allAsync(`
+      WITH suggestion_page AS (
+        SELECT
+          als.id,
+          CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
+        FROM authority_link_suggestions als
+        INNER JOIN entities e ON e.id = als.entity_id
+        INNER JOIN authorities a ON a.id = als.suggested_authority_id
+        ${where}
+        ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
+        LIMIT ?
+      )
+      SELECT
+        als.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        e.authority_id AS current_authority_id,
+        ca.canonical_name AS current_authority_name,
+        a.canonical_name AS suggested_authority_name,
+        a.authority_type AS suggested_authority_type,
+        suggestion_page.exact_name_match AS exact_name_match
+        ${contextColumns}
+      FROM suggestion_page
+      INNER JOIN authority_link_suggestions als ON als.id = suggestion_page.id
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
       LEFT JOIN authorities ca ON ca.id = e.authority_id
-      ${where}
-      ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
-      LIMIT ?
+      ORDER BY ${opts.orderExactFirst ? `suggestion_page.exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
     `, params);
   },
 
