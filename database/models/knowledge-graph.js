@@ -655,43 +655,61 @@ const authorityLinkSuggestions = {
       }
     }
     params.push(limit);
-    const contextColumns = includeContext
+    const contextCtes = includeContext
       ? `,
-        (
-          SELECT d.title
+      source_context AS (
+        SELECT entity_id, document_title, passage_text
+        FROM (
+          SELECT
+            c_ctx.entity_id,
+            d.title AS document_title,
+            c_ctx.passage_text,
+            ROW_NUMBER() OVER (
+              PARTITION BY c_ctx.entity_id
+              ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
+            ) AS rn
           FROM citations c_ctx
           LEFT JOIN documents d ON d.id = c_ctx.document_id
-          WHERE c_ctx.entity_id = e.id
-            AND c_ctx.approval_status = 'approved'
-          ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
-          LIMIT 1
-        ) AS source_document_title,
-        (
-          SELECT c_ctx.passage_text
-          FROM citations c_ctx
-          WHERE c_ctx.entity_id = e.id
-            AND c_ctx.approval_status = 'approved'
-          ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
-          LIMIT 1
-        ) AS source_evidence_text,
-        (
-          SELECT COUNT(*)
-          FROM entities authority_member
-          WHERE authority_member.authority_id = a.id
-        ) AS suggested_authority_member_count,
-        (
-          SELECT COUNT(DISTINCT authority_citation.document_id)
-          FROM entities authority_member
-          INNER JOIN citations authority_citation
-            ON authority_citation.entity_id = authority_member.id
-           AND authority_citation.approval_status = 'approved'
-          WHERE authority_member.authority_id = a.id
-        ) AS suggested_authority_document_count`
+          WHERE c_ctx.approval_status = 'approved'
+            AND c_ctx.entity_id IN (SELECT entity_id FROM suggestion_page)
+        )
+        WHERE rn = 1
+      ),
+      authority_member_stats AS (
+        SELECT authority_id, COUNT(*) AS member_count
+        FROM entities
+        WHERE authority_id IN (SELECT suggested_authority_id FROM suggestion_page)
+        GROUP BY authority_id
+      ),
+      authority_document_stats AS (
+        SELECT authority_member.authority_id, COUNT(DISTINCT authority_citation.document_id) AS document_count
+        FROM entities authority_member
+        INNER JOIN citations authority_citation
+          ON authority_citation.entity_id = authority_member.id
+         AND authority_citation.approval_status = 'approved'
+        WHERE authority_member.authority_id IN (SELECT suggested_authority_id FROM suggestion_page)
+        GROUP BY authority_member.authority_id
+      )`
+      : '';
+    const contextColumns = includeContext
+      ? `,
+        source_context.document_title AS source_document_title,
+        source_context.passage_text AS source_evidence_text,
+        COALESCE(authority_member_stats.member_count, 0) AS suggested_authority_member_count,
+        COALESCE(authority_document_stats.document_count, 0) AS suggested_authority_document_count`
+      : '';
+    const contextJoins = includeContext
+      ? `
+      LEFT JOIN source_context ON source_context.entity_id = e.id
+      LEFT JOIN authority_member_stats ON authority_member_stats.authority_id = a.id
+      LEFT JOIN authority_document_stats ON authority_document_stats.authority_id = a.id`
       : '';
     return await allAsync(`
       WITH suggestion_page AS (
         SELECT
           als.id,
+          als.entity_id,
+          als.suggested_authority_id,
           CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
         FROM authority_link_suggestions als
         INNER JOIN entities e ON e.id = als.entity_id
@@ -700,6 +718,7 @@ const authorityLinkSuggestions = {
         ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
         LIMIT ?
       )
+      ${contextCtes}
       SELECT
         als.*,
         e.canonical_name AS entity_name,
@@ -715,6 +734,7 @@ const authorityLinkSuggestions = {
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
       LEFT JOIN authorities ca ON ca.id = e.authority_id
+      ${contextJoins}
       ORDER BY ${opts.orderExactFirst ? `suggestion_page.exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
     `, params);
   },
