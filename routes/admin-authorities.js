@@ -108,6 +108,10 @@ function decorateSuggestionDisplay(suggestion) {
     : (!!entityName && entityName === authorityName);
   const memberCount = Number(suggestion.suggested_authority_member_count || 0);
   const documentCount = Number(suggestion.suggested_authority_document_count || 0);
+  const contextPending = suggestion.source_document_title === undefined
+    && suggestion.source_evidence_text === undefined
+    && suggestion.suggested_authority_member_count === undefined
+    && suggestion.suggested_authority_document_count === undefined;
   const currentAuthorityId = Number(suggestion.current_authority_id);
   const suggestedAuthorityId = Number(suggestion.suggested_authority_id);
   let currentAuthorityLabel = null;
@@ -120,13 +124,14 @@ function decorateSuggestionDisplay(suggestion) {
   return {
     ...suggestion,
     exact_name_match: exactNameMatch,
+    source_context_pending: contextPending,
     confidence_label: formatConfidenceLabel(suggestion.confidence),
     match_method_label: formatMatchMethodLabel(suggestion.match_method),
-    source_document_label: suggestion.source_document_title || 'Document context unavailable',
+    source_document_label: contextPending ? 'Loading context...' : (suggestion.source_document_title || 'Document context unavailable'),
     source_evidence_excerpt: compactText(suggestion.source_evidence_text, 220),
     suggested_authority_member_count: memberCount,
     suggested_authority_document_count: documentCount,
-    suggested_authority_stats_label: [
+    suggested_authority_stats_label: contextPending ? 'Loading authority stats...' : [
       pluralizeCount(memberCount, 'member'),
       pluralizeCount(documentCount, 'document')
     ].join(', '),
@@ -280,6 +285,19 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
     : null;
 
   res.json({ suggestions, nextCursor });
+}));
+
+router.get('/suggestions/context.json', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [] });
+
+  const ids = parseIdList(String(req.query.ids || '').split(',')).slice(0, 100);
+  if (!ids.length) return res.json({ suggestions: [] });
+
+  const rows = stores.authorityLinkSuggestions.getByIds
+    ? await stores.authorityLinkSuggestions.getByIds(ids, { includeContext: true })
+    : [];
+  res.json({ suggestions: decorateSuggestionsDisplay(rows) });
 }));
 
 router.post('/suggestions/bulk/approve', express.json(), asyncHandler(async (req, res) => {

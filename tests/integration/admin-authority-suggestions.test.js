@@ -204,6 +204,16 @@ describe('admin authority suggestions AJAX', () => {
     expect(row.suggested_authority_member_count).toBe(1);
     expect(row.suggested_authority_document_count).toBe(1);
     expect(row.current_authority_name).toBe('Current Context Authority');
+
+    const contextRes = await agent
+      .get(`/admin/knowledge/authorities/suggestions/context.json?ids=${suggestionId}`);
+    expect(contextRes.status).toBe(200);
+    const contextRow = contextRes.body.suggestions.find(s => s.id === suggestionId);
+    expect(contextRow).toBeTruthy();
+    expect(contextRow.source_context_pending).toBe(false);
+    expect(contextRow.source_document_label).toBe('Authority Suggestion Context Doc');
+    expect(contextRow.source_evidence_excerpt).toContain('supporting authority evidence');
+    expect(contextRow.suggested_authority_stats_label).toBe('1 member, 1 document');
   });
 
   it('GET /suggestions.json?nameSignal=exact returns only exact-name suggestions', async () => {
@@ -274,6 +284,8 @@ describe('admin authority suggestions AJAX', () => {
     expect(res.text).toContain('Select exact names on page');
     expect(res.text).toContain('authority-suggestion-bulk-bar');
     expect(res.text).toContain('authority-suggestion-card');
+    expect(res.text).toContain('data-context-pending="1"');
+    expect(res.text).toContain('skeleton-line');
     expect(res.text).toContain('Evidence');
     expect(res.text).toContain('Suggested authority');
     expect(res.text).toContain('Exact name');
@@ -290,6 +302,9 @@ describe('admin authority suggestions AJAX', () => {
     expect(script).toContain('authority-suggestion-context');
     expect(script).toContain('authority-suggestion-meta-note');
     expect(script).toContain('data-exact-name-match');
+    expect(script).toContain('data-context-pending');
+    expect(script).toContain('skeleton-line');
+    expect(script).toContain('suggestions/context.json');
     expect(script).toContain('Method: ');
   });
 

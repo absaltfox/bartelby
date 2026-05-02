@@ -140,6 +140,51 @@
     ].join(', ');
   }
 
+  function renderSkeleton(label, lines) {
+    var safeLabel = escHtml(label || 'Loading content...');
+    var widths = lines && lines.length ? lines : ['medium'];
+    return '<span class="sr-only">' + safeLabel + '</span>' +
+      '<span class="skeleton-stack" aria-hidden="true">' +
+        widths.map(function(width) {
+          return '<span class="skeleton-line skeleton-line--' + escHtml(width) + '"></span>';
+        }).join('') +
+      '</span>';
+  }
+
+  function renderDocumentContext(s) {
+    if (s.source_context_pending) {
+      return '<p class="authority-suggestion-document" data-context-document aria-busy="true">' +
+        renderSkeleton('Loading document context...', ['short']) +
+      '</p>';
+    }
+    return '<p class="authority-suggestion-document" data-context-document>' +
+      escHtml(s.source_document_label || 'Document context unavailable') +
+    '</p>';
+  }
+
+  function renderEvidenceContext(s) {
+    if (s.source_evidence_excerpt) {
+      return '<div data-context-evidence><blockquote class="authority-suggestion-evidence">' +
+        escHtml(s.source_evidence_excerpt) +
+      '</blockquote></div>';
+    }
+    if (s.source_context_pending) {
+      return '<div data-context-evidence aria-busy="true">' +
+        renderSkeleton('Loading approved citation evidence...', ['long', 'medium']) +
+      '</div>';
+    }
+    return '<div data-context-evidence><p class="authority-suggestion-empty">No approved citation evidence is available yet.</p></div>';
+  }
+
+  function renderAuthorityStatsContext(s) {
+    if (s.source_context_pending) {
+      return '<p class="authority-suggestion-empty" data-context-stats aria-busy="true">' +
+        renderSkeleton('Loading authority stats...', ['compact']) +
+      '</p>';
+    }
+    return '<p class="authority-suggestion-empty" data-context-stats>' + escHtml(authorityStatsLabel(s)) + '</p>';
+  }
+
   function renderCard(s, status) {
     var checkbox = status === 'pending'
       ? '<input type="checkbox" class="suggestion-cb authority-suggestion-checkbox" value="' + s.id + '">'
@@ -165,13 +210,12 @@
     var currentAuthorityPart = s.current_authority_label
       ? '<span class="authority-suggestion-meta-note">' + escHtml(s.current_authority_label) + '</span>'
       : '';
-    var evidence = s.source_evidence_excerpt
-      ? '<blockquote class="authority-suggestion-evidence">' + escHtml(s.source_evidence_excerpt) + '</blockquote>'
-      : '<p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>';
+    var evidence = renderEvidenceContext(s);
     return '<article class="knowledge-citation-card authority-suggestion-card"' +
                    ' data-suggestion-id="' + s.id + '"' +
                    ' data-entity-id="' + s.entity_id + '"' +
-                   ' data-exact-name-match="' + (s.exact_name_match ? '1' : '0') + '">' +
+                   ' data-exact-name-match="' + (s.exact_name_match ? '1' : '0') + '"' +
+                   ' data-context-pending="' + (s.source_context_pending ? '1' : '0') + '">' +
              '<div class="authority-suggestion-card-header ' + (status === 'pending' ? 'authority-suggestion-card-header--selectable' : '') + '">' +
                checkbox +
                '<div class="authority-suggestion-title-group">' +
@@ -190,7 +234,7 @@
              '<div class="authority-suggestion-context">' +
                '<section class="authority-suggestion-context-section" aria-label="Evidence context">' +
                  '<span class="authority-suggestion-section-label">Evidence</span>' +
-                 '<p class="authority-suggestion-document">' + escHtml(s.source_document_label || 'Document context unavailable') + '</p>' +
+                 renderDocumentContext(s) +
                  evidence +
                '</section>' +
                '<section class="authority-suggestion-context-section" aria-label="Suggested authority context">' +
@@ -198,11 +242,60 @@
                  '<p class="authority-suggestion-authority">' +
                    '<a href="/admin/knowledge/authorities/' + s.suggested_authority_id + '">' + escHtml(s.suggested_authority_name) + '</a>' +
                  '</p>' +
-                 '<p class="authority-suggestion-empty">' + escHtml(authorityStatsLabel(s)) + '</p>' +
+                 renderAuthorityStatsContext(s) +
                '</section>' +
              '</div>' +
              actions +
            '</article>';
+  }
+
+  function updateCardContext(s) {
+    var card = findCard(s.id);
+    if (!card) return;
+    card.setAttribute('data-context-pending', '0');
+    var documentSlot = card.querySelector('[data-context-document]');
+    if (documentSlot) {
+      documentSlot.textContent = s.source_document_label || 'Document context unavailable';
+      documentSlot.removeAttribute('aria-busy');
+    }
+    var evidenceSlot = card.querySelector('[data-context-evidence]');
+    if (evidenceSlot) {
+      evidenceSlot.innerHTML = s.source_evidence_excerpt
+        ? '<blockquote class="authority-suggestion-evidence">' + escHtml(s.source_evidence_excerpt) + '</blockquote>'
+        : '<p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>';
+      evidenceSlot.removeAttribute('aria-busy');
+    }
+    var statsSlot = card.querySelector('[data-context-stats]');
+    if (statsSlot) {
+      statsSlot.textContent = authorityStatsLabel(s);
+      statsSlot.removeAttribute('aria-busy');
+    }
+  }
+
+  async function loadVisibleContext() {
+    var cards = Array.from(document.querySelectorAll('.authority-suggestion-card'))
+      .filter(function(card) {
+        return card.getAttribute('data-context-pending') === '1';
+      });
+    var ids = cards
+      .map(function(card) { return card.getAttribute('data-suggestion-id'); })
+      .filter(Boolean);
+    if (!ids.length) return;
+    cards.forEach(function(card) { card.setAttribute('data-context-pending', 'loading'); });
+    try {
+      var res = await fetch('/admin/knowledge/authorities/suggestions/context.json?ids=' + encodeURIComponent(ids.join(',')), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!res.ok) {
+        cards.forEach(function(card) { card.setAttribute('data-context-pending', '1'); });
+        return;
+      }
+      var data = await res.json();
+      (data.suggestions || []).forEach(updateCardContext);
+    } catch (err) {
+      cards.forEach(function(card) { card.setAttribute('data-context-pending', '1'); });
+    }
   }
 
   async function loadMore() {
@@ -237,6 +330,7 @@
       var empty = list.querySelector('[data-empty-state]');
       if (empty) empty.remove();
       list.insertAdjacentHTML('beforeend', html);
+      loadVisibleContext();
 
       if (data.nextCursor && data.nextCursor.beforeCreatedAt && Number.isInteger(Number(data.nextCursor.beforeId))) {
         loadMoreBlock.setAttribute('data-before-created-at', data.nextCursor.beforeCreatedAt);
@@ -413,6 +507,7 @@
     if (bulkClear)   bulkClear.addEventListener('click',   clearSelection);
 
     refreshBulkBar();
+    loadVisibleContext();
   }
 
   if (document.readyState === 'loading') {

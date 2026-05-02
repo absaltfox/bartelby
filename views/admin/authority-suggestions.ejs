@@ -45,7 +45,8 @@
         <article class="knowledge-citation-card authority-suggestion-card"
                  data-suggestion-id="<%= suggestion.id %>"
                  data-entity-id="<%= suggestion.entity_id %>"
-                 data-exact-name-match="<%= suggestion.exact_name_match ? '1' : '0' %>">
+                 data-exact-name-match="<%= suggestion.exact_name_match ? '1' : '0' %>"
+                 data-context-pending="<%= suggestion.source_context_pending ? '1' : '0' %>">
           <div class="authority-suggestion-card-header <%= status === 'pending' ? 'authority-suggestion-card-header--selectable' : '' %>">
             <% if (status === 'pending') { %>
               <input type="checkbox" class="suggestion-cb authority-suggestion-checkbox" value="<%= suggestion.id %>">
@@ -75,12 +76,29 @@
           <div class="authority-suggestion-context">
             <section class="authority-suggestion-context-section" aria-label="Evidence context">
               <span class="authority-suggestion-section-label">Evidence</span>
-              <p class="authority-suggestion-document"><%= suggestion.source_document_label %></p>
-              <% if (suggestion.source_evidence_excerpt) { %>
-                <blockquote class="authority-suggestion-evidence"><%= suggestion.source_evidence_excerpt %></blockquote>
-              <% } else { %>
-                <p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>
-              <% } %>
+              <p class="authority-suggestion-document" data-context-document <% if (suggestion.source_context_pending) { %>aria-busy="true"<% } %>>
+                <% if (suggestion.source_context_pending) { %>
+                  <span class="sr-only">Loading document context...</span>
+                  <span class="skeleton-stack" aria-hidden="true">
+                    <span class="skeleton-line skeleton-line--short"></span>
+                  </span>
+                <% } else { %>
+                  <%= suggestion.source_document_label %>
+                <% } %>
+              </p>
+              <div data-context-evidence <% if (suggestion.source_context_pending) { %>aria-busy="true"<% } %>>
+                <% if (suggestion.source_evidence_excerpt) { %>
+                  <blockquote class="authority-suggestion-evidence"><%= suggestion.source_evidence_excerpt %></blockquote>
+                <% } else if (suggestion.source_context_pending) { %>
+                  <span class="sr-only">Loading approved citation evidence...</span>
+                  <span class="skeleton-stack" aria-hidden="true">
+                    <span class="skeleton-line skeleton-line--long"></span>
+                    <span class="skeleton-line skeleton-line--medium"></span>
+                  </span>
+                <% } else { %>
+                  <p class="authority-suggestion-empty">No approved citation evidence is available yet.</p>
+                <% } %>
+              </div>
             </section>
 
             <section class="authority-suggestion-context-section" aria-label="Suggested authority context">
@@ -88,7 +106,16 @@
               <p class="authority-suggestion-authority">
                 <a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a>
               </p>
-              <p class="authority-suggestion-empty"><%= suggestion.suggested_authority_stats_label %></p>
+              <p class="authority-suggestion-empty" data-context-stats <% if (suggestion.source_context_pending) { %>aria-busy="true"<% } %>>
+                <% if (suggestion.source_context_pending) { %>
+                  <span class="sr-only">Loading authority stats...</span>
+                  <span class="skeleton-stack" aria-hidden="true">
+                    <span class="skeleton-line skeleton-line--compact"></span>
+                  </span>
+                <% } else { %>
+                  <%= suggestion.suggested_authority_stats_label %>
+                <% } %>
+              </p>
             </section>
           </div>
 

@@ -743,6 +743,32 @@ const authorityLinkSuggestions = {
     return await this.list('all', limit, { entityId });
   },
 
+  async getByIds(ids = [], opts = {}) {
+    const safeIds = [...new Set(ids.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!safeIds.length) return [];
+    const placeholders = safeIds.map(() => '?').join(',');
+    const rows = await allAsync(`
+      SELECT
+        als.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        e.authority_id AS current_authority_id,
+        ca.canonical_name AS current_authority_name,
+        a.canonical_name AS suggested_authority_name,
+        a.authority_type AS suggested_authority_type,
+        CASE WHEN LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name)) THEN 1 ELSE 0 END AS exact_name_match
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      INNER JOIN authorities a ON a.id = als.suggested_authority_id
+      LEFT JOIN authorities ca ON ca.id = e.authority_id
+      WHERE als.id IN (${placeholders})
+    `, safeIds);
+    const ordered = safeIds
+      .map((id) => rows.find((row) => Number(row.id) === id))
+      .filter(Boolean);
+    return opts.includeContext ? await this.attachContext(ordered) : ordered;
+  },
+
   async getById(id) {
     return await getAsync('SELECT * FROM authority_link_suggestions WHERE id = ?', [id]);
   },

@@ -219,6 +219,15 @@ Each component should have:
 Avoid reopening the same selector in distant sections unless there is a very
 clear reason and documentation.
 
+## Loading States
+
+Use the shared skeleton loader classes for content that is expected to arrive
+shortly after the initial render, especially when the page shell and primary
+actions are already usable. Skeletons should reserve the same general space as
+the eventual content, include screen-reader-only loading text, and use
+`aria-busy="true"` on the region being updated. Replace the skeleton with real
+content as soon as the async request completes.
+
 ## Naming
 
 Prefer stable, purpose-driven component names over borrowed page names.
