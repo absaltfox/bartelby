@@ -125,7 +125,7 @@ describe('admin authority suggestions AJAX', () => {
     expect(row.exact_name_match).toBe(true);
   });
 
-  it('GET /suggestions.json includes compact review context', async () => {
+  it('authority suggestion list can include compact review context when requested', async () => {
     const suggestedAuthorityId = await db.authoritiesAsync.create({
       authority_type: 'organization', canonical_name: 'Context Review Authority',
       description: null, properties: {}, external_source: null, external_key: null
@@ -193,21 +193,17 @@ describe('admin authority suggestions AJAX', () => {
       status: 'pending'
     });
 
-    const res = await agent
-      .get('/admin/knowledge/authorities/suggestions.json?status=pending&limit=100');
-    expect(res.status).toBe(200);
+    const rows = await db.authorityLinkSuggestionsAsync.list('pending', 100, {
+      includeContext: true
+    });
 
-    const row = res.body.suggestions.find(s => s.id === suggestionId);
+    const row = rows.find(s => s.id === suggestionId);
     expect(row).toBeTruthy();
     expect(row.source_document_title).toBe('Authority Suggestion Context Doc');
-    expect(row.source_document_label).toBe('Authority Suggestion Context Doc');
-    expect(row.source_evidence_excerpt).toContain('supporting authority evidence');
+    expect(row.source_evidence_text).toContain('supporting authority evidence');
     expect(row.suggested_authority_member_count).toBe(1);
     expect(row.suggested_authority_document_count).toBe(1);
-    expect(row.suggested_authority_stats_label).toBe('1 member, 1 document');
-    expect(row.current_authority_label).toBe('Currently linked to Current Context Authority');
-    expect(row.confidence_label).toBe('Confidence 82%');
-    expect(row.match_method_label).toBe('Method: embedding');
+    expect(row.current_authority_name).toBe('Current Context Authority');
   });
 
   it('GET /suggestions.json?nameSignal=exact returns only exact-name suggestions', async () => {

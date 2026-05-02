@@ -223,8 +223,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   const suggestions = stores.authorityLinkSuggestions
     ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE, {
       nameSignal,
-      orderExactFirst,
-      includeContext: true
+      orderExactFirst
     })
     : [];
   const displaySuggestions = decorateSuggestionsDisplay(suggestions);
@@ -269,8 +268,7 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
   const suggestions = decorateSuggestionsDisplay(await stores.authorityLinkSuggestions.list(status, limit, {
     cursor,
     nameSignal,
-    orderExactFirst,
-    includeContext: true
+    orderExactFirst
   }));
   const last = suggestions[suggestions.length - 1];
   const nextCursor = suggestions.length === limit && last
