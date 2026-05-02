@@ -16,6 +16,15 @@ const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
+const KNOWLEDGE_OVERVIEW_STEP_TIMEOUT_MS = parseInt(
+  process.env.KNOWLEDGE_OVERVIEW_STEP_TIMEOUT_MS || '2500',
+  10
+);
+const knowledgeOverviewStepTimeoutMs = Number.isFinite(KNOWLEDGE_OVERVIEW_STEP_TIMEOUT_MS)
+  && KNOWLEDGE_OVERVIEW_STEP_TIMEOUT_MS > 0
+  ? KNOWLEDGE_OVERVIEW_STEP_TIMEOUT_MS
+  : 2500;
+
 function normalizeReturnTo(value, fallbackPath) {
   const candidate = String(value || '').trim();
   if (!candidate || !candidate.startsWith('/admin')) return fallbackPath;
@@ -32,19 +41,83 @@ function appendRedirectParams(basePath, params) {
   return url.pathname + url.search + url.hash;
 }
 
+function warnSlowKnowledgeStep(name, message, context = {}) {
+  console.warn(JSON.stringify({
+    ts: new Date().toISOString(),
+    level: 'warn',
+    category: 'admin_knowledge_overview',
+    step: name,
+    message,
+    ...context
+  }));
+}
+
+async function loadKnowledgeOverviewStep(name, fallback, fn) {
+  const startedAt = Date.now();
+  let settled = false;
+  let timedOut = false;
+  let timer = null;
+
+  const work = Promise.resolve()
+    .then(fn)
+    .then((value) => {
+      if (timedOut) return fallback;
+      settled = true;
+      const durationMs = Date.now() - startedAt;
+      if (durationMs >= 1000) {
+        warnSlowKnowledgeStep(name, 'Slow overview step completed.', { durationMs });
+      }
+      return value;
+    })
+    .catch((err) => {
+      if (timedOut) return fallback;
+      settled = true;
+      warnSlowKnowledgeStep(name, 'Overview step failed.', {
+        durationMs: Date.now() - startedAt,
+        error: err?.message || String(err)
+      });
+      return fallback;
+    });
+
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      settled = true;
+      warnSlowKnowledgeStep(name, 'Overview step timed out; rendering fallback.', {
+        durationMs: Date.now() - startedAt,
+        timeoutMs: knowledgeOverviewStepTimeoutMs
+      });
+      resolve(fallback);
+    }, knowledgeOverviewStepTimeoutMs);
+  });
+
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function buildKnowledgePageState() {
   const [collections, extractionCounts, authorityCount, authoritySuggestionCount, authorityJobCounts] = await Promise.all([
-    collectionsAsync.getAll(),
-    extractionJobsAsync && extractionJobsAsync.getStatusCounts
-      ? extractionJobsAsync.getStatusCounts()
-      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 },
-    authoritiesAsync && authoritiesAsync.getCount ? authoritiesAsync.getCount() : 0,
-    authorityLinkSuggestionsAsync && authorityLinkSuggestionsAsync.countPending
-      ? authorityLinkSuggestionsAsync.countPending()
-      : 0,
-    authorityResolutionJobsAsync && authorityResolutionJobsAsync.getCounts
-      ? authorityResolutionJobsAsync.getCounts()
-      : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
+    loadKnowledgeOverviewStep('collections', [], () => collectionsAsync.getAll()),
+    loadKnowledgeOverviewStep('extractionCounts', { total: 0, queued: 0, running: 0, done: 0, failed: 0 }, () => (
+      extractionJobsAsync && extractionJobsAsync.getStatusCounts
+        ? extractionJobsAsync.getStatusCounts()
+        : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
+    )),
+    loadKnowledgeOverviewStep('authorityCount', 0, () => (
+      authoritiesAsync && authoritiesAsync.getCount ? authoritiesAsync.getCount() : 0
+    )),
+    loadKnowledgeOverviewStep('authoritySuggestionCount', 0, () => (
+      authorityLinkSuggestionsAsync && authorityLinkSuggestionsAsync.countPending
+        ? authorityLinkSuggestionsAsync.countPending()
+        : 0
+    )),
+    loadKnowledgeOverviewStep('authorityJobCounts', { total: 0, queued: 0, running: 0, done: 0, failed: 0 }, () => (
+      authorityResolutionJobsAsync && authorityResolutionJobsAsync.getCounts
+        ? authorityResolutionJobsAsync.getCounts()
+        : { total: 0, queued: 0, running: 0, done: 0, failed: 0 }
+    ))
   ]);
 
   return {
