@@ -655,70 +655,7 @@ const authorityLinkSuggestions = {
       }
     }
     params.push(limit);
-    const contextCtes = includeContext
-      ? `,
-      source_context AS (
-        SELECT entity_id, document_title, passage_text
-        FROM (
-          SELECT
-            c_ctx.entity_id,
-            d.title AS document_title,
-            c_ctx.passage_text,
-            ROW_NUMBER() OVER (
-              PARTITION BY c_ctx.entity_id
-              ORDER BY c_ctx.created_at DESC, c_ctx.id DESC
-            ) AS rn
-          FROM citations c_ctx
-          LEFT JOIN documents d ON d.id = c_ctx.document_id
-          WHERE c_ctx.approval_status = 'approved'
-            AND c_ctx.entity_id IN (SELECT entity_id FROM suggestion_page)
-        )
-        WHERE rn = 1
-      ),
-      authority_member_stats AS (
-        SELECT authority_id, COUNT(*) AS member_count
-        FROM entities
-        WHERE authority_id IN (SELECT suggested_authority_id FROM suggestion_page)
-        GROUP BY authority_id
-      ),
-      authority_document_stats AS (
-        SELECT authority_member.authority_id, COUNT(DISTINCT authority_citation.document_id) AS document_count
-        FROM entities authority_member
-        INNER JOIN citations authority_citation
-          ON authority_citation.entity_id = authority_member.id
-         AND authority_citation.approval_status = 'approved'
-        WHERE authority_member.authority_id IN (SELECT suggested_authority_id FROM suggestion_page)
-        GROUP BY authority_member.authority_id
-      )`
-      : '';
-    const contextColumns = includeContext
-      ? `,
-        source_context.document_title AS source_document_title,
-        source_context.passage_text AS source_evidence_text,
-        COALESCE(authority_member_stats.member_count, 0) AS suggested_authority_member_count,
-        COALESCE(authority_document_stats.document_count, 0) AS suggested_authority_document_count`
-      : '';
-    const contextJoins = includeContext
-      ? `
-      LEFT JOIN source_context ON source_context.entity_id = e.id
-      LEFT JOIN authority_member_stats ON authority_member_stats.authority_id = a.id
-      LEFT JOIN authority_document_stats ON authority_document_stats.authority_id = a.id`
-      : '';
-    return await allAsync(`
-      WITH suggestion_page AS (
-        SELECT
-          als.id,
-          als.entity_id,
-          als.suggested_authority_id,
-          CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
-        FROM authority_link_suggestions als
-        INNER JOIN entities e ON e.id = als.entity_id
-        INNER JOIN authorities a ON a.id = als.suggested_authority_id
-        ${where}
-        ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
-        LIMIT ?
-      )
-      ${contextCtes}
+    const rows = await allAsync(`
       SELECT
         als.*,
         e.canonical_name AS entity_name,
@@ -727,16 +664,79 @@ const authorityLinkSuggestions = {
         ca.canonical_name AS current_authority_name,
         a.canonical_name AS suggested_authority_name,
         a.authority_type AS suggested_authority_type,
-        suggestion_page.exact_name_match AS exact_name_match
-        ${contextColumns}
-      FROM suggestion_page
-      INNER JOIN authority_link_suggestions als ON als.id = suggestion_page.id
+        CASE WHEN ${exactNameSql} THEN 1 ELSE 0 END AS exact_name_match
+      FROM authority_link_suggestions als
       INNER JOIN entities e ON e.id = als.entity_id
       INNER JOIN authorities a ON a.id = als.suggested_authority_id
       LEFT JOIN authorities ca ON ca.id = e.authority_id
-      ${contextJoins}
-      ORDER BY ${opts.orderExactFirst ? `suggestion_page.exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
+      ${where}
+      ORDER BY ${opts.orderExactFirst ? `exact_name_match DESC, ` : ''}als.created_at DESC, als.id DESC
+      LIMIT ?
     `, params);
+    return includeContext ? await this.attachContext(rows) : rows;
+  },
+
+  async attachContext(rows = []) {
+    if (!rows.length) return rows;
+    const uniqueNumbers = (values) => [...new Set(values.map(Number).filter((value) => Number.isInteger(value) && value > 0))];
+    const entityIds = uniqueNumbers(rows.map((row) => row.entity_id));
+    const authorityIds = uniqueNumbers(rows.map((row) => row.suggested_authority_id));
+
+    const placeholders = (ids) => ids.map(() => '?').join(',');
+    const evidenceByEntity = new Map();
+    const memberCountByAuthority = new Map();
+    const documentCountByAuthority = new Map();
+
+    if (entityIds.length) {
+      const evidenceRows = await allAsync(`
+        SELECT
+          c.entity_id,
+          d.title AS document_title,
+          c.passage_text,
+          c.created_at,
+          c.id
+        FROM citations c
+        LEFT JOIN documents d ON d.id = c.document_id
+        WHERE c.approval_status = 'approved'
+          AND c.entity_id IN (${placeholders(entityIds)})
+        ORDER BY c.entity_id, c.created_at DESC, c.id DESC
+      `, entityIds);
+      for (const row of evidenceRows) {
+        if (!evidenceByEntity.has(row.entity_id)) evidenceByEntity.set(row.entity_id, row);
+      }
+    }
+
+    if (authorityIds.length) {
+      const memberRows = await allAsync(`
+        SELECT authority_id, COUNT(*) AS member_count
+        FROM entities
+        WHERE authority_id IN (${placeholders(authorityIds)})
+        GROUP BY authority_id
+      `, authorityIds);
+      memberRows.forEach((row) => memberCountByAuthority.set(row.authority_id, Number(row.member_count || 0)));
+
+      const documentRows = await allAsync(`
+        SELECT e.authority_id, COUNT(DISTINCT c.document_id) AS document_count
+        FROM entities e
+        INNER JOIN citations c
+          ON c.entity_id = e.id
+         AND c.approval_status = 'approved'
+        WHERE e.authority_id IN (${placeholders(authorityIds)})
+        GROUP BY e.authority_id
+      `, authorityIds);
+      documentRows.forEach((row) => documentCountByAuthority.set(row.authority_id, Number(row.document_count || 0)));
+    }
+
+    return rows.map((row) => {
+      const evidence = evidenceByEntity.get(row.entity_id) || {};
+      return {
+        ...row,
+        source_document_title: evidence.document_title || null,
+        source_evidence_text: evidence.passage_text || null,
+        suggested_authority_member_count: memberCountByAuthority.get(row.suggested_authority_id) || 0,
+        suggested_authority_document_count: documentCountByAuthority.get(row.suggested_authority_id) || 0
+      };
+    });
   },
 
   async getByEntityId(entityId, limit = 50) {
