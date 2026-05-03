@@ -192,6 +192,14 @@ class.
 
 ## CSS Standards
 
+## Design Tokens
+
+Theme overrides should preserve the semantic split between `--accent`,
+`--accent-hover`, and `--accent-dark`: use `--accent-hover` for hover states,
+and reserve `--accent-dark` for pressed, active, or otherwise deepened states.
+Any surface that uses `--accent-mid` as a background must pair it with
+`color: var(--ink)` to maintain readable contrast.
+
 ## File Organization
 
 `public/css/style.css` should be organized by component families, with each

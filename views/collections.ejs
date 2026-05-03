@@ -10,7 +10,19 @@
     <!-- All Documents card -->
     <a href="/collections/all" class="collection-card collection-card--special">
       <div class="collection-card-thumb collection-card-thumb--icon">
-        <span class="collection-card-icon">&#128218;</span>
+        <span class="collection-card-icon" aria-hidden="true">
+          <svg viewBox="0 0 80 80" width="80" height="80">
+            <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+              <path d="M16 60 L64 60 L64 53 L16 53 Z" fill="currentColor" fill-opacity="0.10"/>
+              <path d="M22 53 L22 58 M30 53 L30 58 M58 53 L58 58" stroke-width="0.7"/>
+              <path d="M18 51 L62 49 L62 42 L18 44 Z" fill="currentColor" fill-opacity="0.08"/>
+              <path d="M24 44.3 L24 49.7 M56 42.6 L56 48.0" stroke-width="0.7"/>
+              <path d="M22 41 L60 39 L60 22 L22 24 Z" fill="currentColor" fill-opacity="0.10"/>
+              <path d="M28 24.4 L28 39.6 M54 22.8 L54 38" stroke-width="0.7"/>
+              <path d="M36 27 L48 26 M36 32 L46 31.5" stroke-width="0.7" opacity="0.5"/>
+            </g>
+          </svg>
+        </span>
       </div>
       <div class="collection-card-body">
         <h2 class="collection-card-title">All Documents</h2>
@@ -32,7 +44,16 @@
               <img src="<%= c.thumbnail %>" alt="<%= c.name %>" data-hide-on-image-error loading="lazy" decoding="async" width="400" height="300">
             <% } %>
           <% } %>
-        <div class="collection-card-placeholder">&#128220;</div>
+        <div class="collection-card-placeholder" aria-hidden="true">
+          <svg viewBox="0 0 80 80" width="80" height="80">
+            <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+              <path d="M14 22 L66 22 L66 60 L14 60 Z" fill="currentColor" fill-opacity="0.08"/>
+              <path d="M14 22 L40 44 L66 22"/>
+              <path d="M14 60 L34 40 M66 60 L46 40"/>
+              <path d="M28 28 L52 28 M28 33 L48 33" stroke-width="0.7" opacity="0.5"/>
+            </g>
+          </svg>
+        </div>
       </div>
       <div class="collection-card-body">
         <h2 class="collection-card-title"><%= c.name %></h2>
@@ -54,7 +75,19 @@
   <% if (isAdmin && uncollectedCount > 0) { %>
     <a href="/collections/uncollected" class="collection-card collection-card--special">
       <div class="collection-card-thumb collection-card-thumb--icon">
-        <span class="collection-card-icon">&#128451;</span>
+        <span class="collection-card-icon" aria-hidden="true">
+          <svg viewBox="0 0 80 80" width="80" height="80">
+            <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+              <path d="M14 20 L66 20 L66 62 L14 62 Z" fill="currentColor" fill-opacity="0.08"/>
+              <path d="M14 32 L66 32 M14 46 L66 46"/>
+              <circle cx="40" cy="26" r="1.6" fill="currentColor"/>
+              <circle cx="40" cy="39" r="1.6" fill="currentColor"/>
+              <circle cx="40" cy="54" r="1.6" fill="currentColor"/>
+              <path d="M22 24 L34 24 L34 28 L22 28 Z" fill="var(--surface, #fffefb)" stroke-width="0.8"/>
+              <path d="M24 26 L32 26" stroke-width="0.6" opacity="0.6"/>
+            </g>
+          </svg>
+        </span>
       </div>
       <div class="collection-card-body">
         <h2 class="collection-card-title">Uncollected</h2>

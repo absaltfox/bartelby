@@ -21,7 +21,8 @@
   --border-light:  #ece3d4;
 
   --accent:        #7c4d2e;
-  --accent-dark:   #5a3520;
+  --accent-hover:  #683c22;   /* halfway hover step - visible value shift without going inky */
+  --accent-dark:   #42261a;   /* deepened from #5a3520 so pressed/active reads distinct */
   --accent-light:  #f5ece0;
   --accent-mid:    #c9906a;
 
@@ -56,8 +57,8 @@ html {
 
 body {
   font-family: 'EB Garamond', Georgia, serif;
-  font-size: 1.0625rem;
-  line-height: 1.65;
+  font-size: 1.125rem;    /* 18px - Garamond's small x-height needs the extra */
+  line-height: 1.6;       /* tightened from 1.65; the size bump compensates */
   color: var(--ink);
   background-color: var(--parchment);
   background-image:
@@ -248,7 +249,7 @@ h1, h2, h3, h4 {
 }
 
 a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-dark); text-decoration: underline; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
 
 code, pre {
   font-family: 'JetBrains Mono', 'Courier New', monospace;
@@ -491,7 +492,6 @@ main { flex: 1; padding: 32px 0; }
   align-items: center;
   justify-content: center;
   font-size: 3rem;
-  opacity: 0.4;
 }
 
 .collection-card-thumb--icon {
@@ -503,7 +503,12 @@ main { flex: 1; padding: 32px 0; }
 
 .collection-card-icon {
   font-size: 3.5rem;
-  opacity: 0.6;
+}
+
+.collection-card-icon,
+.collection-card-placeholder {
+  color: var(--accent-mid);
+  opacity: 0.55;        /* ~30% perceived after fill-opacity multipliers */
 }
 
 .collection-card-body {
@@ -645,11 +650,14 @@ main { flex: 1; padding: 32px 0; }
 
 .filter-label {
   display: block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-family: 'EB Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 0.8125rem;          /* 13px */
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "c2sc" 1, "smcp" 1;
+  letter-spacing: 0.08em;
   color: var(--ink-muted);
+  text-transform: none;          /* small caps replaces uppercase */
   margin-bottom: 6px;
 }
 
@@ -772,9 +780,13 @@ main { flex: 1; padding: 32px 0; }
 .filter-hint {
   display: block;
   margin-top: 4px;
-  font-size: 0.72rem;
-  color: var(--ink-faint);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: 'EB Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 0.875rem;
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "c2sc" 1, "smcp" 1, "onum" 1;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
 }
 
 .filter-apply-btn {
@@ -1095,7 +1107,7 @@ main { flex: 1; padding: 32px 0; }
   font-size: 0.9375rem;
   transition: color 0.15s;
 }
-.back-link:hover { color: var(--accent-dark); text-decoration: none; }
+.back-link:hover { color: var(--accent-hover); text-decoration: none; }
 
 .document-title-row {
   display: flex;
@@ -1860,11 +1872,15 @@ main { flex: 1; padding: 32px 0; }
 
 .form-group label {
   display: block;
+  font-family: 'EB Garamond', Georgia, serif;
   font-weight: 500;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "c2sc" 1, "smcp" 1;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  text-transform: none;
   margin-bottom: 5px;
-  color: var(--ink-mid);
-  letter-spacing: 0.03em;
 }
 
 .form-group input[type="text"],
@@ -1955,7 +1971,8 @@ main { flex: 1; padding: 32px 0; }
   background-color: var(--accent);
   color: var(--parchment);
 }
-.btn-primary:hover { background-color: var(--accent-dark); color: var(--parchment); text-decoration: none; }
+.btn-primary:hover { background-color: var(--accent-hover); color: var(--parchment); text-decoration: none; }
+.btn-primary:active { background-color: var(--accent-dark); color: var(--parchment); }
 
 .btn-secondary {
   background-color: var(--parchment-alt);
@@ -9099,4 +9116,99 @@ body.modal-open {
   .authority-suggestion-title-group h2 {
     font-size: 1.08rem;
   }
+}
+
+/* -- Texture layers ---------------------------------------------------------
+   Page bg already lives on `body`. These two add raised-feel grain
+   to cards and a coarser fiber to reading panes. Layer them with the
+   existing background-color, do not replace it.
+   ------------------------------------------------------------------------- */
+
+.surface-grain {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 3px rgba(30,22,16,0.08);
+}
+
+.paper-fiber {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23f)' opacity='0.06'/%3E%3C/svg%3E");
+}
+
+.collection-card,
+.document-card,
+.image-panel,
+.transcript-panel,
+.filter-sidebar,
+.auth-card,
+.knowledge-graph-panel {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 3px rgba(30,22,16,0.08);
+}
+
+.transcript-content {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23f)' opacity='0.06'/%3E%3C/svg%3E");
+}
+
+/* -- Editorial flourishes -------------------------------------------------- */
+
+.display-xl {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 3rem;          /* 48px */
+  line-height: 1.05;
+  letter-spacing: -0.012em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.dropcap::first-letter {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 700;
+  font-style: italic;
+  float: left;
+  font-size: 4.2em;
+  line-height: 0.85;
+  padding: 0.05em 0.10em 0 0;
+  color: var(--accent);
+}
+
+.swash {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-style: italic;
+  font-feature-settings: "swsh" 1, "salt" 1;
+}
+
+.section-num {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-variant-numeric: oldstyle-nums;
+  font-feature-settings: "smcp" 1, "c2sc" 1;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+}
+
+/* -- Contrast guards --------------------------------------------------------
+   #C9906A on #FAF6EF ~= 1.7:1 (fail). #C9906A on #1E1610 ~= 7.6:1 (AA+).
+   Any background using --accent-mid MUST set color: var(--ink).
+   ------------------------------------------------------------------------- */
+
+.on-accent-mid {
+  background: var(--accent-mid);
+  color: var(--ink);
+}
+
+.on-accent {
+  background: var(--accent);
+  color: var(--parchment);
+}
+
+.on-accent:hover {
+  background: var(--accent-hover);
+}
+
+.on-accent:active {
+  background: var(--accent-dark);
 }
