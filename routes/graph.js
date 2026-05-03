@@ -105,7 +105,13 @@ router.get('/entities', asyncHandler(async (req, res) => {
     try {
       const matchIds = new Set();
       for (const entity of rows) {
-        const rels = await stores.relationships.getByEntityId(entity.id);
+        const sourceIds = Array.isArray(entity.member_entity_ids) && entity.member_entity_ids.length
+          ? entity.member_entity_ids
+          : [entity.id];
+        const rels = [];
+        for (const memberId of sourceIds) {
+          rels.push(...await stores.relationships.getByEntityId(memberId));
+        }
         if (rels.some(r => r.relationship_type === relType)) {
           matchIds.add(entity.id);
         }
@@ -120,7 +126,13 @@ router.get('/entities', asyncHandler(async (req, res) => {
     try {
       const matchIds = new Set();
       for (const entity of rows) {
-        const dates = await stores.dateExpressions.getByEntityId(entity.id);
+        const sourceIds = Array.isArray(entity.member_entity_ids) && entity.member_entity_ids.length
+          ? entity.member_entity_ids
+          : [entity.id];
+        const dates = [];
+        for (const memberId of sourceIds) {
+          dates.push(...await stores.dateExpressions.getByEntityId(memberId));
+        }
         const inRange = dates.some(d => {
           if (dateFrom && d.latest && d.latest < dateFrom) return false;
           if (dateTo && d.earliest && d.earliest > dateTo) return false;
@@ -173,6 +185,7 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
   return res.json({
     entity,
     authority: authorityContext.authority || null,
+    graphNode: authorityContext.graphNode || null,
     linkedEntities: visibleLinkedEntities,
     aliases: aliases || [],
     dates: dates || [],
@@ -199,10 +212,16 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
 
   const collectionId = collectionFilterId(req);
   const relType = req.query.relType || null;
+  const neighborLimit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+  const neighborOffset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   const { userId, isAdmin, accessAll } = accessOpts(req);
-  const neighbors = stores.graphAccess && typeof stores.graphAccess.getNeighbors === 'function'
-    ? await stores.graphAccess.getNeighbors(id, userId, isAdmin, accessAll, collectionId)
-    : [];
+  const neighborResult = stores.graphAccess && typeof stores.graphAccess.getNeighbors === 'function'
+    ? await stores.graphAccess.getNeighbors(id, userId, isAdmin, accessAll, collectionId, {
+      limit: neighborLimit,
+      offset: neighborOffset
+    })
+    : { neighbors: [], total: 0, limit: neighborLimit, offset: neighborOffset, hasMore: false, nextOffset: null };
+  const neighbors = Array.isArray(neighborResult) ? neighborResult : neighborResult.neighbors || [];
 
   const accessChecks = await Promise.all(
     neighbors.map(async (neighbor) => ({
@@ -215,7 +234,18 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
     accessible = accessible.filter((n) => safeRelationshipTypes(n).includes(relType));
   }
 
-  return res.json({ entity, neighbors: accessible, depth });
+  const total = Number(neighborResult.total != null ? neighborResult.total : accessible.length);
+  return res.json({
+    entity,
+    neighbors: accessible,
+    depth,
+    total,
+    limit: neighborLimit,
+    offset: neighborOffset,
+    hasMore: !!neighborResult.hasMore,
+    nextOffset: neighborResult.nextOffset,
+    overflow: Math.max(0, total - neighborOffset - accessible.length)
+  });
 }));
 
 router.get('/relationships/:id', asyncHandler(async (req, res) => {
@@ -289,8 +319,8 @@ router.get('/search', asyncHandler(async (req, res) => {
     const documentIds = new Set(citationRows.map(row => row.document_id).filter(Boolean));
     return {
       ...entity,
-      citationCount: citationRows.length,
-      documentCount: documentIds.size
+      citationCount: entity.citation_count != null ? entity.citation_count : citationRows.length,
+      documentCount: entity.document_count != null ? entity.document_count : documentIds.size
     };
   });
 
@@ -476,9 +506,39 @@ router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
     };
   });
 
+  const authorityIds = Array.from(new Set(accessible.map((entity) => Number(entity.authority_id)).filter((id) => Number.isInteger(id))));
+  const authorityMap = new Map();
+  if (stores.authorities && stores.authorities.getById) {
+    for (const authorityId of authorityIds) {
+      const authority = await stores.authorities.getById(authorityId);
+      if (authority) authorityMap.set(authorityId, authority);
+    }
+  }
+  const enrichedEntities = accessible.map((entity) => {
+    const authorityId = Number(entity.authority_id);
+    const authority = Number.isInteger(authorityId) ? authorityMap.get(authorityId) : null;
+    if (!authority) {
+      return {
+        ...entity,
+        node_kind: 'entity',
+        graph_node_id: `entity:${entity.id}`
+      };
+    }
+    return {
+      ...entity,
+      node_kind: 'entity',
+      graph_node_id: `entity:${entity.id}`,
+      authority: {
+        id: authority.id,
+        authority_type: authority.authority_type,
+        canonical_name: authority.canonical_name
+      }
+    };
+  });
+
   return res.json({
     documentId: docId,
-    entities: accessible,
+    entities: enrichedEntities,
     relationships: enrichedRelationships,
     pendingCount
   });

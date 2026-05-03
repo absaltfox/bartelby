@@ -1970,38 +1970,42 @@ const graphAccess = {
     if (isFts5Available()) {
       const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
       try {
-        return (await allAsync(`
+        const rows = (await allAsync(`
           SELECT DISTINCT e.*
           FROM entities e
+          LEFT JOIN authorities a ON a.id = e.authority_id
           INNER JOIN citations c ON c.entity_id = e.id
           WHERE (${access.clause})
             AND e.entity_type != 'date'
-            AND e.id IN (
+            AND (e.id IN (
               SELECT rowid FROM entities_fts WHERE entities_fts MATCH ?
               UNION
               SELECT ea.entity_id FROM entity_aliases ea
               JOIN entity_aliases_fts af ON af.rowid = ea.id
               WHERE entity_aliases_fts MATCH ?
-            )
-          ORDER BY e.canonical_name
+            ) OR a.canonical_name LIKE ?)
+          ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
           LIMIT ?
-        `, [...access.params, ftsQuery, ftsQuery, limit])).map(hydrateEntity);
+        `, [...access.params, ftsQuery, ftsQuery, `%${sanitized}%`, limit * 5])).map(hydrateEntity);
+        return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
       } catch (err) {
         // fall through to LIKE
       }
     }
     const pattern = `%${sanitized}%`;
-    return (await allAsync(`
+    const rows = (await allAsync(`
       SELECT DISTINCT e.*
       FROM entities e
       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+      LEFT JOIN authorities a ON a.id = e.authority_id
       INNER JOIN citations c ON c.entity_id = e.id
       WHERE (${access.clause})
         AND e.entity_type != 'date'
-        AND (e.canonical_name LIKE ? OR ea.alias LIKE ?)
-      ORDER BY e.canonical_name
+        AND (e.canonical_name LIKE ? OR ea.alias LIKE ? OR a.canonical_name LIKE ?)
+      ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
       LIMIT ?
-    `, [...access.params, pattern, pattern, limit])).map(hydrateEntity);
+    `, [...access.params, pattern, pattern, pattern, limit * 5])).map(hydrateEntity);
+    return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
   },
 
   async getEntitiesByType(entityType, userId, isAdmin, accessAll, limit = 50, offset = 0, collectionId = null) {
@@ -2012,17 +2016,19 @@ const graphAccess = {
       typeClause = 'AND e.entity_type = ?';
       params.push(entityType);
     }
-    params.push(limit, offset);
-    return (await allAsync(`
+    params.push(limit * 5, offset);
+    const rows = (await allAsync(`
       SELECT DISTINCT e.*
       FROM entities e
+      LEFT JOIN authorities a ON a.id = e.authority_id
       INNER JOIN citations c ON c.entity_id = e.id
       WHERE (${access.clause})
         AND e.entity_type != 'date'
         ${typeClause}
-      ORDER BY e.canonical_name
+      ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
       LIMIT ? OFFSET ?
     `, params)).map(hydrateEntity);
+    return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
   },
 
   async canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId = null) {
@@ -2047,6 +2053,7 @@ const graphAccess = {
         entity,
         authority: null,
         linkedEntities: [entity],
+        graphNode: await buildEntityGraphNode(entity, { userId, isAdmin, accessAll, collectionId }),
         centerEntityIds: [entity.id]
       };
     }
@@ -2065,21 +2072,27 @@ const graphAccess = {
       entity,
       authority: await authorities.getById(entity.authority_id),
       linkedEntities,
+      graphNode: await buildAuthorityGraphNode(entity.authority_id, linkedEntities, { userId, isAdmin, accessAll, collectionId }),
       centerEntityIds: linkedEntities.length ? linkedEntities.map((row) => row.id) : [entity.id]
     };
   },
 
-  async getNeighbors(entityId, userId, isAdmin, accessAll, collectionId = null) {
+  async getNeighbors(entityId, userId, isAdmin, accessAll, collectionId = null, opts = {}) {
     const context = await this.getAuthorityContext(entityId, userId, isAdmin, accessAll, collectionId);
     const centerEntityIds = Array.from(new Set(
       (context.centerEntityIds || []).filter((value) => Number.isInteger(value))
     ));
-    if (!centerEntityIds.length) return [];
+    const limit = Math.min(Math.max(parseInt(opts.limit, 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(opts.offset, 10) || 0, 0);
+    if (!centerEntityIds.length) {
+      return { neighbors: [], total: 0, limit, offset, hasMore: false, nextOffset: null };
+    }
 
     const visibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
     const centerPlaceholders = centerEntityIds.map(() => '?').join(',');
     const rows = await allAsync(`
       SELECT
+        c.id AS citation_id,
         r.id AS relationship_id,
         r.relationship_type,
         r.confidence,
@@ -2095,7 +2108,8 @@ const graphAccess = {
         other.description AS other_entity_description,
         other.authority_id AS other_authority_id,
         oa.canonical_name AS other_authority_name,
-        oa.authority_type AS other_authority_type
+        oa.authority_type AS other_authority_type,
+        c.document_id AS evidence_document_id
       FROM relationships r
       INNER JOIN citations c ON c.relationship_id = r.id
       INNER JOIN entities other
@@ -2134,7 +2148,10 @@ const graphAccess = {
           description: row.other_entity_description || '',
           authority_id: hasAuthority ? row.other_authority_id : null,
           node_kind: hasAuthority ? 'authority' : 'entity',
+          graph_node_id: key,
           member_entity_ids: new Set(),
+          document_ids: new Set(),
+          citation_ids: new Set(),
           relationship_ids: new Set(),
           relationship_types: new Set(),
           directions: new Set(),
@@ -2143,6 +2160,8 @@ const graphAccess = {
       }
       const entry = grouped.get(key);
       entry.member_entity_ids.add(row.other_entity_id);
+      if (row.evidence_document_id) entry.document_ids.add(row.evidence_document_id);
+      if (row.citation_id) entry.citation_ids.add(row.citation_id);
       entry.relationship_ids.add(row.relationship_id);
       entry.relationship_types.add(row.relationship_type || 'related_to');
       entry.directions.add(row.direction === 'incoming' ? 'incoming' : 'outgoing');
@@ -2151,15 +2170,18 @@ const graphAccess = {
       }
     }
 
-    return Array.from(grouped.values()).map((entry) => ({
+    const allNeighbors = Array.from(grouped.values()).map((entry) => ({
       id: entry.id,
       canonical_name: entry.canonical_name,
       entity_type: entry.entity_type,
       description: entry.description,
       authority_id: entry.authority_id,
       node_kind: entry.node_kind,
+      graph_node_id: entry.graph_node_id,
       member_entity_ids: Array.from(entry.member_entity_ids),
       member_count: entry.member_entity_ids.size,
+      document_count: entry.document_ids.size,
+      citation_count: entry.citation_ids.size,
       relationship_id: entry.relationship_ids.size === 1 ? Array.from(entry.relationship_ids)[0] : null,
       relationship_ids: Array.from(entry.relationship_ids),
       relationship_type: Array.from(entry.relationship_types).join(', '),
@@ -2167,9 +2189,137 @@ const graphAccess = {
       direction: entry.directions.size === 1 ? Array.from(entry.directions)[0] : 'mixed',
       evidence_text: entry.evidence_texts[0] || null,
       evidence_texts: entry.evidence_texts
-    }));
+    })).sort((a, b) => {
+      if (b.citation_count !== a.citation_count) return b.citation_count - a.citation_count;
+      if (b.document_count !== a.document_count) return b.document_count - a.document_count;
+      if (b.relationship_ids.length !== a.relationship_ids.length) return b.relationship_ids.length - a.relationship_ids.length;
+      if (b.member_count !== a.member_count) return b.member_count - a.member_count;
+      return String(a.canonical_name || '').localeCompare(String(b.canonical_name || ''));
+    });
+
+    const total = allNeighbors.length;
+    const neighbors = allNeighbors.slice(offset, offset + limit);
+    const nextOffset = offset + neighbors.length;
+    return {
+      neighbors,
+      total,
+      limit,
+      offset,
+      hasMore: nextOffset < total,
+      nextOffset: nextOffset < total ? nextOffset : null
+    };
   }
 };
+
+function normalizePositiveInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+async function getVisibleCitationStats(entityIds, opts = {}) {
+  const ids = Array.from(new Set((entityIds || []).map(normalizePositiveInteger).filter(Boolean)));
+  if (!ids.length) {
+    return { citationCount: 0, documentCount: 0 };
+  }
+  const placeholders = ids.map(() => '?').join(',');
+  const visibility = buildKnowledgeCitationVisibilityFilter(opts, 'c', 'c.document_id');
+  const row = await getAsync(`
+    SELECT
+      COUNT(DISTINCT c.id) AS citation_count,
+      COUNT(DISTINCT c.document_id) AS document_count
+    FROM citations c
+    WHERE c.entity_id IN (${placeholders})
+      AND (${visibility.clause})
+  `, [...ids, ...visibility.params]);
+  return {
+    citationCount: Number(row?.citation_count || 0),
+    documentCount: Number(row?.document_count || 0)
+  };
+}
+
+async function getVisibleAuthorityMembers(authorityId, opts = {}) {
+  const normalizedAuthorityId = normalizePositiveInteger(authorityId);
+  if (!normalizedAuthorityId) return [];
+  const visibility = buildKnowledgeCitationVisibilityFilter(opts, 'c', 'c.document_id');
+  return (await allAsync(`
+    SELECT DISTINCT e.*
+    FROM entities e
+    INNER JOIN citations c ON c.entity_id = e.id
+    WHERE e.authority_id = ?
+      AND e.entity_type != 'date'
+      AND (${visibility.clause})
+    ORDER BY e.canonical_name, e.id
+  `, [normalizedAuthorityId, ...visibility.params])).map(hydrateEntity);
+}
+
+async function buildEntityGraphNode(entity, opts = {}) {
+  if (!entity) return null;
+  const stats = await getVisibleCitationStats([entity.id], opts);
+  return {
+    ...entity,
+    node_kind: 'entity',
+    graph_node_id: `entity:${entity.id}`,
+    authority_id: null,
+    member_entity_ids: [entity.id],
+    member_count: 1,
+    document_count: stats.documentCount,
+    citation_count: stats.citationCount
+  };
+}
+
+async function buildAuthorityGraphNode(authorityId, visibleMembers, opts = {}) {
+  const authority = await authorities.getById(authorityId);
+  const members = visibleMembers && visibleMembers.length
+    ? visibleMembers
+    : await getVisibleAuthorityMembers(authorityId, opts);
+  if (!authority || !members.length) return null;
+  const memberIds = members.map((member) => member.id);
+  const stats = await getVisibleCitationStats(memberIds, opts);
+  const representative = members[0];
+  return {
+    id: representative.id,
+    entity_type: authority.authority_type || representative.entity_type,
+    canonical_name: authority.canonical_name || representative.canonical_name,
+    description: authority.description || representative.description || '',
+    properties: authority.properties || {},
+    authority_id: authority.id,
+    node_kind: 'authority',
+    graph_node_id: `authority:${authority.id}`,
+    member_entity_ids: memberIds,
+    member_count: memberIds.length,
+    document_count: stats.documentCount,
+    citation_count: stats.citationCount
+  };
+}
+
+async function projectGraphNodes(entityRows, opts = {}) {
+  const grouped = new Map();
+  for (const row of entityRows || []) {
+    if (!row || !row.id) continue;
+    const authorityId = normalizePositiveInteger(row.authority_id);
+    const key = authorityId ? `authority:${authorityId}` : `entity:${row.id}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        authorityId,
+        entities: []
+      });
+    }
+    grouped.get(key).entities.push(row);
+  }
+
+  const projected = [];
+  for (const group of grouped.values()) {
+    const node = group.authorityId
+      ? await buildAuthorityGraphNode(group.authorityId, null, opts)
+      : await buildEntityGraphNode(group.entities[0], opts);
+    if (node) projected.push(node);
+  }
+
+  const limit = Math.max(1, parseInt(opts.limit, 10) || projected.length || 50);
+  return projected
+    .sort((a, b) => String(a.canonical_name || '').localeCompare(String(b.canonical_name || '')))
+    .slice(0, limit);
+}
 
 function parseJsonValue(value, fallback) {
   if (!value) return fallback;

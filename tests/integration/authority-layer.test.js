@@ -200,6 +200,13 @@ describe('authority layer integration', () => {
       properties: {},
       authority_id: authorityId
     });
+    const aliceOutsideCollectionId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Alice R.',
+      description: null,
+      properties: {},
+      authority_id: authorityId
+    });
     const bobId = await db.entitiesAsync.create({
       entity_type: 'person',
       canonical_name: 'Bob Grant',
@@ -209,6 +216,12 @@ describe('authority layer integration', () => {
     const charlieId = await db.entitiesAsync.create({
       entity_type: 'person',
       canonical_name: 'Charlie Stone',
+      description: null,
+      properties: {}
+    });
+    const danaId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Dana Unresolved',
       description: null,
       properties: {}
     });
@@ -243,6 +256,13 @@ describe('authority layer integration', () => {
       image_path: '/uploads/authority-doc-b.png',
       metadata: {}
     });
+    const docCId = await db.documentsAsync.create({
+      title: 'Authority Graph Doc C Outside Collection',
+      date_created: '1880-01-03',
+      description: null,
+      image_path: '/uploads/authority-doc-c.png',
+      metadata: {}
+    });
     await db.documentCollectionsAsync.add(docAId, collectionId);
     await db.documentCollectionsAsync.add(docBId, collectionId);
 
@@ -262,12 +282,22 @@ describe('authority layer integration', () => {
       notes: null,
       is_best: true
     });
+    const transcriptCId = await db.transcriptsAsync.create({
+      document_id: docCId,
+      content: 'Alice R. appears in a document outside the selected collection.',
+      transcriber: 'Test',
+      version: 1,
+      notes: null,
+      is_best: true
+    });
 
     const entityCitations = [
       { entity_id: aliceAId, transcript_id: transcriptAId, document_id: docAId, passage_text: 'Alice Reed', passage_start: 0, passage_end: 10 },
       { entity_id: aliceBId, transcript_id: transcriptBId, document_id: docBId, passage_text: 'A. Reed', passage_start: 0, passage_end: 7 },
+      { entity_id: aliceOutsideCollectionId, transcript_id: transcriptCId, document_id: docCId, passage_text: 'Alice R.', passage_start: 0, passage_end: 8 },
       { entity_id: bobId, transcript_id: transcriptAId, document_id: docAId, passage_text: 'Bob Grant', passage_start: 20, passage_end: 29 },
-      { entity_id: charlieId, transcript_id: transcriptBId, document_id: docBId, passage_text: 'Charlie Stone', passage_start: 28, passage_end: 41 }
+      { entity_id: charlieId, transcript_id: transcriptBId, document_id: docBId, passage_text: 'Charlie Stone', passage_start: 28, passage_end: 41 },
+      { entity_id: danaId, transcript_id: transcriptAId, document_id: docAId, passage_text: 'Dana Unresolved', passage_start: 44, passage_end: 59 }
     ];
     for (const citation of entityCitations) {
       await db.citationsAsync.create({
@@ -292,6 +322,13 @@ describe('authority layer integration', () => {
       source_entity_id: aliceBId,
       target_entity_id: charlieId,
       relationship_type: 'responds_to',
+      confidence: 0.9,
+      properties: {}
+    });
+    const relCId = await db.relationshipsAsync.create({
+      source_entity_id: aliceAId,
+      target_entity_id: danaId,
+      relationship_type: 'mentioned_in',
       confidence: 0.9,
       properties: {}
     });
@@ -324,20 +361,84 @@ describe('authority layer integration', () => {
       approval_status: 'approved',
       approval_method: 'manual'
     });
+    await db.citationsAsync.create({
+      entity_id: null,
+      relationship_id: relCId,
+      transcript_id: transcriptAId,
+      document_id: docAId,
+      passage_start: 0,
+      passage_end: 65,
+      passage_text: 'Alice Reed wrote to Bob Grant and mentioned Dana Unresolved.',
+      extraction_method: 'test',
+      extraction_model: 'jest',
+      confidence: 1,
+      approval_status: 'approved',
+      approval_method: 'manual'
+    });
+
+    const searchRes = await agent.get('/graph/entities').query({ q: 'Alice', limit: 10 });
+    expect(searchRes.status).toBe(200);
+    const aliceRows = searchRes.body.entities.filter((row) => row.canonical_name === 'Alice Reed');
+    expect(aliceRows).toHaveLength(1);
+    expect(aliceRows[0].node_kind).toBe('authority');
+    expect(aliceRows[0].graph_node_id).toBe(`authority:${authorityId}`);
+    expect(aliceRows[0].member_count).toBe(3);
+
+    const browseRes = await agent.get('/graph/entities').query({ type: 'person', q: 'Dana', limit: 10 });
+    expect(browseRes.status).toBe(200);
+    const danaRow = browseRes.body.entities.find((row) => row.canonical_name === 'Dana Unresolved');
+    expect(danaRow).toBeDefined();
+    expect(danaRow.node_kind).toBe('entity');
+    expect(danaRow.graph_node_id).toBe(`entity:${danaId}`);
 
     const detailRes = await agent.get(`/graph/entities/${aliceAId}`);
     expect(detailRes.status).toBe(200);
     expect(detailRes.body.authority).toBeDefined();
     expect(detailRes.body.authority.canonical_name).toBe('Alice Reed');
-    expect(detailRes.body.linkedEntities.map((row) => row.id).sort((a, b) => a - b)).toEqual([aliceAId, aliceBId]);
+    expect(detailRes.body.graphNode.node_kind).toBe('authority');
+    expect(detailRes.body.linkedEntities.map((row) => row.id).sort((a, b) => a - b)).toEqual([aliceAId, aliceBId, aliceOutsideCollectionId]);
     expect(detailRes.body.citations.map((row) => row.passage_text)).toEqual(
-      expect.arrayContaining(['Alice Reed', 'A. Reed'])
+      expect.arrayContaining(['Alice Reed', 'A. Reed', 'Alice R.'])
     );
+
+    const scopedDetailRes = await agent.get(`/graph/entities/${aliceAId}`).query({ collectionId });
+    expect(scopedDetailRes.status).toBe(200);
+    expect(scopedDetailRes.body.linkedEntities.map((row) => row.id).sort((a, b) => a - b)).toEqual([aliceAId, aliceBId]);
+    expect(scopedDetailRes.body.citations.map((row) => row.passage_text)).not.toContain('Alice R.');
+
+    const documentGraphRes = await agent.get(`/graph/documents/${docAId}/entities`);
+    expect(documentGraphRes.status).toBe(200);
+    const documentAlice = documentGraphRes.body.entities.find((row) => row.id === aliceAId);
+    expect(documentAlice.node_kind).toBe('entity');
+    expect(documentAlice.authority.canonical_name).toBe('Alice Reed');
+    expect(documentGraphRes.body.entities.some((row) => row.node_kind === 'authority')).toBe(false);
+
+    const collectionBrowseRes = await agent.get('/graph/entities').query({ type: 'person', collectionId, limit: 10 });
+    expect(collectionBrowseRes.status).toBe(200);
+    const collectionAlice = collectionBrowseRes.body.entities.find((row) => row.graph_node_id === `authority:${authorityId}`);
+    expect(collectionAlice.member_entity_ids.sort((a, b) => a - b)).toEqual([aliceAId, aliceBId]);
+    expect(collectionAlice.document_count).toBe(2);
+
+    const archiveBrowseRes = await agent.get('/graph/entities').query({ type: 'person', limit: 20 });
+    expect(archiveBrowseRes.status).toBe(200);
+    const archiveAlice = archiveBrowseRes.body.entities.find((row) => row.graph_node_id === `authority:${authorityId}`);
+    expect(archiveAlice.member_entity_ids.sort((a, b) => a - b)).toEqual([aliceAId, aliceBId, aliceOutsideCollectionId]);
+    expect(archiveAlice.document_count).toBe(3);
 
     const neighborsRes = await agent.get(`/graph/entities/${aliceAId}/neighbors?depth=1`);
     expect(neighborsRes.status).toBe(200);
-    const neighborNames = neighborsRes.body.neighbors.map((row) => row.canonical_name).sort();
-    expect(neighborNames).toEqual(['Bob Grant', 'Charlie Stone']);
+    const bobNeighbor = neighborsRes.body.neighbors.find((row) => row.canonical_name === 'Bob Grant');
+    const charlieNeighbor = neighborsRes.body.neighbors.find((row) => row.canonical_name === 'Charlie Stone');
+    const danaNeighbor = neighborsRes.body.neighbors.find((row) => row.canonical_name === 'Dana Unresolved');
+    expect(bobNeighbor.node_kind).toBe('authority');
+    expect(bobNeighbor.graph_node_id).toBe(`authority:${bobAuthorityId}`);
+    expect(charlieNeighbor.node_kind).toBe('authority');
+    expect(charlieNeighbor.graph_node_id).toBe(`authority:${charlieAuthorityId}`);
+    expect(danaNeighbor.node_kind).toBe('entity');
+    expect(danaNeighbor.graph_node_id).toBe(`entity:${danaId}`);
+    expect(neighborsRes.body.neighbors.map((row) => row.canonical_name).sort()).toEqual(
+      ['Bob Grant', 'Charlie Stone', 'Dana Unresolved']
+    );
   });
 
   it('blocks merging entities that belong to different authorities', async () => {

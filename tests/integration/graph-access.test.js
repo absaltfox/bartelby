@@ -45,6 +45,9 @@ describe('Graph citation access control', () => {
   let authorizedUsername;
   let unauthorizedUsername;
   let entityId;
+  let authorityId;
+  let publicAuthorityEntityId;
+  let privateAuthorityEntityId;
 
   beforeAll(async () => {
     ({ app, db } = await bootApp());
@@ -125,6 +128,26 @@ describe('Graph citation access control', () => {
       description: null,
       properties: {}
     });
+    authorityId = await db.authoritiesAsync.create({
+      authority_type: 'person',
+      canonical_name: 'Scoped Authority Person',
+      description: null,
+      properties: {}
+    });
+    publicAuthorityEntityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Scoped Authority Public Member',
+      description: null,
+      properties: {},
+      authority_id: authorityId
+    });
+    privateAuthorityEntityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Scoped Authority Private Member',
+      description: null,
+      properties: {},
+      authority_id: authorityId
+    });
 
     // ── Transcripts ───────────────────────────────────────────────────────────
     const publicTranscriptId = await db.transcriptsAsync.create({
@@ -162,6 +185,20 @@ describe('Graph citation access control', () => {
       approval_status: 'approved',
       approval_method: 'manual'
     });
+    await db.citationsAsync.create({
+      entity_id: publicAuthorityEntityId,
+      relationship_id: null,
+      transcript_id: publicTranscriptId,
+      document_id: publicDocumentId,
+      passage_start: 0,
+      passage_end: 29,
+      passage_text: 'Scoped Authority Public Member',
+      extraction_method: 'manual',
+      extraction_model: null,
+      confidence: 1.0,
+      approval_status: 'approved',
+      approval_method: 'manual'
+    });
 
     // ── Private citation — only authorized user should see this ───────────────
     await db.citationsAsync.create({
@@ -172,6 +209,20 @@ describe('Graph citation access control', () => {
       passage_start: 0,
       passage_end: 6,
       passage_text: 'Secret private passage text',
+      extraction_method: 'manual',
+      extraction_model: null,
+      confidence: 1.0,
+      approval_status: 'approved',
+      approval_method: 'manual'
+    });
+    await db.citationsAsync.create({
+      entity_id: privateAuthorityEntityId,
+      relationship_id: null,
+      transcript_id: privateTranscriptId,
+      document_id: privateDocumentId,
+      passage_start: 0,
+      passage_end: 30,
+      passage_text: 'Scoped Authority Private Member',
       extraction_method: 'manual',
       extraction_model: null,
       confidence: 1.0,
@@ -206,5 +257,27 @@ describe('Graph citation access control', () => {
     const passageTexts = res.body.citations.map(c => c.passage_text);
     expect(passageTexts).toContain('Public passage text');
     expect(passageTexts).toContain('Secret private passage text');
+  });
+
+  it('authority graph projection counts only members visible to the current user', async () => {
+    const unauthorizedAgent = request.agent(app);
+    await login(unauthorizedAgent, unauthorizedUsername, 'password123!');
+
+    const unauthorizedRes = await unauthorizedAgent.get('/graph/entities').query({ q: 'Scoped Authority', limit: 10 });
+    expect(unauthorizedRes.status).toBe(200);
+    const unauthorizedAuthority = unauthorizedRes.body.entities.find((row) => row.graph_node_id === `authority:${authorityId}`);
+    expect(unauthorizedAuthority).toBeDefined();
+    expect(unauthorizedAuthority.member_entity_ids).toEqual([publicAuthorityEntityId]);
+    expect(unauthorizedAuthority.member_count).toBe(1);
+    expect(unauthorizedAuthority.document_count).toBe(1);
+
+    const authorizedAgent = request.agent(app);
+    await login(authorizedAgent, authorizedUsername, 'password123!');
+    const authorizedRes = await authorizedAgent.get('/graph/entities').query({ q: 'Scoped Authority', limit: 10 });
+    expect(authorizedRes.status).toBe(200);
+    const authorizedAuthority = authorizedRes.body.entities.find((row) => row.graph_node_id === `authority:${authorityId}`);
+    expect(authorizedAuthority.member_entity_ids.sort((a, b) => a - b)).toEqual([publicAuthorityEntityId, privateAuthorityEntityId]);
+    expect(authorizedAuthority.member_count).toBe(2);
+    expect(authorizedAuthority.document_count).toBe(2);
   });
 });

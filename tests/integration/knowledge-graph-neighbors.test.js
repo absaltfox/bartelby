@@ -164,4 +164,69 @@ describe('GET /graph/entities/:id/neighbors', () => {
     expect(row.relationship_type).toBe('authored');
     expect(row.evidence_text).toBe('Alice wrote to Bob about the harbour proposal.');
   });
+
+  it('supports ranked neighbor pagination metadata for high-degree graph views', async () => {
+    const db = require('../../database/db');
+    const agent = request.agent(app);
+    await loginAsAdmin(agent);
+
+    const extraIds = [];
+    for (let i = 0; i < 3; i++) {
+      const entityId = await db.entities.create({
+        entity_type: 'person',
+        canonical_name: `Neighbor Extra ${i}`,
+        description: 'Additional neighbor',
+        properties: {}
+      });
+      extraIds.push(entityId);
+      const entityCitationId = await db.citations.create({
+        entity_id: entityId,
+        relationship_id: null,
+        transcript_id: 1,
+        document_id: 1,
+        passage_start: 0,
+        passage_end: 16,
+        passage_text: `Neighbor Extra ${i}`,
+        extraction_method: 'test',
+        extraction_model: 'jest',
+        confidence: 1
+      });
+      await db.citationsAsync.approve(entityCitationId, 1, 'manual');
+
+      const relId = await db.relationships.create({
+        source_entity_id: focusEntityId,
+        target_entity_id: entityId,
+        relationship_type: i === 0 ? 'member_of' : 'mentioned_in',
+        confidence: 0.9,
+        properties: {}
+      });
+      const relCitationId = await db.citations.create({
+        entity_id: null,
+        relationship_id: relId,
+        transcript_id: 1,
+        document_id: 1,
+        passage_start: 0,
+        passage_end: 32,
+        passage_text: `Alice mentioned Neighbor Extra ${i}.`,
+        extraction_method: 'test',
+        extraction_model: 'jest',
+        confidence: 0.9
+      });
+      await db.citationsAsync.approve(relCitationId, 1, 'manual');
+    }
+
+    const firstPage = await agent.get(`/graph/entities/${focusEntityId}/neighbors?depth=1&limit=2`);
+    expect(firstPage.status).toBe(200);
+    expect(firstPage.body.neighbors).toHaveLength(2);
+    expect(firstPage.body.total).toBeGreaterThanOrEqual(4);
+    expect(firstPage.body.hasMore).toBe(true);
+    expect(firstPage.body.nextOffset).toBe(2);
+    expect(firstPage.body.overflow).toBe(firstPage.body.total - 2);
+
+    const secondPage = await agent.get(`/graph/entities/${focusEntityId}/neighbors?depth=1&limit=2&offset=2`);
+    expect(secondPage.status).toBe(200);
+    expect(secondPage.body.neighbors.length).toBeGreaterThan(0);
+    expect(secondPage.body.offset).toBe(2);
+    expect(secondPage.body.neighbors.map((row) => row.id)).not.toEqual(firstPage.body.neighbors.map((row) => row.id));
+  });
 });

@@ -52,6 +52,33 @@ does not create standalone date nodes for explorer use.
 - Drive authority-first graph focus in the explorer when an entity has an
   assigned authority
 
+### Three-Layer Graph Model
+
+Bartelby keeps three related graph layers separate:
+
+- **Document entities** are the evidence layer. They remain scoped to one
+  transcript/document and carry citations, aliases, date expressions, and
+  extracted relationships.
+- **Authorities** are the identity layer. They assert that multiple
+  document-scoped entities refer to the same real-world subject.
+- **Derived authority graph projections** are the corpus/collection browsing
+  layer. Archive-wide and collection-wide explorer views collapse visible
+  authority-linked entities into one authority node, while unresolved entities
+  remain visible as entity nodes.
+
+Authority-to-authority edges are not stored as primary extracted facts in the
+current model. They are derived at query time from approved entity-to-entity
+relationships between visible member entities. If Bartelby later supports
+explicitly curated authority relationships, those should be modeled as
+separate editorial assertions with their own provenance and review lifecycle.
+
+Large collection and corpus graphs are rendered as ranked neighborhoods rather
+than full-collection network diagrams. The explorer loads a limited slice of
+the strongest visible neighbors first, ranked by citation, document,
+relationship, and member counts, then exposes overflow metadata so users can
+load additional connections without forcing the browser to lay out every
+possible node at once.
+
 ### Aliases
 
 - Stored in `entity_aliases`
@@ -299,6 +326,9 @@ Graph visibility is permission-scoped through document access.
   can already open
 - Authority-backed graph focus only expands through member entities that remain
   visible after the same document/collection access rules are applied
+- Authority-first corpus and collection graph nodes only count visible member
+  entities, documents, and citations; hidden authority members must not be
+  inferable through graph counts or neighbor aggregation
 
 This means the graph is citation-backed and document-scoped, not globally
 visible by default.
