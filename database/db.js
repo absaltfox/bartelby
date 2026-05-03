@@ -342,6 +342,34 @@ MIGRATIONS.push(`
     );
 `);
 
+// v65 — repair generic authority terms table on schemas that skipped v61 DDL
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS authority_generic_terms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    term TEXT NOT NULL,
+    normalized_term TEXT NOT NULL,
+    entity_type TEXT,
+    status TEXT NOT NULL DEFAULT 'suggested',
+    source TEXT NOT NULL DEFAULT 'manual',
+    seen_count INTEGER NOT NULL DEFAULT 0,
+    rejected_link_count INTEGER NOT NULL DEFAULT 0,
+    approved_link_count INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(normalized_term, entity_type)
+  );
+  CREATE INDEX IF NOT EXISTS idx_authority_generic_terms_status ON authority_generic_terms(status);
+  CREATE INDEX IF NOT EXISTS idx_authority_generic_terms_entity_type ON authority_generic_terms(entity_type);
+  INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('authority_generic_learning_enabled', '1'),
+    ('authority_generic_learning_min_rejections', '3'),
+    ('authority_generic_learning_min_seen', '5');
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
