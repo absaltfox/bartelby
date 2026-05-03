@@ -182,13 +182,13 @@ async function runAuthoritySuggestionWorkerCycle() {
           await logLine(`Auto-approved (${decision.action === 'auto_approve_exact' ? 'exact name' : 'embedding'}): entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);
         } else {
           // Pending suggestion
-          await authorityLinkSuggestionsAsync.createIfMissing({
+          const suggestionId = await authorityLinkSuggestionsAsync.createIfMissing({
             entity_id: pair.entityB.id,
             suggested_authority_id: authorityId,
             confidence: similarity,
             match_method: 'embedding'
           });
-          suggestionCount++;
+          if (suggestionId) suggestionCount++;
         }
       }
 

@@ -370,6 +370,20 @@ MIGRATIONS.push(`
     ('authority_generic_learning_min_seen', '5');
 `);
 
+// v66 — linked entities should not remain in the authority suggestion queue
+MIGRATIONS.push(`
+  UPDATE authority_link_suggestions
+  SET status = 'rejected',
+      reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
+  WHERE status = 'pending'
+    AND EXISTS (
+      SELECT 1
+      FROM entities e
+      WHERE e.id = authority_link_suggestions.entity_id
+        AND e.authority_id IS NOT NULL
+    );
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

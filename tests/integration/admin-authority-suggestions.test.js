@@ -125,9 +125,13 @@ describe('admin authority suggestions AJAX', () => {
     expect(row.exact_name_match).toBe(true);
   });
 
-  it('pending suggestion lists and counts ignore already-linked authority suggestions', async () => {
+  it('pending suggestion creation rejects suggestions for already-linked entities', async () => {
     const authorityId = await db.authoritiesAsync.create({
       authority_type: 'organization', canonical_name: 'Already Linked Authority',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+    const otherAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'organization', canonical_name: 'Already Linked Alternative',
       description: null, properties: {}, external_source: null, external_key: null
     });
     const entityId = await db.entitiesAsync.create({
@@ -137,18 +141,16 @@ describe('admin authority suggestions AJAX', () => {
     const beforeCount = await db.authorityLinkSuggestionsAsync.countPending();
     const suggestionId = await db.authorityLinkSuggestionsAsync.createIfMissing({
       entity_id: entityId,
-      suggested_authority_id: authorityId,
+      suggested_authority_id: otherAuthorityId,
       confidence: 0.92,
       match_method: 'embedding',
       status: 'pending'
     });
 
+    expect(suggestionId).toBeNull();
     const rows = await db.authorityLinkSuggestionsAsync.list('pending', 1000);
     expect(rows.map(s => s.id)).not.toContain(suggestionId);
     await expect(db.authorityLinkSuggestionsAsync.countPending()).resolves.toBe(beforeCount);
-    const reconciled = await db.authorityLinkSuggestionsAsync.getById(suggestionId);
-    expect(reconciled.status).toBe('approved');
-    expect(reconciled.reviewed_at).toBeTruthy();
 
     const res = await agent
       .get('/admin/knowledge/authorities/suggestions.json?status=pending&limit=100');
@@ -156,18 +158,33 @@ describe('admin authority suggestions AJAX', () => {
     expect(res.body.suggestions.map(s => s.id)).not.toContain(suggestionId);
   });
 
+  it('existing pending suggestions for an entity are rejected when authority is assigned', async () => {
+    const { entityId, suggestionId } = await seedSuggestion(db, {
+      entityName: 'assignment-rejects-pending-entity',
+      authorityName: 'assignment-rejects-pending-authority'
+    });
+    const assignedAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'person', canonical_name: 'assignment-rejects-assigned-authority',
+      description: null, properties: {}, external_source: null, external_key: null
+    });
+
+    await db.entitiesAsync.assignAuthority(entityId, assignedAuthorityId);
+
+    const row = await db.authorityLinkSuggestionsAsync.getById(suggestionId);
+    expect(row.status).toBe('rejected');
+    expect(row.reviewed_at).toBeTruthy();
+    const rows = await db.authorityLinkSuggestionsAsync.list('pending', 1000);
+    expect(rows.map(s => s.id)).not.toContain(suggestionId);
+  });
+
   it('authority suggestion list can include compact review context when requested', async () => {
     const suggestedAuthorityId = await db.authoritiesAsync.create({
       authority_type: 'organization', canonical_name: 'Context Review Authority',
       description: null, properties: {}, external_source: null, external_key: null
     });
-    const currentAuthorityId = await db.authoritiesAsync.create({
-      authority_type: 'organization', canonical_name: 'Current Context Authority',
-      description: null, properties: {}, external_source: null, external_key: null
-    });
     const entityId = await db.entitiesAsync.create({
       entity_type: 'organization', canonical_name: 'Context Review Entity',
-      description: null, properties: {}, authority_id: currentAuthorityId
+      description: null, properties: {}, authority_id: null
     });
     const memberId = await db.entitiesAsync.create({
       entity_type: 'organization', canonical_name: 'Context Review Member',
@@ -234,7 +251,6 @@ describe('admin authority suggestions AJAX', () => {
     expect(row.source_evidence_text).toContain('supporting authority evidence');
     expect(row.suggested_authority_member_count).toBe(1);
     expect(row.suggested_authority_document_count).toBe(1);
-    expect(row.current_authority_name).toBe('Current Context Authority');
 
     const contextRes = await agent
       .get(`/admin/knowledge/authorities/suggestions/context.json?ids=${suggestionId}`);

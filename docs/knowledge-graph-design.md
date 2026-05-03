@@ -274,12 +274,15 @@ are met. Extraction can also store a `genericity` hint in entity properties and
 propose terms, but those hints do not suppress linking unless a curator
 approves the term.
 
-Suggestions whose entity is already linked to the suggested authority are
-reconciled to `approved` because there is no remaining curator decision to
-make. Schema initialization cleans up existing stale rows, and future authority
-assignment/write paths normalize matching pending suggestions as part of the
-same workflow. Pending counts and pending tabs also defensively exclude any
-already-linked residue.
+Suggestions are only actionable for entities that do not already have an
+authority link. If an entity is already linked to any authority, new suggestion
+writes are skipped and any existing pending suggestions for that entity are
+reconciled to `rejected`; changing an established authority assignment should
+happen through the explicit authority merge/reassignment workflows instead of
+the suggestion queue. Schema initialization cleans up existing stale rows, and
+future authority assignment/write paths normalize pending suggestions for the
+linked entity as part of the same workflow. Pending counts and pending tabs
+also defensively exclude any already-linked residue.
 
 Per-row actions are handled via JSON endpoints:
 

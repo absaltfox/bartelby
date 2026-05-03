@@ -167,12 +167,11 @@ const entities = {
     if (normalizedAuthorityId) {
       await runAsync(`
         UPDATE authority_link_suggestions
-        SET status = 'approved',
+        SET status = 'rejected',
             reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
         WHERE entity_id = ?
-          AND suggested_authority_id = ?
           AND status = 'pending'
-      `, [entityId, normalizedAuthorityId]);
+      `, [entityId]);
     }
     return await this.getById(entityId);
   },
@@ -787,14 +786,28 @@ const authorityGenericTerms = {
 const authorityLinkSuggestions = {
   async createIfMissing({ entity_id, suggested_authority_id, confidence, match_method, status = 'pending' }) {
     const entity = await entities.getById(Number(entity_id));
-    const isAlreadyLinked = entity
-      && Number(entity.authority_id) === Number(suggested_authority_id);
-    const normalizedStatus = isAlreadyLinked ? 'approved' : (status || 'pending');
+    const hasAuthorityLink = entity
+      && entity.authority_id !== null
+      && entity.authority_id !== undefined
+      && Number.isInteger(Number(entity.authority_id))
+      && Number(entity.authority_id) > 0;
+    const normalizedStatus = status || 'pending';
     const existing = await getAsync(`
       SELECT * FROM authority_link_suggestions
       WHERE entity_id = ? AND suggested_authority_id = ?
       LIMIT 1
     `, [entity_id, suggested_authority_id]);
+    if (hasAuthorityLink) {
+      if (existing && existing.status === 'pending') {
+        await runAsync(`
+          UPDATE authority_link_suggestions
+          SET status = 'rejected',
+              reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
+          WHERE id = ?
+        `, [existing.id]);
+      }
+      return null;
+    }
     if (existing) {
       await runAsync(`
         UPDATE authority_link_suggestions
@@ -838,13 +851,19 @@ const authorityLinkSuggestions = {
   },
 
   async countPending() {
-    const row = await getAsync(`SELECT COUNT(*) AS n FROM authority_link_suggestions WHERE status = 'pending'`);
+    const row = await getAsync(`
+      SELECT COUNT(*) AS n
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      WHERE als.status = 'pending'
+        AND e.authority_id IS NULL
+    `);
     return Number(row?.n || 0);
   },
 
   async list(status = 'pending', limit = 25, opts = {}) {
     const exactNameSql = "LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))";
-    const actionablePendingSql = "(e.authority_id IS NULL OR e.authority_id != als.suggested_authority_id)";
+    const actionablePendingSql = "e.authority_id IS NULL";
     const includeContext = opts.includeContext === true;
     const params = [];
     let where = '';
