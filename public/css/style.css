@@ -1883,6 +1883,48 @@ main { flex: 1; padding: 32px 0; }
   margin-bottom: 5px;
 }
 
+.form-group .radio-label,
+.form-group .checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-family: 'EB Garamond', Georgia, serif;
+  font-weight: 400;
+  font-size: 1rem;
+  font-variant-caps: normal;
+  font-feature-settings: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--ink);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.form-group .radio-label > span,
+.form-group .checkbox-label > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-group .radio-label strong,
+.form-group .checkbox-label strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.form-group .radio-label input,
+.form-group .checkbox-label input {
+  flex-shrink: 0;
+  margin-top: 6px;
+  accent-color: var(--accent);
+}
+
+.form-group .checkbox-label + .field-hint {
+  margin-left: 26px;
+  margin-top: 2px;
+}
+
 .form-group input[type="text"],
 .form-group input[type="password"],
 .form-group input[type="number"],
