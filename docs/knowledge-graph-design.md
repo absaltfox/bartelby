@@ -155,6 +155,11 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
   manually from the Knowledge → Authorities admin page
 - Legacy entities that predate the async suggestion pipeline can be reprocessed
   by running the suggestion job manually
+- Pending authority-link suggestions that predate a narrower auto-approval rule
+  can be backfilled once with
+  `npm run backfill:exact-authority-suggestions -- --apply`; the script uses
+  the same approval path as manual review and defaults to a dry run unless
+  `--apply` is passed.
 
 ## Review and Curation
 

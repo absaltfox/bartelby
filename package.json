@@ -11,6 +11,7 @@
     "setup:python": "python3 -m venv .venv && ./.venv/bin/python -m pip install --upgrade pip setuptools wheel && ./.venv/bin/python -m pip install -r requirements.txt",
     "seed": "node database/seed.js",
     "import": "node utils/import.js",
+    "backfill:exact-authority-suggestions": "node scripts/backfill-exact-authority-suggestions.js",
     "migrate:turso": "node scripts/migrate-to-turso.js",
     "migrate:s3": "node scripts/migrate-uploads-to-s3.js",
     "test": "npm run test:hygiene && jest",
