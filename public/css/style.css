@@ -4365,6 +4365,11 @@ main { flex: 1; padding: 32px 0; }
 .admin-section-label,
 .knowledge-section-label,
 .knowledge-card-label {
+  display: none;
+}
+
+.admin-section-label {
+  display: block;
   margin-bottom: 6px;
   color: var(--ink-muted);
   font-size: 0.78rem;
@@ -9211,4 +9216,43 @@ body.modal-open {
 
 .on-accent:active {
   background: var(--accent-dark);
+}
+
+/* -- Nested action cards (admin/knowledge) ---------------------------------
+   Inner cards must read as nested actions, not siblings of the parent panel.
+   ------------------------------------------------------------------------- */
+
+.knowledge-overview-section .knowledge-task-card {
+  background: var(--surface-alt);
+  border: 1px solid var(--border-light);
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.knowledge-overview-section .knowledge-task-card:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.knowledge-overview-section .knowledge-task-card h3 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.knowledge-overview-section .knowledge-task-card .muted {
+  flex: 1;
+  margin-bottom: 14px;
+}
+
+.knowledge-overview-section .knowledge-task-card form .edit-actions {
+  margin-top: auto;
+}
+
+.knowledge-overview-section .knowledge-admin-grid {
+  gap: 16px;
 }

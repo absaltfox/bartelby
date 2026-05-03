@@ -71,7 +71,6 @@
   <section class="settings-section knowledge-overview-section">
     <div class="knowledge-overview-header">
       <div>
-        <p class="knowledge-section-label">Extraction Control</p>
         <h2>Queue Re-extraction</h2>
         <p class="subtitle">Choose a single document or an entire collection and Bartelby will rebuild the graph artifacts from the current best transcript.</p>
       </div>
@@ -79,7 +78,6 @@
 
     <div class="knowledge-admin-grid">
       <section class="knowledge-task-card">
-        <p class="knowledge-card-label">Single Document</p>
         <h3>Re-run One Document</h3>
         <p class="muted">Use the current best transcript for one document and replace the knowledge graph artifacts generated from that transcript.</p>
         <form method="POST" action="/admin/knowledge/documents/reextract" class="edit-form" data-knowledge-document-form>
@@ -108,7 +106,6 @@
       </section>
 
       <section class="knowledge-task-card">
-        <p class="knowledge-card-label">Whole Collection</p>
         <h3>Re-run One Collection</h3>
         <p class="muted">Queue a fresh extraction run for every transcript-bearing document in a collection. When the provider supports it and more than one document is eligible, Bartelby submits the rerun as a single provider batch job.</p>
         <form method="POST" action="/admin/knowledge/collections/reextract" class="edit-form">
@@ -133,15 +130,13 @@
   <section class="settings-section knowledge-overview-section">
     <div class="knowledge-overview-header">
       <div>
-        <p class="knowledge-section-label">Authority Maintenance</p>
-        <h2>Queue Authority Jobs</h2>
+        <h2>Authority Maintenance</h2>
         <p class="subtitle">Refresh cross-document identity work without changing extraction evidence.</p>
       </div>
     </div>
 
     <div class="knowledge-admin-grid">
       <section class="knowledge-task-card">
-        <p class="knowledge-card-label">Backfill</p>
         <h3>Queue Authority Backfill</h3>
         <p class="muted">Creates durable jobs for unresolved entities so Bartelby can attach them to existing authorities or create new authority records without re-running transcript extraction.</p>
         <form method="POST" action="/admin/knowledge/authorities/backfill" class="edit-form">
@@ -153,7 +148,6 @@
       </section>
 
       <section class="knowledge-task-card">
-        <p class="knowledge-card-label">Suggestions</p>
         <h3>Run Authority Suggestions</h3>
         <p class="muted">Runs the full-corpus authority suggestion pipeline, comparing unresolved entities against authority clusters and adding medium-confidence links to the review queue.</p>
         <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs" class="edit-form">
@@ -169,7 +163,6 @@
   <section class="admin-actions knowledge-tools-section">
     <div class="knowledge-overview-header">
       <div>
-        <p class="knowledge-section-label">Tools</p>
         <h2>Knowledge Workspace</h2>
         <p class="subtitle">Inspect approved nodes, review evidence, resolve duplicates, and open the archive-wide explorer.</p>
       </div>
@@ -205,7 +198,6 @@
   <section class="settings-section knowledge-guidance-section">
     <div class="knowledge-overview-header">
       <div>
-        <p class="knowledge-section-label">Workflow</p>
         <h2>How Knowledge Runs Work</h2>
       </div>
     </div>
