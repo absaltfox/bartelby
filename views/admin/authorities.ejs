@@ -64,12 +64,13 @@
     <form method="POST" action="/admin/knowledge/authorities/bulk/merge" class="authority-bulk-form" data-authority-bulk-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="returnTo" value="<%= currentUrl %>">
-      <div class="suggestions-bulk-controls">
-        <label class="suggestions-select-all">
-          <input type="checkbox" id="authorities-select-all" data-authorities-select-all> Select all on page
+      <div class="bulk-toolbar suggestions-bulk-controls">
+        <label class="bulk-toolbar-select-all suggestions-select-all">
+          <input type="checkbox" id="authorities-select-all" data-authorities-select-all>
+          <span>Select all on page</span>
         </label>
-        <div class="bulk-actions is-hidden" data-authorities-bulk-actions>
-          <span data-authorities-bulk-count>0 selected</span>
+        <div class="bulk-toolbar-actions bulk-actions is-hidden" data-authorities-bulk-actions>
+          <span class="bulk-toolbar-count" data-authorities-bulk-count>0 selected</span>
           <label class="inline-form">
             Keep
             <select name="target_authority_id" data-authorities-merge-target>

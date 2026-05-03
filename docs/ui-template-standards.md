@@ -228,6 +228,15 @@ the eventual content, include screen-reader-only loading text, and use
 `aria-busy="true"` on the region being updated. Replace the skeleton with real
 content as soon as the async request completes.
 
+## Bulk Selection Toolbars
+
+Use the shared `bulk-toolbar` class family for page-level selection and batch
+actions. Page-specific toolbar classes may remain as compatibility hooks, but
+they should be paired with the shared classes rather than defining a separate
+visual pattern. The select-all control should use `bulk-toolbar-select-all`,
+the selected count should use `bulk-toolbar-count`, and action groups should
+use `bulk-toolbar-actions`.
+
 ## Naming
 
 Prefer stable, purpose-driven component names over borrowed page names.

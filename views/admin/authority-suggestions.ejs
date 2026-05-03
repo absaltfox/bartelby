@@ -18,16 +18,16 @@
   </div>
 
   <% if (status === 'pending') { %>
-    <div class="suggestions-bulk-controls authority-suggestion-bulk-bar">
-      <label class="suggestions-select-all authority-suggestion-select-all">
+    <div class="bulk-toolbar bulk-toolbar--sticky suggestions-bulk-controls authority-suggestion-bulk-bar">
+      <label class="bulk-toolbar-select-all suggestions-select-all authority-suggestion-select-all">
         <input type="checkbox" id="suggestions-select-all">
         <span>Select all on page</span>
       </label>
       <% if (!nameSignal) { %>
         <button type="button" id="suggestions-select-exact" class="btn-secondary btn-sm">Select exact names on page</button>
       <% } %>
-      <div id="suggestions-bulk-actions" class="bulk-actions is-hidden">
-        <span id="suggestions-bulk-count">0 selected</span>
+      <div id="suggestions-bulk-actions" class="bulk-toolbar-actions bulk-actions is-hidden">
+        <span id="suggestions-bulk-count" class="bulk-toolbar-count">0 selected</span>
         <button type="button" id="suggestions-bulk-approve" class="btn-primary btn-sm">Approve selected</button>
         <button type="button" id="suggestions-bulk-reject"  class="btn-secondary btn-sm">Reject selected</button>
         <button type="button" id="suggestions-bulk-clear"   class="btn-link btn-sm">Clear</button>

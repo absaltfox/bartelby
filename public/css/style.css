@@ -6754,12 +6754,14 @@ main { flex: 1; padding: 32px 0; }
   border-radius: 10px;
 }
 
-/* ── Document Toolbar ── */
+/* ── Bulk Toolbar ── */
 
-.doc-toolbar {
+.bulk-toolbar,
+.doc-toolbar,
+.suggestions-bulk-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px 14px;
   padding: 10px 12px 12px;
   margin-bottom: 14px;
   border: 1px solid var(--border-light);
@@ -6768,44 +6770,82 @@ main { flex: 1; padding: 32px 0; }
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow-sm);
   z-index: 10;
+  flex-wrap: wrap;
 }
 
+.bulk-toolbar--sticky,
 .doc-toolbar--sticky {
   position: sticky;
   top: 10px;
 }
 
+.bulk-toolbar-left,
 .doc-toolbar-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
+.bulk-toolbar-select-all,
 .doc-toolbar-select-all {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  min-height: 32px;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.9rem;
+  font-weight: 600;
   color: var(--ink-mid);
   user-select: none;
 }
-.doc-toolbar-select-all input { cursor: pointer; }
 
+.bulk-toolbar-select-all input,
+.doc-toolbar-select-all input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ink-mid);
+  cursor: pointer;
+}
+
+.bulk-toolbar-count,
 .bulk-count {
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--accent-dark);
   white-space: nowrap;
 }
 
+.bulk-toolbar-actions,
 .doc-toolbar-actions {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
+.bulk-toolbar-right,
 .doc-toolbar-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .bulk-toolbar,
+  .doc-toolbar,
+  .suggestions-bulk-controls {
+    align-items: flex-start;
+  }
+
+  .bulk-toolbar-right,
+  .doc-toolbar-right {
+    margin-left: 0;
+    width: 100%;
+  }
 }
 
 .doc-filter-select {
@@ -8884,40 +8924,11 @@ body.modal-open {
 }
 .knowledge-citation-card .inline-error[hidden] { display: none; }
 
-.suggestions-bulk-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px 14px;
-  padding: 10px 12px;
-  flex-wrap: wrap;
-}
-
 .authority-suggestion-bulk-bar {
-  position: sticky;
-  top: 10px;
   z-index: 20;
   margin: 0 0 16px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  background: rgba(255, 254, 251, 0.96);
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(8px);
 }
 
-.suggestions-select-all,
-.authority-suggestion-select-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  color: var(--ink-mid);
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  user-select: none;
-}
-
-.suggestions-select-all input,
 .authority-suggestion-checkbox {
   width: 16px;
   height: 16px;
@@ -8926,6 +8937,7 @@ body.modal-open {
   cursor: pointer;
 }
 
+.bulk-toolbar-actions,
 .bulk-actions {
   display: inline-flex;
   align-items: center;
