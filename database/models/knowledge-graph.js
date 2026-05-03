@@ -643,13 +643,7 @@ const authorityLinkSuggestions = {
   },
 
   async countPending() {
-    const row = await getAsync(`
-      SELECT COUNT(*) AS n
-      FROM authority_link_suggestions als
-      INNER JOIN entities e ON e.id = als.entity_id
-      WHERE als.status = 'pending'
-        AND (e.authority_id IS NULL OR e.authority_id != als.suggested_authority_id)
-    `);
+    const row = await getAsync(`SELECT COUNT(*) AS n FROM authority_link_suggestions WHERE status = 'pending'`);
     return Number(row?.n || 0);
   },
 
