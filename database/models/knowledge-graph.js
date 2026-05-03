@@ -154,14 +154,25 @@ const entities = {
   },
 
   async assignAuthority(entityId, authorityId) {
+    const normalizedAuthorityId = Number.isInteger(Number(authorityId)) ? Number(authorityId) : null;
     await runAsync(`
       UPDATE entities
       SET authority_id = ?
       WHERE id = ?
     `, [
-      Number.isInteger(Number(authorityId)) ? Number(authorityId) : null,
+      normalizedAuthorityId,
       entityId
     ]);
+    if (normalizedAuthorityId) {
+      await runAsync(`
+        UPDATE authority_link_suggestions
+        SET status = 'approved',
+            reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
+        WHERE entity_id = ?
+          AND suggested_authority_id = ?
+          AND status = 'pending'
+      `, [entityId, normalizedAuthorityId]);
+    }
     return await this.getById(entityId);
   },
 
@@ -580,6 +591,10 @@ const authorities = {
 
 const authorityLinkSuggestions = {
   async createIfMissing({ entity_id, suggested_authority_id, confidence, match_method, status = 'pending' }) {
+    const entity = await entities.getById(Number(entity_id));
+    const isAlreadyLinked = entity
+      && Number(entity.authority_id) === Number(suggested_authority_id);
+    const normalizedStatus = isAlreadyLinked ? 'approved' : (status || 'pending');
     const existing = await getAsync(`
       SELECT * FROM authority_link_suggestions
       WHERE entity_id = ? AND suggested_authority_id = ?
@@ -590,12 +605,17 @@ const authorityLinkSuggestions = {
         UPDATE authority_link_suggestions
         SET confidence = COALESCE(?, confidence),
             match_method = COALESCE(?, match_method),
-            status = CASE WHEN status = 'approved' THEN status ELSE ? END
+            status = CASE WHEN status = 'approved' THEN status ELSE ? END,
+            reviewed_at = CASE
+              WHEN ? = 'approved' AND reviewed_at IS NULL THEN CURRENT_TIMESTAMP
+              ELSE reviewed_at
+            END
         WHERE id = ?
       `, [
         confidence != null ? confidence : null,
         match_method || null,
-        status || 'pending',
+        normalizedStatus,
+        normalizedStatus,
         existing.id
       ]);
       return existing.id;
@@ -610,24 +630,41 @@ const authorityLinkSuggestions = {
       suggested_authority_id,
       confidence != null ? confidence : null,
       match_method || null,
-      status || 'pending'
+      normalizedStatus
     ]);
+    if (normalizedStatus === 'approved') {
+      await runAsync(`
+        UPDATE authority_link_suggestions
+        SET reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
+        WHERE id = ?
+      `, [result.lastInsertRowid]);
+    }
     return result.lastInsertRowid;
   },
 
   async countPending() {
-    const row = await getAsync(`SELECT COUNT(*) AS n FROM authority_link_suggestions WHERE status = 'pending'`);
+    const row = await getAsync(`
+      SELECT COUNT(*) AS n
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      WHERE als.status = 'pending'
+        AND (e.authority_id IS NULL OR e.authority_id != als.suggested_authority_id)
+    `);
     return Number(row?.n || 0);
   },
 
   async list(status = 'pending', limit = 25, opts = {}) {
     const exactNameSql = "LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))";
+    const actionablePendingSql = "(e.authority_id IS NULL OR e.authority_id != als.suggested_authority_id)";
     const includeContext = opts.includeContext === true;
     const params = [];
     let where = '';
     if (status && status !== 'all') {
       where = 'WHERE als.status = ?';
       params.push(status);
+    }
+    if (status === 'pending' && opts.includeAlreadyLinked !== true) {
+      where += where ? ` AND ${actionablePendingSql}` : `WHERE ${actionablePendingSql}`;
     }
     if (opts.nameSignal === 'exact') {
       where += where ? ` AND ${exactNameSql}` : `WHERE ${exactNameSql}`;

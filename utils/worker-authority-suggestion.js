@@ -155,8 +155,8 @@ async function runAuthoritySuggestionWorkerCycle() {
 
         if (similarity >= job.auto_approve_threshold) {
           // Auto-approve: assign authority directly to both entities
-          await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [authorityId, pair.entityA.id]);
-          await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [authorityId, pair.entityB.id]);
+          await db.entitiesAsync.assignAuthority(pair.entityA.id, authorityId);
+          await db.entitiesAsync.assignAuthority(pair.entityB.id, authorityId);
           await db.saveDatabase();
           autoApprovedCount++;
           await logLine(`Auto-approved: entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);

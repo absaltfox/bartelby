@@ -214,6 +214,13 @@ queue to rows where the entity and suggested authority canonical names match
 case/trim-insensitively. This filter is a manual-review fast lane only; exact
 names do not auto-approve and do not override embedding confidence.
 
+Suggestions whose entity is already linked to the suggested authority are
+reconciled to `approved` because there is no remaining curator decision to
+make. Schema initialization cleans up existing stale rows, and future authority
+assignment/write paths normalize matching pending suggestions as part of the
+same workflow. Pending counts and pending tabs also defensively exclude any
+already-linked residue.
+
 Per-row actions are handled via JSON endpoints:
 
 - `POST /admin/knowledge/authorities/suggestions/:id/approve` →

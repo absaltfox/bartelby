@@ -300,6 +300,20 @@ MIGRATIONS.push(`
     ON citations(entity_id, approval_status, document_id);
 `);
 
+// v63 — reconcile already-satisfied authority suggestions
+MIGRATIONS.push(`
+  UPDATE authority_link_suggestions
+  SET status = 'approved',
+      reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
+  WHERE status = 'pending'
+    AND EXISTS (
+      SELECT 1
+      FROM entities e
+      WHERE e.id = authority_link_suggestions.entity_id
+        AND e.authority_id = authority_link_suggestions.suggested_authority_id
+    );
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
