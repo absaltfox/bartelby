@@ -310,7 +310,7 @@ router.get('/setup', asyncHandler(async (req, res) => {
 }));
 
 router.get('/terms', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getAllPublic();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
     pageTitle: 'Terms of Service',
@@ -321,7 +321,7 @@ router.get('/terms', asyncHandler(async (req, res) => {
 }));
 
 router.get('/privacy', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getAllPublic();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
     pageTitle: 'Privacy Policy',
@@ -332,7 +332,7 @@ router.get('/privacy', asyncHandler(async (req, res) => {
 }));
 
 router.get('/data-security', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getAllPublic();
   const applicationSettings = resolveApplicationSettings(cfg);
   res.render('policy', {
     pageTitle: 'Data Security',

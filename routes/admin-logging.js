@@ -8,6 +8,15 @@ const { asyncHandler } = require('../utils/async-handler');
 router.use(requireAdmin);
 
 const PAGE_SIZE = 100;
+const LOGGING_SETTING_KEYS = [
+  'log_level',
+  'log_persist_enabled',
+  'log_persist_min_level',
+  'log_slow_request_ms',
+  'log_event_loop_monitor_enabled',
+  'log_event_loop_lag_warn_ms',
+  'log_retention_days'
+];
 
 function normalizeLevelFilter(value) {
   const candidate = String(value || 'all').toLowerCase();
@@ -49,7 +58,7 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.get('/settings', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getMany(LOGGING_SETTING_KEYS);
 
   res.render('admin/logging-settings', {
     pageTitle: 'Logging Settings',

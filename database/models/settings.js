@@ -29,6 +29,38 @@ const settings = {
     }, {});
   },
 
+  getAllPublic() {
+    const rows = all('SELECT key, value FROM settings');
+    return rows.reduce((acc, { key, value }) => {
+      if (!SECRET_SETTING_KEYS.has(key)) acc[key] = value;
+      return acc;
+    }, {});
+  },
+
+  getMany(keys) {
+    const safeKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter(Boolean))];
+    if (!safeKeys.length) return {};
+    const placeholders = safeKeys.map(() => '?').join(',');
+    const rows = all(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, safeKeys);
+    return rows.reduce((acc, { key, value }) => {
+      acc[key] = SECRET_SETTING_KEYS.has(key) && value != null
+        ? decryptSecret(value)
+        : value;
+      return acc;
+    }, {});
+  },
+
+  getSecretPresence(keys = [...SECRET_SETTING_KEYS]) {
+    const safeKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter((key) => SECRET_SETTING_KEYS.has(key)))];
+    if (!safeKeys.length) return {};
+    const placeholders = safeKeys.map(() => '?').join(',');
+    const rows = all(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, safeKeys);
+    return rows.reduce((acc, { key, value }) => {
+      acc[key] = value != null && value !== '';
+      return acc;
+    }, {});
+  },
+
   set(key, value) {
     const storedValue = SECRET_SETTING_KEYS.has(key) && value != null && value !== ''
       ? encryptSecret(value)
@@ -60,6 +92,38 @@ const settingsAsync = {
       acc[key] = SECRET_SETTING_KEYS.has(key) && value != null
         ? decryptSecret(value)
         : value;
+      return acc;
+    }, {});
+  },
+
+  async getAllPublic() {
+    const rows = await allAsync('SELECT key, value FROM settings');
+    return rows.reduce((acc, { key, value }) => {
+      if (!SECRET_SETTING_KEYS.has(key)) acc[key] = value;
+      return acc;
+    }, {});
+  },
+
+  async getMany(keys) {
+    const safeKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter(Boolean))];
+    if (!safeKeys.length) return {};
+    const placeholders = safeKeys.map(() => '?').join(',');
+    const rows = await allAsync(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, safeKeys);
+    return rows.reduce((acc, { key, value }) => {
+      acc[key] = SECRET_SETTING_KEYS.has(key) && value != null
+        ? decryptSecret(value)
+        : value;
+      return acc;
+    }, {});
+  },
+
+  async getSecretPresence(keys = [...SECRET_SETTING_KEYS]) {
+    const safeKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter((key) => SECRET_SETTING_KEYS.has(key)))];
+    if (!safeKeys.length) return {};
+    const placeholders = safeKeys.map(() => '?').join(',');
+    const rows = await allAsync(`SELECT key, value FROM settings WHERE key IN (${placeholders})`, safeKeys);
+    return rows.reduce((acc, { key, value }) => {
+      acc[key] = value != null && value !== '';
       return acc;
     }, {});
   },

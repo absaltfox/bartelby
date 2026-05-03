@@ -31,7 +31,7 @@ async function revokeRememberedDevices(req) {
 }
 
 router.get('/', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getAllPublic();
   const applicationSettings = resolveApplicationSettings(cfg);
   const pendingTotpSecret = req.session.pendingTotpSecret || null;
   const pendingTotpUri = pendingTotpSecret

@@ -2,7 +2,7 @@
 
 jest.mock('../../database/db', () => ({
   settingsAsync: {
-    getAll: jest.fn(async () => ({
+    getMany: jest.fn(async () => ({
       log_level: 'info',
       log_persist_enabled: '0',
       log_persist_min_level: 'warn',

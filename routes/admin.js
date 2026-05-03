@@ -22,6 +22,18 @@ const ANALYTICS_DAY_OPTIONS = [
   { value: '5', label: 'Friday' },
   { value: '6', label: 'Saturday' }
 ];
+const LLM_SECRET_SETTING_KEYS = [
+  'openai_api_key',
+  'anthropic_api_key',
+  'google_api_key',
+  'vertex_api_key',
+  'vertex_batch_credentials_json'
+];
+const ANALYTICS_SETTING_KEYS = [
+  'analytics_schedule_interval',
+  'analytics_schedule_day_of_week',
+  'analytics_schedule_time'
+];
 
 function normalizeAnalyticsSchedule(settings = {}) {
   const interval = ['24', '168', '720'].includes(String(settings.analytics_schedule_interval || ''))
@@ -158,9 +170,13 @@ router.get('/settings', (req, res) => {
 
 // LLM settings page
 router.get('/llm-settings', asyncHandler(async (req, res) => {
+  const [publicSettings, storedSecrets] = await Promise.all([
+    settingsAsync.getAllPublic(),
+    settingsAsync.getSecretPresence(LLM_SECRET_SETTING_KEYS)
+  ]);
   res.render('admin/settings', {
     pageTitle: 'LLM Settings',
-    cfg: await settingsAsync.getAll(),
+    cfg: { ...publicSettings, ...storedSecrets },
     providers: require('../utils/llm').listProviders(),
     saved: req.query.saved === '1',
     error: req.query.error || null,
@@ -169,7 +185,7 @@ router.get('/llm-settings', asyncHandler(async (req, res) => {
 }));
 
 router.get('/application-settings', asyncHandler(async (req, res) => {
-  const cfg = await settingsAsync.getAll();
+  const cfg = await settingsAsync.getAllPublic();
   res.render('admin/application-settings', {
     pageTitle: 'Application Settings',
     cfg,
@@ -346,7 +362,7 @@ router.get('/import', asyncHandler(async (req, res) => {
 router.use('/api', (req, res, next) => getImportApiRouter()(req, res, next));
 
 router.get('/analytics-settings', asyncHandler(async (req, res) => {
-  const settings = await settingsAsync.getAll();
+  const settings = await settingsAsync.getMany(ANALYTICS_SETTING_KEYS);
   const schedule = normalizeAnalyticsSchedule(settings);
   const [collections, latestStats] = await Promise.all([
     collectionsAsync.getAll(),

@@ -31,6 +31,15 @@ const SENSITIVE_KEY_PATTERN = /(secret|password|token|cookie|authorization|api[_
 const MAX_STRING_LENGTH = 500;
 const MAX_OBJECT_DEPTH = 4;
 const CONFIG_CACHE_MS = 5000;
+const CONFIG_SETTING_KEYS = [
+  'log_level',
+  'log_persist_enabled',
+  'log_persist_min_level',
+  'log_slow_request_ms',
+  'log_event_loop_monitor_enabled',
+  'log_event_loop_lag_warn_ms',
+  'log_retention_days'
+];
 let cachedConfig = { expiresAt: 0, value: DEFAULT_CONFIG };
 let eventLoopMonitorStarted = false;
 let logMaintenanceStarted = false;
@@ -115,7 +124,7 @@ async function loadConfig() {
   const next = { ...DEFAULT_CONFIG };
   try {
     const { settingsAsync } = require('../database/db');
-    const cfg = await settingsAsync.getAll();
+    const cfg = await settingsAsync.getMany(CONFIG_SETTING_KEYS);
     next.logLevel = normalizeLevel(cfg.log_level, DEFAULT_CONFIG.logLevel);
     next.persistEnabled = parseBoolean(cfg.log_persist_enabled, DEFAULT_CONFIG.persistEnabled);
     next.persistMinLevel = normalizeLevel(cfg.log_persist_min_level, DEFAULT_CONFIG.persistMinLevel);

@@ -422,7 +422,7 @@ app.use(passport.session());
 app.use(locals); // makes currentUser / isAdmin available in all templates
 app.use(async (req, res, next) => {
   try {
-    const cfg = await settingsAsync.getAll();
+    const cfg = await settingsAsync.getAllPublic();
     Object.assign(res.locals, resolveApplicationSettings(cfg));
   } catch (err) {
     Object.assign(res.locals, resolveApplicationSettings({}));

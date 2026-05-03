@@ -27,6 +27,21 @@ function graphStores() {
   };
 }
 
+async function getAuthorityGenericTermSettings(settingsStore) {
+  const defaults = {
+    authority_generic_learning_enabled: '1',
+    authority_generic_learning_min_rejections: '3',
+    authority_generic_learning_min_seen: '5'
+  };
+  if (!settingsStore || !settingsStore.get) return defaults;
+
+  const entries = await Promise.all(Object.keys(defaults).map(async (key) => {
+    const value = await settingsStore.get(key);
+    return [key, value == null || value === '' ? defaults[key] : value];
+  }));
+  return Object.fromEntries(entries);
+}
+
 function genericTermsPath(params = {}) {
   const query = new URLSearchParams();
   if (params.status && params.status !== 'all') query.set('status', params.status);
@@ -448,7 +463,7 @@ router.get('/generic-terms', asyncHandler(async (req, res) => {
   }
   const status = String(req.query.status || 'suggested').trim() || 'suggested';
   const terms = await stores.authorityGenericTerms.list(status, { limit: 500 });
-  const settings = stores.settings && stores.settings.getAll ? await stores.settings.getAll() : {};
+  const settings = await getAuthorityGenericTermSettings(stores.settings);
   res.render('admin/authority-generic-terms', {
     pageTitle: 'Generic Authority Terms',
     activeKnowledgePage: 'authority-generic-terms',
