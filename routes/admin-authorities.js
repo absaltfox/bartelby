@@ -18,11 +18,19 @@ function graphStores() {
     authorities: db.authoritiesAsync || db.authorities || null,
     authorityLinkSuggestions: db.authorityLinkSuggestionsAsync || db.authorityLinkSuggestions || null,
     authorityResolutionJobs: db.authorityResolutionJobsAsync || db.authorityResolutionJobs || null,
+    authorityGenericTerms: db.authorityGenericTermsAsync || db.authorityGenericTerms || null,
+    settings: db.settingsAsync || db.settings || null,
     entities: db.entitiesAsync || db.entities || null,
     entityAliases: db.entityAliasesAsync || db.entityAliases || null,
     relationships: db.relationshipsAsync || db.relationships || null,
     citations: db.citationsAsync || db.citations || null
   };
+}
+
+function genericTermsPath(params = {}) {
+  const query = new URLSearchParams();
+  if (params.status && params.status !== 'all') query.set('status', params.status);
+  return knowledgePath('/authorities/generic-terms', query.toString() ? '?' + query.toString() : '');
 }
 
 function knowledgePath(pathname, queryString) {
@@ -431,6 +439,90 @@ router.post('/suggestions/:id/reject', express.json(), asyncHandler(async (req, 
   });
 
   res.json({ success: true, suggestionId: id });
+}));
+
+router.get('/generic-terms', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  if (!stores.authorityGenericTerms) {
+    return res.status(404).render('error', { pageTitle: 'Not Found', message: 'Generic terms are unavailable.' });
+  }
+  const status = String(req.query.status || 'suggested').trim() || 'suggested';
+  const terms = await stores.authorityGenericTerms.list(status, { limit: 500 });
+  const settings = stores.settings && stores.settings.getAll ? await stores.settings.getAll() : {};
+  res.render('admin/authority-generic-terms', {
+    pageTitle: 'Generic Authority Terms',
+    activeKnowledgePage: 'authority-generic-terms',
+    terms,
+    status,
+    settings,
+    genericTermsPath,
+    error: req.query.error || null,
+    saved: req.query.saved || null
+  });
+}));
+
+router.post('/generic-terms', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const term = String(req.body.term || '').trim();
+  const entityType = String(req.body.entity_type || '').trim() || null;
+  const notes = String(req.body.notes || '').trim() || null;
+  if (!term) {
+    return res.redirect(appendRedirectParams(genericTermsPath({ status: 'active' }), { error: 'Enter a generic term.' }));
+  }
+  try {
+    await stores.authorityGenericTerms.createManual({
+      term,
+      entity_type: entityType,
+      notes,
+      userId: req.user.id,
+      status: 'active'
+    });
+    audit.log('admin.authority_generic_term_created', {
+      ...audit.reqContext(req),
+      term,
+      entityType
+    });
+    res.redirect(appendRedirectParams(genericTermsPath({ status: 'active' }), { saved: 1 }));
+  } catch (err) {
+    res.redirect(appendRedirectParams(genericTermsPath({ status: 'active' }), { error: err.message }));
+  }
+}));
+
+router.post('/generic-terms/settings', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  if (stores.settings && stores.settings.set) {
+    await stores.settings.set('authority_generic_learning_enabled', req.body.authority_generic_learning_enabled === 'on' ? '1' : '0');
+    await stores.settings.set('authority_generic_learning_min_rejections', String(Math.max(parseInt(req.body.authority_generic_learning_min_rejections, 10) || 3, 1)));
+    await stores.settings.set('authority_generic_learning_min_seen', String(Math.max(parseInt(req.body.authority_generic_learning_min_seen, 10) || 5, 1)));
+  }
+  res.redirect(appendRedirectParams(genericTermsPath({ status: String(req.body.status || 'suggested') }), { saved: 1 }));
+}));
+
+router.post('/generic-terms/:id/:action', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const id = parseInt(req.params.id, 10);
+  const action = String(req.params.action || '').trim();
+  const status = String(req.body.status || 'suggested').trim();
+  if (!Number.isInteger(id)) {
+    return res.redirect(appendRedirectParams(genericTermsPath({ status }), { error: 'Invalid generic term id.' }));
+  }
+  const nextStatus = action === 'approve'
+    ? 'active'
+    : action === 'reject'
+      ? 'rejected'
+      : action === 'disable'
+        ? 'disabled'
+        : null;
+  if (!nextStatus) {
+    return res.redirect(appendRedirectParams(genericTermsPath({ status }), { error: 'Invalid generic term action.' }));
+  }
+  await stores.authorityGenericTerms.setStatus(id, nextStatus, req.user.id);
+  audit.log('admin.authority_generic_term_status_changed', {
+    ...audit.reqContext(req),
+    genericTermId: id,
+    status: nextStatus
+  });
+  res.redirect(appendRedirectParams(genericTermsPath({ status: nextStatus === 'active' ? 'active' : status }), { saved: 1 }));
 }));
 
 router.get('/', asyncHandler(async (req, res) => {

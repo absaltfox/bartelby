@@ -1,5 +1,6 @@
 'use strict';
 const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
+const { normalizeGenericTerm } = require('../../utils/authority-suggestion-pipeline');
 const REVIEW_KIND_ENTITY_TYPES = new Set([
   'person',
   'place',
@@ -589,6 +590,200 @@ const authorities = {
   }
 };
 
+const GENERIC_TERM_STATUSES = new Set(['active', 'suggested', 'rejected', 'disabled']);
+const GENERIC_TERM_SOURCES = new Set(['manual', 'review_pattern', 'extraction', 'corpus_frequency']);
+
+function normalizeGenericEntityType(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function normalizeGenericStatus(value, fallback = 'suggested') {
+  const text = String(value || '').trim();
+  return GENERIC_TERM_STATUSES.has(text) ? text : fallback;
+}
+
+function normalizeGenericSource(value, fallback = 'manual') {
+  const text = String(value || '').trim();
+  return GENERIC_TERM_SOURCES.has(text) ? text : fallback;
+}
+
+const authorityGenericTerms = {
+  async list(status = 'active', opts = {}) {
+    const params = [];
+    const clauses = [];
+    if (status && status !== 'all') {
+      clauses.push('status = ?');
+      params.push(status);
+    }
+    if (opts.entityType) {
+      clauses.push('(entity_type = ? OR entity_type IS NULL)');
+      params.push(String(opts.entityType).trim());
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = Math.min(Math.max(parseInt(opts.limit, 10) || 200, 1), 1000);
+    const offset = Math.max(parseInt(opts.offset, 10) || 0, 0);
+    return await allAsync(`
+      SELECT *
+      FROM authority_generic_terms
+      ${where}
+      ORDER BY
+        CASE status WHEN 'suggested' THEN 0 WHEN 'active' THEN 1 WHEN 'disabled' THEN 2 ELSE 3 END,
+        updated_at DESC,
+        id DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+  },
+
+  async getById(id) {
+    return await getAsync('SELECT * FROM authority_generic_terms WHERE id = ?', [id]);
+  },
+
+  async listActive() {
+    return await this.list('active', { limit: 1000 });
+  },
+
+  async createManual({ term, entity_type = null, notes = null, userId = null, status = 'active' }) {
+    return await this.upsert({
+      term,
+      entity_type,
+      source: 'manual',
+      status,
+      notes,
+      created_by_user_id: userId,
+      reviewed_by_user_id: status === 'active' ? userId : null
+    });
+  },
+
+  async upsert({
+    term,
+    entity_type = null,
+    source = 'manual',
+    status = 'suggested',
+    notes = null,
+    created_by_user_id = null,
+    reviewed_by_user_id = null,
+    seenIncrement = 0,
+    rejectedIncrement = 0,
+    approvedIncrement = 0
+  }) {
+    const normalizedTerm = normalizeGenericTerm(term);
+    if (!normalizedTerm) throw new Error('Generic term is required.');
+    const entityType = normalizeGenericEntityType(entity_type);
+    const normalizedStatus = normalizeGenericStatus(status);
+    const normalizedSource = normalizeGenericSource(source);
+    const existing = await getAsync(`
+      SELECT *
+      FROM authority_generic_terms
+      WHERE normalized_term = ?
+        AND ((entity_type IS NULL AND ? IS NULL) OR entity_type = ?)
+      LIMIT 1
+    `, [normalizedTerm, entityType, entityType]);
+
+    if (existing) {
+      const keepReviewed = existing.status === 'active' && normalizedStatus !== 'active';
+      await runAsync(`
+        UPDATE authority_generic_terms
+        SET term = COALESCE(?, term),
+            source = COALESCE(?, source),
+            status = CASE
+              WHEN status = 'active' AND ? != 'active' THEN status
+              ELSE ?
+            END,
+            seen_count = seen_count + ?,
+            rejected_link_count = rejected_link_count + ?,
+            approved_link_count = approved_link_count + ?,
+            notes = COALESCE(?, notes),
+            reviewed_by_user_id = CASE WHEN ? IS NOT NULL THEN ? ELSE reviewed_by_user_id END,
+            reviewed_at = CASE
+              WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP
+              ELSE reviewed_at
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [
+        term || null,
+        normalizedSource,
+        normalizedStatus,
+        normalizedStatus,
+        Number(seenIncrement || 0),
+        Number(rejectedIncrement || 0),
+        Number(approvedIncrement || 0),
+        notes || null,
+        keepReviewed ? null : reviewed_by_user_id,
+        keepReviewed ? null : reviewed_by_user_id,
+        keepReviewed ? null : reviewed_by_user_id,
+        existing.id
+      ]);
+      return existing.id;
+    }
+
+    const result = await runAsync(`
+      INSERT INTO authority_generic_terms (
+        term, normalized_term, entity_type, status, source,
+        seen_count, rejected_link_count, approved_link_count, notes,
+        created_by_user_id, reviewed_by_user_id, reviewed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END)
+    `, [
+      term,
+      normalizedTerm,
+      entityType,
+      normalizedStatus,
+      normalizedSource,
+      Number(seenIncrement || 0),
+      Number(rejectedIncrement || 0),
+      Number(approvedIncrement || 0),
+      notes || null,
+      created_by_user_id || null,
+      reviewed_by_user_id || null,
+      reviewed_by_user_id || null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async setStatus(id, status, userId = null) {
+    const normalizedStatus = normalizeGenericStatus(status, null);
+    if (!normalizedStatus) throw new Error('Invalid generic term status.');
+    await runAsync(`
+      UPDATE authority_generic_terms
+      SET status = ?,
+          reviewed_by_user_id = ?,
+          reviewed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [normalizedStatus, userId || null, id]);
+    return await this.getById(id);
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM authority_generic_terms WHERE id = ?', [id]);
+  },
+
+  async isGenericName(name, entityType = null) {
+    const normalizedTerm = normalizeGenericTerm(name);
+    if (!normalizedTerm) return false;
+    const row = await getAsync(`
+      SELECT id
+      FROM authority_generic_terms
+      WHERE normalized_term = ?
+        AND status = 'active'
+        AND (entity_type IS NULL OR entity_type = ?)
+      LIMIT 1
+    `, [normalizedTerm, normalizeGenericEntityType(entityType)]);
+    return !!row;
+  },
+
+  async recordExtractionHint({ term, entity_type = null }) {
+    return await this.upsert({
+      term,
+      entity_type,
+      source: 'extraction',
+      status: 'suggested',
+      seenIncrement: 1
+    });
+  }
+};
+
 const authorityLinkSuggestions = {
   async createIfMissing({ entity_id, suggested_authority_id, confidence, match_method, status = 'pending' }) {
     const entity = await entities.getById(Number(entity_id));
@@ -812,6 +1007,17 @@ const authorityLinkSuggestions = {
     if (!suggestion) {
       throw new Error('Authority suggestion not found.');
     }
+    const details = await getAsync(`
+      SELECT
+        als.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        a.canonical_name AS authority_name
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      INNER JOIN authorities a ON a.id = als.suggested_authority_id
+      WHERE als.id = ?
+    `, [id]);
 
     const runApprove = async () => {
       await runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [suggestion.suggested_authority_id, suggestion.entity_id]);
@@ -851,9 +1057,21 @@ const authorityLinkSuggestions = {
     }
 
     await saveDatabase();
+    await maybeLearnGenericTermFromSuggestion(details, 'approved');
   },
 
   async reject(id, reviewedByUserId) {
+    const details = await getAsync(`
+      SELECT
+        als.*,
+        e.canonical_name AS entity_name,
+        e.entity_type,
+        a.canonical_name AS authority_name
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      INNER JOIN authorities a ON a.id = als.suggested_authority_id
+      WHERE als.id = ?
+    `, [id]);
     await runAsync(`
       UPDATE authority_link_suggestions
       SET status = 'rejected',
@@ -861,8 +1079,72 @@ const authorityLinkSuggestions = {
           reviewed_by_user_id = ?
       WHERE id = ?
     `, [reviewedByUserId || null, id]);
+    await maybeLearnGenericTermFromSuggestion(details, 'rejected');
   }
 };
+
+async function maybeLearnGenericTermFromSuggestion(details, outcome) {
+  if (!details) return;
+  const enabled = await getAsync("SELECT value FROM settings WHERE key = 'authority_generic_learning_enabled'");
+  if (String(enabled?.value ?? '1') === '0') return;
+  const entityName = normalizeGenericTerm(details.entity_name);
+  const authorityName = normalizeGenericTerm(details.authority_name);
+  if (!entityName || entityName !== authorityName) return;
+  const existing = await getAsync(`
+    SELECT id
+    FROM authority_generic_terms
+    WHERE normalized_term = ?
+      AND ((entity_type IS NULL AND ? IS NULL) OR entity_type = ?)
+    LIMIT 1
+  `, [entityName, details.entity_type || null, details.entity_type || null]);
+  if (outcome === 'approved' && !existing) return;
+
+  const rejectedIncrement = outcome === 'rejected' ? 1 : 0;
+  const approvedIncrement = outcome === 'approved' ? 1 : 0;
+  const minRejected = parseInt((await getAsync("SELECT value FROM settings WHERE key = 'authority_generic_learning_min_rejections'"))?.value, 10) || 3;
+  const minSeen = parseInt((await getAsync("SELECT value FROM settings WHERE key = 'authority_generic_learning_min_seen'"))?.value, 10) || 5;
+
+  if (existing) {
+    await authorityGenericTerms.upsert({
+      term: details.entity_name,
+      entity_type: details.entity_type,
+      source: 'review_pattern',
+      status: 'suggested',
+      seenIncrement: 1,
+      rejectedIncrement,
+      approvedIncrement
+    });
+    return;
+  }
+
+  if (outcome !== 'rejected') return;
+
+  const aggregate = await getAsync(`
+    SELECT
+      COUNT(*) AS seen_count,
+      SUM(CASE WHEN als.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
+    FROM authority_link_suggestions als
+    INNER JOIN entities e ON e.id = als.entity_id
+    INNER JOIN authorities a ON a.id = als.suggested_authority_id
+    WHERE LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))
+      AND e.entity_type = ?
+      AND LOWER(TRIM(e.canonical_name)) = ?
+  `, [details.entity_type, entityName]);
+  if (
+    Number(aggregate?.rejected_count || 0) >= minRejected
+    && Number(aggregate?.seen_count || 0) >= minSeen
+  ) {
+    await authorityGenericTerms.upsert({
+      term: details.entity_name,
+      entity_type: details.entity_type,
+      source: 'review_pattern',
+      status: 'suggested',
+      seenIncrement: Number(aggregate.seen_count || 0),
+      rejectedIncrement: Number(aggregate.rejected_count || 0),
+      notes: `Suggested after ${aggregate.rejected_count} rejected exact-name authority links.`
+    });
+  }
+}
 
 const dateExpressions = {
   async create({ entity_id, label, earliest, latest, precision, qualifier, calendar }) {
@@ -2090,6 +2372,7 @@ function buildCitationQueryConditions(opts = {}, alias = 'c') {
     entityAliases,
     authorities,
     authorityLinkSuggestions,
+    authorityGenericTerms,
     dateExpressions,
     relationships,
     citations,

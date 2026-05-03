@@ -72,9 +72,13 @@ does not create standalone date nodes for explorer use.
   document, or manually from the admin UI (per-collection or full-corpus)
 - High-confidence pairs (≥ 0.92 cosine) are auto-approved; mid-confidence
   (0.75–0.91) enter the pending review queue; below 0.75 are discarded. Exact
-  canonical-name matches are surfaced as a review cue, but they do not override
-  embedding confidence because generic labels can refer to different subjects
-  in different document contexts.
+  canonical-name matches for `person` and `place` entities can auto-approve at
+  the pending threshold when neither name matches an active generic authority
+  term. Other entity types keep the embedding auto-approval threshold unless
+  reviewed by a human.
+- Active generic authority terms suppress exact bare-name suggestions before
+  they reach review. These terms live in `authority_generic_terms` and are
+  managed from Knowledge → Generic Terms.
 
 ### Authority Link Suggestions
 
@@ -211,8 +215,32 @@ server response and uses cursor pagination via
 Pending suggestions default to sorting exact canonical-name matches first while
 preserving their original confidence. The `nameSignal=exact` filter narrows the
 queue to rows where the entity and suggested authority canonical names match
-case/trim-insensitively. This filter is a manual-review fast lane only; exact
-names do not auto-approve and do not override embedding confidence.
+case/trim-insensitively. This filter is a manual-review fast lane for
+non-auto-approved types; exact `person` and `place` names may already have been
+auto-approved by the authority suggestion job.
+
+### Generic Authority Terms
+
+Generic terms prevent bare class-like labels such as `High School` or
+`School Board` from becoming conceptual authority clusters. Matching is exact
+after normalization, so an active term for `High School` suppresses `High
+School` but not qualified names such as `Victoria High School`.
+
+Terms can be global or scoped to one `entity_type`. Their statuses are:
+
+- `active` — suppresses authority-link suggestions
+- `suggested` — visible for curator review, but operationally inert
+- `rejected` — retained history for a rejected learned suggestion
+- `disabled` — previously active or suggested, but no longer applied
+
+Generic-term learning is controlled by
+`authority_generic_learning_enabled`,
+`authority_generic_learning_min_rejections`, and
+`authority_generic_learning_min_seen`. Repeated rejections of exact-name
+authority suggestions can create a `suggested` term once the configured counts
+are met. Extraction can also store a `genericity` hint in entity properties and
+propose terms, but those hints do not suppress linking unless a curator
+approves the term.
 
 Suggestions whose entity is already linked to the suggested authority are
 reconciled to `approved` because there is no remaining curator decision to

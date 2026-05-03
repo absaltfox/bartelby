@@ -1,6 +1,12 @@
 'use strict';
 
-const { buildCandidatePairs, cosineSimilarity } = require('../../utils/authority-suggestion-pipeline');
+const {
+  buildCandidatePairs,
+  buildGenericTermMatcher,
+  cosineSimilarity,
+  decideAuthorityLinkAction,
+  normalizeGenericTerm
+} = require('../../utils/authority-suggestion-pipeline');
 
 describe('buildCandidatePairs', () => {
   const entities = [
@@ -63,5 +69,57 @@ describe('cosineSimilarity', () => {
     const sim = cosineSimilarity([1, 2, 3], [1, 2, 4]);
     expect(sim).toBeGreaterThan(0.9);
     expect(sim).toBeLessThanOrEqual(1.0);
+  });
+});
+
+describe('generic authority term policy', () => {
+  it('normalizes generic terms for exact bare-name matching', () => {
+    expect(normalizeGenericTerm(' High School! ')).toBe('high school');
+  });
+
+  it('matches active generic terms exactly, not by substring', () => {
+    const isGeneric = buildGenericTermMatcher([
+      { term: 'High School', entity_type: 'organization' }
+    ]);
+    expect(isGeneric('High School', 'organization')).toBe(true);
+    expect(isGeneric('Victoria High School', 'organization')).toBe(false);
+    expect(isGeneric('High School', 'place')).toBe(false);
+  });
+
+  it('supports global generic terms across entity types', () => {
+    const isGeneric = buildGenericTermMatcher([{ term: 'School Board', entity_type: null }]);
+    expect(isGeneric('School Board', 'organization')).toBe(true);
+    expect(isGeneric('School Board', 'topic')).toBe(true);
+  });
+
+  it('skips active generic names before suggestions or auto-approval', () => {
+    const isGeneric = buildGenericTermMatcher([{ term: 'High School', entity_type: 'organization' }]);
+    const decision = decideAuthorityLinkAction({
+      entityA: { entity_type: 'organization', canonical_name: 'High School' },
+      entityB: { entity_type: 'organization', canonical_name: 'High School' }
+    }, 0.99, {}, isGeneric);
+    expect(decision.action).toBe('skip_generic');
+  });
+
+  it('auto-approves exact place and person names at the pending threshold', () => {
+    const placeDecision = decideAuthorityLinkAction({
+      entityA: { entity_type: 'place', canonical_name: 'Victoria, British Columbia' },
+      entityB: { entity_type: 'place', canonical_name: 'Victoria, British Columbia' }
+    }, 0.76, { pendingThreshold: 0.75, autoApproveThreshold: 0.92 });
+    expect(placeDecision.action).toBe('auto_approve_exact');
+
+    const personDecision = decideAuthorityLinkAction({
+      entityA: { entity_type: 'person', canonical_name: 'Alice Reed' },
+      entityB: { entity_type: 'person', canonical_name: 'Alice Reed' }
+    }, 0.75, { pendingThreshold: 0.75, autoApproveThreshold: 0.92 });
+    expect(personDecision.action).toBe('auto_approve_exact');
+  });
+
+  it('keeps exact organization names in review below the embedding auto-approval threshold', () => {
+    const decision = decideAuthorityLinkAction({
+      entityA: { entity_type: 'organization', canonical_name: 'Victoria School Board' },
+      entityB: { entity_type: 'organization', canonical_name: 'Victoria School Board' }
+    }, 0.86, { pendingThreshold: 0.75, autoApproveThreshold: 0.92 });
+    expect(decision.action).toBe('suggest');
   });
 });

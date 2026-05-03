@@ -261,7 +261,35 @@ MIGRATIONS.push(`
   CREATE INDEX IF NOT EXISTS idx_authority_suggestion_jobs_collection ON authority_suggestion_jobs(collection_id)
 `);
 
-// v61 — performance indexes and append-only job log storage
+// v61 — editable generic authority terms and learning settings
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS authority_generic_terms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    term TEXT NOT NULL,
+    normalized_term TEXT NOT NULL,
+    entity_type TEXT,
+    status TEXT NOT NULL DEFAULT 'suggested',
+    source TEXT NOT NULL DEFAULT 'manual',
+    seen_count INTEGER NOT NULL DEFAULT 0,
+    rejected_link_count INTEGER NOT NULL DEFAULT 0,
+    approved_link_count INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(normalized_term, entity_type)
+  );
+  CREATE INDEX IF NOT EXISTS idx_authority_generic_terms_status ON authority_generic_terms(status);
+  CREATE INDEX IF NOT EXISTS idx_authority_generic_terms_entity_type ON authority_generic_terms(entity_type);
+  INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('authority_generic_learning_enabled', '1'),
+    ('authority_generic_learning_min_rejections', '3'),
+    ('authority_generic_learning_min_seen', '5');
+`);
+
+// v62 — performance indexes and append-only job log storage
 MIGRATIONS.push(`
   CREATE INDEX IF NOT EXISTS idx_document_collections_collection_document
     ON document_collections(collection_id, document_id);
@@ -1043,7 +1071,7 @@ const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userIn
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
-const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
+const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, authorityGenericTerms, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
@@ -1120,6 +1148,8 @@ module.exports = {
   authoritiesAsync: authorities,
   authorityLinkSuggestions,
   authorityLinkSuggestionsAsync: authorityLinkSuggestions,
+  authorityGenericTerms,
+  authorityGenericTermsAsync: authorityGenericTerms,
   graphAccess,
   graphAccessAsync: graphAccess
 };

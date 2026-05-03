@@ -3,6 +3,71 @@
 const { normalizeComparable, similarityScore, normalizeForMatching } = require('./entity-resolution');
 
 const STOPWORDS = new Set(['the', 'of', 'and', 'in', 'at', 'to', 'a', 'an', 'de', 'van', 'von']);
+const EXACT_NAME_AUTO_APPROVE_TYPES = new Set(['person', 'place']);
+
+function normalizeGenericTerm(value) {
+  return normalizeComparable(value);
+}
+
+function buildGenericTermMatcher(terms = []) {
+  const globalTerms = new Set();
+  const typedTerms = new Map();
+
+  for (const row of terms || []) {
+    const term = normalizeGenericTerm(row.normalized_term || row.term);
+    if (!term) continue;
+    const entityType = String(row.entity_type || '').trim();
+    if (!entityType) {
+      globalTerms.add(term);
+      continue;
+    }
+    if (!typedTerms.has(entityType)) typedTerms.set(entityType, new Set());
+    typedTerms.get(entityType).add(term);
+  }
+
+  return function isGenericAuthorityName(name, entityType = null) {
+    const normalized = normalizeGenericTerm(name);
+    if (!normalized) return false;
+    if (globalTerms.has(normalized)) return true;
+    const typed = typedTerms.get(String(entityType || '').trim());
+    return !!typed && typed.has(normalized);
+  };
+}
+
+function decideAuthorityLinkAction(pair, embeddingSimilarity, thresholds = {}, isGenericAuthorityName = () => false) {
+  const entityA = pair?.entityA || {};
+  const entityB = pair?.entityB || {};
+  const entityType = String(entityB.entity_type || entityA.entity_type || '').trim();
+  const exactNameMatch = normalizeComparable(entityA.canonical_name) === normalizeComparable(entityB.canonical_name);
+  const pendingThreshold = Number(thresholds.pendingThreshold ?? thresholds.pending_threshold ?? 0.75);
+  const autoApproveThreshold = Number(thresholds.autoApproveThreshold ?? thresholds.auto_approve_threshold ?? 0.92);
+  const confidence = Number(embeddingSimilarity || 0);
+
+  if (
+    isGenericAuthorityName(entityA.canonical_name, entityA.entity_type)
+    || isGenericAuthorityName(entityB.canonical_name, entityB.entity_type)
+  ) {
+    return { action: 'skip_generic', exactNameMatch };
+  }
+
+  if (confidence < pendingThreshold) {
+    return { action: 'discard', exactNameMatch };
+  }
+
+  if (
+    exactNameMatch
+    && EXACT_NAME_AUTO_APPROVE_TYPES.has(entityType)
+    && confidence >= pendingThreshold
+  ) {
+    return { action: 'auto_approve_exact', exactNameMatch };
+  }
+
+  if (confidence >= autoApproveThreshold) {
+    return { action: 'auto_approve_embedding', exactNameMatch };
+  }
+
+  return { action: 'suggest', exactNameMatch };
+}
 
 /**
  * Build an inverted index: significant token → Set of indices into the entities array.
@@ -124,4 +189,11 @@ async function scorePairs(pairs, embedFn, entityTextFn) {
   }));
 }
 
-module.exports = { buildCandidatePairs, cosineSimilarity, scorePairs };
+module.exports = {
+  buildCandidatePairs,
+  buildGenericTermMatcher,
+  cosineSimilarity,
+  decideAuthorityLinkAction,
+  normalizeGenericTerm,
+  scorePairs
+};

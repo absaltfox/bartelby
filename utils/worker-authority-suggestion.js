@@ -1,7 +1,12 @@
 'use strict';
 
 const { buildEntityText } = require('./entity-embedding');
-const { buildCandidatePairs, cosineSimilarity } = require('./authority-suggestion-pipeline');
+const {
+  buildCandidatePairs,
+  buildGenericTermMatcher,
+  cosineSimilarity,
+  decideAuthorityLinkAction
+} = require('./authority-suggestion-pipeline');
 
 let isBusy = false;
 
@@ -110,7 +115,7 @@ async function runAuthoritySuggestionWorkerCycle() {
     const logLine = makeLogger(job.id, authoritySuggestionJobsAsync);
     await logLine(`Authority suggestion job #${job.id} started. Scope: ${job.collection_id != null ? `collection #${job.collection_id}` : 'full corpus'}.`);
 
-    let entityCount = 0, candidateCount = 0, suggestionCount = 0, autoApprovedCount = 0;
+    let entityCount = 0, candidateCount = 0, suggestionCount = 0, autoApprovedCount = 0, skippedGenericCount = 0;
 
     try {
       const entities = await loadEntitiesInScope(job.collection_id, db);
@@ -127,6 +132,13 @@ async function runAuthoritySuggestionWorkerCycle() {
       }
 
       const embedFn = await makeEmbedFn();
+      const activeGenericTerms = db.authorityGenericTermsAsync && db.authorityGenericTermsAsync.listActive
+        ? await db.authorityGenericTermsAsync.listActive()
+        : [];
+      const isGenericAuthorityName = buildGenericTermMatcher(activeGenericTerms);
+      if (activeGenericTerms.length) {
+        await logLine(`Loaded ${activeGenericTerms.length} active generic authority term(s).`);
+      }
 
       // Collect unique entities from all pairs and embed them
       const entityMap = new Map();
@@ -148,18 +160,26 @@ async function runAuthoritySuggestionWorkerCycle() {
         const embA = embeddingById.get(pair.entityA.id);
         const embB = embeddingById.get(pair.entityB.id);
         const similarity = cosineSimilarity(embA, embB);
+        const decision = decideAuthorityLinkAction(pair, similarity, {
+          pendingThreshold: job.pending_threshold,
+          autoApproveThreshold: job.auto_approve_threshold
+        }, isGenericAuthorityName);
 
-        if (similarity < job.pending_threshold) continue;
+        if (decision.action === 'discard') continue;
+        if (decision.action === 'skip_generic') {
+          skippedGenericCount++;
+          continue;
+        }
 
         const authorityId = await ensureAuthority(pair.entityA, db);
 
-        if (similarity >= job.auto_approve_threshold) {
+        if (decision.action === 'auto_approve_exact' || decision.action === 'auto_approve_embedding') {
           // Auto-approve: assign authority directly to both entities
           await db.entitiesAsync.assignAuthority(pair.entityA.id, authorityId);
           await db.entitiesAsync.assignAuthority(pair.entityB.id, authorityId);
           await db.saveDatabase();
           autoApprovedCount++;
-          await logLine(`Auto-approved: entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);
+          await logLine(`Auto-approved (${decision.action === 'auto_approve_exact' ? 'exact name' : 'embedding'}): entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);
         } else {
           // Pending suggestion
           await authorityLinkSuggestionsAsync.createIfMissing({
@@ -172,6 +192,9 @@ async function runAuthoritySuggestionWorkerCycle() {
         }
       }
 
+      if (skippedGenericCount > 0) {
+        await logLine(`Skipped ${skippedGenericCount} candidate pair(s) because an entity name matched an active generic authority term.`);
+      }
       await logLine(`Done. Suggestions: ${suggestionCount} pending, ${autoApprovedCount} auto-approved.`);
       await authoritySuggestionJobsAsync.markDone(job.id, { entityCount, candidateCount, suggestionCount, autoApprovedCount });
     } catch (err) {

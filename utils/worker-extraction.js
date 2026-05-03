@@ -130,6 +130,13 @@ async function materializeExtractionResult({
       const mention = String(ext.mention || normalized).trim();
       const entityType = String(ext.type || 'topic').trim() || 'topic';
       if (!normalized) continue;
+      const genericity = ['specific', 'generic', 'unknown'].includes(String(ext.genericity || '').trim())
+        ? String(ext.genericity).trim()
+        : 'unknown';
+      const properties = {
+        ...(ext.properties || {}),
+        genericity
+      };
 
       const resolved = resolveEntityInScope(mention, normalized, entityType, mentionToEntityId);
       let entityId = resolved?.entityId || null;
@@ -138,7 +145,7 @@ async function materializeExtractionResult({
           entity_type: entityType,
           canonical_name: normalized,
           description: null,
-          properties: ext.properties || {}
+          properties
         });
         await entityAliases.createIfMissing({ entity_id: entityId, alias: normalized, source: 'extracted' });
         if (mention && mention.toLowerCase() !== normalized.toLowerCase()) {
@@ -149,6 +156,18 @@ async function materializeExtractionResult({
         await entityAliases.createIfMissing({ entity_id: entityId, alias: normalized, source: 'extracted' });
         if (mention && mention.toLowerCase() !== normalized.toLowerCase()) {
           await entityAliases.createIfMissing({ entity_id: entityId, alias: mention, source: 'extracted' });
+        }
+      }
+      if (genericity === 'generic') {
+        const db = require('../database/db');
+        const learningEnabled = db.settingsAsync && db.settingsAsync.get
+          ? await db.settingsAsync.get('authority_generic_learning_enabled')
+          : '1';
+        if (String(learningEnabled ?? '1') !== '0' && db.authorityGenericTermsAsync?.recordExtractionHint) {
+          await db.authorityGenericTermsAsync.recordExtractionHint({
+            term: normalized,
+            entity_type: entityType
+          });
         }
       }
 

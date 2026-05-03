@@ -41,6 +41,7 @@ RULES:
 6. Respond with valid JSON only.
 7. Every date in "dates" must include "entity_mention" — the normalized name of the entity the date describes (e.g. the person born, the event that occurred, the organization that was active). Only extract a date if you can identify which entity it belongs to. Do not extract free-floating dates with no clear subject entity.
 8. Use "qualifier" on dates to indicate the nature of the temporal relationship: born_in, died_in, active_during, created_on, occurred_on, dated, valid_from, valid_to, or similar.
+9. For each entity, include "genericity": "specific", "generic", or "unknown". Use "generic" only when the mention is a class-like reference rather than a particular person, place, organization, event, topic, artifact, or claim. For example, "High School" by itself may be generic; "Victoria High School" is specific.
 
 Return this exact shape:
 {
@@ -52,6 +53,7 @@ Return this exact shape:
       "span_start": 0,
       "span_end": 10,
       "confidence": 0.9,
+      "genericity": "specific",
       "properties": {}
     }
   ],
