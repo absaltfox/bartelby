@@ -89,7 +89,10 @@ Fly Machine PDF render jobs send heartbeat updates from the standalone worker
 and treat render progress as liveness. During the long `pdftoppm` rasterization
 step, the worker polls the generated PNG files in its temp directory and updates
 `import_jobs.pages_rendered` so the admin Jobs UI can show that image rendering
-is still moving before the final page assets are uploaded.
+is still moving before the final page assets are uploaded. The same nonblocking
+progress polling is required for the extraction-first `pdfimages` path, because
+large embedded-image PDFs can otherwise spend several minutes inside Poppler
+without yielding back to the worker heartbeat interval.
 
 For batch finalization, the in-memory poller flags are not enough on their own
 because Fly can briefly run overlapping app processes during deployments or

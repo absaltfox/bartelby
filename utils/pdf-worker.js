@@ -253,11 +253,15 @@ async function extractEmbeddedPageImages(pdfPath, dbJobId, prefix) {
 
     const tempPrefix = path.join(path.dirname(pdfPath), `${prefix}_embedded`);
     const tempPrefixBase = path.basename(tempPrefix);
-    execFileSync('pdfimages', ['-png', '-p', pdfPath, tempPrefix], {
-      stdio: 'pipe',
-      encoding: 'utf8',
-      timeout: isStandalone ? 30 * 60 * 1000 : 10 * 60 * 1000,
-      maxBuffer: 20 * 1024 * 1024
+
+    await runPdfimagesWithProgress({
+      pdfPath,
+      tempPrefix,
+      outDir: path.dirname(pdfPath),
+      tempPrefixBase,
+      dbJobId,
+      pageCount,
+      timeoutMs: isStandalone ? 30 * 60 * 1000 : 10 * 60 * 1000
     });
 
     extractedFiles = collectGeneratedPngs(path.dirname(pdfPath), tempPrefixBase);
@@ -307,6 +311,92 @@ async function extractEmbeddedPageImages(pdfPath, dbJobId, prefix) {
       try { fs.unlinkSync(file); } catch {}
     }
   }
+}
+
+function runPdfimagesWithProgress({
+  pdfPath,
+  tempPrefix,
+  outDir,
+  tempPrefixBase,
+  dbJobId,
+  pageCount,
+  timeoutMs,
+  reportProgressImpl = reportProgress
+}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('pdfimages', ['-png', '-p', pdfPath, tempPrefix], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const output = [];
+    let settled = false;
+    let lastReported = 0;
+    let progressBusy = false;
+    let progressTimer = null;
+    let timeoutTimer = null;
+
+    function appendOutput(chunk) {
+      if (!chunk) return;
+      output.push(String(chunk));
+      if (output.length > 40) output.splice(0, output.length - 40);
+    }
+
+    async function pollProgress() {
+      if (settled || progressBusy || !pageCount) return;
+      progressBusy = true;
+      try {
+        const rendered = collectGeneratedPngs(outDir, tempPrefixBase).length;
+        if (rendered !== lastReported) {
+          lastReported = rendered;
+          await reportProgressImpl(dbJobId, pageCount, Math.min(rendered, pageCount));
+        }
+      } catch (err) {
+        console.warn(`PDF worker: failed to poll pdfimages progress (${err.message})`);
+      } finally {
+        progressBusy = false;
+      }
+    }
+
+    function cleanupTimers() {
+      if (progressTimer) clearInterval(progressTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      progressTimer = null;
+      timeoutTimer = null;
+    }
+
+    progressTimer = setInterval(() => {
+      pollProgress().catch(() => {});
+    }, RASTER_PROGRESS_INTERVAL_MS);
+    timeoutTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanupTimers();
+      child.kill('SIGTERM');
+      reject(new Error(`pdfimages timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', appendOutput);
+    child.stderr.on('data', appendOutput);
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      cleanupTimers();
+      reject(err);
+    });
+    child.on('close', async (code, signal) => {
+      if (settled) return;
+      cleanupTimers();
+      try {
+        await pollProgress();
+      } catch {}
+      settled = true;
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = output.join('').trim();
+      reject(new Error(`pdfimages exited with ${signal || `code ${code}`}${detail ? `: ${detail}` : ''}`));
+    });
+  });
 }
 
 function runPdftoppmWithProgress({ pdfPath, outPrefix, outDir, prefix, dbJobId, pageCount, timeoutMs }) {
@@ -576,9 +666,9 @@ async function runStandalone() {
 
 // ── IPC mode (forked by web server) ─────────────────────────────────────
 
-if (isStandalone) {
+if (isStandalone && require.main === module) {
   runStandalone();
-} else {
+} else if (require.main === module) {
   process.on('message', async (msg) => {
     const result = await processIpcJob(msg);
     process.exit(result.ok ? 0 : 1);
@@ -611,6 +701,7 @@ module.exports = {
   __testables: {
     processIpcJob,
     renderWithPdfjs,
+    runPdfimagesWithProgress,
     collectGeneratedPngs,
     compareNumericFilename
   }
