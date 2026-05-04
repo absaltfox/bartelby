@@ -4691,6 +4691,25 @@ main { flex: 1; padding: 32px 0; }
   margin-bottom: 0;
 }
 
+.authority-generic-controls {
+  align-items: stretch;
+}
+
+.authority-generic-controls .knowledge-task-card h2 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.authority-generic-controls .knowledge-task-card .muted {
+  margin-bottom: 14px;
+}
+
+.authority-generic-learning-toggle {
+  margin-bottom: 12px;
+}
+
 .knowledge-document-search-input {
   max-width: none;
 }
@@ -6206,6 +6225,13 @@ main { flex: 1; padding: 32px 0; }
 
 .col-actions {
   white-space: nowrap;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .user-badge-stack {
