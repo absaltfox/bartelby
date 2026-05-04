@@ -20,6 +20,7 @@
     var previewTranscript = document.getElementById('review-preview-transcript');
     var previewPassageNote = document.getElementById('review-preview-passage-note');
     var previewDocumentLink = document.getElementById('review-preview-document-link');
+    var activePreviewTrigger = null;
 
     function getCsrfToken() {
       var meta = document.querySelector('meta[name="csrf-token"]');
@@ -135,6 +136,10 @@
       previewModal.classList.add('is-hidden');
       previewModal.removeAttribute('data-citation-id');
       document.body.classList.remove('modal-open');
+      if (activePreviewTrigger && activePreviewTrigger.isConnected && typeof activePreviewTrigger.focus === 'function') {
+        activePreviewTrigger.focus();
+      }
+      activePreviewTrigger = null;
     }
 
     function renderTranscriptPreview(text, highlightStart, highlightEnd) {
@@ -158,6 +163,19 @@
         + '</pre>';
     }
 
+    function scrollPreviewHighlightIntoView() {
+      if (!previewTranscript) return;
+      var highlightedPassage = previewTranscript.querySelector('mark');
+      if (!highlightedPassage || typeof highlightedPassage.scrollIntoView !== 'function') return;
+
+      window.requestAnimationFrame(function() {
+        highlightedPassage.scrollIntoView({
+          block: 'center',
+          inline: 'nearest'
+        });
+      });
+    }
+
     function setPreviewLoading(trigger) {
       if (!previewModal) return;
       previewTitle.textContent = trigger && trigger.getAttribute('data-review-preview-title')
@@ -176,9 +194,14 @@
 
     function openPreviewModal(trigger) {
       if (!previewModal) return;
+      activePreviewTrigger = trigger || null;
       setPreviewLoading(trigger);
       previewModal.classList.remove('is-hidden');
       document.body.classList.add('modal-open');
+      if (!previewModal.hasAttribute('tabindex')) {
+        previewModal.setAttribute('tabindex', '-1');
+      }
+      previewModal.focus({ preventScroll: true });
       var citationCard = trigger ? trigger.closest('[data-review-card]') : null;
       if (citationCard && citationCard.dataset.citationId) {
         previewModal.setAttribute('data-citation-id', citationCard.dataset.citationId);
@@ -206,6 +229,7 @@
       }
 
       previewTranscript.innerHTML = renderTranscriptPreview(preview.pageText, preview.highlightStart, preview.highlightEnd);
+      scrollPreviewHighlightIntoView();
       previewPassageNote.textContent = preview.passageText
         ? 'Primary citation: ' + preview.passageText
         : 'This citation does not include a precise span, so the preview shows the closest available transcript context.';
