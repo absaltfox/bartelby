@@ -28,7 +28,7 @@
 
     function getConfirmMessage(form) {
       if (!form) return '';
-      return form.getAttribute('data-confirm-message') || form.getAttribute('data-confirm') || '';
+      return form.getAttribute('data-review-confirm-message') || '';
     }
 
     function toNumber(value) {
@@ -263,6 +263,7 @@
       var form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
       if (!form.matches('[data-review-action-form="1"]')) return;
+      if (event.defaultPrevented) return;
 
       event.preventDefault();
       event.stopImmediatePropagation();

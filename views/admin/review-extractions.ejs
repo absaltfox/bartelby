@@ -198,7 +198,7 @@
                     </form>
                   <% } %>
                   <% if (item.approval_status !== 'rejected') { %>
-                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/reject" class="inline-form" data-confirm-message="Reject this evidence claim?" data-review-action-form="1" data-review-action="reject">
+                    <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/reject" class="inline-form" data-review-confirm-message="Reject this evidence claim?" data-review-action-form="1" data-review-action="reject">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="status" value="<%= approvalStatus %>">
                       <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
@@ -207,7 +207,7 @@
                     </form>
                   <% } %>
                 </div>
-                <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/delete" class="inline-form" data-confirm-message="Delete this evidence permanently?" data-review-action-form="1" data-review-action="delete">
+                <form method="POST" action="/admin/knowledge/review-extractions/<%= item.id %>/delete" class="inline-form" data-review-confirm-message="Delete this evidence permanently?" data-review-action-form="1" data-review-action="delete">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <input type="hidden" name="status" value="<%= approvalStatus %>">
                   <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
