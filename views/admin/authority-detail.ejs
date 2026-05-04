@@ -4,65 +4,103 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'authorities' }) %>
 
-  <div class="admin-header">
-    <h1><%= authority.canonical_name %></h1>
-    <p class="subtitle">
-      <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
-      Authority cluster
-    </p>
+  <div class="admin-header authority-workspace-header">
+    <div>
+      <h1><%= authority.canonical_name %></h1>
+      <p class="subtitle">
+        <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
+        Authority cluster
+      </p>
+    </div>
+    <div class="authority-workspace-stats" aria-label="Authority summary">
+      <div><strong><%= authorityWorkspace.summary.memberCount %></strong><span>Members</span></div>
+      <div><strong><%= authorityWorkspace.summary.documentCount %></strong><span>Documents</span></div>
+      <div><strong><%= authorityWorkspace.summary.aliasCount %></strong><span>Aliases</span></div>
+      <div><strong><%= authorityWorkspace.summary.citationCount %></strong><span>Citations</span></div>
+      <div><strong><%= authorityWorkspace.summary.relationshipCount %></strong><span>Edges</span></div>
+    </div>
   </div>
 
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (merged) { %><div class="alert alert-success">Authority merge completed.</div><% } %>
+  <% if (unlinked) { %><div class="alert alert-success">Entity unlinked from this authority.</div><% } %>
+  <% if (reassigned) { %><div class="alert alert-success">Entity moved to another authority.</div><% } %>
 
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
     <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
   </div>
 
-  <div class="knowledge-detail-grid">
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Profile</p>
-        <h2>Properties</h2>
+  <section class="authority-workspace" data-authority-workspace>
+    <div class="graph-shell-card knowledge-card authority-member-browser">
+      <div class="graph-sidebar-header authority-workspace-panel-header">
+        <div>
+          <p class="kg-panel-eyebrow">Members</p>
+          <h2>Linked entities</h2>
+        </div>
+        <span class="status-badge"><%= authorityWorkspace.summary.memberCount %></span>
       </div>
-      <div class="graph-sidebar-body">
-        <dl class="metadata-list">
-          <dt>ID</dt>
-          <dd><%= authority.id %></dd>
-          <dt>Type</dt>
-          <dd><%= authority.authority_type %></dd>
-          <dt>Canonical name</dt>
-          <dd><%= authority.canonical_name %></dd>
-          <% Object.entries(authority.properties || {}).forEach(function(entry) { %>
-            <dt><%= entry[0] %></dt>
-            <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
-          <% }) %>
-        </dl>
-      </div>
-    </section>
+      <div class="graph-sidebar-body authority-member-browser-body">
+        <label class="sr-only" for="authority-member-filter-<%= authority.id %>">Filter linked entities</label>
+        <input
+          type="search"
+          id="authority-member-filter-<%= authority.id %>"
+          class="admin-search-input authority-member-filter"
+          placeholder="Filter by name, id, or type..."
+          autocomplete="off"
+          data-authority-member-filter
+        >
 
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Members</p>
-        <h2>Linked entities</h2>
-      </div>
-      <div class="graph-sidebar-body">
         <% if (!members.length) { %>
           <p class="graph-empty-state">No member entities are linked to this authority.</p>
         <% } else { %>
-          <div class="graph-detail-list">
-            <% members.forEach(function(member) { %>
-              <div class="graph-detail-card">
-                <strong><a href="/admin/knowledge/entities/<%= member.id %>"><%= member.canonical_name %></a></strong>
-                <div class="graph-muted">Entity #<%= member.id %> • <%= member.entity_type %></div>
-              </div>
+          <div class="authority-member-list" data-authority-member-list>
+            <% members.forEach(function(member, index) { %>
+              <a
+                href="/admin/knowledge/entities/<%= member.id %>"
+                class="authority-member-row <%= index === 0 ? 'is-selected' : '' %>"
+                data-authority-member-id="<%= member.id %>"
+                data-authority-member-search="<%= [member.id, member.canonical_name, member.entity_type].join(' ').toLowerCase() %>"
+              >
+                <span>
+                  <strong><%= member.canonical_name %></strong>
+                  <span class="graph-muted">Entity #<%= member.id %> &bull; <%= member.entity_type %></span>
+                </span>
+                <span class="authority-member-row-meta">
+                  <span><%= member.document_count %> docs</span>
+                  <span><%= member.citation_count %> cites</span>
+                  <span><%= member.relationship_count %> edges</span>
+                </span>
+              </a>
             <% }) %>
           </div>
         <% } %>
       </div>
-    </section>
+    </div>
 
+    <div class="graph-shell-card knowledge-card authority-context-panel">
+      <div class="graph-sidebar-header authority-workspace-panel-header">
+        <div>
+          <p class="kg-panel-eyebrow">Selected member</p>
+          <h2 data-authority-selected-title><%= members[0] ? members[0].canonical_name : 'No entity selected' %></h2>
+        </div>
+        <a class="btn-secondary btn-sm" href="<%= members[0] ? '/admin/knowledge/entities/' + members[0].id : '/admin/knowledge/entities' %>" data-authority-selected-link>Open Entity</a>
+      </div>
+      <div class="graph-sidebar-body">
+        <div class="authority-selected-meta" data-authority-selected-meta></div>
+
+        <div class="authority-detail-tabs" role="tablist" aria-label="Selected member detail">
+          <button type="button" class="authority-detail-tab active" data-authority-detail-tab="citations">Citations</button>
+          <button type="button" class="authority-detail-tab" data-authority-detail-tab="edges">Connected edges</button>
+          <button type="button" class="authority-detail-tab" data-authority-detail-tab="manage">Manage</button>
+        </div>
+
+        <div class="authority-detail-panel" data-authority-detail-panel></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="authority-secondary-grid">
     <section class="graph-shell-card knowledge-card">
       <div class="graph-sidebar-header">
         <p class="kg-panel-eyebrow">Aliases</p>
@@ -72,7 +110,7 @@
         <% if (!aliases.length) { %>
           <p class="graph-empty-state">No member aliases are recorded.</p>
         <% } else { %>
-          <div class="graph-alias-list">
+          <div class="graph-alias-list authority-compact-list">
             <% aliases.forEach(function(alias) { %>
               <div class="graph-detail-card">
                 <strong><%= alias.alias %></strong>
@@ -114,52 +152,19 @@
     </section>
   </div>
 
-  <section class="graph-shell-card knowledge-card">
-    <div class="graph-sidebar-header">
-      <p class="kg-panel-eyebrow">Evidence</p>
-      <h2>Approved citations</h2>
-    </div>
-    <div class="graph-sidebar-body">
-      <% if (!citations.length) { %>
-        <p class="graph-empty-state">No approved citations were found for this authority’s member entities.</p>
-      <% } else { %>
-        <div class="knowledge-citation-list">
-          <% citations.slice(0, 50).forEach(function(citation) { %>
-            <article class="knowledge-citation-card">
-              <div class="knowledge-citation-card-header">
-                <div>
-                  <strong><a href="/documents/<%= citation.document_id %>"><%= citation.document_title || ('Document ' + citation.document_id) %></a></strong>
-                </div>
-              </div>
-              <p><%= citation.passage_text %></p>
-            </article>
-          <% }) %>
-        </div>
-      <% } %>
-    </div>
-  </section>
-
-  <section class="graph-shell-card knowledge-card">
-    <div class="graph-sidebar-header">
-      <p class="kg-panel-eyebrow">Relationships</p>
-      <h2>Connected edges</h2>
-    </div>
-    <div class="graph-sidebar-body">
-      <% if (!relationships.length) { %>
-        <p class="graph-empty-state">No relationships were found for this authority’s member entities.</p>
-      <% } else { %>
-        <div class="graph-detail-list">
-          <% relationships.slice(0, 100).forEach(function(rel) { %>
-            <div class="graph-detail-card">
-              <strong><%= rel.relationship_type || 'related_to' %></strong>
-              <div class="graph-muted"><%= rel.source_name || 'Unknown source' %> → <%= rel.target_name || 'Unknown target' %></div>
-            </div>
-          <% }) %>
-        </div>
-      <% } %>
-    </div>
-  </section>
+  <script type="application/json" id="authority-workspace-data"><%- JSON.stringify({
+    authority: {
+      id: authority.id,
+      canonical_name: authority.canonical_name,
+      authority_type: authority.authority_type
+    },
+    csrfToken,
+    members: authorityWorkspace.members,
+    citationsByEntityId: authorityWorkspace.citationsByEntityId,
+    relationshipsByEntityId: authorityWorkspace.relationshipsByEntityId
+  }).replace(/</g, '\\u003c') %></script>
 </div>
 
 <script src="/js/authority-picker.js"></script>
+<script src="/js/authority-detail-page.js"></script>
 <%- include('../partials/footer') %>

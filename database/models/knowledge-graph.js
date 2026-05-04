@@ -1287,6 +1287,24 @@ const relationships = {
     `, [entityId, entityId])).map(hydrateRelationship);
   },
 
+  async getByEntityIds(entityIds) {
+    const ids = [...new Set((entityIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return (await allAsync(`
+      SELECT DISTINCT
+        r.*,
+        se.canonical_name AS source_name, se.entity_type AS source_type,
+        te.canonical_name AS target_name, te.entity_type AS target_type
+      FROM relationships r
+      JOIN entities se ON se.id = r.source_entity_id
+      JOIN entities te ON te.id = r.target_entity_id
+      WHERE r.source_entity_id IN (${placeholders})
+         OR r.target_entity_id IN (${placeholders})
+      ORDER BY r.created_at DESC
+    `, [...ids, ...ids])).map(hydrateRelationship);
+  },
+
   async getBetween(entityA, entityB) {
     return (await allAsync(`
       SELECT

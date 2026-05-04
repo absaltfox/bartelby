@@ -5,12 +5,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initAuthorityPicker(form) {
+  if (form.__authorityPickerInitialized) return;
   var searchInput = form.querySelector('[data-authority-search]');
   var hiddenInput = form.querySelector('[data-authority-id]');
   var resultsPanel = form.querySelector('[data-authority-results]');
   var selectedPanel = form.querySelector('[data-authority-selected]');
   var authorityType = form.getAttribute('data-authority-type') || '';
   if (!searchInput || !hiddenInput || !resultsPanel || !selectedPanel) return;
+  form.__authorityPickerInitialized = true;
 
   var requestCounter = 0;
   var selectedLabel = '';
@@ -136,3 +138,5 @@ function initAuthorityPicker(form) {
     searchInput.focus();
   });
 }
+
+window.initAuthorityPicker = initAuthorityPicker;

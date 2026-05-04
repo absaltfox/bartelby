@@ -1,9 +1,9 @@
 <nav class="admin-subnav knowledge-subnav">
   <a href="/admin/knowledge" class="admin-subnav-link <%= activeKnowledgePage === 'overview' ? 'active' : '' %>">Overview</a>
   <a href="/admin/knowledge/authorities" class="admin-subnav-link <%= activeKnowledgePage === 'authorities' ? 'active' : '' %>">Authorities</a>
-  <a href="/admin/knowledge/entities" class="admin-subnav-link <%= activeKnowledgePage === 'entities' ? 'active' : '' %>">Entities</a>
-  <a href="/admin/knowledge/authorities/suggestions" class="admin-subnav-link <%= activeKnowledgePage === 'authority-suggestions' ? 'active' : '' %>">Authority Review</a>
+  <a href="/admin/knowledge/authorities/suggestions" class="admin-subnav-link <%= activeKnowledgePage === 'authority-suggestions' ? 'active' : '' %>">Authority-Entity Review</a>
+  <a href="/admin/knowledge/entities" class="admin-subnav-link knowledge-subnav-link--partition <%= activeKnowledgePage === 'entities' ? 'active' : '' %>">Entities</a>
+  <a href="/admin/knowledge/review-extractions" class="admin-subnav-link <%= activeKnowledgePage === 'review-extractions' ? 'active' : '' %>">Entity Evidence Review</a>
+  <a href="/admin/knowledge/entities/merge" class="admin-subnav-link <%= activeKnowledgePage === 'merge-entities' ? 'active' : '' %>">Entity Merge</a>
   <a href="/admin/knowledge/authorities/generic-terms" class="admin-subnav-link <%= activeKnowledgePage === 'authority-generic-terms' ? 'active' : '' %>">Generic Terms</a>
-  <a href="/admin/knowledge/review-extractions" class="admin-subnav-link <%= activeKnowledgePage === 'review-extractions' ? 'active' : '' %>">Review</a>
-  <a href="/admin/knowledge/entities/merge" class="admin-subnav-link <%= activeKnowledgePage === 'merge-entities' ? 'active' : '' %>">Merge</a>
 </nav>

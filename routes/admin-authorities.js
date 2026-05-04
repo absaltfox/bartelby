@@ -111,6 +111,96 @@ function pluralizeCount(count, singular, plural) {
   return `${n} ${n === 1 ? singular : (plural || singular + 's')}`;
 }
 
+function groupRowsByKey(rows, key) {
+  const grouped = {};
+  (rows || []).forEach((row) => {
+    const value = row && row[key];
+    if (value === null || value === undefined) return;
+    const groupKey = String(value);
+    if (!grouped[groupKey]) grouped[groupKey] = [];
+    grouped[groupKey].push(row);
+  });
+  return grouped;
+}
+
+function uniqueCount(rows, key) {
+  return new Set((rows || []).map((row) => row && row[key]).filter(Boolean)).size;
+}
+
+async function buildAuthorityDetailViewModel(authorityId) {
+  const stores = graphStores();
+  const members = stores.authorities && stores.authorities.getMembers
+    ? await stores.authorities.getMembers(authorityId, 1000)
+    : [];
+  const memberIds = members.map((row) => row.id);
+
+  const [aliases, citations, relationships] = await Promise.all([
+    stores.authorities && stores.authorities.getMemberAliases
+      ? stores.authorities.getMemberAliases(authorityId, 500)
+      : [],
+    stores.citations && stores.citations.getByEntityIds
+      ? stores.citations.getByEntityIds(memberIds, { approvalStatus: 'approved' })
+      : [],
+    stores.relationships && stores.relationships.getByEntityIds
+      ? stores.relationships.getByEntityIds(memberIds)
+      : []
+  ]);
+
+  const relationshipIds = [...new Set((relationships || []).map((row) => row.id).filter(Boolean))];
+  const relationshipCitations = stores.citations && stores.citations.getByRelationshipIds
+    ? await stores.citations.getByRelationshipIds(relationshipIds, { approvalStatus: 'approved' })
+    : [];
+
+  const citationsByEntityId = groupRowsByKey(citations, 'entity_id');
+  const relationshipEvidenceById = groupRowsByKey(relationshipCitations, 'relationship_id');
+  const relationshipsByEntityId = {};
+  (relationships || []).forEach((relationship) => {
+    [relationship.source_entity_id, relationship.target_entity_id].forEach((entityId) => {
+      if (!memberIds.includes(entityId)) return;
+      const key = String(entityId);
+      if (!relationshipsByEntityId[key]) relationshipsByEntityId[key] = [];
+      if (!relationshipsByEntityId[key].some((row) => row.id === relationship.id)) {
+        relationshipsByEntityId[key].push({
+          ...relationship,
+          evidence: relationshipEvidenceById[String(relationship.id)] || []
+        });
+      }
+    });
+  });
+
+  const membersWithStats = members.map((member) => {
+    const memberCitations = citationsByEntityId[String(member.id)] || [];
+    const memberRelationships = relationshipsByEntityId[String(member.id)] || [];
+    return {
+      ...member,
+      properties: parseJsonMaybe(member.properties),
+      citation_count: memberCitations.length,
+      relationship_count: memberRelationships.length,
+      document_count: uniqueCount(memberCitations, 'document_id')
+    };
+  });
+
+  return {
+    members: membersWithStats,
+    aliases,
+    citations,
+    relationships,
+    relationshipCitations,
+    workspace: {
+      members: membersWithStats,
+      citationsByEntityId,
+      relationshipsByEntityId,
+      summary: {
+        memberCount: members.length,
+        aliasCount: (aliases || []).length,
+        citationCount: (citations || []).length,
+        relationshipCount: relationshipIds.length,
+        documentCount: uniqueCount(citations, 'document_id')
+      }
+    }
+  };
+}
+
 function formatConfidenceLabel(confidence) {
   if (confidence == null || Number.isNaN(Number(confidence))) return null;
   return `Confidence ${Math.round(Number(confidence) * 100)}%`;
@@ -684,18 +774,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return res.status(404).render('error', { message: 'Authority not found', error: {} });
   }
 
-  const members = await stores.authorities.getMembers(authorityId, 200);
-  const aliases = await stores.authorities.getMemberAliases(authorityId, 500);
-  const citations = stores.citations && stores.citations.getByEntityIds
-    ? await stores.citations.getByEntityIds(members.map((row) => row.id), { approvalStatus: 'approved' })
-    : [];
-  const relationships = [];
-  for (const member of members) {
-    const rows = stores.relationships && stores.relationships.getByEntityId
-      ? await stores.relationships.getByEntityId(member.id)
-      : [];
-    rows.forEach((row) => relationships.push(row));
-  }
+  const detailState = await buildAuthorityDetailViewModel(authorityId);
 
   res.render('admin/authority-detail', {
     pageTitle: authority.canonical_name,
@@ -703,14 +782,82 @@ router.get('/:id', asyncHandler(async (req, res) => {
       ...authority,
       properties: parseJsonMaybe(authority.properties)
     },
-    members,
-    aliases,
-    citations,
-    relationships,
+    members: detailState.members,
+    aliases: detailState.aliases,
+    citations: detailState.citations,
+    relationships: detailState.relationships,
+    authorityWorkspace: detailState.workspace,
     activeKnowledgePage: 'authorities',
     merged: req.query.merged || null,
+    unlinked: req.query.unlinked || null,
+    reassigned: req.query.reassigned || null,
     error: req.query.error || null
   });
+}));
+
+router.post('/:id/members/:entityId/unlink', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const authorityId = parseInt(req.params.id, 10);
+  const entityId = parseInt(req.params.entityId, 10);
+  if (!Number.isInteger(authorityId) || !Number.isInteger(entityId) || !stores.entities) {
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?error=` + encodeURIComponent('Invalid authority member.')));
+  }
+
+  try {
+    const entity = await stores.entities.getById(entityId);
+    if (!entity || Number(entity.authority_id) !== authorityId) {
+      throw new Error('Entity is not linked to this authority.');
+    }
+    await stores.entities.assignAuthority(entityId, null);
+    audit.log('admin.authority_member_unlinked', {
+      ...audit.reqContext(req),
+      authorityId,
+      entityId
+    });
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?unlinked=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?error=` + encodeURIComponent(err.message)));
+  }
+}));
+
+router.post('/:id/members/:entityId/reassign', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const authorityId = parseInt(req.params.id, 10);
+  const entityId = parseInt(req.params.entityId, 10);
+  const targetAuthorityId = parseInt(req.body.authority_id, 10);
+  if (!Number.isInteger(authorityId) || !Number.isInteger(entityId) || !Number.isInteger(targetAuthorityId) || !stores.entities || !stores.authorities) {
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?error=` + encodeURIComponent('Choose a valid target authority.')));
+  }
+
+  try {
+    const [entity, currentAuthority, targetAuthority] = await Promise.all([
+      stores.entities.getById(entityId),
+      stores.authorities.getById(authorityId),
+      stores.authorities.getById(targetAuthorityId)
+    ]);
+    if (!entity || Number(entity.authority_id) !== authorityId) {
+      throw new Error('Entity is not linked to this authority.');
+    }
+    if (!currentAuthority || !targetAuthority) {
+      throw new Error('Authority not found.');
+    }
+    if (targetAuthorityId === authorityId) {
+      throw new Error('Choose a different authority to move this entity to.');
+    }
+    if (entity.entity_type !== targetAuthority.authority_type || currentAuthority.authority_type !== targetAuthority.authority_type) {
+      throw new Error('Entity type must match the target authority type.');
+    }
+    await stores.entities.assignAuthority(entityId, targetAuthorityId);
+    audit.log('admin.authority_member_reassigned', {
+      ...audit.reqContext(req),
+      authorityId,
+      targetAuthorityId,
+      entityId
+    });
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?reassigned=1`));
+  } catch (err) {
+    return res.redirect(knowledgePath(`/authorities/${authorityId}?error=` + encodeURIComponent(err.message)));
+  }
 }));
 
 router.post('/:id/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {

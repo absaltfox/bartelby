@@ -230,8 +230,14 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - The authorities table supports filtering by authority type, sorting by type,
   member count, and document count, and batch operations for deleting selected
   authorities or merging selected authorities into a chosen same-type target
-- Authority detail pages show rolled-up aliases, citations, and relationships
-  across the member entities
+- Authority detail pages are curator workspaces: they show compact authority
+  counts, a searchable linked-entity browser, contextual approved citation
+  evidence and connected edges for the selected member entity, rolled-up
+  aliases, and authority merge controls
+- Individual authority members can be unlinked from an authority or reassigned
+  to another same-type authority from the detail page; reassignment preserves
+  the entity as the evidence-bearing record and only changes its
+  cross-document identity link
 - Authorities can also be merged when two authority records represent the same
   subject
 
