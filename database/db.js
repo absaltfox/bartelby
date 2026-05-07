@@ -1227,6 +1227,7 @@ const { entities, entityAliases, dateExpressions, relationships, citations, grap
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
+const { sentimentAsync } = require('./models/sentiment')(db, runAsync, getAsync, allAsync, saveDatabase);
 
 function getDb() { return db; }
 
@@ -1294,6 +1295,7 @@ module.exports = {
   authorityResolutionJobsAsync,
   authoritySuggestionJobs,
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
+  sentimentAsync,
   relationshipTypes,
   relationshipTypesAsync: relationshipTypes,
   authorities,
