@@ -18,7 +18,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
         [document_id, transcript_id, reset_existing ? 1 : 0, provider]
       );
       await saveDatabase();
-      return result.lastID;
+      return result.lastInsertRowid;
     },
 
     async getJobById(id) {
@@ -157,7 +157,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
         [normalized]
       );
       await saveDatabase();
-      return getAsync(`SELECT * FROM sentiment_emotion_phrases WHERE id = ?`, [result.lastID]);
+      return getAsync(`SELECT * FROM sentiment_emotion_phrases WHERE id = ?`, [result.lastInsertRowid]);
     },
 
     async setPhraseEmbedding(id, { embedding, embedding_model }) {
