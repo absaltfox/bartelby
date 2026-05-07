@@ -1,0 +1,92 @@
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+describe('sentiment model', () => {
+  let db;
+  let sentimentAsync;
+  let tmpDir;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentiment-model-'));
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, 'test.db')}`;
+    process.env.STORAGE_DRIVER = 'local';
+    jest.resetModules();
+    db = require('../../database/db');
+    await db.initializeSchema({ runStaleJobRecovery: false });
+    sentimentAsync = db.sentimentAsync;
+    await db.runAsync(`INSERT INTO documents (id, title) VALUES (1, 'Doc A')`);
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (1, 1, 'transcript text')`);
+  });
+
+  afterEach(async () => {
+    if (db && db.closeAsync) await db.closeAsync();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('createJob inserts a queued singleton job', async () => {
+    const id = await sentimentAsync.createJob({
+      document_id: 1, transcript_id: 1, reset_existing: 0
+    });
+    const row = await sentimentAsync.getJobById(id);
+    expect(row.status).toBe('queued');
+    expect(row.kind).toBe('singleton');
+    expect(row.transcript_id).toBe(1);
+  });
+
+  test('claimNextQueued atomically promotes one job to running', async () => {
+    const id = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    const claimed = await sentimentAsync.claimNextQueued();
+    expect(claimed.id).toBe(id);
+    expect(claimed.status).toBe('running');
+    expect(claimed.kind).toBe('singleton');
+    const second = await sentimentAsync.claimNextQueued();
+    expect(second).toBeNull();
+  });
+
+  test('claimUpToBatch claims up to N queued jobs and marks them batch/running', async () => {
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push(await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 }));
+    }
+    const claimed = await sentimentAsync.claimUpToBatch(50);
+    expect(claimed.length).toBe(3);
+    for (const job of claimed) {
+      expect(job.status).toBe('running');
+      expect(job.kind).toBe('batch');
+    }
+  });
+
+  test('hasQueuedOrRunningForTranscript returns true when a queued job exists', async () => {
+    await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    const has = await sentimentAsync.hasQueuedOrRunningForTranscript(1);
+    expect(has).toBe(true);
+  });
+
+  test('upsertEmotionPhrase dedupes by normalized text and bumps usage_count', async () => {
+    const a = await sentimentAsync.upsertEmotionPhrase('Filled with Deep Indignation.');
+    const b = await sentimentAsync.upsertEmotionPhrase('filled with deep indignation');
+    expect(a.id).toBe(b.id);
+    expect(b.usage_count).toBeGreaterThanOrEqual(2);
+  });
+
+  test('writeAnnotationsForJob inserts annotations and links to job', async () => {
+    const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    const phrase = await sentimentAsync.upsertEmotionPhrase('weariness');
+    const written = await sentimentAsync.writeAnnotationsForJob(jobId, [{
+      transcript_id: 1, document_id: 1, span_start: 0, span_end: 9,
+      evidence_excerpt: 'transcript', polarity: 'negative', intensity: 'low',
+      confidence: 0.9, voice_role: 'author', target_kind: 'phrase',
+      target_phrase: 'weariness', emotion_phrase_id: phrase.id,
+      emotion_phrase_verbatim: 'weariness',
+      approval_status: 'approved', auto_approved: 1,
+      extracted_by: 'test', extracted_at: new Date().toISOString()
+    }]);
+    expect(written).toBe(1);
+    const rows = await sentimentAsync.getAnnotationsByJobId(jobId);
+    expect(rows.length).toBe(1);
+    expect(rows[0].extraction_job_id).toBe(jobId);
+  });
+});
