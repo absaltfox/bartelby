@@ -59,17 +59,13 @@ async function ensurePhraseAndEmbedding(verbatim) {
 }
 
 async function processSingletonJob(job, config) {
-  const transcript = await db.transcriptsAsync && db.transcriptsAsync.getById
-    ? await db.transcriptsAsync.getById(job.transcript_id)
-    : await db.getAsync(`SELECT id, content FROM transcripts WHERE id = ?`, [job.transcript_id]);
+  const transcript = await db.transcriptsAsync.getById(job.transcript_id);
   if (!transcript) {
     await db.sentimentAsync.markFailed(job.id, `Transcript ${job.transcript_id} not found.`);
     return;
   }
 
-  const document = await db.documentsAsync && db.documentsAsync.getById
-    ? await db.documentsAsync.getById(job.document_id)
-    : await db.getAsync(`SELECT id, title FROM documents WHERE id = ?`, [job.document_id]);
+  const document = await db.documentsAsync.getById(job.document_id);
   const knownEntities = await loadKnownEntities(job.document_id);
 
   let preExistingIds = [];
@@ -132,29 +128,37 @@ async function processSingletonJob(job, config) {
   });
 }
 
+let isBusy = false;
+
 async function runSentimentExtractionCycle() {
-  const config = await loadConfig();
+  if (isBusy) return;
+  isBusy = true;
+  try {
+    const config = await loadConfig();
 
-  const claimed = await db.sentimentAsync.claimUpToBatch(SENTIMENT_BATCH_MAX_CLAIM);
-  if (claimed.length === 0) return;
+    const claimed = await db.sentimentAsync.claimUpToBatch(SENTIMENT_BATCH_MAX_CLAIM);
+    if (claimed.length === 0) return;
 
-  if (claimed.length < config.batchMinJobs) {
-    for (const job of claimed) {
-      await db.runAsync(
-        `UPDATE sentiment_extraction_jobs SET kind = 'singleton' WHERE id = ?`, [job.id]
-      );
-      try {
-        await processSingletonJob({ ...job, kind: 'singleton' }, config);
-      } catch (err) {
-        await db.sentimentAsync.markFailed(job.id, err.message);
+    if (claimed.length < config.batchMinJobs) {
+      for (const job of claimed) {
+        await db.runAsync(
+          `UPDATE sentiment_extraction_jobs SET kind = 'singleton' WHERE id = ?`, [job.id]
+        );
+        try {
+          await processSingletonJob({ ...job, kind: 'singleton' }, config);
+        } catch (err) {
+          await db.sentimentAsync.markFailed(job.id, err.message);
+        }
       }
+      return;
     }
-    return;
-  }
 
-  // Batch path lands in Task 10.
-  for (const job of claimed) {
-    await db.sentimentAsync.markFailed(job.id, 'Batch path not yet implemented (Task 10).');
+    // Batch path lands in Task 10.
+    for (const job of claimed) {
+      await db.sentimentAsync.markFailed(job.id, 'Batch path not yet implemented (Task 10).');
+    }
+  } finally {
+    isBusy = false;
   }
 }
 
