@@ -305,6 +305,10 @@ const collectionsAsync = {
     await runAsync('UPDATE collections SET auto_group_pages = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
+  async setSentimentEnabled(id, enabled) {
+    await runAsync('UPDATE collections SET sentiment_enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+  },
+
   async delete(id) {
     return await runAsync('DELETE FROM collections WHERE id = ?', [id]);
   }

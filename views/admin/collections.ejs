@@ -157,6 +157,13 @@
                 </label>
                 <p class="field-hint">When enabled, users importing into this collection will see an <strong>Auto-group</strong> button that uses AI to detect archival page numbering and suggest document groups.</p>
               </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" name="sentiment_enabled" value="1" <%= c.sentiment_enabled ? 'checked' : '' %>>
+                  <span>Enable sentiment extraction for this collection</span>
+                </label>
+                <p class="field-hint">When enabled, every successful transcript extraction queues a sentiment-extraction job. Disabling stops new jobs but does not delete existing annotations.</p>
+              </div>
               <div class="form-actions">
                 <button type="submit" class="btn-primary">Save</button>
                 <button type="button" class="btn-secondary js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Cancel</button>
