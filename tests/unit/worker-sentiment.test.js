@@ -81,4 +81,59 @@ describe('worker-sentiment singleton path', () => {
     expect(allRows.length).toBe(1);
     expect(allRows[0].extraction_job_id).not.toBe(jobId1);
   });
+
+  test('batch: claims ≥2 jobs, submits batch, marks batch_submitted', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    provider.submitBatch.mockResolvedValueOnce({ batch_id: 'remote-1', provider: 'anthropic' });
+
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (2, 1, 'weariness elsewhere too')`);
+    const j1 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    const j2 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 2 });
+
+    await runSentimentExtractionCycle();
+
+    const r1 = await db.sentimentAsync.getJobById(j1);
+    const r2 = await db.sentimentAsync.getJobById(j2);
+    expect(r1.status).toBe('batch_submitted');
+    expect(r2.status).toBe('batch_submitted');
+    expect(r1.batch_remote_id).toBe('remote-1');
+    expect(provider.submitBatch).toHaveBeenCalledTimes(1);
+  });
+
+  test('batch finalization: claims durably, materializes per-job results, marks done', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    provider.submitBatch.mockResolvedValueOnce({ batch_id: 'remote-2', provider: 'anthropic' });
+
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (3, 1, 'weariness here')`);
+    const jA = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    const jB = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 3 });
+    await runSentimentExtractionCycle();
+
+    provider.getBatchStatus.mockResolvedValueOnce({ status: 'completed' });
+    provider.fetchBatchResults.mockResolvedValueOnce([
+      { request_id: String(jA), text: JSON.stringify({ annotations: [{
+        span_start: 0, span_end: 9, emotion_phrase_verbatim: 'weariness',
+        polarity: 'negative', intensity: 'low', voice_role: 'author',
+        target_kind: 'phrase', target_phrase: 'school', confidence: 0.91
+      }]}), usage: { input_tokens: 50, output_tokens: 12 } },
+      { request_id: String(jB), text: JSON.stringify({ annotations: [{
+        span_start: 0, span_end: 9, emotion_phrase_verbatim: 'weariness',
+        polarity: 'negative', intensity: 'low', voice_role: 'author',
+        target_kind: 'phrase', target_phrase: 'school', confidence: 0.66
+      }]}), usage: { input_tokens: 40, output_tokens: 10 } }
+    ]);
+
+    const { pollRunningSentimentBatches } = require('../../utils/worker-sentiment');
+    await pollRunningSentimentBatches();
+
+    const a = await db.sentimentAsync.getJobById(jA);
+    const b = await db.sentimentAsync.getJobById(jB);
+    expect(a.status).toBe('done');
+    expect(b.status).toBe('done');
+    const annA = await db.sentimentAsync.getAnnotationsByJobId(jA);
+    const annB = await db.sentimentAsync.getAnnotationsByJobId(jB);
+    expect(annA.length).toBe(1);
+    expect(annA[0].auto_approved).toBe(1);
+    expect(annB[0].approval_status).toBe('pending');
+  });
 });
