@@ -928,6 +928,52 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleAuthoritySuggestionCount} stale authority suggestion job(s) as failed`);
   }
 
+  // Sentiment singleton jobs in 'running' lost their executor on restart;
+  // mark them failed. Batch rows in 'batch_submitted' are intentionally
+  // left untouched — the provider still owns the work and
+  // pollRunningSentimentBatchesTick will resume them. Batch rows in
+  // 'running' are only swept here when a finalization claim is present
+  // (the finalizer crashed mid-write); the claim is cleared so the next
+  // tick can re-claim cleanly. See docs/background-jobs.md
+  // § Graceful Shutdown and Stale Job Recovery.
+  const staleSentimentSingleton = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM sentiment_extraction_jobs
+    WHERE status = 'running' AND kind = 'singleton'
+  `);
+  const staleSentimentSingletonCount = staleSentimentSingleton?.count || 0;
+  if (staleSentimentSingletonCount > 0) {
+    await db.run(`
+      UPDATE sentiment_extraction_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running' AND kind = 'singleton'
+    `);
+    console.log(`[db] Marked ${staleSentimentSingletonCount} stale sentiment singleton job(s) as failed`);
+  }
+
+  const staleSentimentBatchClaimed = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM sentiment_extraction_jobs
+    WHERE status = 'running' AND kind = 'batch'
+      AND batch_finalization_claimed_at IS NOT NULL
+  `);
+  const staleSentimentBatchClaimedCount = staleSentimentBatchClaimed?.count || 0;
+  if (staleSentimentBatchClaimedCount > 0) {
+    await db.run(`
+      UPDATE sentiment_extraction_jobs
+      SET status = 'failed',
+          error = 'Server restarted during batch finalization',
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running' AND kind = 'batch'
+        AND batch_finalization_claimed_at IS NOT NULL
+    `);
+    console.log(`[db] Cleared ${staleSentimentBatchClaimedCount} stale sentiment batch finalization claim(s)`);
+  }
+
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
@@ -940,6 +986,8 @@ async function initializeSchema(options = {}) {
     || staleCompletedBatchCount > 0
     || staleAuthorityResolutionCount > 0
     || staleAuthoritySuggestionCount > 0
+    || staleSentimentSingletonCount > 0
+    || staleSentimentBatchClaimedCount > 0
   ) {
     await saveDatabase();
   }
