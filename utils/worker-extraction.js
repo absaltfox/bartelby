@@ -23,6 +23,33 @@ function normalizeEvidenceText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+// Per docs/superpowers/specs/2026-05-01-sentiment-analysis-design.md §4.9,
+// after a graph extraction finalizes successfully we auto-queue a sentiment
+// extraction job for the transcript when at least one collection containing
+// the document has sentiment_enabled = 1. We de-dupe against any existing
+// queued/running/batch_submitted job for the same transcript.
+async function autoQueueSentimentForTranscript({ documentId, transcriptId }) {
+  const db = require('../database/db');
+  const enabled = await db.getAsync(
+    `SELECT 1 AS hit
+       FROM document_collections dc
+       JOIN collections c ON c.id = dc.collection_id
+      WHERE dc.document_id = ? AND c.sentiment_enabled = 1
+      LIMIT 1`,
+    [documentId]
+  );
+  if (!enabled) return;
+
+  const exists = await db.sentimentAsync.hasQueuedOrRunningForTranscript(transcriptId);
+  if (exists) return;
+
+  await db.sentimentAsync.createJob({
+    document_id: documentId,
+    transcript_id: transcriptId,
+    reset_existing: 0
+  });
+}
+
 function isMeaningfulEvidenceText(value) {
   const text = normalizeEvidenceText(value);
   if (!text) return false;
@@ -349,6 +376,17 @@ async function materializeExtractionResult({
       // Non-fatal — log but don't fail the extraction job
       console.error('[worker-extraction] failed to queue authority suggestion job:', triggerErr.message);
     }
+
+    // Post-extraction: queue a sentiment extraction job for this transcript if
+    // any containing collection has sentiment_enabled = 1. Non-fatal.
+    try {
+      await autoQueueSentimentForTranscript({
+        documentId: doc.id,
+        transcriptId: transcript.id
+      });
+    } catch (sentimentErr) {
+      console.error('[worker-extraction] failed to queue sentiment job:', sentimentErr.message);
+    }
   }
 
   return { entityCount, relationshipCount };
@@ -585,6 +623,23 @@ async function pollRunningExtractionBatches() {
       } catch (triggerErr) {
         console.error('[worker-extraction] failed to queue authority suggestion job after batch:', triggerErr.message);
       }
+
+      // Post-batch: queue sentiment extraction jobs for each transcript in the
+      // batch where any containing collection has sentiment_enabled = 1.
+      // Non-fatal — log but don't fail the job.
+      try {
+        const { parseBatchManifest } = require('./extraction-batches');
+        const manifest = parseBatchManifest(job);
+        for (const entry of manifest) {
+          if (!entry?.documentId || !entry?.transcriptId) continue;
+          await autoQueueSentimentForTranscript({
+            documentId: entry.documentId,
+            transcriptId: entry.transcriptId
+          });
+        }
+      } catch (sentimentErr) {
+        console.error('[worker-extraction] failed to queue sentiment job after batch:', sentimentErr.message);
+      }
     } catch (err) {
       if (isLostFinalizationClaimError(err)) {
         console.warn(`[worker] extraction batch finalization ownership changed for job ${job.id}:`, err.message);
@@ -704,5 +759,6 @@ async function runExtractionWorkerCycle() {
 
 module.exports = {
   runExtractionWorkerCycle,
-  pollRunningExtractionBatches
+  pollRunningExtractionBatches,
+  autoQueueSentimentForTranscript
 };
