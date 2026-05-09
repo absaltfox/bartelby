@@ -60,6 +60,48 @@ router.get('/review.json', asyncHandler(async (req, res) => {
   res.json({ annotations, nextCursor });
 }));
 
+// Bulk routes MUST be declared before /review/:id/* — Express matches routes in
+// declaration order and `:id` matches any non-slash string (including "bulk"),
+// so /review/bulk/approve would otherwise be hijacked by /review/:id/approve
+// with id="bulk", returning 400 "Invalid id."
+async function bulkSet(req, res, status) {
+  const rawIds = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  const ids = [...new Set(rawIds.map((v) => parseInt(v, 10)).filter(Number.isInteger))];
+  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided.' });
+  if (ids.length > BULK_LIMIT) {
+    return res.status(400).json({ error: `Too many ids — limit ${BULK_LIMIT} per request.` });
+  }
+  const reviewer = req.user ? req.user.id : null;
+  const results = [];
+  for (const id of ids) {
+    try {
+      const ann = await db.getAsync(
+        `SELECT id, approval_status FROM sentiment_annotations WHERE id = ?`,
+        [id]
+      );
+      if (!ann) {
+        results.push({ id, success: false, error: 'not_found' });
+        continue;
+      }
+      if (ann.approval_status !== 'pending') {
+        results.push({ id, success: false, error: 'already_reviewed' });
+        continue;
+      }
+      const ok = await db.sentimentAsync.setApprovalStatus(id, {
+        approval_status: status,
+        reviewed_by: reviewer
+      });
+      results.push({ id, success: ok });
+    } catch (err) {
+      results.push({ id, success: false, error: err.message });
+    }
+  }
+  return res.json({ results });
+}
+
+router.post('/review/bulk/approve', express.json(), asyncHandler((req, res) => bulkSet(req, res, 'approved')));
+router.post('/review/bulk/reject', express.json(), asyncHandler((req, res) => bulkSet(req, res, 'rejected')));
+
 router.post('/review/:id/approve', express.json(), asyncHandler(async (req, res) => {
   const id = asInt(req.params.id);
   if (id === null) return res.status(400).json({ error: 'Invalid id.' });
@@ -103,43 +145,5 @@ router.post('/review/:id/delete', express.json(), asyncHandler(async (req, res) 
   if (!ok) return res.status(404).json({ error: 'Annotation not found.' });
   return res.json({ success: true, annotationId: id });
 }));
-
-async function bulkSet(req, res, status) {
-  const rawIds = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
-  const ids = [...new Set(rawIds.map((v) => parseInt(v, 10)).filter(Number.isInteger))];
-  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided.' });
-  if (ids.length > BULK_LIMIT) {
-    return res.status(400).json({ error: `Too many ids — limit ${BULK_LIMIT} per request.` });
-  }
-  const reviewer = req.user ? req.user.id : null;
-  const results = [];
-  for (const id of ids) {
-    try {
-      const ann = await db.getAsync(
-        `SELECT id, approval_status FROM sentiment_annotations WHERE id = ?`,
-        [id]
-      );
-      if (!ann) {
-        results.push({ id, success: false, error: 'not_found' });
-        continue;
-      }
-      if (ann.approval_status !== 'pending') {
-        results.push({ id, success: false, error: 'already_reviewed' });
-        continue;
-      }
-      const ok = await db.sentimentAsync.setApprovalStatus(id, {
-        approval_status: status,
-        reviewed_by: reviewer
-      });
-      results.push({ id, success: ok });
-    } catch (err) {
-      results.push({ id, success: false, error: err.message });
-    }
-  }
-  return res.json({ results });
-}
-
-router.post('/review/bulk/approve', express.json(), asyncHandler((req, res) => bulkSet(req, res, 'approved')));
-router.post('/review/bulk/reject', express.json(), asyncHandler((req, res) => bulkSet(req, res, 'rejected')));
 
 module.exports = router;
