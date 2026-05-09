@@ -41,7 +41,11 @@ async function loadKnownEntities(documentId) {
   if (!db.entitiesAsync || typeof db.entitiesAsync.getByDocumentId !== 'function') {
     return [];
   }
-  const rows = await db.entitiesAsync.getByDocumentId(documentId);
+  // Pass approvalStatus: null to skip the default approved-only filter — sentiment
+  // extraction runs immediately after graph extraction, so most citations are still
+  // pending review. Including pending citations gives the LLM the full entity
+  // inventory; the parser still rejects any LLM-returned id not in this list.
+  const rows = await db.entitiesAsync.getByDocumentId(documentId, { approvalStatus: null });
   return (rows || []).map((e) => ({ id: e.id, name: e.name || e.canonical_name, entity_type: e.entity_type }));
 }
 
