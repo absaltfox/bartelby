@@ -99,19 +99,25 @@
         + `&beforeCreatedAt=${encodeURIComponent(beforeCreatedAt)}&beforeId=${encodeURIComponent(beforeId)}`;
       try {
         const { annotations, nextCursor } = await (await fetch(url)).json();
+        const esc = (s) => String(s || '').replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
         annotations.forEach((a) => {
+          const annotationId = Number(a.id);
+          const targetEntityId = Number(a.target_entity_id);
+          const targetLabel = a.target_kind === 'entity'
+            ? (Number.isFinite(targetEntityId) ? 'Entity #' + targetEntityId : 'Entity')
+            : esc(a.target_phrase || a.target_kind);
           const article = document.createElement('article');
           article.className = 'knowledge-citation-card sentiment-annotation-card';
-          article.setAttribute('data-annotation-id', a.id);
+          article.setAttribute('data-annotation-id', String(annotationId));
           article.innerHTML = `
             <div class="authority-suggestion-card-header authority-suggestion-card-header--selectable">
-              <input type="checkbox" class="sentiment-cb authority-suggestion-checkbox" value="${a.id}">
+              <input type="checkbox" class="sentiment-cb authority-suggestion-checkbox" value="${annotationId}">
               <div class="authority-suggestion-title-group">
                 <span class="authority-suggestion-kicker">Pending sentiment annotation</span>
-                <h2>${a.target_kind === 'entity' ? ('Entity #' + a.target_entity_id) : (a.target_phrase || a.target_kind)}</h2>
+                <h2>${targetLabel}</h2>
                 <div class="authority-suggestion-meta">
-                  <span class="status-badge status-running">${a.polarity} · ${a.intensity}</span>
-                  <span class="authority-suggestion-meta-note">voice: ${a.voice_role}</span>
+                  <span class="status-badge status-running">${esc(a.polarity)} · ${esc(a.intensity)}</span>
+                  <span class="authority-suggestion-meta-note">voice: ${esc(a.voice_role)}</span>
                   <span class="authority-suggestion-meta-note">confidence: ${Number(a.confidence || 0).toFixed(2)}</span>
                 </div>
               </div>
@@ -119,17 +125,17 @@
             <div class="authority-suggestion-context">
               <section class="authority-suggestion-context-section">
                 <span class="authority-suggestion-section-label">Evidence</span>
-                <blockquote class="authority-suggestion-evidence">${(a.evidence_excerpt || '').replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</blockquote>
+                <blockquote class="authority-suggestion-evidence">${esc(a.evidence_excerpt)}</blockquote>
               </section>
               <section class="authority-suggestion-context-section">
                 <span class="authority-suggestion-section-label">Emotion phrase</span>
-                <p class="authority-suggestion-document">${(a.emotion_phrase_verbatim || '').replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</p>
+                <p class="authority-suggestion-document">${esc(a.emotion_phrase_verbatim)}</p>
               </section>
             </div>
             <div class="authority-suggestion-card-footer">
-              <button type="button" class="btn-primary   btn-sm" data-action="approve" data-annotation-id="${a.id}">Approve</button>
-              <button type="button" class="btn-secondary btn-sm" data-action="reject"  data-annotation-id="${a.id}">Reject</button>
-              <button type="button" class="btn-link      btn-sm" data-action="delete"  data-annotation-id="${a.id}">Delete</button>
+              <button type="button" class="btn-primary   btn-sm" data-action="approve" data-annotation-id="${annotationId}">Approve</button>
+              <button type="button" class="btn-secondary btn-sm" data-action="reject"  data-annotation-id="${annotationId}">Reject</button>
+              <button type="button" class="btn-link      btn-sm" data-action="delete"  data-annotation-id="${annotationId}">Delete</button>
               <span class="inline-error" hidden></span>
             </div>`;
           list.appendChild(article);

@@ -4,6 +4,12 @@ const { generateText } = require('ai');
 const { getUtilityModelInstance } = require('../llm');
 
 async function callSingleton({ provider, prompt, system = null, runtimeConfig = {} }) {
+  if (!provider) {
+    throw new Error(
+      'Sentiment provider is not configured. Set sentiment.provider.default in '
+      + 'Admin → Settings → Sentiment to one of: openai, claude, gemini, vertex, ollama, lmstudio.'
+    );
+  }
   const modelInstance = await getUtilityModelInstance(provider, runtimeConfig);
   if (!modelInstance) {
     throw new Error(
@@ -16,7 +22,15 @@ async function callSingleton({ provider, prompt, system = null, runtimeConfig = 
     prompt,
     temperature: 0
   });
-  return { text: result.text, usage: result.usage || null };
+  // Vercel AI SDK returns camelCase usage keys (inputTokens/outputTokens);
+  // normalize to snake_case so worker telemetry persists correctly.
+  const usage = result.usage
+    ? {
+        input_tokens: result.usage.inputTokens ?? null,
+        output_tokens: result.usage.outputTokens ?? null
+      }
+    : null;
+  return { text: result.text, usage };
 }
 
 function getSentimentBatches() {
