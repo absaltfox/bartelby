@@ -33,11 +33,19 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Knowledge graph extraction | `extraction_jobs` | `utils/worker-extraction.js` |
 | Authority resolution backfill | `authority_resolution_jobs` | `utils/worker-authority-resolution.js` |
 | Authority suggestion (cluster pipeline) | `authority_suggestion_jobs` | `utils/worker-authority-suggestion.js` |
+| Sentiment extraction | `sentiment_extraction_jobs` | `utils/worker-sentiment.js` |
 | Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
 > **Note:** Analytics do not use a DB-backed job record for the outer sweep;
 > `collection_analytics` rows serve as the durable output. The BERTopic sub-step
 > is dispatched as either an ephemeral Fly Machine or a detached local process.
+
+> **Note:** `sentiment_extraction_jobs` are auto-queued from
+> `utils/worker-extraction.js` via `autoQueueSentimentForTranscript` after a
+> graph-extraction job finalizes. Enqueue is gated on the document belonging
+> to at least one collection with `collections.sentiment_enabled = 1`, and is
+> de-duped via `hasQueuedOrRunningForTranscript` so a transcript never has
+> overlapping sentiment jobs.
 
 ---
 
@@ -57,9 +65,11 @@ is running with background work enabled. In practice that means
 | `tickExtractionJobs` | 5 s | `extractionBusy` boolean |
 | `tickAuthorityResolutionJobs` | 5 s | `authorityResolutionBusy` boolean |
 | `tickAuthoritySuggestionJobs` | `BATCH_POLL_MS` | `authoritySuggestionBusy` boolean |
+| `tickSentimentExtractionJobs` | 5 s | `sentimentExtractionBusy` boolean |
 | `pollRunningBatches` (transcription) | `BATCH_POLL_MS` | `batchPollBusy` boolean |
 | `pollRunningGroupingBatches` | `BATCH_POLL_MS` | `groupingBatchPollBusy` boolean |
 | `pollRunningExtractionBatchesTick` | `BATCH_POLL_MS` | `extractionBatchPollBusy` boolean |
+| `pollRunningSentimentBatchesTick` | `BATCH_POLL_MS` | `sentimentBatchPollBusy` boolean |
 | `checkStaleImportJobs` | 60 s | — (read-only) |
 | Analytics sweep | 15 min | `_analyticsRunning` in `utils/analytics.js` |
 | MFA token cleanup | 60 min | — |
@@ -186,6 +196,8 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`extraction_jobs` (`running`, not a batch)** → marked `failed`
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
 - **`authority_suggestion_jobs` (`running`)** → marked `failed`
+- **`sentiment_extraction_jobs` (singleton, `running`)** → marked `failed` with `error = 'Server restarted during processing'`
+- **`sentiment_extraction_jobs` (batch, `running`, finalization claimed)** → marked `failed`, claim columns nulled, `error = 'Server restarted during batch finalization'`. Note: `batch_submitted` rows are intentionally untouched — provider still owns them; `pollRunningSentimentBatchesTick` resumes them on next tick.
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
 `initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip

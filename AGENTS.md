@@ -20,6 +20,11 @@ Then read the subsystem-specific docs that match the task:
   [docs/ui-template-standards.md](./docs/ui-template-standards.md)
 - Knowledge graph extraction, approval, review, entities, and graph explorer:
   [docs/knowledge-graph-design.md](./docs/knowledge-graph-design.md)
+- Sentiment analysis (citation-backed aspect-based annotations, voice tagging,
+  inductive vocabulary, review queue): [docs/sentiment-design.md](./docs/sentiment-design.md).
+  Touches `utils/worker-sentiment.js`, `utils/sentiment/*`,
+  `database/models/sentiment.js`, `routes/admin-sentiment.js`,
+  `views/admin/sentiment-review.ejs`.
 - Background jobs, worker loop, analytics scheduler, SQLite queue model:
   [docs/background-jobs.md](./docs/background-jobs.md)
 - Deployment, Docker, Fly, Turso, and S3 expectations:

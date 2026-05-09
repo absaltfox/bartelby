@@ -104,10 +104,27 @@ Current job families:
 - import submission jobs
 - extraction jobs
 - collection analytics jobs
+- sentiment extraction jobs
 
 Workers claim jobs atomically, mark them running, and persist logs and status
 as they progress. This makes the app safer under restarts and compatible with
 multi-instance deployment.
+
+**Sentiment extraction (`sentiment_extraction_jobs`)** runs
+`utils/worker-sentiment.js` after a graph-extraction job finalizes for a
+transcript whose document belongs to ≥1 collection with
+`sentiment_enabled = 1`. The singleton path makes one synchronous LLM call;
+the batch path (≥2 jobs claimed) submits a provider Messages-Batch and
+finalizes via durable `batch_finalization_claimed_at`. Annotations are
+citation-backed (`span_start`/`span_end` + `evidence_excerpt`), voice-tagged
+(`author` / `speaker` / `described_subject`), and aspect-targeted
+(`entity` / `phrase`). They are reviewable at
+`/admin/knowledge/sentiment/review`. **Note:** Phase 1 implements the worker
+batch wiring but defers the per-provider batch primitives
+(`utils/sentiment-batches.js`); at runtime only the singleton path is
+functional, and the batch path throws
+`Cannot find module '../sentiment-batches'` until a Phase 1.5 follow-up
+lands.
 
 For lighter deployments, Bartelby can run the web server and worker loop in one
 Node process. For production deployments under load, the preferred topology is

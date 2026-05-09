@@ -197,6 +197,16 @@ router.get('/application-settings', asyncHandler(async (req, res) => {
 
 async function saveLlmSettings(req, res) {
   try {
+    // Validate sentiment prompt template before persisting any fields.
+    const sentimentPrompt = req.body['sentiment.prompt.default'];
+    if (sentimentPrompt && sentimentPrompt.trim()) {
+      const { validatePromptTemplate } = require('../utils/sentiment/prompt');
+      try {
+        validatePromptTemplate(sentimentPrompt);
+      } catch (err) {
+        return res.redirect('/admin/llm-settings?error=' + encodeURIComponent('Sentiment prompt: ' + err.message));
+      }
+    }
     // Non-secret fields: always save (even if empty)
     const plainFields = [
       'default_provider',
@@ -216,7 +226,14 @@ async function saveLlmSettings(req, res) {
       'vertex_batch_project_id', 'vertex_batch_location', 'vertex_batch_bucket',
       'vertex_batch_input_prefix', 'vertex_batch_output_prefix',
       'ollama_base_url', 'ollama_model',
-      'lmstudio_base_url', 'lmstudio_model'
+      'lmstudio_base_url', 'lmstudio_model',
+      'sentiment.prompt.default',
+      'sentiment.auto_approve_threshold',
+      'sentiment.review_floor',
+      'sentiment.batch_min_jobs',
+      'sentiment.provider.default',
+      'sentiment.vocab_debounce_phrase_count',
+      'sentiment.auto_route_threshold'
     ];
     for (const field of plainFields) {
       if (req.body[field] !== undefined) await settingsAsync.set(field, req.body[field]);

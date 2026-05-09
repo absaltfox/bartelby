@@ -24,6 +24,8 @@ let importBusy = false;
 let extractionBusy = false;
 let authorityResolutionBusy = false;
 let authoritySuggestionBusy = false;
+let sentimentExtractionBusy = false;
+let sentimentBatchPollBusy = false;
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
@@ -38,6 +40,8 @@ function startWorker() {
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningGroupingBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
+  setInterval(tickSentimentExtractionJobs, 5000);
+  setInterval(pollRunningSentimentBatchesTick, BATCH_POLL_MS);
   setInterval(checkStaleImportJobs, 60000);
   setInterval(async () => {
     try {
@@ -151,6 +155,32 @@ async function tickAuthoritySuggestionJobs() {
     console.error('[worker] authority suggestion worker cycle failed:', err.message);
   } finally {
     authoritySuggestionBusy = false;
+  }
+}
+
+async function tickSentimentExtractionJobs() {
+  if (sentimentExtractionBusy) return;
+  sentimentExtractionBusy = true;
+  try {
+    const { runSentimentExtractionCycle } = require('./worker-sentiment');
+    await runSentimentExtractionCycle();
+  } catch (err) {
+    console.error('[worker] sentiment extraction cycle failed:', err.message);
+  } finally {
+    sentimentExtractionBusy = false;
+  }
+}
+
+async function pollRunningSentimentBatchesTick() {
+  if (sentimentBatchPollBusy) return;
+  sentimentBatchPollBusy = true;
+  try {
+    const { pollRunningSentimentBatches } = require('./worker-sentiment');
+    await pollRunningSentimentBatches();
+  } catch (err) {
+    console.error('[worker] sentiment batch poll failed:', err.message);
+  } finally {
+    sentimentBatchPollBusy = false;
   }
 }
 

@@ -282,6 +282,49 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
       </div>
     </section>
 
+    <section class="settings-section">
+      <h2>Sentiment</h2>
+      <p class="field-hint">Aspect-based sentiment extraction. See the <a href="/admin/knowledge/sentiment/review">review queue</a>.</p>
+
+      <div class="form-group">
+        <label for="sentiment_prompt_default">Prompt template</label>
+        <textarea id="sentiment_prompt_default" name="sentiment.prompt.default" rows="14"
+          placeholder="Required placeholders: {{transcript_content}}, {{known_entities}}. Must instruct JSON output with an &quot;annotations&quot; array."><%= cfg['sentiment.prompt.default'] || '' %></textarea>
+        <p class="field-hint">Validated on save: must include <code>{{transcript_content}}</code> and <code>{{known_entities}}</code>, and instruct the model to return JSON with an <code>annotations</code> array.</p>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="sentiment_auto_approve_threshold">Auto-approve threshold (0–1)</label>
+          <input type="number" id="sentiment_auto_approve_threshold" step="0.01" min="0" max="1"
+                 name="sentiment.auto_approve_threshold"
+                 value="<%= cfg['sentiment.auto_approve_threshold'] || '0.85' %>">
+        </div>
+        <div class="form-group">
+          <label for="sentiment_review_floor">Review floor (0–1)</label>
+          <input type="number" id="sentiment_review_floor" step="0.01" min="0" max="1"
+                 name="sentiment.review_floor"
+                 value="<%= cfg['sentiment.review_floor'] || '0.65' %>">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="sentiment_batch_min_jobs">Batch path minimum jobs</label>
+          <input type="number" id="sentiment_batch_min_jobs" min="2"
+                 name="sentiment.batch_min_jobs"
+                 value="<%= cfg['sentiment.batch_min_jobs'] || '2' %>">
+        </div>
+        <div class="form-group">
+          <label for="sentiment_provider_default">Default provider</label>
+          <input type="text" id="sentiment_provider_default"
+                 name="sentiment.provider.default"
+                 value="<%= cfg['sentiment.provider.default'] || '' %>">
+          <p class="field-hint">Leave blank to inherit the global default provider above.</p>
+        </div>
+      </div>
+    </section>
+
     <div class="form-actions">
       <button type="submit" class="btn-primary">Save Settings</button>
     </div>

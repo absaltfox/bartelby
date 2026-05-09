@@ -69,6 +69,7 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), asyncHandler(a
   const is_world_public = visibility === 'public';
   const allow_export = req.body.allow_export === '1' ? 1 : 0;
   const auto_group_pages = req.body.auto_group_pages === '1' ? 1 : 0;
+  const sentiment_enabled = req.body.sentiment_enabled === '1' ? 1 : 0;
 
   if (!name) return res.redirect('/admin/collections?error=Name+is+required');
 
@@ -76,6 +77,7 @@ router.post('/:id/edit', express.urlencoded({ extended: false }), asyncHandler(a
     await collectionsAsync.update(id, { name, description, is_public, is_world_public });
     await collectionsAsync.setAllowExport(id, allow_export);
     await collectionsAsync.setAutoGroupPages(id, auto_group_pages);
+    await collectionsAsync.setSentimentEnabled(id, sentiment_enabled);
     res.redirect('/admin/collections?saved=1');
   } catch (err) {
     res.redirect('/admin/collections?error=' + encodeURIComponent(err.message));

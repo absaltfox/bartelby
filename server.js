@@ -551,6 +551,7 @@ app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-knowledge', 'a
 app.use('/admin/knowledge/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin knowledge extraction routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/authorities', registerDeferredRoute('./routes/admin-authorities', 'admin knowledge authority routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/entities', registerDeferredRoute('./routes/admin-entities', 'admin knowledge entity routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge/sentiment', registerDeferredRoute('./routes/admin-sentiment', 'admin knowledge sentiment routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-review', 'admin knowledge review routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin extraction routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/authorities', registerDeferredRoute('./routes/admin-authorities', 'admin authority routes', { tier: 'admin' })); // has its own requireAdmin
