@@ -138,6 +138,39 @@ describe('sentiment parse', () => {
     expect(result.drops.malformed_json).toBe(1);
   });
 
+  test('drops phrase-targeted annotation with empty target_phrase', () => {
+    const a = annotation({ target_kind: 'phrase', target_phrase: '' });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(0);
+    expect(result.drops.missing_target).toBe(1);
+  });
+
+  test('drops phrase-targeted annotation with whitespace-only target_phrase', () => {
+    const a = annotation({ target_kind: 'phrase', target_phrase: '   ' });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(0);
+    expect(result.drops.missing_target).toBe(1);
+  });
+
+  test('drops entity-targeted annotation with null target_entity_id', () => {
+    const a = annotation({ target_kind: 'entity', target_entity_id: null, target_phrase: null });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(0);
+    expect(result.drops.missing_target).toBe(1);
+  });
+
   test('drops annotation with invalid polarity', () => {
     const a = annotation({ polarity: 'happy' });
     const result = parseAndValidate({

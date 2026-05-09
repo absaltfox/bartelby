@@ -30,7 +30,8 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     invalid_confidence: 0,
     below_review_floor: 0,
     theme_kind_phase1: 0,
-    span_out_of_range: 0
+    span_out_of_range: 0,
+    missing_target: 0
   };
 
   const data = tryExtractJson(raw);
@@ -51,6 +52,18 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     if (!POLARITY.has(a.polarity) || !INTENSITY.has(a.intensity)
         || !VOICE_ROLE.has(a.voice_role) || !TARGET_KIND.has(a.target_kind)) {
       drops.invalid_enum++; continue;
+    }
+
+    // Target must be specified concretely. Empty target_phrase or null
+    // target_entity_id makes the annotation analytically useless — we know
+    // the writer felt something, but not what it was about. Curators
+    // consistently rejected these during smoke testing.
+    if (a.target_kind === 'phrase') {
+      const tp = typeof a.target_phrase === 'string' ? a.target_phrase.trim() : '';
+      if (!tp) { drops.missing_target++; continue; }
+    } else if (a.target_kind === 'entity') {
+      if (a.target_entity_id == null) { drops.missing_target++; continue; }
+      // unknown_entity gate below validates the id against the known set.
     }
 
     const conf = Number(a.confidence);
