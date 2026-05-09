@@ -384,6 +384,116 @@ MIGRATIONS.push(`
     );
 `);
 
+// v67 — sentiment analysis foundation (Phase 1: schema + extraction job + annotation + phrase)
+MIGRATIONS.push(`
+  ALTER TABLE collections ADD COLUMN sentiment_enabled INTEGER NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS sentiment_emotion_phrases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phrase_text_normalized TEXT NOT NULL UNIQUE,
+    embedding BLOB,
+    embedding_model TEXT,
+    first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    usage_count   INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS sentiment_extraction_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id   INTEGER NOT NULL,
+    transcript_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued'
+      CHECK (status IN ('queued','running','batch_submitted','done','failed')),
+    kind   TEXT NOT NULL DEFAULT 'singleton'
+      CHECK (kind IN ('singleton','batch')),
+    reset_existing INTEGER NOT NULL DEFAULT 0,
+    provider TEXT,
+    batch_remote_id TEXT,
+    batch_submitted_at DATETIME,
+    batch_finalization_claimed_at DATETIME,
+    batch_finalization_claimed_by TEXT,
+    started_at DATETIME,
+    completed_at DATETIME,
+    error TEXT,
+    validation_drops TEXT,
+    input_tokens  INTEGER,
+    output_tokens INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (document_id)   REFERENCES documents(id)   ON DELETE CASCADE,
+    FOREIGN KEY (transcript_id) REFERENCES transcripts(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sentiment_jobs_status_created
+    ON sentiment_extraction_jobs(status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_jobs_transcript
+    ON sentiment_extraction_jobs(transcript_id);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_jobs_batch_remote
+    ON sentiment_extraction_jobs(batch_remote_id);
+
+  CREATE TABLE IF NOT EXISTS sentiment_annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transcript_id INTEGER NOT NULL,
+    document_id   INTEGER NOT NULL,
+    span_start INTEGER,
+    span_end   INTEGER,
+    evidence_excerpt TEXT,
+    polarity  TEXT NOT NULL CHECK (polarity  IN ('positive','negative','neutral','mixed')),
+    intensity TEXT NOT NULL CHECK (intensity IN ('low','moderate','strong')),
+    confidence REAL,
+    voice_role  TEXT NOT NULL CHECK (voice_role  IN ('author','speaker','described_subject')),
+    target_kind TEXT NOT NULL CHECK (target_kind IN ('entity','phrase','theme')),
+    target_entity_id INTEGER,
+    target_phrase    TEXT,
+    expressed_by_entity_id      INTEGER,
+    described_subject_entity_id INTEGER,
+    emotion_phrase_id INTEGER,
+    emotion_phrase_verbatim TEXT NOT NULL,
+    plutchik_hint TEXT,
+    approval_status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (approval_status IN ('pending','approved','rejected')),
+    auto_approved INTEGER NOT NULL DEFAULT 0,
+    reviewed_by INTEGER,
+    reviewed_at DATETIME,
+    review_note TEXT,
+    extracted_by TEXT,
+    extraction_job_id INTEGER,
+    extracted_at DATETIME,
+    replaced_at DATETIME,
+    replaced_by_job_id INTEGER,
+    FOREIGN KEY (transcript_id)               REFERENCES transcripts(id) ON DELETE CASCADE,
+    FOREIGN KEY (document_id)                 REFERENCES documents(id)   ON DELETE CASCADE,
+    FOREIGN KEY (target_entity_id)            REFERENCES entities(id)    ON DELETE SET NULL,
+    FOREIGN KEY (expressed_by_entity_id)      REFERENCES entities(id)    ON DELETE SET NULL,
+    FOREIGN KEY (described_subject_entity_id) REFERENCES entities(id)    ON DELETE SET NULL,
+    FOREIGN KEY (emotion_phrase_id)           REFERENCES sentiment_emotion_phrases(id) ON DELETE SET NULL,
+    FOREIGN KEY (extraction_job_id)           REFERENCES sentiment_extraction_jobs(id) ON DELETE SET NULL,
+    FOREIGN KEY (replaced_by_job_id)          REFERENCES sentiment_extraction_jobs(id) ON DELETE SET NULL,
+    FOREIGN KEY (reviewed_by)                 REFERENCES users(id)       ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_transcript_status
+    ON sentiment_annotations(transcript_id, approval_status);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_document_status
+    ON sentiment_annotations(document_id, approval_status);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_target_entity
+    ON sentiment_annotations(target_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_emotion_phrase
+    ON sentiment_annotations(emotion_phrase_id);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_extraction_job
+    ON sentiment_annotations(extraction_job_id);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_status_created
+    ON sentiment_annotations(approval_status, extracted_at);
+
+  INSERT OR IGNORE INTO settings (key, value) VALUES
+    ('sentiment.prompt.default', ''),
+    ('sentiment.auto_approve_threshold', '0.85'),
+    ('sentiment.review_floor', '0.65'),
+    ('sentiment.batch_min_jobs', '2'),
+    ('sentiment.provider.default', ''),
+    ('sentiment.vocab_debounce_phrase_count', '50'),
+    ('sentiment.auto_route_threshold', '0.80')
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
