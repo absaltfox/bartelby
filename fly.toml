@@ -11,6 +11,7 @@ primary_region = 'iad'
   STORAGE_DRIVER = "s3"
   S3_REGION = "auto"
   S3_FORCE_PATH_STYLE = "false"
+  S3_MAX_SOCKETS = "64"
   TRUST_PROXY = "1"
   FLY_MACHINES_ENABLED = "true"
 
@@ -28,8 +29,8 @@ primary_region = 'iad'
 
   [http_service.concurrency]
     type = "requests"
-    hard_limit = 250
-    soft_limit = 200
+    hard_limit = 64
+    soft_limit = 48
 
   [[http_service.checks]]
     grace_period = "30s"

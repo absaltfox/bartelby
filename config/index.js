@@ -11,6 +11,13 @@ function boolEnv(name, fallback = false) {
   return /^(1|true|yes|on)$/i.test(raw);
 }
 
+function intEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function flyProcessGroup() {
   return String(process.env.FLY_PROCESS_GROUP || '').trim().toLowerCase();
 }
@@ -41,7 +48,10 @@ const config = {
       endpoint: process.env.S3_ENDPOINT || '',
       accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
       secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
-      forcePathStyle: boolEnv('S3_FORCE_PATH_STYLE', false)
+      forcePathStyle: boolEnv('S3_FORCE_PATH_STYLE', false),
+      maxSockets: intEnv('S3_MAX_SOCKETS', 64),
+      connectionTimeoutMs: intEnv('S3_CONNECTION_TIMEOUT_MS', 5000),
+      socketTimeoutMs: intEnv('S3_SOCKET_TIMEOUT_MS', 120000)
     }
   },
   flyMachines: {

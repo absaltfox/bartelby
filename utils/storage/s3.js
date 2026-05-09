@@ -3,7 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const http = require('http');
+const https = require('https');
 const config = require('../../config');
+const { NodeHttpHandler } = require('@smithy/node-http-handler');
 const {
   S3Client,
   PutObjectCommand,
@@ -45,10 +48,21 @@ function validateS3Endpoint(endpoint) {
 
 validateS3Endpoint(s3Config.endpoint);
 
+const s3HttpAgentOptions = {
+  keepAlive: true,
+  maxSockets: s3Config.maxSockets,
+};
+
 const s3 = new S3Client({
   region: s3Config.region || 'us-east-1',
   endpoint: s3Config.endpoint || undefined,
   forcePathStyle: s3Config.forcePathStyle,
+  requestHandler: new NodeHttpHandler({
+    connectionTimeout: s3Config.connectionTimeoutMs,
+    socketTimeout: s3Config.socketTimeoutMs,
+    httpAgent: new http.Agent(s3HttpAgentOptions),
+    httpsAgent: new https.Agent(s3HttpAgentOptions),
+  }),
   credentials: (s3Config.accessKeyId && s3Config.secretAccessKey) ? {
     accessKeyId: s3Config.accessKeyId,
     secretAccessKey: s3Config.secretAccessKey

@@ -135,6 +135,7 @@ primary_region = "iad"  # ← your chosen region
   STORAGE_DRIVER = "s3"
   S3_REGION = "auto"
   S3_FORCE_PATH_STYLE = "false"
+  S3_MAX_SOCKETS = "64"
 
 [http_service]
   internal_port = 3000
@@ -143,6 +144,11 @@ primary_region = "iad"  # ← your chosen region
   auto_start_machines = true
   min_machines_running = 1
 
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 64
+    soft_limit = 48
+
 [[vm]]
   memory = "512mb"
   cpu_kind = "shared"
@@ -150,6 +156,13 @@ primary_region = "iad"  # ← your chosen region
 ```
 
 Setting `min_machines_running = 1` keeps the app always on (required for the background transcription worker). The free allowance covers one always-on machine.
+
+`S3_MAX_SOCKETS` controls the AWS SDK HTTP connection pool used for R2/S3
+traffic. Keep the web role's request concurrency near that value so upload
+proxying and background storage operations do not build a large queue inside
+`@smithy/node-http-handler`. If Fly logs show socket-capacity warnings, first
+lower the web concurrency or scale out, then raise `S3_MAX_SOCKETS` only if the
+VM has enough CPU and memory headroom.
 
 ### Set secrets
 
