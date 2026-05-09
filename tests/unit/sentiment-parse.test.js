@@ -32,7 +32,7 @@ describe('sentiment parse', () => {
     expect(result.drops.malformed_json).toBe(0);
   });
 
-  test('drops annotation whose emotion_phrase_verbatim does not match transcript span', () => {
+  test('drops annotation whose emotion_phrase_verbatim does not appear anywhere in transcript', () => {
     const a = annotation({ emotion_phrase_verbatim: 'something not in the text' });
     const result = parseAndValidate({
       raw: JSON.stringify({ annotations: [a] }),
@@ -41,6 +41,46 @@ describe('sentiment parse', () => {
     });
     expect(result.annotations.length).toBe(0);
     expect(result.drops.verbatim_mismatch).toBe(1);
+  });
+
+  test('recovers annotation when LLM offsets are wrong but verbatim is in transcript', () => {
+    // The LLM emits a valid quote but bogus character offsets — common LLM failure mode.
+    // The parser should locate the verbatim by indexOf and use the computed positions.
+    const a = annotation({
+      span_start: 9999, span_end: 10000,           // nonsense offsets
+      emotion_phrase_verbatim: 'deplorable condition.'
+    });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(1);
+    expect(result.annotations[0].span_start).toBe(18);
+    expect(result.annotations[0].span_end).toBe(18 + 'deplorable condition.'.length);
+    expect(result.annotations[0].evidence_excerpt).toBe('deplorable condition.');
+    expect(result.drops.verbatim_mismatch).toBe(0);
+  });
+
+  test('disambiguates by closest claimed offset when verbatim appears multiple times', () => {
+    const transcript = 'The school is good. Then later the school is great.';
+    // 'the school' (lowercase) appears at indexes 30 (after "later "); 'The school' at 0.
+    // Use lowercase verbatim with two occurrences via case match — but JS indexOf is case-sensitive,
+    // so let's use the literal lowercase text which appears once at 30.
+    // For this test, use a phrase that genuinely appears twice:
+    const t = 'the situation is bad. the situation is worse.';
+    const a = annotation({
+      span_start: 25,                              // closer to second occurrence
+      emotion_phrase_verbatim: 'the situation'
+    });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: t, knownEntities: [],
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(1);
+    // Two occurrences at 0 and 22; claimedStart=25 → 22 wins (|22-25|=3 < |0-25|=25)
+    expect(result.annotations[0].span_start).toBe(22);
   });
 
   test('drops annotation referencing unknown entity id', () => {

@@ -40,7 +40,7 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
   }
 
   const knownIds = new Set((knownEntities || []).map((e) => Number(e.id)));
-  const transcriptLength = String(transcriptContent || '').length;
+  const transcriptStr = String(transcriptContent || '');
   const out = [];
 
   for (const a of data.annotations) {
@@ -56,16 +56,30 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     const conf = Number(a.confidence);
     if (!Number.isFinite(conf) || conf < 0 || conf > 1) { drops.invalid_confidence++; continue; }
 
-    const start = Number(a.span_start);
-    const end = Number(a.span_end);
-    if (!Number.isInteger(start) || !Number.isInteger(end)
-        || start < 0 || end <= start || end > transcriptLength) {
-      drops.span_out_of_range++; continue;
-    }
-
+    // Trust the verbatim quote, derive the position. LLMs cannot count characters
+    // reliably, so we ignore their span_start/span_end claims (treating them only
+    // as a hint for disambiguation when verbatim appears multiple times). The
+    // citation-traceability invariant — "verbatim text exists in the transcript"
+    // — is preserved by the indexOf check below.
     const verbatim = String(a.emotion_phrase_verbatim || '');
-    const slice = String(transcriptContent).slice(start, end);
-    if (!verbatim || !slice.includes(verbatim)) { drops.verbatim_mismatch++; continue; }
+    if (!verbatim) { drops.verbatim_mismatch++; continue; }
+    const occurrences = [];
+    let searchFrom = 0;
+    while (searchFrom <= transcriptStr.length) {
+      const idx = transcriptStr.indexOf(verbatim, searchFrom);
+      if (idx === -1) break;
+      occurrences.push(idx);
+      searchFrom = idx + 1;
+    }
+    if (occurrences.length === 0) { drops.verbatim_mismatch++; continue; }
+
+    const claimedStart = Number(a.span_start);
+    const resolvedStart = (Number.isInteger(claimedStart) && claimedStart >= 0)
+      ? occurrences.reduce((best, occ) =>
+          Math.abs(occ - claimedStart) < Math.abs(best - claimedStart) ? occ : best
+        )
+      : occurrences[0];
+    const resolvedEnd = resolvedStart + verbatim.length;
 
     for (const key of ['target_entity_id', 'expressed_by_entity_id', 'described_subject_entity_id']) {
       const id = a[key];
@@ -77,9 +91,9 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
 
     const auto = conf >= autoApproveThreshold;
     out.push({
-      span_start: start,
-      span_end: end,
-      evidence_excerpt: slice,
+      span_start: resolvedStart,
+      span_end: resolvedEnd,
+      evidence_excerpt: transcriptStr.slice(resolvedStart, resolvedEnd),
       polarity: a.polarity,
       intensity: a.intensity,
       confidence: conf,
