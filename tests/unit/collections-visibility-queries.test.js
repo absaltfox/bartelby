@@ -43,4 +43,30 @@ describe('collections visibility queries', () => {
     const names = rows.map((r) => r.name);
     expect(names).toEqual(expect.arrayContaining(['VisW', 'VisA', 'VisP']));
   });
+
+  test('getLandingView applies the same visibility policy and includes counts/thumbnails', async () => {
+    const docId = await db.documentsAsync.create({
+      title: 'Landing Preview',
+      image_path: '/uploads/landing-preview.png',
+      date_created: '1900-01-01',
+      description: null,
+      metadata: {}
+    });
+    await db.documentCollectionsAsync.add(docId, cWorld);
+    await db.collectionsAsync.setPreviewDocument(cWorld, docId);
+
+    const anonRows = await db.collectionsAsync.getLandingView({ userId: null, isAdmin: false, accessAll: false });
+    expect(anonRows.map((r) => r.name)).toEqual(expect.arrayContaining(['VisW']));
+    expect(anonRows.map((r) => r.name)).not.toEqual(expect.arrayContaining(['VisA', 'VisP']));
+    expect(anonRows.find((r) => r.name === 'VisW')).toEqual(expect.objectContaining({
+      document_count: 1,
+      thumbnail: '/uploads/landing-preview.png'
+    }));
+
+    const memberRows = await db.collectionsAsync.getLandingView({ userId: member, isAdmin: false, accessAll: false });
+    expect(memberRows.map((r) => r.name)).toEqual(expect.arrayContaining(['VisW', 'VisA', 'VisP']));
+
+    const adminRows = await db.collectionsAsync.getLandingView({ userId: admin, isAdmin: true, accessAll: false });
+    expect(adminRows.map((r) => r.name)).toEqual(expect.arrayContaining(['VisW', 'VisA', 'VisP']));
+  });
 });

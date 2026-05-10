@@ -51,7 +51,8 @@ const config = {
       forcePathStyle: boolEnv('S3_FORCE_PATH_STYLE', false),
       maxSockets: intEnv('S3_MAX_SOCKETS', 64),
       connectionTimeoutMs: intEnv('S3_CONNECTION_TIMEOUT_MS', 5000),
-      socketTimeoutMs: intEnv('S3_SOCKET_TIMEOUT_MS', 120000)
+      socketTimeoutMs: intEnv('S3_SOCKET_TIMEOUT_MS', 120000),
+      presignedGetTtlSeconds: intEnv('S3_PRESIGNED_GET_TTL_SECONDS', 0)
     }
   },
   flyMachines: {

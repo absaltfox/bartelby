@@ -10,22 +10,25 @@ const documents = {
     if (!isAdmin && !accessAll) {
       if (userId) {
         // Authenticated user: world-public + all-users + explicitly granted
-        conditions.push(`d.id IN (
-          SELECT dc.document_id FROM document_collections dc
-          INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-          WHERE uca.user_id = ?
-          UNION
-          SELECT dc.document_id FROM document_collections dc
+        conditions.push(`EXISTS (
+          SELECT 1
+          FROM document_collections dc
           INNER JOIN collections col ON dc.collection_id = col.id
-          WHERE col.is_public = 1 OR col.is_world_public = 1
+          LEFT JOIN user_collection_access uca
+            ON uca.collection_id = dc.collection_id
+           AND uca.user_id = ?
+          WHERE dc.document_id = d.id
+            AND (col.is_public = 1 OR col.is_world_public = 1 OR uca.user_id IS NOT NULL)
         )`);
         params.push(userId);
       } else {
         // Unauthenticated visitor: world-public only
-        conditions.push(`d.id IN (
-          SELECT dc.document_id FROM document_collections dc
+        conditions.push(`EXISTS (
+          SELECT 1
+          FROM document_collections dc
           INNER JOIN collections col ON dc.collection_id = col.id
-          WHERE col.is_world_public = 1
+          WHERE dc.document_id = d.id
+            AND col.is_world_public = 1
         )`);
       }
     }
@@ -39,9 +42,18 @@ const documents = {
     const params = [];
 
     if (uncollected) {
-      conditions.push(`d.id NOT IN (SELECT document_id FROM document_collections)`);
+      conditions.push(`NOT EXISTS (
+        SELECT 1
+        FROM document_collections dc_uncollected
+        WHERE dc_uncollected.document_id = d.id
+      )`);
     } else if (collectionId) {
-      conditions.push(`d.id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)`);
+      conditions.push(`EXISTS (
+        SELECT 1
+        FROM document_collections dc_scope
+        WHERE dc_scope.document_id = d.id
+          AND dc_scope.collection_id = ?
+      )`);
       params.push(collectionId);
     }
     if (docTypes && docTypes.length > 0) {
@@ -639,17 +651,18 @@ const documentsAsync = {
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
-    const countResult = await getAsync(`SELECT COUNT(*) as count FROM documents d ${where}`, params);
+    const [countResult, rows] = await Promise.all([
+      getAsync(`SELECT COUNT(*) as count FROM documents d ${where}`, params),
+      allAsync(`
+        SELECT d.*,
+               (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
+        FROM documents d
+        ${where}
+        ORDER BY d.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset])
+    ]);
     const totalCount = countResult ? countResult.count : 0;
-
-    const rows = await allAsync(`
-      SELECT d.*,
-             (SELECT COUNT(*) FROM transcripts WHERE document_id = d.id) as transcript_count
-      FROM documents d
-      ${where}
-      ORDER BY d.created_at DESC
-      LIMIT ? OFFSET ?
-    `, [...params, limit, offset]);
 
     return { rows, totalCount };
   },

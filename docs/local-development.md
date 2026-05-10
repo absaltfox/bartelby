@@ -125,3 +125,17 @@ Import workers write a heartbeat timestamp every 30 seconds. The main app requeu
 - `TRUST_PROXY=0` is still appropriate for direct local listeners in
   non-production development. It is not a supported production setting for this
   app.
+
+## S3 image delivery tuning
+
+When `STORAGE_DRIVER=s3`, Bartelby normally serves protected upload URLs through
+the app so document and collection permissions are enforced before any object is
+streamed. Production deployments can set:
+
+```bash
+S3_PRESIGNED_GET_TTL_SECONDS=300
+```
+
+With this enabled, collection and document list pages render already-authorized
+image thumbnails as short-lived S3-compatible signed URLs. Leave it unset or set
+it to `0` to force all upload reads through `/uploads/:filename`.

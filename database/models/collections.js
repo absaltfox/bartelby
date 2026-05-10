@@ -181,10 +181,29 @@ const collectionsAsync = {
       `${thumbnailsBaseSelect()}
        WHERE c.is_world_public = 1
           OR c.is_public = 1
-          OR c.id IN (SELECT collection_id FROM user_collection_access WHERE user_id = ?)
+          OR EXISTS (
+            SELECT 1
+            FROM user_collection_access uca
+            WHERE uca.collection_id = c.id
+              AND uca.user_id = ?
+          )
        ORDER BY c.name`,
       [userId]
     );
+  },
+
+  async getLandingView(opts = {}) {
+    const { userId = null, isAdmin = false, accessAll = false } = opts;
+
+    if (isAdmin || accessAll) {
+      return await this.getAllWithThumbnailsForAdmin();
+    }
+
+    if (!userId) {
+      return await this.getWorldPublicWithThumbnails();
+    }
+
+    return await this.getAccessibleWithThumbnails(userId);
   },
 
   // Single-roundtrip variant of getAllWithThumbnails + per-collection grants +

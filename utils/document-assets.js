@@ -1,6 +1,22 @@
 'use strict';
 
 const storage = require('./storage');
+const config = require('../config');
+
+const IMAGE_UPLOAD_RE = /^\/uploads\/[^?#]+\.(?:jpe?g|png|gif|webp)$/i;
+
+function shouldSignUploadUrl(value) {
+  return config.storage.s3.presignedGetTtlSeconds > 0
+    && typeof storage.getPresignedUploadUrl === 'function'
+    && typeof value === 'string'
+    && IMAGE_UPLOAD_RE.test(value);
+}
+
+async function maybeSignUploadUrl(value) {
+  if (!shouldSignUploadUrl(value)) return value;
+  const signed = await storage.getPresignedUploadUrl(value, config.storage.s3.presignedGetTtlSeconds);
+  return signed || value;
+}
 
 function parseMetadata(metadata) {
   if (!metadata) return {};
@@ -39,9 +55,30 @@ function normalizeCollectionAssets(collection) {
   };
 }
 
+async function normalizeDocumentAssetsForDelivery(doc) {
+  const normalized = normalizeDocumentAssets(doc);
+  if (!normalized) return normalized;
+  return {
+    ...normalized,
+    image_path: await maybeSignUploadUrl(normalized.image_path)
+  };
+}
+
+async function normalizeCollectionAssetsForDelivery(collection) {
+  const normalized = normalizeCollectionAssets(collection);
+  if (!normalized) return normalized;
+  return {
+    ...normalized,
+    thumbnail: await maybeSignUploadUrl(normalized.thumbnail)
+  };
+}
+
 module.exports = {
   parseMetadata,
   normalizeMetadataAssets,
   normalizeDocumentAssets,
-  normalizeCollectionAssets
+  normalizeCollectionAssets,
+  normalizeDocumentAssetsForDelivery,
+  normalizeCollectionAssetsForDelivery,
+  maybeSignUploadUrl
 };

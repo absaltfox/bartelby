@@ -14,7 +14,7 @@ const { passport, locals } = require('./middleware/auth');
 const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
 const { resolveApplicationSettings } = require('./utils/application-settings');
 const { parseProxyTrust } = require('./utils/proxy-trust');
-const { userOrIpRateLimitKey } = require('./utils/rate-limit');
+const { ipRateLimitKey, userOrIpRateLimitKey } = require('./utils/rate-limit');
 const logger = require('./utils/logger');
 
 loadEnv();
@@ -420,15 +420,6 @@ app.use(validateCsrf);
 app.use(passport.initialize());
 app.use(passport.session());
 app.use(locals); // makes currentUser / isAdmin available in all templates
-app.use(async (req, res, next) => {
-  try {
-    const cfg = await settingsAsync.getAllPublic();
-    Object.assign(res.locals, resolveApplicationSettings(cfg));
-  } catch (err) {
-    Object.assign(res.locals, resolveApplicationSettings({}));
-  }
-  next();
-});
 
 // ── General rate limiting (after Passport so req.isAuthenticated works) ───
 const generalLimiter = rateLimit({
@@ -451,6 +442,70 @@ const authenticatedApiLimiter = rateLimit({
   }),
   skip: (req) => process.env.NODE_ENV !== 'production',
   message: { error: 'Too many requests. Please try again later.' }
+});
+
+function isAuthenticatedRequest(req) {
+  return !!(req.isAuthenticated && req.isAuthenticated());
+}
+
+function isCollectionBrowsePath(req) {
+  return req.method === 'GET'
+    && (req.path === '/' || req.path === '/collections' || req.path.startsWith('/collections/'));
+}
+
+function isUploadProxyPath(req) {
+  return req.method === 'GET'
+    && req.path.startsWith('/uploads/');
+}
+
+function isScannerPath(req) {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') return false;
+  return /(?:^|\/)(?:\.env|wp-admin|wp-login\.php|xmlrpc\.php|phpmyadmin|phpMyAdmin|server-status|\.git)(?:\/|$|\?)/i
+    .test(req.path);
+}
+
+const anonymousCollectionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipRateLimitKey(req, { prefix: 'anon-collections-ip' }),
+  skip: (req) => process.env.NODE_ENV !== 'production' || isAuthenticatedRequest(req) || !isCollectionBrowsePath(req),
+  message: 'Too many collection requests. Please try again shortly.'
+});
+
+const anonymousUploadLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipRateLimitKey(req, { prefix: 'anon-uploads-ip' }),
+  skip: (req) => process.env.NODE_ENV !== 'production' || isAuthenticatedRequest(req) || !isUploadProxyPath(req),
+  message: 'Too many upload requests. Please try again shortly.'
+});
+
+const scannerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipRateLimitKey(req, { prefix: 'scanner-ip' }),
+  skip: (req) => process.env.NODE_ENV !== 'production' || isAuthenticatedRequest(req) || !isScannerPath(req),
+  message: 'Too many requests.'
+});
+
+app.use(scannerLimiter);
+app.use(anonymousCollectionLimiter);
+app.use(anonymousUploadLimiter);
+
+app.use(async (req, res, next) => {
+  try {
+    const cfg = await settingsAsync.getAllPublic();
+    Object.assign(res.locals, resolveApplicationSettings(cfg));
+  } catch (err) {
+    Object.assign(res.locals, resolveApplicationSettings({}));
+  }
+  next();
 });
 
 // ── View engine ────────────────────────────────────────────────────────────

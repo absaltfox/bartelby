@@ -182,6 +182,9 @@ implement the same interface. The required methods are:
 The app validates this contract at startup and fails fast if the configured
 driver is incomplete. `streamUploadByUrl` is required for protected upload
 delivery so adapters and mocks do not silently fall back to full-buffer reads.
+S3-compatible adapters may also implement optional `getPresignedUploadUrl()` so
+already-authorized image thumbnails can be delivered through short-lived signed
+object URLs instead of the protected `/uploads/:filename` proxy.
 
 ### Python Runtime
 

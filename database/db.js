@@ -494,6 +494,18 @@ MIGRATIONS.push(`
     ('sentiment.auto_route_threshold', '0.80')
 `);
 
+// v68 — collection browse performance indexes for Fly/Turso deployments
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_documents_created_at
+    ON documents(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_documents_date_created
+    ON documents(date_created);
+  CREATE INDEX IF NOT EXISTS idx_documents_metadata_document_type
+    ON documents(json_extract(metadata, '$.document_type'));
+  CREATE INDEX IF NOT EXISTS idx_documents_metadata_location_norm
+    ON documents(LOWER(TRIM(json_extract(metadata, '$.location'))));
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

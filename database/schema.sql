@@ -138,6 +138,16 @@ CREATE TABLE IF NOT EXISTS document_collections (
   FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
   FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_document_collections_collection_document
+  ON document_collections(collection_id, document_id);
+CREATE INDEX IF NOT EXISTS idx_documents_created_at
+  ON documents(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_date_created
+  ON documents(date_created);
+CREATE INDEX IF NOT EXISTS idx_documents_metadata_document_type
+  ON documents(json_extract(metadata, '$.document_type'));
+CREATE INDEX IF NOT EXISTS idx_documents_metadata_location_norm
+  ON documents(LOWER(TRIM(json_extract(metadata, '$.location'))));
 
 CREATE TABLE IF NOT EXISTS user_collection_access (
   user_id INTEGER NOT NULL,
@@ -146,6 +156,8 @@ CREATE TABLE IF NOT EXISTS user_collection_access (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_user_collection_access_collection_user
+  ON user_collection_access(collection_id, user_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,

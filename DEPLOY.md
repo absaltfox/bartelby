@@ -136,6 +136,9 @@ primary_region = "iad"  # ← your chosen region
   S3_REGION = "auto"
   S3_FORCE_PATH_STYLE = "false"
   S3_MAX_SOCKETS = "64"
+  # Optional: bypass the app's /uploads proxy for already-authorized image
+  # thumbnails by rendering short-lived S3-compatible signed URLs.
+  # S3_PRESIGNED_GET_TTL_SECONDS = "300"
 
 [http_service]
   internal_port = 3000
@@ -150,9 +153,16 @@ primary_region = "iad"  # ← your chosen region
     soft_limit = 48
 
 [[vm]]
-  memory = "512mb"
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2
+  processes = ['web']
+
+[[vm]]
+  memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
+  processes = ['worker']
 ```
 
 Setting `min_machines_running = 1` keeps the app always on (required for the background transcription worker). The free allowance covers one always-on machine.
@@ -163,6 +173,13 @@ proxying and background storage operations do not build a large queue inside
 `@smithy/node-http-handler`. If Fly logs show socket-capacity warnings, first
 lower the web concurrency or scale out, then raise `S3_MAX_SOCKETS` only if the
 VM has enough CPU and memory headroom.
+
+`S3_PRESIGNED_GET_TTL_SECONDS` is disabled by default. Set it to a short value
+such as `300` to render already-authorized collection thumbnails and document
+preview images as short-lived S3-compatible signed URLs. This keeps the
+permission decision in Bartelby while reducing Fly and S3 proxy work during
+image-heavy collection browsing. Non-image uploads and fallback paths continue
+through `/uploads/:filename`.
 
 ### Set secrets
 
@@ -304,6 +321,34 @@ To ensure Fly is actually running one machine for each role:
 ```bash
 fly scale count web=1 worker=1
 ```
+
+For image-heavy or bursty production traffic, the current recommended baseline
+is two web machines and two worker machines in the primary region:
+
+```bash
+fly scale count web=2 worker=2
+fly scale vm shared-cpu-2x --group web
+fly scale memory 2048 --group web
+```
+
+Worker sizing can remain at `shared-cpu-1x` / `1024MB` unless import,
+extraction, or analytics logs show sustained worker pressure.
+
+### Cloudflare front door
+
+For public deployments, put the custom domain behind Cloudflare's proxy
+("orange cloud") rather than exposing all automated traffic directly to Fly.
+Use Full (strict) TLS, keep the Fly ownership TXT record in DNS, and configure:
+
+- Cloudflare managed WAF rules
+- bot/security level rules for anonymous traffic
+- rate limits for `GET /`, `GET /collections*`, and `GET /uploads/*`
+- stronger challenges or blocks for scanner paths such as `.env`, `wp-login.php`,
+  `xmlrpc.php`, `.git`, and `phpmyadmin`
+
+Bartelby's Express rate limits are a second line of defense. Cloudflare should
+absorb the obvious automated traffic before it can consume Fly CPU, Turso query
+round trips, or S3-compatible object reads.
 
 ### Viewing logs
 

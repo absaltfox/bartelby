@@ -75,6 +75,56 @@ const TEMP_PREFIX = 'temp/';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
+function encodeRfc3986(value) {
+  return encodeURIComponent(String(value))
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function encodePath(value) {
+  return String(value)
+    .split('/')
+    .map(encodeRfc3986)
+    .join('/');
+}
+
+function hmac(key, value, encoding) {
+  return crypto.createHmac('sha256', key).update(value, 'utf8').digest(encoding);
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function getSigningKey(secretAccessKey, dateStamp, region, service) {
+  const kDate = hmac(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, service);
+  return hmac(kService, 'aws4_request');
+}
+
+function formatAmzDate(date) {
+  return date.toISOString().replace(/[:-]|\.\d{3}/g, '');
+}
+
+function buildUploadObjectUrl(key) {
+  const endpoint = s3Config.endpoint
+    ? new URL(s3Config.endpoint)
+    : new URL(`https://s3.${s3Config.region || 'us-east-1'}.amazonaws.com`);
+  const bucket = BUCKET;
+  if (!bucket) {
+    throw new Error('S3_BUCKET is required to sign upload URLs.');
+  }
+
+  if (s3Config.forcePathStyle) {
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/${encodePath(bucket)}/${encodePath(key)}`;
+  } else {
+    endpoint.hostname = `${bucket}.${endpoint.hostname}`;
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}/${encodePath(key)}`;
+  }
+  endpoint.search = '';
+  return endpoint;
+}
+
 function sanitizeTempName(name) {
   return path.basename(String(name || '')).replace(/[^a-zA-Z0-9_.-]/g, '');
 }
@@ -457,6 +507,58 @@ async function getUploadSizeByUrl(url) {
   return response.ContentLength || 0;
 }
 
+async function getPresignedUploadUrl(url, ttlSeconds = s3Config.presignedGetTtlSeconds) {
+  if (!url || typeof url !== 'string' || !url.startsWith('/uploads/')) {
+    throw invalidUploadUrlError(url);
+  }
+  const requestedExpires = parseInt(ttlSeconds, 10) || 0;
+  if (requestedExpires <= 0) return null;
+  const expires = Math.min(requestedExpires, 604800);
+  if (!s3Config.accessKeyId || !s3Config.secretAccessKey) {
+    throw new Error('S3 credentials are required to sign upload URLs.');
+  }
+
+  const filename = path.basename(url);
+  const key = UPLOADS_PREFIX + filename;
+  const objectUrl = buildUploadObjectUrl(key);
+  const now = new Date();
+  const amzDate = formatAmzDate(now);
+  const dateStamp = amzDate.slice(0, 8);
+  const region = s3Config.region || 'us-east-1';
+  const service = 's3';
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const signedHeaders = 'host';
+  const query = {
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': `${s3Config.accessKeyId}/${credentialScope}`,
+    'X-Amz-Date': amzDate,
+    'X-Amz-Expires': String(expires),
+    'X-Amz-SignedHeaders': signedHeaders
+  };
+  const canonicalQuery = Object.keys(query)
+    .sort()
+    .map((keyName) => `${encodeRfc3986(keyName)}=${encodeRfc3986(query[keyName])}`)
+    .join('&');
+  const canonicalHeaders = `host:${objectUrl.host}\n`;
+  const canonicalRequest = [
+    'GET',
+    objectUrl.pathname || '/',
+    canonicalQuery,
+    canonicalHeaders,
+    signedHeaders,
+    'UNSIGNED-PAYLOAD'
+  ].join('\n');
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    credentialScope,
+    sha256(canonicalRequest)
+  ].join('\n');
+  const signature = hmac(getSigningKey(s3Config.secretAccessKey, dateStamp, region, service), stringToSign, 'hex');
+  objectUrl.search = `${canonicalQuery}&X-Amz-Signature=${signature}`;
+  return objectUrl.toString();
+}
+
 module.exports = {
   init,
   sanitizeTempName,
@@ -478,6 +580,7 @@ module.exports = {
   readUploadByUrl,
   streamUploadByUrl,
   getUploadSizeByUrl,
+  getPresignedUploadUrl,
   toUploadsUrl,
   resolveStoredUrl,
   putTempObject,

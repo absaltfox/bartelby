@@ -3,10 +3,11 @@ const express = require('express');
 const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
-const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
+const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery, normalizeCollectionAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
 const { aiTranscriptionLimiter } = require('../utils/rate-limiters');
 const { METADATA_RESERVED_KEYS } = require('../utils/metadata-keys');
+const logger = require('../utils/logger');
 
 // ── Metadata safety constants ───────────────────────────────────────────────
 //
@@ -55,6 +56,26 @@ function parseMultiValueFilter(value) {
   return values.map((entry) => String(entry).trim()).filter(Boolean);
 }
 
+const COLLECTION_QUERY_WARN_MS = parseInt(process.env.COLLECTION_ROUTE_SLOW_QUERY_MS || '250', 10);
+
+async function timedCollectionRead(req, label, collectionId, fn) {
+  const startedAt = Date.now();
+  try {
+    return await fn();
+  } finally {
+    const durationMs = Date.now() - startedAt;
+    if (durationMs >= COLLECTION_QUERY_WARN_MS) {
+      void logger.warn('performance', 'Slow collection route read.', {
+        requestId: req.requestId || null,
+        path: req.originalUrl,
+        label,
+        collectionId: collectionId || null,
+        durationMs
+      });
+    }
+  }
+}
+
 // ── Collections landing page ────────────────────────────────────────────────
 router.get('/', asyncHandler(async (req, res) => {
   const user = req.user;
@@ -64,21 +85,14 @@ router.get('/', asyncHandler(async (req, res) => {
     accessAll: user ? !!user.access_all : false
   };
 
-  // Get collections the user can see — visibility resolved in SQL.
-  let allCollections;
-  if (opts.isAdmin || opts.accessAll) {
-    allCollections = (await collectionsAsync.getAllWithThumbnailsForAdmin()).map(normalizeCollectionAssets);
-  } else if (user) {
-    allCollections = (await collectionsAsync.getAccessibleWithThumbnails(user.id)).map(normalizeCollectionAssets);
-  } else {
-    allCollections = (await collectionsAsync.getWorldPublicWithThumbnails()).map(normalizeCollectionAssets);
-  }
-
-  // Total document count (accessible to this user)
-  const totalDocCount = await documentsAsync.getCount(opts);
-
-  // Uncollected count (only show to admins)
-  const uncollectedCount = opts.isAdmin ? await documentsAsync.getUncollectedCount(opts) : 0;
+  const [rawCollections, totalDocCount, uncollectedCount] = await Promise.all([
+    timedCollectionRead(req, 'collections.landing.collections', null, () => collectionsAsync.getLandingView(opts)),
+    timedCollectionRead(req, 'collections.landing.total-documents', null, () => documentsAsync.getCount(opts)),
+    opts.isAdmin
+      ? timedCollectionRead(req, 'collections.landing.uncollected-count', null, () => documentsAsync.getUncollectedCount(opts))
+      : Promise.resolve(0)
+  ]);
+  const allCollections = await Promise.all(rawCollections.map(normalizeCollectionAssetsForDelivery));
 
   res.render('collections', {
     collections: allCollections,
@@ -146,20 +160,31 @@ router.get('/collections/:id', asyncHandler(async (req, res) => {
   if (req.query.dateFrom) filters.dateFrom = req.query.dateFrom;
   if (req.query.dateTo) filters.dateTo = req.query.dateTo;
 
-  const { rows, totalCount } = await documentsAsync.getAllFiltered(limit, offset, opts, filters);
-  const docs = rows.map(normalizeDocumentAssets);
-  const totalPages = Math.ceil(totalCount / limit);
-
   // Get filter options
   const scopeFilters = {
     collectionId: !isAll && !isUncollected ? parseInt(collectionId, 10) : undefined,
     uncollected: isUncollected
   };
-  const docTypes = await documentsAsync.getDistinctTypesFiltered(opts, scopeFilters);
-  const dateRange = await documentsAsync.getDateRangeFiltered(opts, scopeFilters);
+  const scopedCollectionId = filters.collectionId || null;
+  const [
+    { rows, totalCount },
+    docTypes,
+    dateRange,
+    rawLocations,
+    latestAnalytics
+  ] = await Promise.all([
+    timedCollectionRead(req, 'collections.detail.documents', scopedCollectionId, () => documentsAsync.getAllFiltered(limit, offset, opts, filters)),
+    timedCollectionRead(req, 'collections.detail.doc-types', scopedCollectionId, () => documentsAsync.getDistinctTypesFiltered(opts, scopeFilters)),
+    timedCollectionRead(req, 'collections.detail.date-range', scopedCollectionId, () => documentsAsync.getDateRangeFiltered(opts, scopeFilters)),
+    timedCollectionRead(req, 'collections.detail.locations', scopedCollectionId, () => documentsAsync.getDistinctLocationsFiltered(opts, scopeFilters)),
+    (!isAll && !isUncollected)
+      ? timedCollectionRead(req, 'collections.detail.analytics', scopedCollectionId, () => collectionAnalyticsAsync.getLatest(parseInt(collectionId, 10)))
+      : Promise.resolve(null)
+  ]);
+  const docs = await Promise.all(rows.map(normalizeDocumentAssetsForDelivery));
+  const totalPages = Math.ceil(totalCount / limit);
 
   // Normalized locations for filter dropdown
-  const rawLocations = await documentsAsync.getDistinctLocationsFiltered(opts, scopeFilters);
   const locationMap = new Map();
   for (const raw of rawLocations) {
     const key = raw.trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').toLowerCase();
@@ -193,10 +218,6 @@ router.get('/collections/:id', asyncHandler(async (req, res) => {
   const hasActiveFilters = (filters.docTypes && filters.docTypes.length) ||
     (filters.locations && filters.locations.length) ||
     filters.dateFrom || filters.dateTo;
-
-  const latestAnalytics = (!isAll && !isUncollected)
-    ? await collectionAnalyticsAsync.getLatest(parseInt(collectionId, 10))
-    : null;
 
   res.render('collection-documents', {
     documents: docs,

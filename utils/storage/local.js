@@ -31,6 +31,10 @@ function resolveStoredUrl(value) {
   return `/${value.replace(/^\/+/, '')}`;
 }
 
+async function getPresignedUploadUrl() {
+  return null;
+}
+
 function resolveUploadPathFromUrl(url) {
   if (!url || typeof url !== 'string') return null;
   if (!url.startsWith('/uploads/')) return null;
@@ -245,6 +249,7 @@ module.exports = {
   readUploadByUrl,
   streamUploadByUrl,
   getUploadSizeByUrl,
+  getPresignedUploadUrl,
   toUploadsUrl,
   resolveStoredUrl
 };
