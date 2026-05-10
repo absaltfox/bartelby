@@ -375,6 +375,12 @@ Pre-merge work on this baseline:
   [`utils/worker-authority-suggestion.js`](./utils/worker-authority-suggestion.js).
 - Closed `fast-xml-parser` (moderate) via non-breaking
   `npm audit fix`.
+- Closed `fast-xml-builder` (high) through the AWS SDK XML builder chain and
+  `ip-address` (moderate) through `express-rate-limit` via non-breaking
+  `npm audit fix`.
+- Removed the unused legacy `utils/pdf.js` helper so the only remaining
+  `pdfjs-dist` rendering fallback is the hardened, development-only path in
+  `utils/pdf-worker.js`.
 
 ### Worker runtime requirements
 

@@ -7,6 +7,9 @@ const db = require('../database/db');
 const { documentsAsync, userCollectionAccessAsync, citationsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 
+const GRAPH_RESULT_LIMIT_MAX = 100;
+const RELATED_DOCUMENT_LIMIT_MAX = 100;
+
 function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
@@ -35,6 +38,12 @@ function graphNotReady(res) {
 function parseCollectionId(value) {
   const id = parseInt(value, 10);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function parseBoundedLimit(value, fallback, max) {
+  const parsed = parseInt(value, 10);
+  const limit = Number.isInteger(parsed) ? parsed : fallback;
+  return Math.min(Math.max(limit, 1), max);
 }
 
 async function canAccessEntity(graphAccess, entityId, req) {
@@ -81,7 +90,7 @@ router.get('/entities', asyncHandler(async (req, res) => {
     return graphNotReady(res);
   }
 
-  const limit = Math.max(1, parseInt(req.query.limit, 10) || 50);
+  const limit = parseBoundedLimit(req.query.limit, 50, GRAPH_RESULT_LIMIT_MAX);
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const type = req.query.type || null;
   const q = String(req.query.q || '').trim();
@@ -292,7 +301,7 @@ router.get('/search', asyncHandler(async (req, res) => {
   }
 
   const q = String(req.query.q || '').trim();
-  const limit = Math.max(1, parseInt(req.query.limit, 10) || 50);
+  const limit = parseBoundedLimit(req.query.limit, 50, GRAPH_RESULT_LIMIT_MAX);
   if (!q) {
     return res.json({ query: q, results: [] });
   }
@@ -338,7 +347,7 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
   const canRead = await documentsAsync.canAccess(docId, opts.userId, opts.isAdmin, opts.accessAll);
   if (!canRead) return res.status(404).json({ error: 'Document not found.' });
 
-  const limit = Math.max(1, parseInt(req.query.limit, 10) || 20);
+  const limit = parseBoundedLimit(req.query.limit, 20, RELATED_DOCUMENT_LIMIT_MAX);
   const collectionId = req.query.collectionId ? parseInt(req.query.collectionId, 10) : null;
 
   // Get approved entity IDs cited in this document
