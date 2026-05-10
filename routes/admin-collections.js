@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 const { collectionsAsync, usersAsync, userCollectionAccessAsync } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
-const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
+const { normalizeCollectionAssets, normalizeDocumentAssets, normalizeCollectionAssetsForDelivery, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const audit = require('../utils/audit-log');
 const { asyncHandler } = require('../utils/async-handler');
 
@@ -12,10 +12,11 @@ router.use(requireAdmin);
 
 // List collections
 router.get('/', asyncHandler(async (req, res) => {
-  const allCollections = (await collectionsAsync.getAdminListView()).map((c) => ({
-    ...normalizeCollectionAssets(c),
-    documents: (c.documents || []).map(normalizeDocumentAssets)
-  }));
+  const adminList = await collectionsAsync.getAdminListView();
+  const allCollections = await Promise.all(adminList.map(async (c) => ({
+    ...(await normalizeCollectionAssetsForDelivery(c)),
+    documents: await Promise.all((c.documents || []).map(normalizeDocumentAssetsForDelivery))
+  })));
 
   const activeUsers = (await usersAsync.getAll()).filter((u) =>
     u.status === 'active' && u.role !== 'admin' && !u.access_all

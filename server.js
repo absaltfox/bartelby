@@ -218,6 +218,18 @@ async function prewarmDeferredRoutes(tier, options = {}) {
 logBoot(`Starting Bartelby (pid ${process.pid}, env ${config.runtime.nodeEnv}, port ${PORT})`);
 
 // ── Security headers ────────────────────────────────────────────────────
+const imgSrcDirectives = ["'self'", "data:"];
+if (config.storage.driver === 's3') {
+  try {
+    const endpointStr = config.storage.s3.endpoint || `https://s3.${config.storage.s3.region || 'us-east-1'}.amazonaws.com`;
+    const endpointUrl = new URL(endpointStr);
+    imgSrcDirectives.push(endpointUrl.origin);
+    if (config.storage.s3.bucket && !config.storage.s3.forcePathStyle) {
+      imgSrcDirectives.push(`${endpointUrl.protocol}//${config.storage.s3.bucket}.${endpointUrl.hostname}${endpointUrl.port ? ':' + endpointUrl.port : ''}`);
+    }
+  } catch (err) {}
+}
+
 app.use(helmet({
   hsts: isProduction ? undefined : false,
   contentSecurityPolicy: {
@@ -226,7 +238,7 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],  // EJS inline scripts
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:"],
+      imgSrc: imgSrcDirectives,
       connectSrc: ["'self'"],
       upgradeInsecureRequests: isProduction ? [] : null
     }

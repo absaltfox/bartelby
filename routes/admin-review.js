@@ -6,7 +6,7 @@ const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 const { asyncHandler } = require('../utils/async-handler');
-const { normalizeDocumentAssets } = require('../utils/document-assets');
+const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { buildComparisonPages } = require('../utils/document-services');
 
 router.use(requireAdmin);
@@ -286,8 +286,8 @@ function findHighlightRange(pageText, citation, page) {
   return { start: null, end: null };
 }
 
-function buildPreviewPayload(citation, document, transcript) {
-  const normalizedDocument = normalizeDocumentAssets(document);
+async function buildPreviewPayload(citation, document, transcript) {
+  const normalizedDocument = await normalizeDocumentAssetsForDelivery(document);
   const comparisonPages = buildComparisonPages(normalizedDocument, transcript);
   const focusPage = findComparisonPageForOffset(comparisonPages, citation.passage_start, citation.passage_end);
   const fallbackPage = comparisonPages[0] || null;
@@ -649,7 +649,7 @@ router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
     return res.status(404).json({ ok: false, error: 'The source document or transcript is no longer available.' });
   }
 
-  const preview = buildPreviewPayload(citation, document, transcript);
+  const preview = await buildPreviewPayload(citation, document, transcript);
   return res.json({
     ok: true,
     citationId: id,

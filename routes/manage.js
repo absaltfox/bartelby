@@ -13,7 +13,7 @@ const {
   settingsAsync
 } = require('../database/db');
 const { requireAdminOrManager, requireCollectionRole } = require('../middleware/auth');
-const { normalizeDocumentAssets, normalizeCollectionAssets } = require('../utils/document-assets');
+const { normalizeDocumentAssets, normalizeCollectionAssets, normalizeDocumentAssetsForDelivery, normalizeCollectionAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const PAGE_SIZE = 50;
@@ -95,9 +95,9 @@ router.get('/', asyncHandler(async (req, res) => {
 
   let collections;
   if (managedIds === null) {
-    collections = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
+    collections = await Promise.all((await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssetsForDelivery));
   } else {
-    const all = (await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssets);
+    const all = await Promise.all((await collectionsAsync.getAllWithThumbnails()).map(normalizeCollectionAssetsForDelivery));
     collections = all.filter(c => managedIds.includes(c.id));
   }
 
@@ -122,7 +122,7 @@ router.get('/collections/:collectionId/documents', requireCollectionRole('manage
     documentsAsync.getCountByCollectionId(collectionId),
     documentsAsync.getByCollectionId(collectionId, limit, offset)
   ]);
-  const docs = docsRaw.map(normalizeDocumentAssets);
+  const docs = await Promise.all(docsRaw.map(normalizeDocumentAssetsForDelivery));
 
   const totalPages = Math.ceil(totalCount / limit);
 

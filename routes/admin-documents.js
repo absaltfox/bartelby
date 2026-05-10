@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const storage = require('../utils/storage');
-const { normalizeDocumentAssets, parseMetadata } = require('../utils/document-assets');
+const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery, parseMetadata } = require('../utils/document-assets');
 const { documentsAsync, collectionsAsync, documentCollectionsAsync } = require('../database/db');
 const audit = require('../utils/audit-log');
 const { asyncHandler } = require('../utils/async-handler');
@@ -32,10 +32,10 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const totalPages = Math.ceil(totalCount / limit);
 
-  const docsWithCollections = allDocs.map(doc => ({
-    ...normalizeDocumentAssets(doc),
+  const docsWithCollections = await Promise.all(allDocs.map(async doc => ({
+    ...(await normalizeDocumentAssetsForDelivery(doc)),
     collections: []
-  }));
+  })));
   const collectionRows = await documentCollectionsAsync.getCollectionsForDocumentIds(docsWithCollections.map((doc) => doc.id));
   const collectionsByDocumentId = collectionRows.reduce((acc, row) => {
     if (!acc[row.document_id]) acc[row.document_id] = [];

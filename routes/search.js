@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { transcriptsAsync, documentsAsync, collectionsAsync, graphAccess, citations } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
-const { normalizeCollectionAssets, normalizeDocumentAssets } = require('../utils/document-assets');
+const { normalizeCollectionAssets, normalizeDocumentAssets, normalizeCollectionAssetsForDelivery, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAuth);
@@ -23,9 +23,9 @@ function parseMultiValue(param) {
 
 async function getAccessibleCollections(req, opts) {
   if (opts.isAdmin || opts.accessAll) {
-    return (await collectionsAsync.getAllWithThumbnailsForAdmin()).map(normalizeCollectionAssets);
+    return await Promise.all((await collectionsAsync.getAllWithThumbnailsForAdmin()).map(normalizeCollectionAssetsForDelivery));
   }
-  return (await collectionsAsync.getAccessibleWithThumbnails(req.user.id)).map(normalizeCollectionAssets);
+  return await Promise.all((await collectionsAsync.getAccessibleWithThumbnails(req.user.id)).map(normalizeCollectionAssetsForDelivery));
 }
 
 router.get('/', asyncHandler(async (req, res) => {
@@ -92,7 +92,7 @@ router.get('/advanced', asyncHandler(async (req, res) => {
 
   try {
     const advanced = await documentsAsync.searchAdvanced(limit, offset, opts, filters);
-    results = advanced.rows.map(normalizeDocumentAssets);
+    results = await Promise.all(advanced.rows.map(normalizeDocumentAssetsForDelivery));
     totalCount = advanced.totalCount;
   } catch (err) {
     console.error('Advanced search error:', err);

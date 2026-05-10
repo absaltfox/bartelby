@@ -401,10 +401,11 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
   // Check if export is allowed on any of this document's collections
   const allowExport = docCollections.some(c => c.allow_export);
   const exportEnabledCollections = docCollections.filter(c => c.allow_export).map(c => c.name);
-  const comparisonPages = buildComparisonPages(normalizeDocumentAssets(doc), selectedTranscript);
+  const normalizedDoc = await normalizeDocumentAssetsForDelivery(doc);
+  const comparisonPages = buildComparisonPages(normalizedDoc, selectedTranscript);
 
   res.render('document', {
-    document: normalizeDocumentAssets(doc),
+    document: normalizedDoc,
     transcripts: docTranscripts,
     selectedTranscript,
     editableTranscriptContent: selectedTranscript ? stripPageMarkers(selectedTranscript.content || '') : '',
