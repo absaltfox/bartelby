@@ -82,6 +82,61 @@ describe('production configuration validation', () => {
       'PUBLIC_APP_URL must be configured in production'
     );
   });
+
+  it('redirects direct-origin hosts to the canonical PUBLIC_APP_URL in production', () => {
+    const { server } = loadServerWithEnv({
+      SESSION_STORE: 'memory',
+      STORAGE_DRIVER: 's3'
+    });
+    const req = {
+      path: '/collections/2',
+      originalUrl: '/collections/2?type=letter',
+      headers: { host: 'bartelby.fly.dev' }
+    };
+    const res = { redirect: jest.fn() };
+    const next = jest.fn();
+
+    server.canonicalHostGuard(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.redirect).toHaveBeenCalledWith(
+      308,
+      'https://bartelby.example.com/collections/2?type=letter'
+    );
+  });
+
+  it('allows the canonical host and explicit extra hosts in production', () => {
+    const { server } = loadServerWithEnv({
+      SESSION_STORE: 'memory',
+      STORAGE_DRIVER: 's3',
+      PUBLIC_ALLOWED_HOSTS: 'www.bartelby.example.com'
+    });
+    const next = jest.fn();
+
+    server.canonicalHostGuard({
+      path: '/collections',
+      originalUrl: '/collections',
+      headers: { host: 'www.bartelby.example.com' }
+    }, { redirect: jest.fn() }, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it('always allows health checks through the host guard', () => {
+    const { server } = loadServerWithEnv({
+      SESSION_STORE: 'memory',
+      STORAGE_DRIVER: 's3'
+    });
+    const next = jest.fn();
+
+    server.canonicalHostGuard({
+      path: '/healthz',
+      originalUrl: '/healthz',
+      headers: { host: 'bartelby.fly.dev' }
+    }, { redirect: jest.fn() }, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('validateProductionConfiguration', () => {

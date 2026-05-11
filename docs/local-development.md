@@ -95,8 +95,14 @@ misconfigured:
 
 | Variable | Requirement | Notes |
 |----------|-------------|-------|
-| `PUBLIC_APP_URL` | Must be set to the canonical app URL | Used in email links and CSRF validation |
+| `PUBLIC_APP_URL` | Must be set to the canonical app URL | Used in email links, CSRF validation, and production host redirects |
 | `TRUST_PROXY` | Must be set to a non-zero value such as `1` | Required in production because secure session cookies depend on trusted proxy headers when TLS is terminated upstream |
+
+In production, requests whose `Host` header does not match `PUBLIC_APP_URL` are
+redirected to the canonical URL before session, database, or upload-proxy work.
+This keeps direct requests to the default `*.fly.dev` hostname cheap once a
+custom domain is live. Use `PUBLIC_ALLOWED_HOSTS` only for extra hostnames that
+should be accepted without redirecting.
 
 ### Worker heartbeat
 

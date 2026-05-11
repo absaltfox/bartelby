@@ -70,6 +70,57 @@ function isMissingUploadError(err) {
   return err?.code === 'UPLOAD_NOT_FOUND' || err?.code === 'INVALID_UPLOAD_URL';
 }
 
+function normalizeHostname(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .split(':')[0]
+    .toLowerCase();
+}
+
+function parseHostList(value) {
+  return String(value || '')
+    .split(',')
+    .map(normalizeHostname)
+    .filter(Boolean);
+}
+
+function getCanonicalAppUrl() {
+  const rawUrl = String(process.env.PUBLIC_APP_URL || '').trim();
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl);
+  } catch {
+    return null;
+  }
+}
+
+function getAllowedRequestHosts() {
+  const canonicalUrl = getCanonicalAppUrl();
+  const hosts = new Set(parseHostList(process.env.PUBLIC_ALLOWED_HOSTS));
+  if (canonicalUrl?.hostname) {
+    hosts.add(normalizeHostname(canonicalUrl.hostname));
+  }
+  return hosts;
+}
+
+function canonicalHostGuard(req, res, next) {
+  if (!isProduction) return next();
+  if (req.path === '/healthz') return next();
+
+  const canonicalUrl = getCanonicalAppUrl();
+  const allowedHosts = getAllowedRequestHosts();
+  const requestHost = normalizeHostname(req.headers.host);
+
+  if (!canonicalUrl || allowedHosts.size === 0 || allowedHosts.has(requestHost)) {
+    return next();
+  }
+
+  const redirectUrl = new URL(req.originalUrl || '/', canonicalUrl);
+  return res.redirect(308, redirectUrl.toString());
+}
+
 async function streamUploadToResponse(stream, res) {
   let started = false;
   const marker = new Transform({
@@ -254,6 +305,7 @@ const proxyTrust = parseProxyTrust(process.env.TRUST_PROXY, {
   onWarning: (message) => logBootWarn(message)
 });
 app.set('trust proxy', proxyTrust);
+app.use(canonicalHostGuard);
 
 // ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
 const authLimiter = rateLimit({
@@ -774,4 +826,10 @@ if (require.main === module) {
   start();
 }
 
-module.exports = { app, initApp, validateProductionConfiguration };
+module.exports = {
+  app,
+  initApp,
+  validateProductionConfiguration,
+  canonicalHostGuard,
+  getAllowedRequestHosts
+};

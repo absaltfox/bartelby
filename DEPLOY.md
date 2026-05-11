@@ -207,6 +207,11 @@ fly secrets set \
 > **Important:** Production now fails closed for non-durable local defaults. `SESSION_STORE=memory` and `STORAGE_DRIVER=local` are rejected unless you set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` or `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1`. Those overrides are intended only for deliberate single-node deployments.
 >
 > **Important:** Set `PUBLIC_APP_URL` in production. Invite links, password-reset links, and other absolute URLs now fail fast at boot if this value is missing.
+> Bartelby also uses `PUBLIC_APP_URL` as the canonical production host. Requests
+> for other hosts, including the default `*.fly.dev` hostname, are redirected to
+> this URL before sessions, database reads, or upload proxy work. If you need to
+> accept another hostname temporarily, set `PUBLIC_ALLOWED_HOSTS` to a
+> comma-separated list such as `www.bartelby.ca`.
 >
 > **Important:** Production now assumes Bartelby is running behind a trusted
 > proxy or TLS-terminating ingress. Set `TRUST_PROXY=1` on Fly (or a more
@@ -349,6 +354,15 @@ Use Full (strict) TLS, keep the Fly ownership TXT record in DNS, and configure:
 Bartelby's Express rate limits are a second line of defense. Cloudflare should
 absorb the obvious automated traffic before it can consume Fly CPU, Turso query
 round trips, or S3-compatible object reads.
+
+Set the canonical host once Cloudflare and Fly certificates are working:
+
+```bash
+fly secrets set PUBLIC_APP_URL="https://bartelby.ca" --app bartelby
+```
+
+Leave `PUBLIC_ALLOWED_HOSTS` unset unless another hostname should reach the app
+without being redirected to the canonical URL.
 
 ### Viewing logs
 
