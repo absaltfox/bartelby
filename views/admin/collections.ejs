@@ -192,7 +192,7 @@
                       <input type="radio" name="preview_document_id" value="<%= doc.id %>" <%= c.preview_document_id === doc.id ? 'checked' : '' %>>
                       <div class="preview-image-thumb">
                         <% if (doc.image_path) { %>
-                          <img src="<%= doc.image_path %>" alt="<%= doc.title %>">
+                          <img data-preview-lazy-image data-src="<%= doc.image_path %>" alt="<%= doc.title %>">
                         <% } else { %>
                           <span>&#128220;</span>
                         <% } %>

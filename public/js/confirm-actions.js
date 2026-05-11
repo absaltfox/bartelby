@@ -29,6 +29,16 @@
     el.classList.toggle('is-hidden', hidden);
   }
 
+  function loadPreviewImages(panel) {
+    if (!panel) return;
+    panel.querySelectorAll('img[data-preview-lazy-image][data-src]').forEach(function(img) {
+      var src = img.getAttribute('data-src');
+      if (!src) return;
+      img.setAttribute('src', src);
+      img.removeAttribute('data-src');
+    });
+  }
+
   function bindCollectionPanels() {
     document.querySelectorAll('.js-collection-toggle').forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -45,6 +55,9 @@
           if (!panel) return;
           setHidden(panel, panelId !== targetId || !isOpening);
         });
+        if (isOpening && targetId === 'preview-' + collectionId) {
+          loadPreviewImages(target);
+        }
       });
     });
 
