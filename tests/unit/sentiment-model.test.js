@@ -89,4 +89,68 @@ describe('sentiment model', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].extraction_job_id).toBe(jobId);
   });
+
+  test('markBatchPending: stages a single job with correlation id + submitted_prompt', async () => {
+    const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    await db.runAsync(`UPDATE sentiment_extraction_jobs SET status = 'running', kind = 'batch' WHERE id = ?`, [jobId]);
+    const correlationId = 'pending-test-uuid-1';
+
+    await sentimentAsync.markBatchPending([jobId], correlationId, {
+      submitted_prompt: 'rendered prompt text for this job'
+    });
+
+    const row = await sentimentAsync.getJobById(jobId);
+    expect(row.batch_remote_id).toBe(correlationId);
+    expect(row.submitted_prompt).toBe('rendered prompt text for this job');
+    expect(row.batch_submitted_at).toBeTruthy();
+    expect(row.status).toBe('running');  // still running until phase 3
+  });
+
+  test('markBatchSubmittedByCorrelation: atomically flips all rows sharing correlation to batch_submitted', async () => {
+    const j1 = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (2, 1, 'second')`);
+    const j2 = await sentimentAsync.createJob({ document_id: 1, transcript_id: 2, reset_existing: 0 });
+    await db.runAsync(`UPDATE sentiment_extraction_jobs SET status = 'running', kind = 'batch' WHERE id IN (?, ?)`, [j1, j2]);
+
+    const correlationId = 'pending-test-uuid-2';
+    await sentimentAsync.markBatchPending([j1], correlationId, { submitted_prompt: 'p1' });
+    await sentimentAsync.markBatchPending([j2], correlationId, { submitted_prompt: 'p2' });
+
+    await sentimentAsync.markBatchSubmittedByCorrelation(correlationId, {
+      batch_remote_id: 'remote-actual-id',
+      provider: 'vertex',
+      model_name: 'gemini-3.1-flash-lite-preview',
+      prompt_template_hash: 'abc123',
+      temperature: 0,
+      system_prompt: null
+    });
+
+    const r1 = await sentimentAsync.getJobById(j1);
+    const r2 = await sentimentAsync.getJobById(j2);
+    expect(r1.status).toBe('batch_submitted');
+    expect(r2.status).toBe('batch_submitted');
+    expect(r1.batch_remote_id).toBe('remote-actual-id');
+    expect(r2.batch_remote_id).toBe('remote-actual-id');
+    expect(r1.model_name).toBe('gemini-3.1-flash-lite-preview');
+    expect(r1.prompt_template_hash).toBe('abc123');
+    expect(r1.temperature).toBe(0);
+    expect(r1.submitted_prompt).toBe('p1');  // preserved from pre-stage
+    expect(r2.submitted_prompt).toBe('p2');
+  });
+
+  test('markBatchSubmissionFailed: marks all rows in correlation failed and clears placeholder', async () => {
+    const j1 = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    await db.runAsync(`UPDATE sentiment_extraction_jobs SET status = 'running', kind = 'batch' WHERE id = ?`, [j1]);
+
+    const correlationId = 'pending-test-uuid-3';
+    await sentimentAsync.markBatchPending([j1], correlationId, { submitted_prompt: 'p1' });
+
+    await sentimentAsync.markBatchSubmissionFailed(correlationId, 'Vertex API returned 500');
+
+    const r = await sentimentAsync.getJobById(j1);
+    expect(r.status).toBe('failed');
+    expect(r.error).toMatch(/Vertex API returned 500/);
+    expect(r.batch_remote_id).toBeNull();
+    expect(r.completed_at).toBeTruthy();
+  });
 });

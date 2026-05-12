@@ -113,6 +113,54 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return r.changes > 0;
     },
 
+    async markBatchPending(jobIds, correlationId, { submitted_prompt = null } = {}) {
+      if (!Array.isArray(jobIds) || jobIds.length === 0) return;
+      // Per-job UPDATE because submitted_prompt differs per row
+      for (const id of jobIds) {
+        await runAsync(
+          `UPDATE sentiment_extraction_jobs
+              SET batch_remote_id = ?,
+                  batch_submitted_at = CURRENT_TIMESTAMP,
+                  submitted_prompt = ?
+            WHERE id = ? AND status = 'running' AND kind = 'batch'`,
+          [correlationId, submitted_prompt, id]
+        );
+      }
+      await saveDatabase();
+    },
+
+    async markBatchSubmittedByCorrelation(correlationId, {
+      batch_remote_id, provider, model_name,
+      prompt_template_hash = null, temperature = null, system_prompt = null
+    }) {
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'batch_submitted',
+                batch_remote_id = ?,
+                provider = COALESCE(?, provider),
+                model_name = ?,
+                prompt_template_hash = ?,
+                temperature = ?,
+                system_prompt = ?
+          WHERE batch_remote_id = ?`,
+        [batch_remote_id, provider, model_name, prompt_template_hash, temperature, system_prompt, correlationId]
+      );
+      await saveDatabase();
+    },
+
+    async markBatchSubmissionFailed(correlationId, errorMessage) {
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'failed',
+                error = ?,
+                completed_at = CURRENT_TIMESTAMP,
+                batch_remote_id = NULL
+          WHERE batch_remote_id = ?`,
+        [String(errorMessage || 'unknown error').slice(0, 2000), correlationId]
+      );
+      await saveDatabase();
+    },
+
     async markDone(id, { input_tokens = null, output_tokens = null, validation_drops = null } = {}) {
       await runAsync(
         `UPDATE sentiment_extraction_jobs
