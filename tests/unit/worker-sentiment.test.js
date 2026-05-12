@@ -66,6 +66,34 @@ describe('worker-sentiment singleton path', () => {
     expect(rows[0].auto_approved).toBe(1);
   });
 
+  test('singleton: persists per-annotation notes and per-job extraction_notes', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    provider.callSingleton.mockResolvedValueOnce({
+      text: JSON.stringify({
+        document_notes: 'Mostly procedural; one strong negative move around the schoolhouse.',
+        annotations: [{
+          span_start: 0, span_end: 9,
+          emotion_phrase_verbatim: 'weariness',
+          polarity: 'negative', intensity: 'low',
+          voice_role: 'author', target_kind: 'phrase',
+          target_phrase: 'state of school',
+          confidence: 0.92,
+          notes: 'Direct negative; "weariness" is unambiguous period vocab.'
+        }]
+      }),
+      usage: { input_tokens: 100, output_tokens: 30 }
+    });
+
+    const jobId = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    await runSentimentExtractionCycle();
+
+    const job = await db.sentimentAsync.getJobById(jobId);
+    expect(job.extraction_notes).toMatch(/one strong negative move/);
+
+    const rows = await db.sentimentAsync.getAnnotationsByJobId(jobId);
+    expect(rows[0].notes).toMatch(/unambiguous period vocab/);
+  });
+
   test('singleton: reset_existing deletes prior annotations after successful write', async () => {
     const jobId1 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
     await runSentimentExtractionCycle();

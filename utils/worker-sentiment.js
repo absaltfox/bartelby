@@ -101,7 +101,7 @@ async function processSingletonJob(job, config) {
 
   const raw = typeof response === 'string' ? response : (response.text || response.content || '');
   const usage = (response && response.usage) || {};
-  const { annotations, drops } = parseAndValidate({
+  const { annotations, drops, document_notes } = parseAndValidate({
     raw, transcriptContent: transcript.content, knownEntities,
     reviewFloor: config.reviewFloor, autoApproveThreshold: config.autoApproveThreshold
   });
@@ -111,6 +111,7 @@ async function processSingletonJob(job, config) {
     const phrase = await ensurePhraseAndEmbedding(ann.emotion_phrase_verbatim);
     enriched.push({
       ...ann,
+      notes: ann.notes ?? null,
       transcript_id: job.transcript_id,
       document_id: job.document_id,
       evidence_excerpt: buildExcerpt(transcript.content, ann.span_start, ann.span_end),
@@ -129,7 +130,8 @@ async function processSingletonJob(job, config) {
   await db.sentimentAsync.markDone(job.id, {
     input_tokens: usage.input_tokens ?? null,
     output_tokens: usage.output_tokens ?? null,
-    validation_drops: drops
+    validation_drops: drops,
+    extraction_notes: document_notes
   });
 }
 
@@ -271,7 +273,7 @@ async function pollRunningSentimentBatches() {
         const knownEntities = await loadKnownEntities(job.document_id);
         const raw = typeof result === 'string' ? result : (result.text || result.content || '');
         const usage = (result && result.usage) || {};
-        const { annotations, drops } = parseAndValidate({
+        const { annotations, drops, document_notes } = parseAndValidate({
           raw, transcriptContent: transcript ? transcript.content : '',
           knownEntities, reviewFloor: config.reviewFloor,
           autoApproveThreshold: config.autoApproveThreshold
@@ -287,6 +289,7 @@ async function pollRunningSentimentBatches() {
           const phrase = await ensurePhraseAndEmbedding(ann.emotion_phrase_verbatim);
           enriched.push({
             ...ann,
+            notes: ann.notes ?? null,
             transcript_id: job.transcript_id,
             document_id: job.document_id,
             evidence_excerpt: buildExcerpt(transcript.content, ann.span_start, ann.span_end),
@@ -303,7 +306,8 @@ async function pollRunningSentimentBatches() {
         await db.sentimentAsync.markDone(job.id, {
           input_tokens: usage.input_tokens ?? null,
           output_tokens: usage.output_tokens ?? null,
-          validation_drops: drops
+          validation_drops: drops,
+          extraction_notes: document_notes
         });
       } catch (err) {
         await db.sentimentAsync.markFailed(job.id, `Batch finalize failed: ${err.message}`);
