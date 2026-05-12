@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const db = require('../database/db');
 const { buildPrompt } = require('./sentiment/prompt');
 const { parseAndValidate } = require('./sentiment/parse');
@@ -179,26 +180,52 @@ async function runSentimentExtractionCycle() {
     }
     if (requests.length === 0) return;
 
+    // PHASE 1: Pre-stage with correlation placeholder + per-job submitted_prompt
+    // Per docs/superpowers/specs/2026-05-09-sentiment-phase-1.5-batch-primitives-design.md
+    // (recovery model), the placeholder is a `pending-<uuid>` written to
+    // batch_remote_id so a crash between submit and flip never leaves rows
+    // in the running state with the provider's result silently dropped.
+    const correlationId = `pending-${crypto.randomUUID()}`;
+    const promptTemplateHash = crypto
+      .createHash('sha256')
+      .update(config.promptTemplate || '', 'utf8')
+      .digest('hex');
+
+    for (const job of claimed) {
+      if (skipped.includes(job.id)) continue;
+      // requests was built earlier in the cycle; find matching prompt
+      const matchingRequest = requests.find((r) => r.request_id === String(job.id));
+      if (!matchingRequest) continue;
+      await db.sentimentAsync.markBatchPending([job.id], correlationId, {
+        submitted_prompt: matchingRequest.prompt
+      });
+    }
+
+    // PHASE 2: Provider call
     let submission;
     try {
-      submission = await provider.submitBatch({ provider: config.providerName, requests });
+      submission = await provider.submitBatch({
+        provider: config.providerName,
+        requests,
+        runtimeConfig: { correlationId }   // sent as provider metadata for future reconciliation
+      });
     } catch (err) {
-      for (const job of claimed) {
-        if (!skipped.includes(job.id)) {
-          await db.sentimentAsync.markFailed(job.id, `Batch submission failed: ${err.message}`);
-        }
-      }
+      await db.sentimentAsync.markBatchSubmissionFailed(
+        correlationId,
+        `Batch submission failed: ${err.message}`
+      );
       return;
     }
 
-    const remoteId = submission.batch_id || submission.id;
-    const submittedProvider = submission.provider || config.providerName;
-    for (const job of claimed) {
-      if (skipped.includes(job.id)) continue;
-      await db.sentimentAsync.markBatchSubmitted(job.id, {
-        batch_remote_id: remoteId, provider: submittedProvider
-      });
-    }
+    // PHASE 3: Atomic flip of all rows sharing correlation to batch_submitted
+    await db.sentimentAsync.markBatchSubmittedByCorrelation(correlationId, {
+      batch_remote_id: submission.batch_id || submission.id,
+      provider: submission.provider || config.providerName,
+      model_name: submission.model_name || null,
+      prompt_template_hash: promptTemplateHash,
+      temperature: 0,
+      system_prompt: null
+    });
   } finally {
     isBusy = false;
   }

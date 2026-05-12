@@ -82,9 +82,21 @@ describe('worker-sentiment singleton path', () => {
     expect(allRows[0].extraction_job_id).not.toBe(jobId1);
   });
 
-  test('batch: claims ≥2 jobs, submits batch, marks batch_submitted', async () => {
+  test('batch (two-phase): pre-stages with pending-* correlation, then atomically flips on provider success', async () => {
     const provider = require('../../utils/sentiment/provider');
-    provider.submitBatch.mockResolvedValueOnce({ batch_id: 'remote-1', provider: 'anthropic' });
+    provider.submitBatch.mockImplementationOnce(async ({ runtimeConfig }) => {
+      // At this point, jobs should be in pending-* state
+      const rows = await db.allAsync(
+        `SELECT id, status, batch_remote_id, submitted_prompt
+           FROM sentiment_extraction_jobs WHERE status = 'running' AND kind = 'batch'`
+      );
+      expect(rows.length).toBe(2);
+      expect(rows[0].batch_remote_id).toMatch(/^pending-/);
+      expect(rows[0].submitted_prompt).toBeTruthy();  // pre-stage populated this
+      expect(rows[0].batch_remote_id).toBe(rows[1].batch_remote_id);  // same correlation
+      // Return a real provider batch id
+      return { batch_id: 'remote-1', provider: 'anthropic', model_name: 'claude-3-5-haiku-latest' };
+    });
 
     await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (2, 1, 'weariness elsewhere too')`);
     const j1 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
@@ -96,8 +108,29 @@ describe('worker-sentiment singleton path', () => {
     const r2 = await db.sentimentAsync.getJobById(j2);
     expect(r1.status).toBe('batch_submitted');
     expect(r2.status).toBe('batch_submitted');
-    expect(r1.batch_remote_id).toBe('remote-1');
-    expect(provider.submitBatch).toHaveBeenCalledTimes(1);
+    expect(r1.batch_remote_id).toBe('remote-1');  // not pending- anymore
+    expect(r2.batch_remote_id).toBe('remote-1');
+    expect(r1.model_name).toBe('claude-3-5-haiku-latest');
+    expect(r1.submitted_prompt).toBeTruthy();
+    expect(r1.prompt_template_hash).toBeTruthy();  // SHA-256 of template
+  });
+
+  test('batch: provider call failure marks all correlation rows as failed and clears placeholder', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    provider.submitBatch.mockRejectedValueOnce(new Error('Provider 503 Service Unavailable'));
+
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (2, 1, 'weariness too')`);
+    const j1 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    const j2 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 2 });
+
+    await runSentimentExtractionCycle();
+
+    const r1 = await db.sentimentAsync.getJobById(j1);
+    const r2 = await db.sentimentAsync.getJobById(j2);
+    expect(r1.status).toBe('failed');
+    expect(r2.status).toBe('failed');
+    expect(r1.batch_remote_id).toBeNull();   // placeholder cleared
+    expect(r1.error).toMatch(/503/);
   });
 
   test('batch finalization: claims durably, materializes per-job results, marks done', async () => {
