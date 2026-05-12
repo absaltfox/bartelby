@@ -133,3 +133,78 @@ describe('OpenAI sentiment batch primitives', () => {
     expect(results[0].model_name).toBe('gpt-4o-mini-2026-01');
   });
 });
+
+describe('Anthropic sentiment batch primitives', () => {
+  let originalFetch;
+  let sentimentBatches;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    jest.resetModules();
+    sentimentBatches = require('../../utils/sentiment-batches');
+  });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  test('submitSentimentBatch posts requests array to /v1/messages/batches', async () => {
+    let captured;
+    global.fetch = jest.fn(async (url, opts) => {
+      captured = { url, body: opts.body, headers: opts.headers };
+      return { ok: true, status: 200, text: async () => JSON.stringify({
+        id: 'msgbatch_01', processing_status: 'in_progress'
+      }) };
+    });
+
+    const result = await sentimentBatches.submitSentimentBatch({
+      provider: 'claude',
+      requests: [
+        { request_id: '1', prompt: 'p1' },
+        { request_id: '2', prompt: 'p2' }
+      ],
+      runtimeConfig: { apiKey: 'sk-ant-test', model: 'claude-3-5-haiku-latest', correlationId: 'pending-c-1' }
+    });
+
+    expect(result.batch_id).toBe('msgbatch_01');
+    expect(captured.url).toContain('/v1/messages/batches');
+    const body = JSON.parse(captured.body);
+    expect(body.requests).toHaveLength(2);
+    expect(body.requests[0].custom_id).toBe('1');
+    expect(body.requests[0].params.model).toBe('claude-3-5-haiku-latest');
+    expect(body.requests[0].params.messages[0].content).toBe('p1');
+    expect(captured.headers['x-api-key']).toBe('sk-ant-test');
+  });
+
+  test('pollSentimentBatch maps processing_status', async () => {
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+      id: 'msgbatch_01', processing_status: 'ended',
+      request_counts: { processing: 0, succeeded: 2, errored: 0, canceled: 0, expired: 0 }
+    }) }));
+
+    const result = await sentimentBatches.pollSentimentBatch({
+      provider: 'claude', batchId: 'msgbatch_01',
+      runtimeConfig: { apiKey: 'sk-ant-test' }
+    });
+    expect(result.status).toBe('completed');
+  });
+
+  test('fetchSentimentBatchResults parses JSONL results', async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('/results')) {
+        return { ok: true, status: 200, text: async () =>
+          '{"custom_id":"1","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"answer one"}],"model":"claude-3-5-haiku-latest","usage":{"input_tokens":40,"output_tokens":8}}}}\n' +
+          '{"custom_id":"2","result":{"type":"succeeded","message":{"content":[{"type":"text","text":"answer two"}],"model":"claude-3-5-haiku-latest","usage":{"input_tokens":42,"output_tokens":9}}}}\n'
+        };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({ processing_status: 'ended', results_url: 'x' }) };
+    });
+
+    const results = await sentimentBatches.fetchSentimentBatchResults({
+      provider: 'claude', batchId: 'msgbatch_01',
+      runtimeConfig: { apiKey: 'sk-ant-test' }
+    });
+
+    expect(results[0].request_id).toBe('1');
+    expect(results[0].text).toBe('answer one');
+    expect(results[0].usage.input_tokens).toBe(40);
+    expect(results[0].model_name).toBe('claude-3-5-haiku-latest');
+  });
+});

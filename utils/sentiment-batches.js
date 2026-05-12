@@ -153,6 +153,129 @@ async function fetchOpenAiSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
+// ────────────────── Anthropic ──────────────────
+
+const ANTHROPIC_BATCH_URL = 'https://api.anthropic.com/v1/messages/batches';
+const ANTHROPIC_VERSION = '2023-06-01';
+const ANTHROPIC_BETA = 'message-batches-2024-09-24';
+
+function buildAnthropicSentimentEntry({ requestId, prompt, model, systemPrompt, temperature }) {
+  const params = {
+    model,
+    max_tokens: 4096,
+    temperature: temperature ?? 0,
+    messages: [{ role: 'user', content: prompt }]
+  };
+  if (systemPrompt) params.system = systemPrompt;
+  return { custom_id: String(requestId), params };
+}
+
+async function submitAnthropicSentimentBatch({ requests, runtimeConfig }) {
+  const {
+    apiKey,
+    model = 'claude-3-5-haiku-latest',
+    systemPrompt = null,
+    temperature = 0,
+    correlationId = null
+  } = runtimeConfig;
+  if (!apiKey) throw new Error('Anthropic sentiment batch: missing apiKey.');
+
+  const body = {
+    requests: requests.map((r) => buildAnthropicSentimentEntry({
+      requestId: r.request_id, prompt: r.prompt,
+      systemPrompt: r.system ?? systemPrompt,
+      model, temperature
+    }))
+  };
+  if (correlationId) {
+    body.metadata = { bartelby_correlation_id: correlationId };
+  }
+
+  const resp = await fetchJson(ANTHROPIC_BATCH_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-beta': ANTHROPIC_BETA,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  }, 'Anthropic batch create');
+
+  return { batch_id: resp.id, provider: 'claude', model_name: model };
+}
+
+async function pollAnthropicSentimentBatch({ batchId, runtimeConfig }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Anthropic sentiment poll: missing apiKey.');
+
+  const resp = await fetchJson(`${ANTHROPIC_BATCH_URL}/${encodeURIComponent(batchId)}`, {
+    method: 'GET',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': ANTHROPIC_VERSION,
+      'anthropic-beta': ANTHROPIC_BETA
+    }
+  }, 'Anthropic batch get');
+
+  const status = (() => {
+    if (resp.processing_status === 'ended') return 'completed';
+    if (resp.processing_status === 'canceling' || resp.processing_status === 'expired') return 'failed';
+    return 'pending';
+  })();
+
+  return {
+    status,
+    progress: resp.request_counts || null,
+    error: null,
+    raw_status: resp.processing_status,
+    results_url: resp.results_url || null
+  };
+}
+
+async function fetchAnthropicSentimentResults({ batchId, runtimeConfig }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Anthropic sentiment fetch: missing apiKey.');
+
+  // The results endpoint streams JSONL
+  const body = await fetchText(
+    `${ANTHROPIC_BATCH_URL}/${encodeURIComponent(batchId)}/results`,
+    {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'anthropic-beta': ANTHROPIC_BETA
+      }
+    },
+    'Anthropic batch results'
+  );
+
+  const rows = parseJsonl(body);
+  return rows.map((row) => {
+    if (row.result?.type !== 'succeeded') {
+      return {
+        request_id: String(row.custom_id),
+        text: '',
+        usage: { input_tokens: null, output_tokens: null },
+        model_name: null,
+        error: row.result?.error?.message || `Anthropic batch result type: ${row.result?.type}`
+      };
+    }
+    const msg = row.result.message;
+    const textParts = (msg.content || []).filter((c) => c.type === 'text').map((c) => c.text);
+    return {
+      request_id: String(row.custom_id),
+      text: textParts.join(''),
+      usage: {
+        input_tokens: msg.usage?.input_tokens ?? null,
+        output_tokens: msg.usage?.output_tokens ?? null
+      },
+      model_name: msg.model || null
+    };
+  });
+}
+
 // ── public dispatch functions ──────────────────────────────────────────────
 
 async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) {
@@ -166,6 +289,7 @@ async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) 
     case 'openai':
       return submitOpenAiSentimentBatch({ requests, runtimeConfig });
     case 'claude':
+      return submitAnthropicSentimentBatch({ requests, runtimeConfig });
     case 'gemini':
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' primitives not yet implemented.`);
@@ -182,6 +306,7 @@ async function pollSentimentBatch({ provider, batchId, runtimeConfig = {} }) {
     case 'openai':
       return pollOpenAiSentimentBatch({ batchId, runtimeConfig });
     case 'claude':
+      return pollAnthropicSentimentBatch({ batchId, runtimeConfig });
     case 'gemini':
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' poll not yet implemented.`);
@@ -198,6 +323,7 @@ async function fetchSentimentBatchResults({ provider, batchId, runtimeConfig = {
     case 'openai':
       return fetchOpenAiSentimentResults({ batchId, runtimeConfig });
     case 'claude':
+      return fetchAnthropicSentimentResults({ batchId, runtimeConfig });
     case 'gemini':
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' fetch not yet implemented.`);
