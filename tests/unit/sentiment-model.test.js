@@ -90,6 +90,23 @@ describe('sentiment model', () => {
     expect(rows[0].extraction_job_id).toBe(jobId);
   });
 
+  test('writeAnnotationsForJob persists per-annotation notes', async () => {
+    const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    const phrase = await sentimentAsync.upsertEmotionPhrase('weariness');
+    await sentimentAsync.writeAnnotationsForJob(jobId, [{
+      transcript_id: 1, document_id: 1, span_start: 0, span_end: 9,
+      evidence_excerpt: 'transcript', polarity: 'negative', intensity: 'low',
+      confidence: 0.9, voice_role: 'author', target_kind: 'phrase',
+      target_phrase: 'weariness', emotion_phrase_id: phrase.id,
+      emotion_phrase_verbatim: 'weariness',
+      notes: 'Direct negative evaluation; "weariness" is unambiguous period vocab.',
+      approval_status: 'approved', auto_approved: 1,
+      extracted_by: 'test', extracted_at: new Date().toISOString()
+    }]);
+    const rows = await sentimentAsync.getAnnotationsByJobId(jobId);
+    expect(rows[0].notes).toMatch(/unambiguous period vocab/);
+  });
+
   test('markBatchPending: stages a single job with correlation id + submitted_prompt', async () => {
     const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
     await db.runAsync(`UPDATE sentiment_extraction_jobs SET status = 'running', kind = 'batch' WHERE id = ?`, [jobId]);
