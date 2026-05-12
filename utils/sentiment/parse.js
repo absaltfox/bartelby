@@ -37,8 +37,12 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
   const data = tryExtractJson(raw);
   if (!data || !Array.isArray(data.annotations)) {
     drops.malformed_json = 1;
-    return { annotations: [], drops };
+    return { annotations: [], drops, document_notes: null };
   }
+
+  const documentNotes = typeof data.document_notes === 'string' && data.document_notes.trim()
+    ? data.document_notes.trim()
+    : null;
 
   const knownIds = new Set((knownEntities || []).map((e) => Number(e.id)));
   const transcriptStr = String(transcriptContent || '');
@@ -118,12 +122,13 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       described_subject_entity_id: a.described_subject_entity_id ?? null,
       emotion_phrase_verbatim: verbatim,
       plutchik_hint: a.plutchik_hint ?? null,
+      notes: typeof a.notes === 'string' && a.notes.trim() ? a.notes.trim() : null,
       approval_status: auto ? 'approved' : 'pending',
       auto_approved: auto ? 1 : 0
     });
   }
 
-  return { annotations: out, drops };
+  return { annotations: out, drops, document_notes: documentNotes };
 }
 
 module.exports = { parseAndValidate, tryExtractJson };
