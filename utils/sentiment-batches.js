@@ -276,6 +276,94 @@ async function fetchAnthropicSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
+// ────────────────── Gemini ──────────────────
+
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
+function buildGeminiSentimentRequest({ requestId, prompt, systemPrompt, temperature }) {
+  const req = {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 },
+    metadata: { bartelby_request_id: String(requestId) }
+  };
+  if (systemPrompt) {
+    req.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+  return req;
+}
+
+async function submitGeminiSentimentBatch({ requests, runtimeConfig }) {
+  const {
+    apiKey,
+    model = 'gemini-2.5-flash',
+    systemPrompt = null,
+    temperature = 0
+  } = runtimeConfig;
+  if (!apiKey) throw new Error('Gemini sentiment batch: missing apiKey.');
+
+  const url = `${GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:batchGenerateContent?key=${encodeURIComponent(apiKey)}`;
+  const body = {
+    requests: requests.map((r) => buildGeminiSentimentRequest({
+      requestId: r.request_id, prompt: r.prompt,
+      systemPrompt: r.system ?? systemPrompt,
+      temperature
+    }))
+  };
+  const resp = await fetchJson(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, 'Gemini batch create');
+
+  return { batch_id: resp.name, provider: 'gemini', model_name: model };
+}
+
+async function pollGeminiSentimentBatch({ batchId, runtimeConfig }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Gemini sentiment poll: missing apiKey.');
+
+  // batchId is `operations/<id>`
+  const url = `${GEMINI_BASE_URL}/${batchId}?key=${encodeURIComponent(apiKey)}`;
+  const resp = await fetchJson(url, { method: 'GET' }, 'Gemini operation get');
+
+  const status = resp.done ? (resp.error ? 'failed' : 'completed') : 'pending';
+  return {
+    status,
+    progress: resp.metadata?.processedRequestsCount
+      ? { completed: resp.metadata.processedRequestsCount }
+      : null,
+    error: resp.error?.message || null,
+    operation: resp
+  };
+}
+
+async function fetchGeminiSentimentResults({ batchId, runtimeConfig }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Gemini sentiment fetch: missing apiKey.');
+
+  const url = `${GEMINI_BASE_URL}/${batchId}?key=${encodeURIComponent(apiKey)}`;
+  const resp = await fetchJson(url, { method: 'GET' }, 'Gemini operation get');
+  if (!resp.done) throw new Error(`Gemini operation ${batchId} not done.`);
+  if (resp.error) throw new Error(`Gemini operation ${batchId} failed: ${resp.error.message}`);
+
+  const responses = resp.response?.responses || [];
+  return responses.map((entry) => {
+    const requestId = entry.metadata?.bartelby_request_id ?? null;
+    const candidate = entry.response?.candidates?.[0];
+    const textParts = candidate?.content?.parts || [];
+    const usage = entry.response?.usageMetadata || {};
+    return {
+      request_id: requestId != null ? String(requestId) : null,
+      text: textParts.map((p) => p.text || '').join(''),
+      usage: {
+        input_tokens: usage.promptTokenCount ?? null,
+        output_tokens: usage.candidatesTokenCount ?? null
+      },
+      model_name: entry.response?.modelVersion || null
+    };
+  });
+}
+
 // ── public dispatch functions ──────────────────────────────────────────────
 
 async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) {
@@ -291,6 +379,7 @@ async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) 
     case 'claude':
       return submitAnthropicSentimentBatch({ requests, runtimeConfig });
     case 'gemini':
+      return submitGeminiSentimentBatch({ requests, runtimeConfig });
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' primitives not yet implemented.`);
     default:
@@ -308,6 +397,7 @@ async function pollSentimentBatch({ provider, batchId, runtimeConfig = {} }) {
     case 'claude':
       return pollAnthropicSentimentBatch({ batchId, runtimeConfig });
     case 'gemini':
+      return pollGeminiSentimentBatch({ batchId, runtimeConfig });
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' poll not yet implemented.`);
     default:
@@ -325,6 +415,7 @@ async function fetchSentimentBatchResults({ provider, batchId, runtimeConfig = {
     case 'claude':
       return fetchAnthropicSentimentResults({ batchId, runtimeConfig });
     case 'gemini':
+      return fetchGeminiSentimentResults({ batchId, runtimeConfig });
     case 'vertex':
       throw new Error(`Sentiment batch path: provider '${provider}' fetch not yet implemented.`);
     default:
