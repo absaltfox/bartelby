@@ -71,6 +71,16 @@
     });
   }
 
+  function initAdvancedSearchShortcut() {
+    document.addEventListener('keydown', function(event) {
+      var key = (event.key || '').toLowerCase();
+      if (key !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+
+      event.preventDefault();
+      window.location.assign('/search/advanced');
+    });
+  }
+
   initPrimaryNav();
   initSubnav('.admin-subnav-link[data-page]', function(link) {
     var path = window.location.pathname;
@@ -80,4 +90,5 @@
     return path.startsWith('/admin/' + page);
   });
   initUserMenu();
+  initAdvancedSearchShortcut();
 })();

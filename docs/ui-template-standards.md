@@ -308,7 +308,11 @@ Alignment rules:
 - child nav groups such as Logging and Knowledge should follow the same
   left-justified, full-width behavior as the top-level admin nav rather than
   inventing their own alignment
-  alignment
+- the global site header uses three persistent zones: brand on the left,
+  primary nav centered within the bar, and utility controls on the right
+- the global header search is a single integrated field; Enter submits a
+  normal `/search` query, while the visible `⌘K` affordance maps to Advanced
+  Search through shared shell JavaScript
 
 ## Active States
 
@@ -561,6 +565,13 @@ Pattern:
 - result list or table
 - pagination
 - empty state
+
+Collections browsing may use the canonical reading-room homepage composition:
+a server-prepared featured collection, a compact stacks row, and a recent
+documents rail. Keep the template limited to prepared display fields, preserve
+collection/document permission boundaries in the route or model helpers, and do
+not add inert filter/sort/list/activity controls before those routes or
+behaviors exist.
 
 ## Detail Pages
 

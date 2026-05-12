@@ -40,6 +40,24 @@ function thumbnailsBaseSelect() {
   return `
     SELECT c.*,
            (SELECT COUNT(*) FROM document_collections WHERE collection_id = c.id) AS document_count,
+           (SELECT COUNT(*)
+            FROM transcripts t
+            INNER JOIN document_collections dc ON dc.document_id = t.document_id
+            WHERE dc.collection_id = c.id) AS transcript_count,
+           (SELECT MAX(d.created_at)
+            FROM documents d
+            INNER JOIN document_collections dc ON d.id = dc.document_id
+            WHERE dc.collection_id = c.id) AS latest_document_at,
+           (SELECT MIN(CAST(substr(d.date_created, 1, 4) AS INTEGER))
+            FROM documents d
+            INNER JOIN document_collections dc ON d.id = dc.document_id
+            WHERE dc.collection_id = c.id
+              AND d.date_created GLOB '[0-9][0-9][0-9][0-9]*') AS min_year,
+           (SELECT MAX(CAST(substr(d.date_created, 1, 4) AS INTEGER))
+            FROM documents d
+            INNER JOIN document_collections dc ON d.id = dc.document_id
+            WHERE dc.collection_id = c.id
+              AND d.date_created GLOB '[0-9][0-9][0-9][0-9]*') AS max_year,
            COALESCE(
              (SELECT d.image_path FROM documents d WHERE d.id = c.preview_document_id),
              (SELECT d.image_path FROM documents d
