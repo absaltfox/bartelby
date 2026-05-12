@@ -506,6 +506,17 @@ MIGRATIONS.push(`
     ON documents(LOWER(TRIM(json_extract(metadata, '$.location'))));
 `);
 
+// v69 — sentiment Phase 1.5: paradata columns + per-annotation reasoning
+MIGRATIONS.push(`
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN submitted_prompt TEXT;
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN model_name TEXT;
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN prompt_template_hash TEXT;
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN temperature REAL;
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN system_prompt TEXT;
+  ALTER TABLE sentiment_extraction_jobs ADD COLUMN extraction_notes TEXT;
+  ALTER TABLE sentiment_annotations ADD COLUMN notes TEXT;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -986,6 +997,42 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Cleared ${staleSentimentBatchClaimedCount} stale sentiment batch finalization claim(s)`);
   }
 
+  const staleSentimentBatchPending = await getAsync(`
+    SELECT COUNT(*) as count FROM sentiment_extraction_jobs
+     WHERE status = 'running' AND kind = 'batch'
+       AND batch_remote_id LIKE 'pending-%'
+  `);
+  const staleSentimentBatchPendingCount = staleSentimentBatchPending?.count || 0;
+  if (staleSentimentBatchPendingCount > 0) {
+    await db.run(`
+      UPDATE sentiment_extraction_jobs
+         SET status = 'failed',
+             error = 'Server restarted during batch submission (provider may have orphaned batch). Correlation: ' || batch_remote_id,
+             completed_at = CURRENT_TIMESTAMP
+       WHERE status = 'running' AND kind = 'batch'
+         AND batch_remote_id LIKE 'pending-%'
+    `);
+    console.log(`[db] Marked ${staleSentimentBatchPendingCount} stale sentiment batch-pending job(s) as failed.`);
+  }
+
+  const staleSentimentBatchUnsubmitted = await getAsync(`
+    SELECT COUNT(*) as count FROM sentiment_extraction_jobs
+     WHERE status = 'running' AND kind = 'batch'
+       AND batch_remote_id IS NULL
+  `);
+  const staleSentimentBatchUnsubmittedCount = staleSentimentBatchUnsubmitted?.count || 0;
+  if (staleSentimentBatchUnsubmittedCount > 0) {
+    await db.run(`
+      UPDATE sentiment_extraction_jobs
+         SET status = 'failed',
+             error = 'Server restarted before batch submission',
+             completed_at = CURRENT_TIMESTAMP
+       WHERE status = 'running' AND kind = 'batch'
+         AND batch_remote_id IS NULL
+    `);
+    console.log(`[db] Marked ${staleSentimentBatchUnsubmittedCount} stale sentiment batch-unsubmitted job(s) as failed.`);
+  }
+
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
@@ -1000,6 +1047,8 @@ async function initializeSchema(options = {}) {
     || staleAuthoritySuggestionCount > 0
     || staleSentimentSingletonCount > 0
     || staleSentimentBatchClaimedCount > 0
+    || staleSentimentBatchPendingCount > 0
+    || staleSentimentBatchUnsubmittedCount > 0
   ) {
     await saveDatabase();
   }

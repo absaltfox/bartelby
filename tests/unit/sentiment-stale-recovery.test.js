@@ -62,4 +62,35 @@ describe('sentiment stale-job recovery', () => {
     const row = await db.getAsync(`SELECT status FROM sentiment_extraction_jobs WHERE id = 1`);
     expect(row.status).toBe('batch_submitted');
   });
+
+  test('batch running with pending-* placeholder → failed + correlation logged', async () => {
+    await reset();
+    await db.runAsync(
+      `INSERT INTO sentiment_extraction_jobs
+         (document_id, transcript_id, status, kind, batch_remote_id)
+       VALUES (1, 1, 'running', 'batch', 'pending-abc123')`
+    );
+    await db.initializeSchema({ runStaleJobRecovery: true });
+    const row = await db.getAsync(
+      `SELECT status, error FROM sentiment_extraction_jobs WHERE id = 1`
+    );
+    expect(row.status).toBe('failed');
+    expect(row.error).toMatch(/pending-abc123/);
+    expect(row.error).toMatch(/orphaned/i);
+  });
+
+  test('batch running with no batch_remote_id → failed (never staged)', async () => {
+    await reset();
+    await db.runAsync(
+      `INSERT INTO sentiment_extraction_jobs
+         (document_id, transcript_id, status, kind)
+       VALUES (1, 1, 'running', 'batch')`
+    );
+    await db.initializeSchema({ runStaleJobRecovery: true });
+    const row = await db.getAsync(
+      `SELECT status, error FROM sentiment_extraction_jobs WHERE id = 1`
+    );
+    expect(row.status).toBe('failed');
+    expect(row.error).toMatch(/before batch submission/i);
+  });
 });
