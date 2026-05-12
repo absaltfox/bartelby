@@ -161,13 +161,23 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       await saveDatabase();
     },
 
-    async markDone(id, { input_tokens = null, output_tokens = null, validation_drops = null } = {}) {
+    async markDone(id, {
+      input_tokens = null, output_tokens = null,
+      validation_drops = null, extraction_notes = null
+    } = {}) {
       await runAsync(
         `UPDATE sentiment_extraction_jobs
             SET status = 'done', completed_at = CURRENT_TIMESTAMP,
-                input_tokens = ?, output_tokens = ?, validation_drops = ?
+                input_tokens = ?, output_tokens = ?,
+                validation_drops = ?,
+                extraction_notes = ?
           WHERE id = ?`,
-        [input_tokens, output_tokens, validation_drops ? JSON.stringify(validation_drops) : null, id]
+        [
+          input_tokens, output_tokens,
+          validation_drops ? JSON.stringify(validation_drops) : null,
+          extraction_notes,
+          id
+        ]
       );
       await saveDatabase();
     },

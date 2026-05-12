@@ -90,6 +90,19 @@ describe('sentiment model', () => {
     expect(rows[0].extraction_job_id).toBe(jobId);
   });
 
+  test('markDone persists extraction_notes', async () => {
+    const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
+    await sentimentAsync.markDone(jobId, {
+      input_tokens: 1000,
+      output_tokens: 100,
+      validation_drops: { malformed_json: 0 },
+      extraction_notes: 'Highly formal letter; three clear emotional moves around schoolhouse condition.'
+    });
+    const row = await sentimentAsync.getJobById(jobId);
+    expect(row.status).toBe('done');
+    expect(row.extraction_notes).toMatch(/three clear emotional moves/);
+  });
+
   test('writeAnnotationsForJob persists per-annotation notes', async () => {
     const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
     const phrase = await sentimentAsync.upsertEmotionPhrase('weariness');
