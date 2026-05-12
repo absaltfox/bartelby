@@ -276,3 +276,102 @@ describe('Gemini sentiment batch primitives', () => {
     expect(results[0].model_name).toBe('gemini-2.5-flash-001');
   });
 });
+
+describe('Vertex sentiment batch primitives', () => {
+  let originalFetch;
+  let sentimentBatches;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    jest.resetModules();
+    sentimentBatches = require('../../utils/sentiment-batches');
+  });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  test('submitSentimentBatch stages JSONL to GCS then creates batchPredictionJob', async () => {
+    const gcsUploads = [];
+    const vertexCalls = [];
+    global.fetch = jest.fn(async (url, opts) => {
+      if (url.includes('storage.googleapis.com') && opts.method === 'PUT') {
+        gcsUploads.push({ url, body: opts.body });
+        return { ok: true, status: 200, text: async () => '' };
+      }
+      if (url.includes('batchPredictionJobs') && opts.method === 'POST') {
+        vertexCalls.push({ url, body: JSON.parse(opts.body) });
+        return { ok: true, status: 200, text: async () => JSON.stringify({
+          name: 'projects/p/locations/global/batchPredictionJobs/job-123',
+          state: 'JOB_STATE_PENDING'
+        }) };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const result = await sentimentBatches.submitSentimentBatch({
+      provider: 'vertex',
+      requests: [{ request_id: '1', prompt: 'p1' }, { request_id: '2', prompt: 'p2' }],
+      runtimeConfig: {
+        accessToken: 'vertex-token',
+        project: 'test-project',
+        location: 'global',
+        gcsBucket: 'test-bucket',
+        model: 'gemini-3.1-flash-lite-preview',
+        correlationId: 'pending-v-1'
+      }
+    });
+
+    expect(result.batch_id).toMatch(/batchPredictionJobs\/job-123/);
+    expect(gcsUploads.length).toBeGreaterThanOrEqual(1);
+    expect(vertexCalls.length).toBe(1);
+    expect(vertexCalls[0].body.displayName).toContain('pending-v-1');
+    expect(vertexCalls[0].body.model).toContain('gemini-3.1-flash-lite-preview');
+  });
+
+  test('pollSentimentBatch maps Vertex JOB_STATE_* to normalized status', async () => {
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+      name: 'projects/p/locations/global/batchPredictionJobs/job-123',
+      state: 'JOB_STATE_SUCCEEDED',
+      outputInfo: { gcsOutputDirectory: 'gs://test-bucket/output/' }
+    }) }));
+
+    const result = await sentimentBatches.pollSentimentBatch({
+      provider: 'vertex',
+      batchId: 'projects/p/locations/global/batchPredictionJobs/job-123',
+      runtimeConfig: { accessToken: 'v', project: 'p', location: 'global' }
+    });
+    expect(result.status).toBe('completed');
+  });
+
+  test('fetchSentimentBatchResults downloads JSONL from GCS output', async () => {
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('batchPredictionJobs/job-123')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({
+          name: 'projects/p/locations/global/batchPredictionJobs/job-123',
+          state: 'JOB_STATE_SUCCEEDED',
+          outputInfo: { gcsOutputDirectory: 'gs://test-bucket/output-x/' }
+        }) };
+      }
+      if (url.includes('storage.googleapis.com') && url.includes('output-x')) {
+        // List files: returns one .jsonl predictions file
+        if (url.includes('?')) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({
+            items: [{ name: 'output-x/predictions.jsonl' }]
+          }) };
+        }
+        return { ok: true, status: 200, text: async () =>
+          '{"request":{"metadata":{"bartelby_request_id":"1"}},"response":{"candidates":[{"content":{"parts":[{"text":"vr1"}]}}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":7},"modelVersion":"gemini-3.1-flash-lite-preview-001"}}\n'
+        };
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const results = await sentimentBatches.fetchSentimentBatchResults({
+      provider: 'vertex',
+      batchId: 'projects/p/locations/global/batchPredictionJobs/job-123',
+      runtimeConfig: { accessToken: 'v', project: 'p', location: 'global', gcsBucket: 'test-bucket' }
+    });
+
+    expect(results[0].request_id).toBe('1');
+    expect(results[0].text).toBe('vr1');
+    expect(results[0].model_name).toBe('gemini-3.1-flash-lite-preview-001');
+  });
+});
