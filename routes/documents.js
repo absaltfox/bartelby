@@ -76,6 +76,98 @@ async function timedCollectionRead(req, label, collectionId, fn) {
   }
 }
 
+const ROMAN_NUMERALS = [
+  'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+  'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'
+];
+
+function relativeTimeLabel(value) {
+  if (!value) return 'No recent additions';
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 'No recent additions';
+
+  const diffMs = Date.now() - timestamp;
+  if (diffMs < 0) return 'today';
+
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const week = 7 * day;
+
+  if (diffMs < hour) return 'today';
+  if (diffMs < day) return `${Math.max(1, Math.floor(diffMs / hour))}h ago`;
+  if (diffMs < 2 * day) return 'yesterday';
+  if (diffMs < week) return `${Math.floor(diffMs / day)}d ago`;
+  if (diffMs < 8 * week) {
+    const weeks = Math.floor(diffMs / week);
+    return `${weeks} week${weeks !== 1 ? 's' : ''} ago`;
+  }
+
+  return new Date(value).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function formatYearSpan(minYear, maxYear) {
+  const min = minYear == null ? null : Number(minYear);
+  const max = maxYear == null ? null : Number(maxYear);
+  if (!Number.isInteger(min) && !Number.isInteger(max)) return 'All years';
+  if (Number.isInteger(min) && Number.isInteger(max)) {
+    return min === max ? String(min) : `${min}\u2013${max}`;
+  }
+  return String(Number.isInteger(min) ? min : max);
+}
+
+function formatDateSpan(collections) {
+  const years = collections.reduce((acc, collection) => {
+    const min = collection.min_year == null ? null : Number(collection.min_year);
+    const max = collection.max_year == null ? null : Number(collection.max_year);
+    if (Number.isInteger(min)) acc.min = acc.min == null ? min : Math.min(acc.min, min);
+    if (Number.isInteger(max)) acc.max = acc.max == null ? max : Math.max(acc.max, max);
+    return acc;
+  }, { min: null, max: null });
+  return formatYearSpan(years.min, years.max);
+}
+
+function collectionVisibility(collection) {
+  if (collection.is_world_public) return 'public';
+  if (collection.is_public) return 'shared';
+  return 'private';
+}
+
+function buildCollectionLandingView(collections, totalDocCount) {
+  const viewCollections = collections.map((collection, idx) => ({
+    id: collection.id,
+    name: collection.name,
+    desc: collection.description || 'A collection of primary-source documents ready for transcription and review.',
+    docCount: Number(collection.document_count || 0),
+    transcriptCount: Number(collection.transcript_count || 0),
+    numeral: ROMAN_NUMERALS[idx] || String(idx + 1),
+    years: formatYearSpan(collection.min_year, collection.max_year),
+    lastAddedAt: collection.latest_document_at || null,
+    lastAddedLabel: relativeTimeLabel(collection.latest_document_at),
+    visibility: collectionVisibility(collection),
+    thumbnail: collection.thumbnail || null
+  }));
+
+  const featured = viewCollections
+    .slice()
+    .sort((a, b) => {
+      const bTime = b.lastAddedAt ? new Date(b.lastAddedAt).getTime() : 0;
+      const aTime = a.lastAddedAt ? new Date(a.lastAddedAt).getTime() : 0;
+      return bTime - aTime;
+    })[0] || null;
+
+  return {
+    collections: viewCollections,
+    featured,
+    rest: featured ? viewCollections.filter((collection) => collection.id !== featured.id) : [],
+    totalDocCount,
+    dateSpanLabel: formatDateSpan(collections)
+  };
+}
+
 // ── Collections landing page ────────────────────────────────────────────────
 router.get('/', asyncHandler(async (req, res) => {
   const user = req.user;
@@ -85,18 +177,20 @@ router.get('/', asyncHandler(async (req, res) => {
     accessAll: user ? !!user.access_all : false
   };
 
-  const [rawCollections, totalDocCount, uncollectedCount] = await Promise.all([
+  const [rawCollections, totalDocCount, uncollectedCount, recentDocs] = await Promise.all([
     timedCollectionRead(req, 'collections.landing.collections', null, () => collectionsAsync.getLandingView(opts)),
     timedCollectionRead(req, 'collections.landing.total-documents', null, () => documentsAsync.getCount(opts)),
     opts.isAdmin
       ? timedCollectionRead(req, 'collections.landing.uncollected-count', null, () => documentsAsync.getUncollectedCount(opts))
-      : Promise.resolve(0)
+      : Promise.resolve(0),
+    timedCollectionRead(req, 'collections.landing.recent-documents', null, () => documentsAsync.getRecentForLanding(4, opts))
   ]);
   const allCollections = await Promise.all(rawCollections.map(normalizeCollectionAssetsForDelivery));
+  const landing = buildCollectionLandingView(allCollections, totalDocCount);
 
   res.render('collections', {
-    collections: allCollections,
-    totalDocCount,
+    ...landing,
+    recentDocs,
     uncollectedCount,
     isAdmin: opts.isAdmin
   });

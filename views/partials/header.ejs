@@ -7,6 +7,10 @@
   const resolvedIsAdmin = typeof isAdmin !== 'undefined' ? isAdmin : false;
   const resolvedIsManager = typeof isManager !== 'undefined' ? isManager : false;
   const resolvedCurrentUser = typeof currentUser !== 'undefined' ? currentUser : null;
+  const resolvedUserInitial = resolvedCurrentUser
+    ? String(resolvedCurrentUser.username || resolvedCurrentUser.email || '?').trim().charAt(0).toUpperCase()
+    : '';
+  const searchShortcutLabel = '⌘K';
 %>
 <!DOCTYPE html>
 <html lang="en">
@@ -30,49 +34,51 @@
         </span>
         <%= resolvedAppName %>
       </a>
-      <div class="header-controls">
-        <nav class="main-nav header-primary-nav">
-          <a href="/" class="nav-pill" data-section="collection">Collections</a>
-          <% if (resolvedIsManager && !resolvedIsAdmin) { %>
-            <a href="/manage" class="nav-pill" data-section="manage">Manage</a>
-          <% } %>
-          <% if (resolvedIsAdmin) { %>
-            <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
-          <% } %>
-        </nav>
 
-        <div class="header-utility-nav">
-          <div class="header-search-tools">
-            <form action="/search" method="GET" class="search-form">
-              <input type="search" name="q" placeholder="Search transcripts…" value="<%= resolvedQuery %>">
-              <button type="submit">Search</button>
-            </form>
-            <a href="/search/advanced" class="nav-search-link">Advanced Search</a>
-          </div>
+      <nav class="main-nav header-primary-nav">
+        <a href="/" class="nav-pill" data-section="collection">Collections</a>
+        <% if (resolvedIsManager && !resolvedIsAdmin) { %>
+          <a href="/manage" class="nav-pill" data-section="manage">Manage</a>
+        <% } %>
+        <% if (resolvedIsAdmin) { %>
+          <a href="/admin" class="nav-pill" data-section="admin">Admin</a>
+        <% } %>
+      </nav>
 
-          <% if (resolvedCurrentUser) { %>
-            <div class="user-menu" id="user-menu">
-              <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-expanded="false" aria-controls="user-menu-panel">
-                <span class="user-menu-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" role="img" focusable="false">
-                    <path d="M12 12.2a4.1 4.1 0 1 0-4.1-4.1 4.1 4.1 0 0 0 4.1 4.1Zm0 2c-4 0-7.2 2.1-7.2 4.7 0 .5.4.9.9.9h12.6a.9.9 0 0 0 .9-.9c0-2.6-3.2-4.7-7.2-4.7Z" fill="currentColor"/>
-                  </svg>
-                </span>
-                <span class="sr-only">Account</span>
-                <span class="user-menu-name"><%= resolvedCurrentUser.username %></span>
-              </button>
-              <div class="user-menu-panel" id="user-menu-panel" hidden>
-                <a href="/account" class="user-menu-link">Profile</a>
-                <form method="POST" action="/logout" class="user-menu-form">
-                  <input type="hidden" name="_csrf" value="<%= resolvedCsrfToken %>">
-                  <button type="submit" class="user-menu-link user-menu-button">Sign out</button>
-                </form>
-              </div>
-            </div>
-          <% } else { %>
-            <a href="/login" class="nav-login-link">Sign in</a>
-          <% } %>
+      <div class="header-utility-nav">
+        <div class="header-search-tools">
+          <form action="/search" method="GET" class="search-form site-search-form" role="search">
+            <span class="site-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" focusable="false">
+                <path d="M8.5 3.25a5.25 5.25 0 1 1 0 10.5 5.25 5.25 0 0 1 0-10.5Zm0 1.5a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Zm4.2 7.9 3.08 3.08a.75.75 0 0 1-1.06 1.06l-3.08-3.08 1.06-1.06Z"/>
+              </svg>
+            </span>
+            <label class="sr-only" for="site-search-input">Search the archive</label>
+            <input id="site-search-input" type="search" name="q" placeholder="Search transcripts, names, places..." value="<%= resolvedQuery %>" autocomplete="off">
+            <kbd class="site-search-shortcut" aria-hidden="true"><%= searchShortcutLabel %></kbd>
+            <button type="submit" class="sr-only">Search</button>
+          </form>
         </div>
+
+        <% if (resolvedCurrentUser) { %>
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-toggle" id="user-menu-toggle" aria-expanded="false" aria-controls="user-menu-panel">
+              <span class="user-menu-icon" aria-hidden="true">
+                <%= resolvedUserInitial %>
+              </span>
+              <span class="sr-only">Account for <%= resolvedCurrentUser.username || resolvedCurrentUser.email || 'current user' %></span>
+            </button>
+            <div class="user-menu-panel" id="user-menu-panel" hidden>
+              <a href="/account" class="user-menu-link">Profile</a>
+              <form method="POST" action="/logout" class="user-menu-form">
+                <input type="hidden" name="_csrf" value="<%= resolvedCsrfToken %>">
+                <button type="submit" class="user-menu-link user-menu-button">Sign out</button>
+              </form>
+            </div>
+          </div>
+        <% } else { %>
+          <a href="/login" class="nav-login-link">Sign in</a>
+        <% } %>
       </div>
     </div>
   </header>
