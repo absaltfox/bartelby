@@ -19,6 +19,9 @@ const {
   resolveVertexBatchConfig,
   uploadTextToGcs
 } = require('./vertex-batch');
+const {
+  fetchJson, fetchText, parseJsonl, estimateJsonBytes, formatBytes
+} = require('./batch-core');
 
 const BATCH_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 const DEFAULT_MAX_REQUESTS_PER_CHUNK = 25;
@@ -50,42 +53,6 @@ function getBatchChunkLimits() {
     maxBytes: Number.isInteger(maxBytes) && maxBytes > 0 ? maxBytes : DEFAULT_MAX_CHUNK_BYTES,
     maxChunks: Number.isInteger(maxChunks) && maxChunks > 0 ? maxChunks : DEFAULT_MAX_CHUNKS
   };
-}
-
-function estimateJsonBytes(value) {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return 'unknown size';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-async function fetchJson(url, options = {}, errorPrefix = 'Request failed') {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch (err) {
-    data = null;
-  }
-  if (!response.ok) {
-    const message = data?.error?.message || data?.message || text || `${errorPrefix} (${response.status})`;
-    throw new Error(message);
-  }
-  return data;
-}
-
-async function fetchText(url, options = {}, errorPrefix = 'Request failed') {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(text || `${errorPrefix} (${response.status})`);
-  }
-  return text;
 }
 
 function parseChunkedBatchState(remoteId) {
@@ -508,14 +475,6 @@ async function submitExtractionBatch(job, runtimeConfig = {}) {
     return await submitVertexExtractionBatch(job, runtime, manifest);
   }
   return await submitChunkedProviderBatch(job, runtime, manifest, buildGeminiRequestEntry, submitGeminiBatchChunk);
-}
-
-function parseJsonl(text) {
-  return String(text || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
 }
 
 function extractOpenAiExtractionResult(entry, requestedModel, temperature) {

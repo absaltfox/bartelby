@@ -42,7 +42,9 @@ These rules are load-bearing — change them only with deliberate review.
   `batch_submitted` untouched.
 - Provider routing: `utils/sentiment/provider.js` adapter wraps `utils/llm.js`
   (`getUtilityModelInstance` + `generateText` for singleton; lazy-requires
-  `utils/sentiment-batches.js` for batch — see Phase 1.5 below).
+  `utils/sentiment-batches.js` for batch).
+- Shared batch utilities: `utils/batch-core.js` (HTTP, JSONL, byte helpers).
+- Sentiment batch primitives: `utils/sentiment-batches.js` (OpenAI, Anthropic, Gemini, Vertex). No chunking.
 - Phrase embedding: `utils/sentiment/embed.js` (`Xenova/all-MiniLM-L6-v2`,
   `q8`, chunk size 64).
 
@@ -58,26 +60,139 @@ These rules are load-bearing — change them only with deliberate review.
 | `sentiment.vocab_debounce_phrase_count` | 50 | (Phase 2) New-phrase threshold for auto-trigger |
 | `sentiment.auto_route_threshold` | 0.80 | (Phase 2) Cosine threshold for auto-routing to existing labeled clusters |
 
+## Recommended prompt template (v3)
+
+The default seeded prompt is empty. Operators paste this v3 template into
+Admin → Settings → Sentiment to capture full paradata (per-annotation
+reasoning and per-document observations). Customize as needed; the
+parser is tolerant of missing optional fields.
+
+````
+You annotate sentiment in 19th-century letters sent to the British Columbia
+Department of Education (1872-1900). Letter writers are teachers, school
+trustees, parents, settlers, and inspectors.
+
+Your job: extract every emotion the writer expresses or describes. For each
+emotion, output one annotation. Quote the EXACT words from the transcript
+in `emotion_phrase_verbatim` — do not paraphrase, do not invent text.
+
+# EXAMPLE
+
+Transcript excerpt:
+  "Sir thinking that you would be anxious to hear who are the School
+  Trustees ... everything was going along first rate ... I should wish to
+  resign in favor of a professional bill Sticker. The new School House is
+  progressing slowly..."
+
+Expected output:
+{
+  "document_notes": "A teacher-trustee correspondence about a school house under construction. The writer alternates between procedural reporting and personal frustration. Note the use of 'anxious to hear' as a politeness convention attributing eagerness to the recipient — this is described_subject voice, not author anxiety.",
+  "annotations": [
+    {
+      "emotion_phrase_verbatim": "anxious to hear",
+      "polarity": "positive",
+      "intensity": "low",
+      "voice_role": "described_subject",
+      "target_kind": "phrase",
+      "target_phrase": "the situation",
+      "confidence": 0.7,
+      "span_start": 35,
+      "span_end": 50,
+      "plutchik_hint": ["anticipation"],
+      "notes": "19th-century 'anxious' = eager/curious, attributed by writer to recipient (Jessop) as polite framing of the report's purpose. Not author's own anxiety."
+    },
+    {
+      "emotion_phrase_verbatim": "everything was going along first rate",
+      "polarity": "positive",
+      "intensity": "moderate",
+      "voice_role": "author",
+      "target_kind": "phrase",
+      "target_phrase": "the meeting",
+      "confidence": 0.85,
+      "span_start": 350,
+      "span_end": 387,
+      "plutchik_hint": ["joy"],
+      "notes": "Direct positive evaluation of meeting proceedings before the procedural objection. 'first rate' is unambiguously period approval."
+    },
+    {
+      "emotion_phrase_verbatim": "should wish to resign in favor of a professional bill Sticker",
+      "polarity": "negative",
+      "intensity": "moderate",
+      "voice_role": "author",
+      "target_kind": "phrase",
+      "target_phrase": "his clerical duties",
+      "confidence": 0.78,
+      "span_start": 520,
+      "span_end": 582,
+      "plutchik_hint": ["anger", "disgust"],
+      "notes": "Sarcasm. Writer expresses frustration with menial duties (writing/posting notices) by hyperbolically threatening to defer to a professional sign-poster. Strong frustration despite formal letter register."
+    }
+  ]
+}
+
+# FIELD RULES
+
+- `emotion_phrase_verbatim`: EXACT substring of the transcript. Required.
+- `polarity`: "positive" | "negative" | "neutral" | "mixed"
+- `intensity`: "low" | "moderate" | "strong"
+- `voice_role`:
+    - "author" — the writer's own feeling
+    - "speaker" — feeling reported by someone the writer quotes
+    - "described_subject" — feeling the writer ascribes to a third party
+- `target_kind`:
+    - "phrase" + `target_phrase`: a topic, condition, or referent
+    - "entity" + `target_entity_id`: a named entity from the inventory below (use only ids from that list)
+- `confidence`: 0.0 to 1.0. Most letter sentiment is 0.6-0.85.
+- `span_start`, `span_end`: rough character positions. Approximate is fine — the system finds the exact location.
+- `plutchik_hint` (optional): array from {joy, trust, fear, surprise, sadness, disgust, anger, anticipation}.
+- `notes` (optional): 1-2 sentences explaining your reasoning for this annotation.
+  Why does this verbatim warrant this polarity/intensity/voice combination?
+  Note period-specific usage, ambiguity, or context that supports the call.
+  Curators read this when deciding to approve or reject.
+- `expressed_by_entity_id` (optional): when voice_role="speaker", id of quoted person.
+- `described_subject_entity_id` (optional): when voice_role="described_subject", id of the third party.
+
+- `document_notes` (optional, top-level — outside the annotations array):
+  2-3 sentences capturing your overall framing of this letter's emotional landscape.
+  What's the dominant register? Any voice-attribution patterns the curator should know?
+
+# DO emit annotations for
+
+- Direct emotional language: "greatly distressed", "much grieved", "with great satisfaction"
+- Implicit complaint: "deplorable condition", "in straitened circumstances"
+- Positive evaluation: "first rate", "progressing well"
+- Frustration / sarcasm
+- Approval / disapproval of conditions, decisions, or persons
+
+# DO NOT emit for
+
+- Pure formal register: "I have the honour to request", "Your obedient servant", "I beg to inform you"
+- Bare procedural facts: "The school is in Cariboo. There are 23 pupils."
+
+# OUTPUT TARGET
+
+Aim for 3-8 annotations per letter. If purely procedural, return
+{"document_notes":"<brief observation>","annotations":[]}.
+
+DOCUMENT METADATA: {{document_metadata}}
+
+KNOWN ENTITIES (id, name, type):
+{{known_entities}}
+
+TRANSCRIPT:
+{{transcript_content}}
+
+Respond with ONLY the JSON object — no markdown fences, no commentary, no preamble.
+````
+
 ## Phase 1 vs later phases
 
-- **Phase 1 (shipped):** schema (migration v67), extraction worker (singleton
-  path fully functional; batch path wired but provider primitives deferred),
-  phrase upsert + embedding, review queue (HTML + JSON cursor + per-row +
-  bulk).
-- **Phase 1.5 (deferred follow-up):** `utils/sentiment-batches.js` —
-  provider-specific batch primitives (OpenAI, Anthropic, Gemini, Vertex)
-  modeled on `utils/extraction-batches.js`. Until this lands,
-  `provider.submitBatch`/`getBatchStatus`/`fetchBatchResults` throw
-  `Cannot find module '../sentiment-batches'` at runtime; tests mock the
-  adapter and pass without it. Worker tests cover the worker-side logic via
-  mocks.
-- **Phase 2 (deferred):** vocabulary discovery (HDBSCAN via Python helper),
-  curator labeling.
-- **Phase 3 (deferred):** themes, theme assignments. The `target_kind` CHECK
-  constraint already permits `'theme'`; the parser strips theme-kind
-  annotations until Phase 3 ships.
-- **Phase 4 (deferred):** research surfaces (collection analytics tab, entity
-  panel, document sidebar).
+- **Phase 1 (shipped):** schema (migration v67), extraction worker (singleton + batch paths both functional), phrase upsert + embedding, review queue (HTML + JSON cursor + per-row + bulk).
+- **Phase 1.5 (shipped):** `utils/sentiment-batches.js` provider batch primitives for OpenAI, Anthropic, Gemini, Vertex. `utils/batch-core.js` shared utilities consumed by all three batch modules. Two-phase submit with `pending-<uuid>` correlation placeholder eliminates the partial-success bug. Per-job paradata (submitted_prompt, model_name, prompt_template_hash, temperature, system_prompt, extraction_notes) and per-annotation reasoning (notes) — migration v69.
+- **Phase 1.6 (deferred):** reconciliation tick that lists provider-side in-flight batches and matches against `pending-*` rows. Performance optimizations (upsertEmotionPhrase N+1, per-annotation embed batching).
+- **Phase 2 (deferred):** vocabulary discovery (HDBSCAN via Python helper), curator labeling.
+- **Phase 3 (deferred):** themes, theme assignments.
+- **Phase 4 (deferred):** research surfaces.
 
 ## Operational notes
 

@@ -190,4 +190,60 @@ describe('sentiment parse', () => {
     });
     expect(result.annotations.length).toBe(1);
   });
+
+  test('returns document_notes from top-level LLM response', () => {
+    const raw = JSON.stringify({
+      document_notes: 'A formal teacher-trustee letter with mixed-emotion landscape.',
+      annotations: [annotation()]
+    });
+    const result = parseAndValidate({
+      raw, transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.document_notes).toBe('A formal teacher-trustee letter with mixed-emotion landscape.');
+    expect(result.annotations.length).toBe(1);
+  });
+
+  test('returns null document_notes when missing', () => {
+    const raw = JSON.stringify({ annotations: [annotation()] });
+    const result = parseAndValidate({
+      raw, transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.document_notes).toBeNull();
+  });
+
+  test('passes through per-annotation notes field', () => {
+    const a = annotation({ notes: 'Direct negative evaluation in unusually strong period register.' });
+    const result = parseAndValidate({
+      raw: JSON.stringify({ annotations: [a] }),
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations[0].notes).toMatch(/period register/);
+  });
+
+  test('coerces whitespace-only notes/document_notes to null', () => {
+    const raw = JSON.stringify({
+      document_notes: '   ',
+      annotations: [annotation({ notes: '\n\n  ' })]
+    });
+    const result = parseAndValidate({
+      raw, transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.document_notes).toBeNull();
+    expect(result.annotations[0].notes).toBeNull();
+  });
+
+  test('malformed JSON case returns document_notes: null', () => {
+    const result = parseAndValidate({
+      raw: 'not json at all',
+      transcriptContent: TRANSCRIPT, knownEntities: ENTITIES,
+      reviewFloor: 0.65, autoApproveThreshold: 0.85
+    });
+    expect(result.annotations.length).toBe(0);
+    expect(result.drops.malformed_json).toBe(1);
+    expect(result.document_notes).toBeNull();
+  });
 });

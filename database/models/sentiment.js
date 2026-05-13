@@ -113,13 +113,71 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return r.changes > 0;
     },
 
-    async markDone(id, { input_tokens = null, output_tokens = null, validation_drops = null } = {}) {
+    async markBatchPending(jobIds, correlationId, { submitted_prompt = null } = {}) {
+      if (!Array.isArray(jobIds) || jobIds.length === 0) return;
+      // Per-job UPDATE because submitted_prompt differs per row
+      for (const id of jobIds) {
+        await runAsync(
+          `UPDATE sentiment_extraction_jobs
+              SET batch_remote_id = ?,
+                  batch_submitted_at = CURRENT_TIMESTAMP,
+                  submitted_prompt = ?
+            WHERE id = ? AND status = 'running' AND kind = 'batch'`,
+          [correlationId, submitted_prompt, id]
+        );
+      }
+      await saveDatabase();
+    },
+
+    async markBatchSubmittedByCorrelation(correlationId, {
+      batch_remote_id, provider, model_name,
+      prompt_template_hash = null, temperature = null, system_prompt = null
+    }) {
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'batch_submitted',
+                batch_remote_id = ?,
+                provider = COALESCE(?, provider),
+                model_name = ?,
+                prompt_template_hash = ?,
+                temperature = ?,
+                system_prompt = ?
+          WHERE batch_remote_id = ?`,
+        [batch_remote_id, provider, model_name, prompt_template_hash, temperature, system_prompt, correlationId]
+      );
+      await saveDatabase();
+    },
+
+    async markBatchSubmissionFailed(correlationId, errorMessage) {
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'failed',
+                error = ?,
+                completed_at = CURRENT_TIMESTAMP,
+                batch_remote_id = NULL
+          WHERE batch_remote_id = ?`,
+        [String(errorMessage || 'unknown error').slice(0, 2000), correlationId]
+      );
+      await saveDatabase();
+    },
+
+    async markDone(id, {
+      input_tokens = null, output_tokens = null,
+      validation_drops = null, extraction_notes = null
+    } = {}) {
       await runAsync(
         `UPDATE sentiment_extraction_jobs
             SET status = 'done', completed_at = CURRENT_TIMESTAMP,
-                input_tokens = ?, output_tokens = ?, validation_drops = ?
+                input_tokens = ?, output_tokens = ?,
+                validation_drops = ?,
+                extraction_notes = ?
           WHERE id = ?`,
-        [input_tokens, output_tokens, validation_drops ? JSON.stringify(validation_drops) : null, id]
+        [
+          input_tokens, output_tokens,
+          validation_drops ? JSON.stringify(validation_drops) : null,
+          extraction_notes,
+          id
+        ]
       );
       await saveDatabase();
     },
@@ -191,9 +249,10 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
              target_entity_id, target_phrase,
              expressed_by_entity_id, described_subject_entity_id,
              emotion_phrase_id, emotion_phrase_verbatim, plutchik_hint,
+             notes,
              approval_status, auto_approved, reviewed_at,
              extracted_by, extraction_job_id, extracted_at
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             a.transcript_id, a.document_id, a.span_start, a.span_end, a.evidence_excerpt,
             a.polarity, a.intensity, a.confidence, a.voice_role, a.target_kind,
@@ -201,6 +260,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
             a.expressed_by_entity_id ?? null, a.described_subject_entity_id ?? null,
             a.emotion_phrase_id ?? null, a.emotion_phrase_verbatim,
             a.plutchik_hint ? JSON.stringify(a.plutchik_hint) : null,
+            a.notes ?? null,
             a.approval_status || 'pending',
             a.auto_approved ? 1 : 0,
             a.auto_approved ? a.extracted_at : null,
