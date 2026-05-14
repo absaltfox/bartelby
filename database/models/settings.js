@@ -129,9 +129,18 @@ const settingsAsync = {
   },
 
   async set(key, value) {
-    const storedValue = SECRET_SETTING_KEYS.has(key) && value != null && value !== ''
-      ? encryptSecret(value)
-      : value;
+    // Trim leading/trailing whitespace on string values before storage.
+    // Operators frequently paste config values (bucket names, model ids, API
+    // keys) with stray whitespace; the GCS API rejects bucket names with
+    // leading spaces, OpenAI rejects keys with trailing newlines, etc. Trim
+    // here at the single setter funnel so every caller benefits without
+    // duplicating defensive trims across admin routes and config resolvers.
+    // Internal whitespace (e.g. inside multi-line prompt templates) is
+    // preserved — .trim() only touches the very start and end of the value.
+    const normalized = typeof value === 'string' ? value.trim() : value;
+    const storedValue = SECRET_SETTING_KEYS.has(key) && normalized != null && normalized !== ''
+      ? encryptSecret(normalized)
+      : normalized;
     await runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, storedValue]);
   },
 
