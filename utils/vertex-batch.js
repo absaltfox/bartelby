@@ -448,6 +448,7 @@ module.exports = {
   matchVertexCustomId,
   normalizeVertexBatchCredentials,
   normalizeRequestHeaders,
+  getGoogleAuthHeaders,
   resolveVertexBatchConfig,
   sanitizeObjectSegment,
   stableJsonStringify,

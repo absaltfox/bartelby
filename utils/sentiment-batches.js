@@ -18,11 +18,86 @@ function supportsSentimentBatchProvider(name) {
   return SUPPORTED_PROVIDERS.has(name);
 }
 
-// ── per-provider primitives (Tasks 10-13 will fill in) ─────────────────────
-// Task 10: OpenAI
-// Task 11: Anthropic (provider 'claude')
-// Task 12: Gemini
-// Task 13: Vertex
+// ── runtime resolution ─────────────────────────────────────────────────────
+// resolveSentimentRuntime reads provider-specific config from settings/env and
+// (for Vertex) exchanges credentials for a fresh OAuth bearer token. Mirrors the
+// resolveExtractionRuntime pattern in utils/extraction-batches.js. Called from
+// each dispatcher so callers (the sentiment worker) only need to pass
+// { correlationId }; provider config is resolved here.
+//
+// Phase 1.5 originally deferred this to a "future sentiment runtime resolver"
+// per the spec; that gap caused all batch jobs to fail at runtime with
+// "missing project in runtimeConfig" because the worker only passed
+// { correlationId }. This resolver closes that gap.
+
+async function resolveSentimentRuntime(provider, partialRuntimeConfig = {}) {
+  // Fast-path: if caller already supplied the provider-specific auth (tests
+  // routinely do, passing full runtimeConfig directly), skip the settings
+  // lookup entirely. This keeps the existing unit tests (which stub fetch but
+  // not the DB) working unchanged.
+  const hasProviderAuth = provider === 'vertex'
+    ? !!(partialRuntimeConfig.accessToken && partialRuntimeConfig.project)
+    : !!partialRuntimeConfig.apiKey;
+  if (hasProviderAuth) {
+    return { ...partialRuntimeConfig };
+  }
+
+  // Slow path: caller (the worker) only passed { correlationId }, so resolve
+  // provider config from settings/env.
+  // Lazy-require to avoid the require cycle worry: this module is only loaded
+  // from the worker after database/db.js is fully initialized.
+  // eslint-disable-next-line global-require
+  const { settingsAsync } = require('../database/db');
+  const cfg = await settingsAsync.getAll();
+  const correlationId = partialRuntimeConfig.correlationId || null;
+  const temperature = partialRuntimeConfig.temperature != null ? partialRuntimeConfig.temperature : 0;
+  const systemPrompt = partialRuntimeConfig.systemPrompt ?? null;
+
+  if (provider === 'openai') {
+    return {
+      apiKey: partialRuntimeConfig.apiKey || cfg.openai_api_key || process.env.OPENAI_API_KEY,
+      model: partialRuntimeConfig.model || cfg.openai_utility_model || cfg.openai_model || 'gpt-4o-mini',
+      temperature, systemPrompt, correlationId
+    };
+  }
+  if (provider === 'claude') {
+    return {
+      apiKey: partialRuntimeConfig.apiKey || cfg.anthropic_api_key || process.env.ANTHROPIC_API_KEY,
+      model: partialRuntimeConfig.model || cfg.anthropic_utility_model || cfg.anthropic_model || 'claude-3-5-haiku-latest',
+      temperature, systemPrompt, correlationId
+    };
+  }
+  if (provider === 'gemini') {
+    return {
+      apiKey: partialRuntimeConfig.apiKey || cfg.google_api_key || process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+      model: partialRuntimeConfig.model || cfg.google_utility_model || cfg.google_model || 'gemini-2.5-flash',
+      temperature, systemPrompt, correlationId
+    };
+  }
+  if (provider === 'vertex') {
+    // eslint-disable-next-line global-require
+    const { resolveVertexBatchConfig, getGoogleAuthHeaders } = require('./vertex-batch');
+    const vertexCfg = await resolveVertexBatchConfig(partialRuntimeConfig);
+    // Fetch a fresh OAuth bearer for this call. Tokens typically last ~1 hour,
+    // and each call (submit/poll/fetch) re-resolves so we don't carry stale
+    // tokens across the multi-hour submit→poll lifecycle.
+    const headers = await getGoogleAuthHeaders(vertexCfg);
+    const authHeader = headers.Authorization || headers.authorization || '';
+    const accessToken = authHeader.replace(/^Bearer\s+/i, '');
+    return {
+      accessToken,
+      project: vertexCfg.projectId,
+      location: vertexCfg.location,
+      gcsBucket: vertexCfg.bucket,
+      credentialsJson: vertexCfg.credentialsJson,
+      model: partialRuntimeConfig.model || cfg.vertex_utility_model || cfg.vertex_model || 'gemini-2.5-flash',
+      temperature, systemPrompt, correlationId
+    };
+  }
+  throw new Error(`resolveSentimentRuntime: unsupported provider '${provider}'`);
+}
+
+// ── per-provider primitives ────────────────────────────────────────────────
 
 // ────────────────── OpenAI ──────────────────
 
@@ -670,15 +745,16 @@ async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) 
   if (!Array.isArray(requests) || requests.length === 0) {
     throw new Error('Sentiment batch path: requests must be a non-empty array.');
   }
+  const resolvedRuntime = await resolveSentimentRuntime(provider, runtimeConfig);
   switch (provider) {
     case 'openai':
-      return submitOpenAiSentimentBatch({ requests, runtimeConfig });
+      return submitOpenAiSentimentBatch({ requests, runtimeConfig: resolvedRuntime });
     case 'claude':
-      return submitAnthropicSentimentBatch({ requests, runtimeConfig });
+      return submitAnthropicSentimentBatch({ requests, runtimeConfig: resolvedRuntime });
     case 'gemini':
-      return submitGeminiSentimentBatch({ requests, runtimeConfig });
+      return submitGeminiSentimentBatch({ requests, runtimeConfig: resolvedRuntime });
     case 'vertex':
-      return submitVertexSentimentBatch({ requests, runtimeConfig });
+      return submitVertexSentimentBatch({ requests, runtimeConfig: resolvedRuntime });
     default:
       throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
@@ -688,15 +764,16 @@ async function pollSentimentBatch({ provider, batchId, runtimeConfig = {} }) {
   if (!supportsSentimentBatchProvider(provider)) {
     throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
+  const resolvedRuntime = await resolveSentimentRuntime(provider, runtimeConfig);
   switch (provider) {
     case 'openai':
-      return pollOpenAiSentimentBatch({ batchId, runtimeConfig });
+      return pollOpenAiSentimentBatch({ batchId, runtimeConfig: resolvedRuntime });
     case 'claude':
-      return pollAnthropicSentimentBatch({ batchId, runtimeConfig });
+      return pollAnthropicSentimentBatch({ batchId, runtimeConfig: resolvedRuntime });
     case 'gemini':
-      return pollGeminiSentimentBatch({ batchId, runtimeConfig });
+      return pollGeminiSentimentBatch({ batchId, runtimeConfig: resolvedRuntime });
     case 'vertex':
-      return pollVertexSentimentBatch({ batchId, runtimeConfig });
+      return pollVertexSentimentBatch({ batchId, runtimeConfig: resolvedRuntime });
     default:
       throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
@@ -706,15 +783,16 @@ async function fetchSentimentBatchResults({ provider, batchId, runtimeConfig = {
   if (!supportsSentimentBatchProvider(provider)) {
     throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
+  const resolvedRuntime = await resolveSentimentRuntime(provider, runtimeConfig);
   switch (provider) {
     case 'openai':
-      return fetchOpenAiSentimentResults({ batchId, runtimeConfig });
+      return fetchOpenAiSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
     case 'claude':
-      return fetchAnthropicSentimentResults({ batchId, runtimeConfig });
+      return fetchAnthropicSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
     case 'gemini':
-      return fetchGeminiSentimentResults({ batchId, runtimeConfig });
+      return fetchGeminiSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
     case 'vertex':
-      return fetchVertexSentimentResults({ batchId, runtimeConfig });
+      return fetchVertexSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
     default:
       throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
