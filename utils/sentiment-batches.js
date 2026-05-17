@@ -76,12 +76,20 @@ async function resolveSentimentRuntime(provider, partialRuntimeConfig = {}) {
   }
   if (provider === 'vertex') {
     // eslint-disable-next-line global-require
-    const { resolveVertexBatchConfig, getGoogleAuthHeaders } = require('./vertex-batch');
-    const vertexCfg = await resolveVertexBatchConfig(partialRuntimeConfig);
+    const { resolveVertexBatchConfig, getGoogleAuthHeaders, normalizeRequestHeaders } = require('./vertex-batch');
+    // Signature is resolveVertexBatchConfig(cfg, runtimeConfig) — settings
+    // first, caller-supplied overrides second. Passing partialRuntimeConfig
+    // as the first arg silently empties the cfg and breaks credential
+    // resolution.
+    const vertexCfg = resolveVertexBatchConfig(cfg, partialRuntimeConfig);
     // Fetch a fresh OAuth bearer for this call. Tokens typically last ~1 hour,
     // and each call (submit/poll/fetch) re-resolves so we don't carry stale
     // tokens across the multi-hour submit→poll lifecycle.
-    const headers = await getGoogleAuthHeaders(vertexCfg);
+    // getGoogleAuthHeaders returns a Headers object (google-auth-library 10.x);
+    // normalizeRequestHeaders converts it to a plain object so we can read the
+    // Authorization entry.
+    const rawHeaders = await getGoogleAuthHeaders(vertexCfg);
+    const headers = normalizeRequestHeaders(rawHeaders);
     const authHeader = headers.Authorization || headers.authorization || '';
     const accessToken = authHeader.replace(/^Bearer\s+/i, '');
     return {
