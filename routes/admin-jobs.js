@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, adminJobsAsync } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, sentimentAsync, adminJobsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { listConfiguredProviders } = require('../utils/llm');
@@ -11,12 +11,15 @@ router.use(requireAdmin);
 const PAGE_SIZE = 50;
 
 function isActiveJobStatus(status) {
-  return status === 'queued' || status === 'running' || status === 'processing';
+  // `batch_submitted` is sentiment's in-flight provider-batch state and
+  // counts as active for deletion-guard purposes.
+  return status === 'queued' || status === 'running' || status === 'processing' || status === 'batch_submitted';
 }
 
 async function getJobByType(type, id) {
   if (type === 'import') return await importJobsAsync.getById(id);
   if (type === 'extraction') return await extractionJobsAsync.getById(id);
+  if (type === 'sentiment') return await sentimentAsync.getJobById(id);
   return await transcriptionJobsAsync.getById(id);
 }
 
@@ -83,6 +86,8 @@ router.post('/api/bulk/retry', express.json(), asyncHandler(async (req, res) => 
         await importJobsAsync.retry(parseInt(id));
       } else if (type === 'extraction') {
         await extractionJobsAsync.retry(parseInt(id));
+      } else if (type === 'sentiment') {
+        await sentimentAsync.retry(parseInt(id));
       } else {
         await transcriptionJobsAsync.retry(parseInt(id));
       }
@@ -112,6 +117,8 @@ router.post('/api/bulk/delete', express.json(), asyncHandler(async (req, res) =>
         await importJobsAsync.delete(numericId);
       } else if (type === 'extraction') {
         await extractionJobsAsync.delete(numericId);
+      } else if (type === 'sentiment') {
+        await sentimentAsync.delete(numericId);
       } else {
         await transcriptionJobsAsync.delete(numericId);
       }
@@ -285,6 +292,42 @@ router.delete('/api/import/:id', express.json(), asyncHandler(async (req, res) =
     ...audit.reqContext(req),
     jobId,
     jobType: 'import'
+  });
+  res.json({ success: true });
+}));
+
+// API: single sentiment job (for log row)
+router.get('/api/sentiment/:id', asyncHandler(async (req, res) => {
+  const job = await sentimentAsync.getJobById(parseInt(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json(job);
+}));
+
+// API: retry failed sentiment job (clears batch + paradata, re-queues)
+router.post('/api/sentiment/:id/retry', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const result = await sentimentAsync.retry(jobId);
+  if (!result?.changes) {
+    return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  }
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'sentiment'
+  });
+  res.json({ success: true });
+}));
+
+// API: delete sentiment job record
+router.delete('/api/sentiment/:id', express.json(), asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const job = await sentimentAsync.getJobById(jobId);
+  assertJobDeletable(job, 'sentiment');
+  await sentimentAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'sentiment'
   });
   res.json({ success: true });
 }));

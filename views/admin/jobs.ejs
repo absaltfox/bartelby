@@ -5,7 +5,7 @@
 
   <div class="admin-header">
     <h1>Jobs</h1>
-    <p class="subtitle">Background import, transcription, and knowledge extraction jobs</p>
+    <p class="subtitle">Background import, transcription, knowledge extraction, and sentiment jobs</p>
   </div>
 
   <!-- Filter tabs: status -->
@@ -57,6 +57,9 @@
     <a href="<%= filterHref(filter, 'extraction') %>" class="filter-tab filter-tab-type <%= typeFilter === 'extraction' ? 'active' : '' %>">
       Extraction <span class="filter-count"><%= typeCounts.extraction %></span>
     </a>
+    <a href="<%= filterHref(filter, 'sentiment') %>" class="filter-tab filter-tab-type <%= typeFilter === 'sentiment' ? 'active' : '' %>">
+      Sentiment <span class="filter-count"><%= typeCounts.sentiment %></span>
+    </a>
   </div>
 
   <!-- Bulk action bar -->
@@ -106,10 +109,13 @@
               const isImport = job.job_type === 'import';
               const isImportSubmit = isImport && job.job_kind === 'submit';
               const isImportGrouping = isImport && job.job_kind === 'grouping';
-              const isBatch = !isImport && job.job_kind === 'batch';
+              const isSentiment = job.job_type === 'sentiment';
+              const isBatch = !isImport && !isSentiment && job.job_kind === 'batch';
               const canDelete = job.status === 'done' || job.status === 'failed';
               const canRetry = job.status === 'failed' && (!isImport || isImportSubmit);
-              const canEdit = job.status === 'failed' && !isImport;
+              // Sentiment has no provider-edit flow (model is resolved per-cycle
+              // from settings, not stored per-job in an editable form).
+              const canEdit = job.status === 'failed' && !isImport && !isSentiment;
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
                 data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
@@ -119,7 +125,12 @@
               </td>
               <td>
                 <span class="job-type-badge job-type-<%= job.job_type %>">
-                  <%= isImportSubmit ? 'Submit' : isImportGrouping ? 'Grouping' : isImport ? 'Import' : job.job_type === 'extraction' ? 'Extraction' : 'Transcription' %>
+                  <%= isImportSubmit ? 'Submit'
+                    : isImportGrouping ? 'Grouping'
+                    : isImport ? 'Import'
+                    : job.job_type === 'extraction' ? 'Extraction'
+                    : isSentiment ? 'Sentiment'
+                    : 'Transcription' %>
                 </span>
               </td>
               <td>
@@ -266,7 +277,8 @@
   apiBasesByType: {
     transcription: jobsApiBase + '/',
     extraction: jobsApiBase + '/extraction/',
-    import: jobsApiBase + '/import/'
+    import: jobsApiBase + '/import/',
+    sentiment: jobsApiBase + '/sentiment/'
   },
   pollUrl: jobsApiBase + '/all',
   activePollUrl: jobsApiBase + '/all',

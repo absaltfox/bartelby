@@ -38,7 +38,7 @@ function matchesStatusFilter(status, statusFilter) {
   return status === normalized;
 }
 
-function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction']) {
+function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment']) {
   const normalized = String(typeFilter || 'all').toLowerCase();
   return allowed.includes(normalized) ? normalized : 'all';
 }
@@ -52,7 +52,10 @@ function addStatusCount(target, status, count) {
   target.total += numericCount;
   if (status === 'queued') {
     target.queued += numericCount;
-  } else if (status === 'running' || status === 'processing') {
+  } else if (status === 'running' || status === 'processing' || status === 'batch_submitted') {
+    // `batch_submitted` is sentiment's in-flight state (provider has the batch,
+    // worker is polling). Group it under "running" so the unified Jobs tab
+    // shows it the same way as a transcription job that is mid-call.
     target.running += numericCount;
   } else if (status === 'done') {
     target.done += numericCount;
@@ -1334,6 +1337,20 @@ const adminJobsAsync = {
         : counts[normalizedStatus] || 0;
   },
 
+  async getSentimentCounts(statusFilter = 'all') {
+    const counts = buildCountMap(await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM sentiment_extraction_jobs
+      GROUP BY status
+    `));
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    return normalizedStatus === 'all'
+      ? counts
+      : normalizedStatus === 'running'
+        ? counts.running
+        : counts[normalizedStatus] || 0;
+  },
+
   async getTranscriptionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
     const normalizedStatus = normalizeStatusFilter(statusFilter);
     const params = [];
@@ -1443,15 +1460,57 @@ const adminJobsAsync = {
     return rows.map((row) => normalizeJobSummary(row, 'extraction'));
   },
 
+  async getSentimentSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
+    const normalizedStatus = normalizeStatusFilter(statusFilter);
+    const params = [];
+    let statusClause = '';
+    if (normalizedStatus === 'running') {
+      // Sentiment uses `batch_submitted` while a provider batch is in flight;
+      // include it under the unified "running" filter alongside the legacy
+      // `running` / `processing` states.
+      statusClause = "WHERE j.status IN ('running', 'processing', 'batch_submitted')";
+    } else if (normalizedStatus !== 'all') {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalizedStatus);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id,
+        j.created_at,
+        j.status,
+        j.document_id,
+        j.transcript_id,
+        j.started_at,
+        j.completed_at,
+        j.error,
+        j.provider,
+        j.model_name AS model,
+        j.kind AS job_kind,
+        j.batch_remote_id,
+        j.batch_submitted_at,
+        j.input_tokens,
+        j.output_tokens,
+        d.title AS document_title
+      FROM sentiment_extraction_jobs j
+      LEFT JOIN documents d ON j.document_id = d.id
+      ${statusClause}
+      ORDER BY j.created_at DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => normalizeJobSummary(row, 'sentiment'));
+  },
+
   // Overall + per-type counts (no filter applied — used for tab badges)
   async getCounts(statusFilter = 'all', typeFilter = 'all') {
     const normalizedType = normalizeTypeFilter(typeFilter);
     const normalizedStatus = normalizeStatusFilter(statusFilter);
 
-    const [transcriptionCounts, importCounts, extractionCounts] = await Promise.all([
+    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts] = await Promise.all([
       this.getTranscriptionCounts(),
       this.getImportCounts(),
-      this.getExtractionCounts()
+      this.getExtractionCounts(),
+      this.getSentimentCounts()
     ]);
 
     // Status tab counts: scoped to typeFilter (shows the breakdown for the selected type)
@@ -1459,7 +1518,8 @@ const adminJobsAsync = {
     if (normalizedType === 'transcription') statusCounts = transcriptionCounts;
     else if (normalizedType === 'import') statusCounts = importCounts;
     else if (normalizedType === 'extraction') statusCounts = extractionCounts;
-    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts);
+    else if (normalizedType === 'sentiment') statusCounts = sentimentCounts;
+    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts);
 
     // Type tab counts: scoped to statusFilter (shows how many of each type match the current status)
     const getCount = (countMap) => {
@@ -1473,7 +1533,8 @@ const adminJobsAsync = {
       typeCounts: {
         import: getCount(importCounts),
         transcription: getCount(transcriptionCounts),
-        extraction: getCount(extractionCounts)
+        extraction: getCount(extractionCounts),
+        sentiment: getCount(sentimentCounts)
       }
     };
   },
@@ -1491,12 +1552,16 @@ const adminJobsAsync = {
     if (normalizedType === 'extraction') {
       return await this.getExtractionCounts(normalizedStatus);
     }
-    const [transcriptionCount, importCount, extractionCount] = await Promise.all([
+    if (normalizedType === 'sentiment') {
+      return await this.getSentimentCounts(normalizedStatus);
+    }
+    const [transcriptionCount, importCount, extractionCount, sentimentCount] = await Promise.all([
       this.getTranscriptionCounts(normalizedStatus),
       this.getImportCounts(normalizedStatus),
-      this.getExtractionCounts(normalizedStatus)
+      this.getExtractionCounts(normalizedStatus),
+      this.getSentimentCounts(normalizedStatus)
     ]);
-    return transcriptionCount + importCount + extractionCount;
+    return transcriptionCount + importCount + extractionCount + sentimentCount;
   },
 
   // Paginated combined job list
@@ -1514,6 +1579,9 @@ const adminJobsAsync = {
         : [],
       normalizedType === 'all' || normalizedType === 'extraction'
         ? this.getExtractionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'sentiment'
+        ? this.getSentimentSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
         : []
     ]);
 
@@ -1525,12 +1593,13 @@ const adminJobsAsync = {
 
   // Active jobs only (for AJAX polling — avoids historical scans)
   async getActive() {
-    const [transcriptionJobs, importJobs, extractionJobs] = await Promise.all([
+    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs] = await Promise.all([
       this.getTranscriptionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getImportSummaries({ statusFilter: 'running', limit: 1000 }),
-      this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 })
+      this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getSentimentSummaries({ statusFilter: 'running', limit: 1000 })
     ]);
-    return [...transcriptionJobs, ...importJobs, ...extractionJobs].sort(sortJobsByCreatedAtDesc);
+    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs].sort(sortJobsByCreatedAtDesc);
   }
 };
 

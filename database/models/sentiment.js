@@ -192,6 +192,46 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       await saveDatabase();
     },
 
+    // Surface a single failed/done sentiment job back to the queue. Clears
+    // batch correlation + per-job paradata so the worker rebuilds the request
+    // cleanly. Mirrors transcriptionJobsAsync.retry / extractionJobsAsync.retry
+    // so the admin /admin/jobs Retry button works across all job types.
+    async retry(id) {
+      const result = await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'queued',
+                kind = 'singleton',
+                batch_remote_id = NULL,
+                batch_submitted_at = NULL,
+                batch_finalization_claimed_at = NULL,
+                batch_finalization_claimed_by = NULL,
+                started_at = NULL,
+                completed_at = NULL,
+                error = NULL,
+                validation_drops = NULL,
+                input_tokens = NULL,
+                output_tokens = NULL,
+                submitted_prompt = NULL,
+                model_name = NULL,
+                prompt_template_hash = NULL,
+                temperature = NULL,
+                system_prompt = NULL,
+                extraction_notes = NULL
+          WHERE id = ? AND status IN ('failed', 'done')`,
+        [id]
+      );
+      await saveDatabase();
+      return result;
+    },
+
+    async delete(id) {
+      await runAsync(
+        `DELETE FROM sentiment_extraction_jobs WHERE id = ? AND status IN ('done', 'failed')`,
+        [id]
+      );
+      await saveDatabase();
+    },
+
     async upsertEmotionPhrase(verbatim) {
       const normalized = normalizePhrase(verbatim);
       if (!normalized) throw new Error('emotion phrase normalized to empty string');

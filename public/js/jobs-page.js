@@ -152,7 +152,9 @@
 
     var canDelete = job.status === 'done' || job.status === 'failed';
     var canRetry = job.status === 'failed' && (job.job_type !== 'import' || job.job_kind === 'submit');
-    var canEdit = job.status === 'failed' && job.job_type !== 'import';
+    // Sentiment has no provider-edit flow (provider/model resolved per-cycle
+    // from settings); keep parity with the server-side EJS render.
+    var canEdit = job.status === 'failed' && job.job_type !== 'import' && job.job_type !== 'sentiment';
     var isAdmin = config && config.mode === 'admin';
 
     var html = '<div class="job-actions">';
