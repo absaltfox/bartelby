@@ -369,10 +369,22 @@ const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 // unknown fields; the batch wrapper preserves envelope-level `metadata` and
 // echoes it back in the response, which is how transcription does Gemini
 // correlation (utils/transcription-batches.js:369).
+//
+// `responseMimeType: 'application/json'` constrains the model to structured
+// output (mirrors extraction/transcription). `thinkingConfig.thinkingBudget: 0`
+// disables Gemini 2.5+/3.x private reasoning — sentiment annotation is a
+// schema-constrained task, and an unbounded thinking budget burns through
+// `maxOutputTokens` (~4000 thought tokens leaves no room for the JSON answer,
+// triggering finishReason=MAX_TOKENS with empty text).
 function buildGeminiSentimentRequest({ prompt, systemPrompt, temperature }) {
   const req = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 }
+    generationConfig: {
+      temperature: temperature ?? 0,
+      maxOutputTokens: 8192,
+      responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 }
+    }
   };
   if (systemPrompt) {
     req.systemInstruction = { parts: [{ text: systemPrompt }] };
@@ -502,10 +514,23 @@ function buildVertexBatchPredictionUrl({ project, location, batchId = null }) {
 // extras. Correlation back to a job is handled via the matcher (see
 // buildVertexSentimentDescriptors below), keyed off a hash of this exact
 // object echoed in the output JSONL row's `request` field.
+//
+// `responseMimeType: 'application/json'` constrains the model to structured
+// output (mirrors extraction/transcription). `thinkingConfig.thinkingBudget: 0`
+// disables Gemini 2.5+/3.x private reasoning — sentiment annotation is a
+// schema-constrained task, and an unbounded thinking budget burns through
+// `maxOutputTokens` (we observed ~3900 thought tokens leaving no room for
+// the JSON answer and triggering finishReason=MAX_TOKENS with empty text
+// on roughly 35% of jobs).
 function buildVertexSentimentRequest({ prompt, systemPrompt, temperature }) {
   const req = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 }
+    generationConfig: {
+      temperature: temperature ?? 0,
+      maxOutputTokens: 8192,
+      responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 }
+    }
   };
   if (systemPrompt) {
     req.systemInstruction = { parts: [{ text: systemPrompt }] };
