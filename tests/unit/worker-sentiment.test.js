@@ -197,4 +197,40 @@ describe('worker-sentiment singleton path', () => {
     expect(annA[0].auto_approved).toBe(1);
     expect(annB[0].approval_status).toBe('pending');
   });
+
+  test('batch finalization: per-row result.error marks job failed (not done)', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    provider.submitBatch.mockResolvedValueOnce({ batch_id: 'remote-err', provider: 'vertex' });
+
+    // Two jobs to clear the singleton/batch threshold; we'll only fail one.
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (4, 1, 'extra content for err test')`);
+    const jFail = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    const jOk = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 4 });
+    await runSentimentExtractionCycle();
+
+    provider.getBatchStatus.mockResolvedValueOnce({ status: 'completed' });
+    // jFail returns a per-row error (Vertex proto rejection shape). jOk
+    // returns a normal result. The worker must mark jFail `failed` rather
+    // than running parseAndValidate on empty text and silently marking it
+    // `done`.
+    provider.fetchBatchResults.mockResolvedValueOnce([
+      { request_id: String(jFail), text: '', error: "no such field: 'metadata'" },
+      { request_id: String(jOk), text: JSON.stringify({ annotations: [{
+        span_start: 0, span_end: 9, emotion_phrase_verbatim: 'extra con',
+        polarity: 'negative', intensity: 'low', voice_role: 'author',
+        target_kind: 'phrase', target_phrase: 'content', confidence: 0.9
+      }]}), usage: { input_tokens: 10, output_tokens: 5 } }
+    ]);
+
+    const { pollRunningSentimentBatches } = require('../../utils/worker-sentiment');
+    await pollRunningSentimentBatches();
+
+    const failed = await db.sentimentAsync.getJobById(jFail);
+    const ok = await db.sentimentAsync.getJobById(jOk);
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toMatch(/no such field/);
+    expect(ok.status).toBe('done');
+    expect((await db.sentimentAsync.getAnnotationsByJobId(jFail)).length).toBe(0);
+    expect((await db.sentimentAsync.getAnnotationsByJobId(jOk)).length).toBe(1);
+  });
 });

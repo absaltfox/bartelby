@@ -254,20 +254,34 @@ async function pollRunningSentimentBatches() {
     const acquired = await db.sentimentAsync.claimBatchFinalization(remoteId, claimedBy);
     if (!acquired) continue;
 
+    // Load jobs before fetching results — Vertex needs them to rebuild
+    // request descriptors for content-hash correlation. Other providers
+    // ignore the argument.
+    const jobs = await db.sentimentAsync.listBatchSubmittedByRemoteId(remoteId);
+    const byId = new Map(jobs.map((j) => [String(j.id), j]));
+
     let results;
     try {
-      results = await provider.fetchBatchResults({ provider: config.providerName, batchId: remoteId });
+      results = await provider.fetchBatchResults({
+        provider: config.providerName,
+        batchId: remoteId,
+        jobs
+      });
     } catch (err) {
       console.warn(`[worker-sentiment] fetchBatchResults(${remoteId}) failed: ${err.message}`);
       continue;
     }
 
-    const jobs = await db.sentimentAsync.listBatchSubmittedByRemoteId(remoteId);
-    const byId = new Map(jobs.map((j) => [String(j.id), j]));
-
     for (const result of results || []) {
       const job = byId.get(String(result.request_id));
       if (!job) continue;
+      // Per-row error from the provider (e.g. Vertex proto rejection, Gemini
+      // candidate-level failure): mark the job failed rather than running
+      // parseAndValidate on empty text and silently marking it done.
+      if (result && result.error) {
+        await db.sentimentAsync.markFailed(job.id, `Batch row failed: ${result.error}`);
+        continue;
+      }
       try {
         const transcript = await db.getAsync(`SELECT id, content FROM transcripts WHERE id = ?`, [job.transcript_id]);
         const knownEntities = await loadKnownEntities(job.document_id);

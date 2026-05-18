@@ -11,6 +11,7 @@
 
 // eslint-disable-next-line no-unused-vars
 const { fetchJson, fetchText, parseJsonl, estimateJsonBytes, formatBytes } = require('./batch-core');
+const { buildVertexRequestMatcher, matchVertexCustomId } = require('./vertex-batch');
 
 const SUPPORTED_PROVIDERS = new Set(['openai', 'claude', 'gemini', 'vertex']);
 
@@ -363,11 +364,15 @@ async function fetchAnthropicSentimentResults({ batchId, runtimeConfig }) {
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
-function buildGeminiSentimentRequest({ requestId, prompt, systemPrompt, temperature }) {
+// `metadata.bartelby_request_id` is set on the envelope (sibling of `request`),
+// NOT inside `request`. The Gemini `GenerateContentRequest` proto rejects
+// unknown fields; the batch wrapper preserves envelope-level `metadata` and
+// echoes it back in the response, which is how transcription does Gemini
+// correlation (utils/transcription-batches.js:369).
+function buildGeminiSentimentRequest({ prompt, systemPrompt, temperature }) {
   const req = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 },
-    metadata: { bartelby_request_id: String(requestId) }
+    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 }
   };
   if (systemPrompt) {
     req.systemInstruction = { parts: [{ text: systemPrompt }] };
@@ -386,10 +391,13 @@ async function submitGeminiSentimentBatch({ requests, runtimeConfig }) {
 
   const url = `${GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:batchGenerateContent?key=${encodeURIComponent(apiKey)}`;
   const body = {
-    requests: requests.map((r) => buildGeminiSentimentRequest({
-      requestId: r.request_id, prompt: r.prompt,
-      systemPrompt: r.system ?? systemPrompt,
-      temperature
+    requests: requests.map((r) => ({
+      request: buildGeminiSentimentRequest({
+        prompt: r.prompt,
+        systemPrompt: r.system ?? systemPrompt,
+        temperature
+      }),
+      metadata: { bartelby_request_id: String(r.request_id) }
     }))
   };
   const resp = await fetchJson(url, {
@@ -452,14 +460,20 @@ async function fetchGeminiSentimentResults({ batchId, runtimeConfig }) {
 // Vertex differs from the other three providers: requests are staged as a
 // JSONL file in a Cloud Storage bucket, then a batchPredictionJobs resource
 // is created with a gs:// inputUri. Results are written back to a
-// gcsOutputDirectory under the bucket. The 1:1 sentiment mapping uses
-// `metadata.bartelby_request_id` on each request to correlate results to
-// job rows. Auth here is a plain bearer token (Application Default
-// Credentials or a service-account-minted access token), supplied by the
-// caller as `runtimeConfig.accessToken`. The richer
-// `utils/vertex-batch.js` helpers (which lean on google-auth-library) are
-// the right choice for the extraction path, but the sentiment dispatch
-// layer keeps fetch as the single I/O seam so tests can stub it directly.
+// gcsOutputDirectory under the bucket. Correlation back to job rows uses
+// `buildVertexRequestMatcher`/`matchVertexCustomId` (the same helpers
+// extraction and transcription use): each output line echoes the original
+// `request`, and the matcher resolves it to a customId via a hash of the
+// canonical request JSON (with prompt-text and file-URI fallbacks). The
+// request body itself must contain only valid `GenerateContentRequest`
+// fields — Vertex's proto validator rejects extras like `metadata` before
+// inference runs, which silently fails the whole batch. Auth here is a
+// plain bearer token (Application Default Credentials or a
+// service-account-minted access token), supplied by the caller as
+// `runtimeConfig.accessToken`. The richer `utils/vertex-batch.js` helpers
+// (which lean on google-auth-library) are the right choice for the
+// extraction path, but the sentiment dispatch layer keeps fetch as the
+// single I/O seam so tests can stub it directly.
 
 function vertexEndpointPrefix(location) {
   return location === 'global' ? '' : `${location}-`;
@@ -484,16 +498,36 @@ function buildVertexBatchPredictionUrl({ project, location, batchId = null }) {
   return `${base}/${encodeURIComponent(batchId)}`;
 }
 
-function buildVertexSentimentRequest({ requestId, prompt, systemPrompt, temperature }) {
+// Build a sentiment GenerateContentRequest. Only valid proto fields — no
+// extras. Correlation back to a job is handled via the matcher (see
+// buildVertexSentimentDescriptors below), keyed off a hash of this exact
+// object echoed in the output JSONL row's `request` field.
+function buildVertexSentimentRequest({ prompt, systemPrompt, temperature }) {
   const req = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 },
-    metadata: { bartelby_request_id: String(requestId) }
+    generationConfig: { temperature: temperature ?? 0, maxOutputTokens: 4096 }
   };
   if (systemPrompt) {
     req.systemInstruction = { parts: [{ text: systemPrompt }] };
   }
   return req;
+}
+
+// Build matcher descriptors for fetchVertexSentimentResults. Each descriptor
+// pairs a customId (= String(job.id)) with the rebuilt request object so the
+// matcher can resolve output rows back to jobs by content hash. The rebuild
+// uses the per-job paradata (submitted_prompt, system_prompt, temperature)
+// persisted at submit time, so the rebuilt request is byte-identical (under
+// canonical JSON) to what was originally staged.
+function buildVertexSentimentDescriptors(jobs, { systemPrompt = null, temperature = 0 } = {}) {
+  return (jobs || []).map((job) => ({
+    customId: String(job.id),
+    requestObject: buildVertexSentimentRequest({
+      prompt: job.submitted_prompt || '',
+      systemPrompt: job.system_prompt ?? systemPrompt,
+      temperature: job.temperature != null ? job.temperature : temperature
+    })
+  }));
 }
 
 function vertexSentimentObjectPrefix(correlationId) {
@@ -550,7 +584,6 @@ async function submitVertexSentimentBatch({ requests, runtimeConfig }) {
   const jsonl = requests
     .map((r) => JSON.stringify({
       request: buildVertexSentimentRequest({
-        requestId: r.request_id,
         prompt: r.prompt,
         systemPrompt: r.system ?? systemPrompt,
         temperature
@@ -665,27 +698,42 @@ async function downloadVertexSentimentObject({ accessToken, bucket, objectName }
   }, 'Vertex GCS download');
 }
 
-function extractVertexSentimentRow(row) {
-  const requestMeta = row?.request?.metadata || {};
-  const requestId = requestMeta.bartelby_request_id;
+function extractVertexSentimentRow(customId, row) {
   const response = row?.response || {};
   const candidate = response.candidates?.[0];
   const textParts = candidate?.content?.parts || [];
   const usage = response.usageMetadata || {};
-  const status = String(row?.status || '').trim();
+  const rawStatus = row?.status;
+  // Vertex emits per-row `status` as either a non-empty string (legacy) or a
+  // proto-style object `{code, message, ...}` where code !== 0 indicates
+  // failure. Treat either as an error so the worker can mark the job failed
+  // rather than swallowing the bad row as an empty success.
+  const statusError = (() => {
+    if (rawStatus == null) return null;
+    if (typeof rawStatus === 'string') {
+      const trimmed = rawStatus.trim();
+      return trimmed ? trimmed : null;
+    }
+    if (typeof rawStatus === 'object') {
+      const code = Number(rawStatus.code || 0);
+      if (code === 0) return null;
+      return rawStatus.message || `Vertex status code ${code}`;
+    }
+    return String(rawStatus);
+  })();
 
-  if (status || !row?.response) {
+  if (statusError || !row?.response) {
     return {
-      request_id: requestId != null ? String(requestId) : null,
+      request_id: customId != null ? String(customId) : null,
       text: '',
       usage: { input_tokens: null, output_tokens: null },
       model_name: null,
-      error: status || 'Vertex sentiment batch request failed.'
+      error: statusError || 'Vertex sentiment batch request failed.'
     };
   }
 
   return {
-    request_id: requestId != null ? String(requestId) : null,
+    request_id: customId != null ? String(customId) : null,
     text: textParts.map((p) => p.text || '').join(''),
     usage: {
       input_tokens: usage.promptTokenCount ?? null,
@@ -695,7 +743,7 @@ function extractVertexSentimentRow(row) {
   };
 }
 
-async function fetchVertexSentimentResults({ batchId, runtimeConfig }) {
+async function fetchVertexSentimentResults({ batchId, runtimeConfig, descriptors = [] }) {
   const {
     accessToken,
     project,
@@ -734,11 +782,13 @@ async function fetchVertexSentimentResults({ batchId, runtimeConfig }) {
     prefix: parsed.objectPrefix
   });
 
+  const matcher = buildVertexRequestMatcher(descriptors);
   const rows = [];
   for (const objectName of objectNames) {
     const text = await downloadVertexSentimentObject({ accessToken, bucket, objectName });
     for (const row of parseJsonl(text)) {
-      rows.push(extractVertexSentimentRow(row));
+      const customId = matchVertexCustomId(matcher, row?.request);
+      rows.push(extractVertexSentimentRow(customId, row));
     }
   }
   return rows;
@@ -787,7 +837,12 @@ async function pollSentimentBatch({ provider, batchId, runtimeConfig = {} }) {
   }
 }
 
-async function fetchSentimentBatchResults({ provider, batchId, runtimeConfig = {} }) {
+// `jobs` is the list of in-flight sentiment_extraction_jobs rows sharing this
+// batch_remote_id, as returned by listBatchSubmittedByRemoteId. Vertex needs
+// them to rebuild request descriptors for the content-hash matcher; the other
+// providers ignore the argument (their result rows carry custom_id /
+// envelope-level metadata).
+async function fetchSentimentBatchResults({ provider, batchId, jobs = [], runtimeConfig = {} }) {
   if (!supportsSentimentBatchProvider(provider)) {
     throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }
@@ -799,8 +854,10 @@ async function fetchSentimentBatchResults({ provider, batchId, runtimeConfig = {
       return fetchAnthropicSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
     case 'gemini':
       return fetchGeminiSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
-    case 'vertex':
-      return fetchVertexSentimentResults({ batchId, runtimeConfig: resolvedRuntime });
+    case 'vertex': {
+      const descriptors = buildVertexSentimentDescriptors(jobs, resolvedRuntime);
+      return fetchVertexSentimentResults({ batchId, runtimeConfig: resolvedRuntime, descriptors });
+    }
     default:
       throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
   }

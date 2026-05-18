@@ -220,7 +220,7 @@ describe('Gemini sentiment batch primitives', () => {
   });
   afterEach(() => { global.fetch = originalFetch; });
 
-  test('submitSentimentBatch builds an inline-request batch prediction', async () => {
+  test('submitSentimentBatch builds an inline-request batch prediction with envelope metadata', async () => {
     let posted;
     global.fetch = jest.fn(async (url, opts) => {
       if (opts.method === 'POST' && url.includes(':batchGenerateContent')) {
@@ -238,7 +238,13 @@ describe('Gemini sentiment batch primitives', () => {
 
     expect(result.batch_id).toBe('operations/op-1');
     expect(posted.requests).toHaveLength(2);
-    expect(posted.requests[0].metadata?.bartelby_request_id || posted.requests[0].metadata?.bartelby_correlation_id).toBeDefined();
+    // metadata is on the envelope (sibling of `request`), not inside it —
+    // GenerateContentRequest rejects unknown fields.
+    expect(posted.requests[0].metadata?.bartelby_request_id).toBe('1');
+    expect(posted.requests[0].request).toBeDefined();
+    expect(posted.requests[0].request.metadata).toBeUndefined();
+    expect(posted.requests[0].request.contents).toBeDefined();
+    expect(posted.requests[1].metadata?.bartelby_request_id).toBe('2');
   });
 
   test('pollSentimentBatch resolves operation state', async () => {
@@ -324,6 +330,18 @@ describe('Vertex sentiment batch primitives', () => {
     expect(vertexCalls.length).toBe(1);
     expect(vertexCalls[0].body.displayName).toContain('pending-v-1');
     expect(vertexCalls[0].body.model).toContain('gemini-3.1-flash-lite-preview');
+    // The staged JSONL must contain only valid GenerateContentRequest fields —
+    // no `metadata` (Vertex's proto validator rejects unknown fields, which
+    // silently fails every row in the batch).
+    const stagedJsonl = String(gcsUploads[0].body);
+    const stagedLines = stagedJsonl.trim().split('\n').map((l) => JSON.parse(l));
+    expect(stagedLines).toHaveLength(2);
+    for (const line of stagedLines) {
+      expect(line.request).toBeDefined();
+      expect(line.request.metadata).toBeUndefined();
+      expect(line.request.contents).toBeDefined();
+      expect(line.request.generationConfig).toBeDefined();
+    }
   });
 
   test('pollSentimentBatch maps Vertex JOB_STATE_* to normalized status', async () => {
@@ -341,7 +359,37 @@ describe('Vertex sentiment batch primitives', () => {
     expect(result.status).toBe('completed');
   });
 
-  test('fetchSentimentBatchResults downloads JSONL from GCS output', async () => {
+  test('fetchSentimentBatchResults correlates output rows via matcher (no metadata)', async () => {
+    // The request body echoed back in each output row must match what we
+    // staged: contents + generationConfig only. The matcher hashes the
+    // canonical JSON of `request` to recover the customId.
+    const echoedRequest1 = {
+      contents: [{ role: 'user', parts: [{ text: 'prompt-for-job-1' }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 4096 }
+    };
+    const echoedRequest2 = {
+      contents: [{ role: 'user', parts: [{ text: 'prompt-for-job-2' }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 4096 }
+    };
+    const outputJsonl = [
+      JSON.stringify({
+        request: echoedRequest1,
+        response: {
+          candidates: [{ content: { parts: [{ text: 'vr1' }] } }],
+          usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 7 },
+          modelVersion: 'gemini-3.1-flash-lite-preview-001'
+        }
+      }),
+      JSON.stringify({
+        request: echoedRequest2,
+        response: {
+          candidates: [{ content: { parts: [{ text: 'vr2' }] } }],
+          usageMetadata: { promptTokenCount: 51, candidatesTokenCount: 8 },
+          modelVersion: 'gemini-3.1-flash-lite-preview-001'
+        }
+      })
+    ].join('\n') + '\n';
+
     global.fetch = jest.fn(async (url) => {
       if (url.includes('batchPredictionJobs/job-123')) {
         return { ok: true, status: 200, text: async () => JSON.stringify({
@@ -351,15 +399,12 @@ describe('Vertex sentiment batch primitives', () => {
         }) };
       }
       if (url.includes('storage.googleapis.com') && url.includes('output-x')) {
-        // List files: returns one .jsonl predictions file
         if (url.includes('?')) {
           return { ok: true, status: 200, text: async () => JSON.stringify({
             items: [{ name: 'output-x/predictions.jsonl' }]
           }) };
         }
-        return { ok: true, status: 200, text: async () =>
-          '{"request":{"metadata":{"bartelby_request_id":"1"}},"response":{"candidates":[{"content":{"parts":[{"text":"vr1"}]}}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":7},"modelVersion":"gemini-3.1-flash-lite-preview-001"}}\n'
-        };
+        return { ok: true, status: 200, text: async () => outputJsonl };
       }
       throw new Error(`unexpected: ${url}`);
     });
@@ -367,11 +412,60 @@ describe('Vertex sentiment batch primitives', () => {
     const results = await sentimentBatches.fetchSentimentBatchResults({
       provider: 'vertex',
       batchId: 'projects/p/locations/global/batchPredictionJobs/job-123',
+      jobs: [
+        { id: 1, submitted_prompt: 'prompt-for-job-1', system_prompt: null, temperature: 0 },
+        { id: 2, submitted_prompt: 'prompt-for-job-2', system_prompt: null, temperature: 0 }
+      ],
       runtimeConfig: { accessToken: 'v', project: 'p', location: 'global', gcsBucket: 'test-bucket' }
     });
 
-    expect(results[0].request_id).toBe('1');
-    expect(results[0].text).toBe('vr1');
-    expect(results[0].model_name).toBe('gemini-3.1-flash-lite-preview-001');
+    expect(results).toHaveLength(2);
+    const byId = Object.fromEntries(results.map((r) => [r.request_id, r]));
+    expect(byId['1'].text).toBe('vr1');
+    expect(byId['2'].text).toBe('vr2');
+    expect(byId['1'].model_name).toBe('gemini-3.1-flash-lite-preview-001');
+  });
+
+  test('fetchSentimentBatchResults surfaces per-row Vertex errors as result.error', async () => {
+    const echoedRequest = {
+      contents: [{ role: 'user', parts: [{ text: 'prompt-for-job-9' }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 4096 }
+    };
+    // Vertex emits a proto-style status object when the row failed validation.
+    const failedRow = JSON.stringify({
+      request: echoedRequest,
+      status: { code: 3, space: 'generic', message: "no such field: 'metadata'" }
+    });
+
+    global.fetch = jest.fn(async (url) => {
+      if (url.includes('batchPredictionJobs/job-err')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({
+          name: 'projects/p/locations/global/batchPredictionJobs/job-err',
+          state: 'JOB_STATE_SUCCEEDED',
+          outputInfo: { gcsOutputDirectory: 'gs://test-bucket/output-err/' }
+        }) };
+      }
+      if (url.includes('storage.googleapis.com') && url.includes('output-err')) {
+        if (url.includes('?')) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({
+            items: [{ name: 'output-err/predictions.jsonl' }]
+          }) };
+        }
+        return { ok: true, status: 200, text: async () => failedRow + '\n' };
+      }
+      throw new Error(`unexpected: ${url}`);
+    });
+
+    const results = await sentimentBatches.fetchSentimentBatchResults({
+      provider: 'vertex',
+      batchId: 'projects/p/locations/global/batchPredictionJobs/job-err',
+      jobs: [{ id: 9, submitted_prompt: 'prompt-for-job-9', system_prompt: null, temperature: 0 }],
+      runtimeConfig: { accessToken: 'v', project: 'p', location: 'global', gcsBucket: 'test-bucket' }
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].request_id).toBe('9');
+    expect(results[0].error).toMatch(/no such field/);
+    expect(results[0].text).toBe('');
   });
 });

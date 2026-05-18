@@ -46,8 +46,8 @@ async function getBatchStatus({ provider, batchId, runtimeConfig = {} }) {
   return getSentimentBatches().pollSentimentBatch({ provider, batchId, runtimeConfig });
 }
 
-async function fetchBatchResults({ provider, batchId, runtimeConfig = {} }) {
-  return getSentimentBatches().fetchSentimentBatchResults({ provider, batchId, runtimeConfig });
+async function fetchBatchResults({ provider, batchId, jobs = [], runtimeConfig = {} }) {
+  return getSentimentBatches().fetchSentimentBatchResults({ provider, batchId, jobs, runtimeConfig });
 }
 
 module.exports = { callSingleton, submitBatch, getBatchStatus, fetchBatchResults };
