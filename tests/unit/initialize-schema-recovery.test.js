@@ -75,6 +75,82 @@ describe('initializeSchema({ runStaleJobRecovery: false })', () => {
   });
 });
 
+describe('sentiment batch stale-claim recovery', () => {
+  let dbModule;
+  let dbDriver;
+  let tmpDir;
+
+  beforeEach(async () => {
+    const os = require('os');
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sent-recovery-'));
+    process.env.SESSION_SECRET = 'test-session-secret-for-jest-only-32ch';
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, 'test.db')}`;
+    process.env.DATABASE_DRIVER = 'sqljs';
+    process.env.DISABLE_BACKGROUND_WORKER = '1';
+    process.env.SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS = '0';
+
+    jest.resetModules();
+    dbModule = require('../../database/db');
+    await dbModule.initializeSchema({ runStaleJobRecovery: false });
+    dbDriver = dbModule.getDb();
+    await dbModule.runAsync(`INSERT INTO documents (id, title) VALUES (1, 'Doc')`);
+    await dbModule.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (1, 1, 'text')`);
+  });
+
+  afterEach(async () => {
+    if (dbModule?.closeAsync) await dbModule.closeAsync();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('clears stale finalization claim on batch_submitted rows (does not fail them)', async () => {
+    // Simulate a row left in batch_submitted with a claim from a prior, now-dead process.
+    const jobId = await dbModule.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    await dbModule.runAsync(`
+      UPDATE sentiment_extraction_jobs
+         SET status = 'batch_submitted',
+             batch_remote_id = 'projects/p/locations/global/batchPredictionJobs/12345',
+             batch_submitted_at = datetime('now', '-1 hour'),
+             batch_finalization_claimed_at = datetime('now', '-30 minutes'),
+             batch_finalization_claimed_by = 'host-old-pid'
+       WHERE id = ?
+    `, [jobId]);
+
+    await dbModule.initializeSchema();
+
+    const after = await dbModule.getAsync(
+      'SELECT status, batch_remote_id, batch_finalization_claimed_at, batch_finalization_claimed_by, error FROM sentiment_extraction_jobs WHERE id = ?',
+      [jobId]
+    );
+    // Status stays batch_submitted so the next worker tick can re-claim and
+    // finalize; only the claim is released.
+    expect(after.status).toBe('batch_submitted');
+    expect(after.batch_remote_id).toBe('projects/p/locations/global/batchPredictionJobs/12345');
+    expect(after.batch_finalization_claimed_at).toBeNull();
+    expect(after.batch_finalization_claimed_by).toBeNull();
+    expect(after.error).toBeNull();
+  });
+
+  it('marks pending-* placeholder rows failed (no real batch was created)', async () => {
+    const jobId = await dbModule.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    await dbModule.runAsync(`
+      UPDATE sentiment_extraction_jobs
+         SET status = 'batch_submitted',
+             batch_remote_id = 'pending-aaaa-bbbb',
+             batch_submitted_at = datetime('now', '-1 hour')
+       WHERE id = ?
+    `, [jobId]);
+
+    await dbModule.initializeSchema();
+
+    const after = await dbModule.getAsync(
+      'SELECT status, error FROM sentiment_extraction_jobs WHERE id = ?',
+      [jobId]
+    );
+    expect(after.status).toBe('failed');
+    expect(after.error).toMatch(/orphaned batch.*pending-aaaa-bbbb/);
+  });
+});
+
 describe('pdf-worker standalone wiring', () => {
   it('runStandalone opts out of stale-job recovery', () => {
     const src = fs.readFileSync(

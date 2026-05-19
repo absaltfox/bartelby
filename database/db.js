@@ -976,32 +976,50 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleSentimentSingletonCount} stale sentiment singleton job(s) as failed`);
   }
 
+  // Sentiment batch in-flight state is `status = 'batch_submitted'` (Phase
+  // 1.5 — see docs/background-jobs.md). The original recovery queries here
+  // checked `status = 'running' AND kind = 'batch'`, which never matched any
+  // real row and left stale finalization claims wedged across server
+  // restarts. Mirror the transcription/extraction pattern: clear (don't
+  // fail) genuinely stale claims so the next worker tick can re-claim and
+  // finalize the provider batch.
+  const sentimentBatchFinalizationStaleSeconds = parseFinalizationStaleSeconds(
+    'SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS',
+    DEFAULT_BATCH_FINALIZATION_STALE_SECONDS
+  );
+
   const staleSentimentBatchClaimed = await getAsync(`
     SELECT COUNT(*) as count
     FROM sentiment_extraction_jobs
-    WHERE status = 'running' AND kind = 'batch'
+    WHERE status = 'batch_submitted'
       AND batch_finalization_claimed_at IS NOT NULL
-  `);
+      AND batch_finalization_claimed_at < datetime('now', ?)
+  `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);
   const staleSentimentBatchClaimedCount = staleSentimentBatchClaimed?.count || 0;
   if (staleSentimentBatchClaimedCount > 0) {
     await db.run(`
       UPDATE sentiment_extraction_jobs
-      SET status = 'failed',
-          error = 'Server restarted during batch finalization',
-          batch_finalization_claimed_at = NULL,
-          batch_finalization_claimed_by = NULL,
-          completed_at = CURRENT_TIMESTAMP
-      WHERE status = 'running' AND kind = 'batch'
+      SET batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE status = 'batch_submitted'
         AND batch_finalization_claimed_at IS NOT NULL
-    `);
+        AND batch_finalization_claimed_at < datetime('now', ?)
+    `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);
     console.log(`[db] Cleared ${staleSentimentBatchClaimedCount} stale sentiment batch finalization claim(s)`);
   }
 
+  // `pending-<uuid>` is the correlation placeholder written by
+  // markBatchPending before the provider call lands. If we crashed during
+  // submission, the placeholder never got flipped to the real remote_id;
+  // there's no batch to finalize against, so fail these rows (the provider
+  // may still have an orphaned batch — surface the correlation id in the
+  // error for forensic recovery).
   const staleSentimentBatchPending = await getAsync(`
     SELECT COUNT(*) as count FROM sentiment_extraction_jobs
-     WHERE status = 'running' AND kind = 'batch'
+     WHERE status = 'batch_submitted'
        AND batch_remote_id LIKE 'pending-%'
-  `);
+       AND batch_submitted_at < datetime('now', ?)
+  `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);
   const staleSentimentBatchPendingCount = staleSentimentBatchPending?.count || 0;
   if (staleSentimentBatchPendingCount > 0) {
     await db.run(`
@@ -1009,15 +1027,19 @@ async function initializeSchema(options = {}) {
          SET status = 'failed',
              error = 'Server restarted during batch submission (provider may have orphaned batch). Correlation: ' || batch_remote_id,
              completed_at = CURRENT_TIMESTAMP
-       WHERE status = 'running' AND kind = 'batch'
+       WHERE status = 'batch_submitted'
          AND batch_remote_id LIKE 'pending-%'
-    `);
+         AND batch_submitted_at < datetime('now', ?)
+    `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);
     console.log(`[db] Marked ${staleSentimentBatchPendingCount} stale sentiment batch-pending job(s) as failed.`);
   }
 
+  // Defensive: any `running` sentiment batch row with NULL batch_remote_id
+  // was claimed by the worker but never made it past markBatchPending. Fail
+  // with a clear message — caller can re-queue.
   const staleSentimentBatchUnsubmitted = await getAsync(`
     SELECT COUNT(*) as count FROM sentiment_extraction_jobs
-     WHERE status = 'running' AND kind = 'batch'
+     WHERE status = 'running'
        AND batch_remote_id IS NULL
   `);
   const staleSentimentBatchUnsubmittedCount = staleSentimentBatchUnsubmitted?.count || 0;
@@ -1027,7 +1049,7 @@ async function initializeSchema(options = {}) {
          SET status = 'failed',
              error = 'Server restarted before batch submission',
              completed_at = CURRENT_TIMESTAMP
-       WHERE status = 'running' AND kind = 'batch'
+       WHERE status = 'running'
          AND batch_remote_id IS NULL
     `);
     console.log(`[db] Marked ${staleSentimentBatchUnsubmittedCount} stale sentiment batch-unsubmitted job(s) as failed.`);
