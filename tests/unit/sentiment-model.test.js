@@ -183,4 +183,25 @@ describe('sentiment model', () => {
     expect(r.batch_remote_id).toBeNull();
     expect(r.completed_at).toBeTruthy();
   });
+
+  test('markBatchPending persists provider at placeholder-write time', async () => {
+    const jobId = await sentimentAsync.createJob({
+      document_id: 1, transcript_id: 1
+    });
+    // Promote to the state markBatchPending requires (status='running', kind='batch')
+    await db.runAsync(
+      `UPDATE sentiment_extraction_jobs SET status='running', kind='batch' WHERE id=?`,
+      [jobId]
+    );
+    await sentimentAsync.markBatchPending(
+      [jobId], 'pending-corr-1',
+      { submitted_prompt: 'p', provider: 'vertex' }
+    );
+    const row = await db.getAsync(
+      `SELECT provider, batch_remote_id FROM sentiment_extraction_jobs WHERE id=?`,
+      [jobId]
+    );
+    expect(row.provider).toBe('vertex');
+    expect(row.batch_remote_id).toBe('pending-corr-1');
+  });
 });

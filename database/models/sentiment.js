@@ -113,17 +113,22 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return r.changes > 0;
     },
 
-    async markBatchPending(jobIds, correlationId, { submitted_prompt = null } = {}) {
+    async markBatchPending(jobIds, correlationId, { submitted_prompt = null, provider = null } = {}) {
       if (!Array.isArray(jobIds) || jobIds.length === 0) return;
-      // Per-job UPDATE because submitted_prompt differs per row
+      // Per-job UPDATE because submitted_prompt differs per row. provider is set
+      // here so the reconciliation tick (Phase 1.6a) can route an orphaned
+      // pending-* row to the right provider API after a crash. Without this the
+      // orphan window has provider=NULL and reconciliation has no way to know
+      // which list endpoint to call.
       for (const id of jobIds) {
         await runAsync(
           `UPDATE sentiment_extraction_jobs
               SET batch_remote_id = ?,
                   batch_submitted_at = CURRENT_TIMESTAMP,
-                  submitted_prompt = ?
+                  submitted_prompt = ?,
+                  provider = COALESCE(?, provider)
             WHERE id = ? AND status = 'running' AND kind = 'batch'`,
-          [correlationId, submitted_prompt, id]
+          [correlationId, submitted_prompt, provider, id]
         );
       }
       await saveDatabase();

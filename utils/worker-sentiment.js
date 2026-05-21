@@ -199,7 +199,8 @@ async function runSentimentExtractionCycle() {
       const matchingRequest = requests.find((r) => r.request_id === String(job.id));
       if (!matchingRequest) continue;
       await db.sentimentAsync.markBatchPending([job.id], correlationId, {
-        submitted_prompt: matchingRequest.prompt
+        submitted_prompt: matchingRequest.prompt,
+        provider: config.providerName
       });
     }
 
