@@ -1014,9 +1014,15 @@ async function initializeSchema(options = {}) {
   // there's no batch to finalize against, so fail these rows (the provider
   // may still have an orphaned batch — surface the correlation id in the
   // error for forensic recovery).
+  //
+  // Orphan state: status='running' AND kind='batch' (markBatchPending sets
+  // batch_remote_id and batch_submitted_at but leaves status='running').
+  // The Phase 1.6a reconciliation tick has 30 min to flip the placeholder
+  // to a real id before this recovery sweep fails the row at next startup.
   const staleSentimentBatchPending = await getAsync(`
     SELECT COUNT(*) as count FROM sentiment_extraction_jobs
-     WHERE status = 'batch_submitted'
+     WHERE status = 'running'
+       AND kind = 'batch'
        AND batch_remote_id LIKE 'pending-%'
        AND batch_submitted_at < datetime('now', ?)
   `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);
@@ -1027,7 +1033,8 @@ async function initializeSchema(options = {}) {
          SET status = 'failed',
              error = 'Server restarted during batch submission (provider may have orphaned batch). Correlation: ' || batch_remote_id,
              completed_at = CURRENT_TIMESTAMP
-       WHERE status = 'batch_submitted'
+       WHERE status = 'running'
+         AND kind = 'batch'
          AND batch_remote_id LIKE 'pending-%'
          AND batch_submitted_at < datetime('now', ?)
     `, [`-${sentimentBatchFinalizationStaleSeconds} seconds`]);

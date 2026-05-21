@@ -39,16 +39,26 @@ describe('sentiment stale-job recovery', () => {
 
   test('batch running with finalization claim → claim cleared, status untouched', async () => {
     await reset();
+    // The finalization-claim sweep targets status='batch_submitted' rows whose
+    // claim is older than SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS. Use a
+    // back-dated claim so it falls within the stale window (env default 0).
     await db.runAsync(
       `INSERT INTO sentiment_extraction_jobs
          (document_id, transcript_id, status, kind,
-          batch_finalization_claimed_at, batch_finalization_claimed_by, batch_remote_id)
-       VALUES (1, 1, 'running', 'batch', CURRENT_TIMESTAMP, 'web-1', 'remote-abc')`
+          batch_finalization_claimed_at, batch_finalization_claimed_by,
+          batch_remote_id, batch_submitted_at)
+       VALUES (1, 1, 'batch_submitted', 'batch',
+               datetime('now', '-1 hour'), 'web-1',
+               'remote-abc', datetime('now', '-2 hours'))`
     );
     await db.initializeSchema({ runStaleJobRecovery: true });
-    const row = await db.getAsync(`SELECT status, batch_finalization_claimed_at FROM sentiment_extraction_jobs WHERE id = 1`);
-    expect(row.status).toBe('failed');
+    const row = await db.getAsync(`SELECT status, batch_finalization_claimed_at, batch_finalization_claimed_by FROM sentiment_extraction_jobs WHERE id = 1`);
+    // Post-8725bd6: stale finalization claims are cleared (not failed) so the
+    // next worker tick can re-claim and finalize. The row stays batch_submitted;
+    // only the claim fields are nulled.
+    expect(row.status).toBe('batch_submitted');
     expect(row.batch_finalization_claimed_at).toBeNull();
+    expect(row.batch_finalization_claimed_by).toBeNull();
   });
 
   test('batch_submitted untouched', async () => {
@@ -67,8 +77,8 @@ describe('sentiment stale-job recovery', () => {
     await reset();
     await db.runAsync(
       `INSERT INTO sentiment_extraction_jobs
-         (document_id, transcript_id, status, kind, batch_remote_id)
-       VALUES (1, 1, 'running', 'batch', 'pending-abc123')`
+         (document_id, transcript_id, status, kind, batch_remote_id, batch_submitted_at)
+       VALUES (1, 1, 'running', 'batch', 'pending-abc123', datetime('now', '-1 hour'))`
     );
     await db.initializeSchema({ runStaleJobRecovery: true });
     const row = await db.getAsync(

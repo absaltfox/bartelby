@@ -130,11 +130,14 @@ describe('sentiment batch stale-claim recovery', () => {
     expect(after.error).toBeNull();
   });
 
-  it('marks pending-* placeholder rows failed (no real batch was created)', async () => {
+  it('marks pending-* placeholder rows failed when in real orphan state (status=running, kind=batch)', async () => {
     const jobId = await dbModule.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    // The REAL orphan window — what markBatchPending leaves behind if the
+    // worker crashes before markBatchSubmittedByCorrelation lands.
     await dbModule.runAsync(`
       UPDATE sentiment_extraction_jobs
-         SET status = 'batch_submitted',
+         SET status = 'running',
+             kind = 'batch',
              batch_remote_id = 'pending-aaaa-bbbb',
              batch_submitted_at = datetime('now', '-1 hour')
        WHERE id = ?
