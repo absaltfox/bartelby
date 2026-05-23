@@ -72,6 +72,64 @@ describe('sentiment model', () => {
     expect(b.usage_count).toBeGreaterThanOrEqual(2);
   });
 
+  describe('bulkUpsertEmotionPhrases', () => {
+    test('returns map keyed by normalized text for all-new inputs', async () => {
+      const result = await sentimentAsync.bulkUpsertEmotionPhrases([
+        'Joy', 'Sorrow', 'Wonder'
+      ]);
+      expect(result.size).toBe(3);
+      expect(result.get('joy')?.usage_count).toBe(1);
+      expect(result.get('sorrow')?.usage_count).toBe(1);
+      expect(result.get('wonder')?.usage_count).toBe(1);
+      expect(result.get('joy')?.id).toBeGreaterThan(0);
+    });
+
+    test('increments usage_count exactly once per unique normalized input when all exist', async () => {
+      // Seed: insert each phrase once via the singular method
+      await sentimentAsync.upsertEmotionPhrase('joy');
+      await sentimentAsync.upsertEmotionPhrase('sorrow');
+      await sentimentAsync.upsertEmotionPhrase('wonder');
+      // Each is now usage_count=1. Bulk-upsert all three — each should go to 2.
+      const result = await sentimentAsync.bulkUpsertEmotionPhrases(['joy', 'sorrow', 'wonder']);
+      expect(result.size).toBe(3);
+      expect(result.get('joy').usage_count).toBe(2);
+      expect(result.get('sorrow').usage_count).toBe(2);
+      expect(result.get('wonder').usage_count).toBe(2);
+    });
+
+    test('handles mixed new + existing in one call', async () => {
+      await sentimentAsync.upsertEmotionPhrase('joy');
+      await sentimentAsync.upsertEmotionPhrase('sorrow');
+      const result = await sentimentAsync.bulkUpsertEmotionPhrases([
+        'joy', 'wonder', 'sorrow', 'dread'
+      ]);
+      expect(result.size).toBe(4);
+      expect(result.get('joy').usage_count).toBe(2);
+      expect(result.get('sorrow').usage_count).toBe(2);
+      expect(result.get('wonder').usage_count).toBe(1);
+      expect(result.get('dread').usage_count).toBe(1);
+    });
+
+    test('dedupes duplicate verbatims that normalize to the same value (increments by 1, not N)', async () => {
+      const result = await sentimentAsync.bulkUpsertEmotionPhrases([
+        'Joy', 'joy', 'JOY.', 'joy '
+      ]);
+      expect(result.size).toBe(1);
+      expect(result.get('joy').usage_count).toBe(1);
+    });
+
+    test('throws if any verbatim normalizes to empty string', async () => {
+      await expect(
+        sentimentAsync.bulkUpsertEmotionPhrases(['joy', '   ', 'sorrow'])
+      ).rejects.toThrow(/empty/i);
+    });
+
+    test('returns empty Map for empty input array', async () => {
+      const result = await sentimentAsync.bulkUpsertEmotionPhrases([]);
+      expect(result.size).toBe(0);
+    });
+  });
+
   test('writeAnnotationsForJob inserts annotations and links to job', async () => {
     const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
     const phrase = await sentimentAsync.upsertEmotionPhrase('weariness');

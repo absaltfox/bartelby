@@ -263,6 +263,55 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return getAsync(`SELECT * FROM sentiment_emotion_phrases WHERE id = ?`, [result.lastInsertRowid]);
     },
 
+    async bulkUpsertEmotionPhrases(verbatims) {
+      if (!Array.isArray(verbatims) || verbatims.length === 0) return new Map();
+      const uniqueNormalized = new Set();
+      for (const v of verbatims) {
+        const n = normalizePhrase(v);
+        if (!n) throw new Error('emotion phrase normalized to empty string');
+        uniqueNormalized.add(n);
+      }
+      const normalizedList = [...uniqueNormalized];
+      const placeholders = normalizedList.map(() => '?').join(', ');
+
+      // 1. Find existing rows
+      const existing = await allAsync(
+        `SELECT * FROM sentiment_emotion_phrases WHERE phrase_text_normalized IN (${placeholders})`,
+        normalizedList
+      );
+      const existingByNormalized = new Map(existing.map((r) => [r.phrase_text_normalized, r]));
+
+      // 2. Increment usage_count for existing (one UPDATE per row; SQLite has no
+      //    multi-row UPDATE with different WHERE per row, but the IDs are known
+      //    so the per-row UPDATEs are cheap).
+      for (const row of existing) {
+        await runAsync(
+          `UPDATE sentiment_emotion_phrases
+              SET usage_count = usage_count + 1, last_seen_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+          [row.id]
+        );
+      }
+
+      // 3. Insert missing rows
+      const missing = normalizedList.filter((n) => !existingByNormalized.has(n));
+      for (const normalized of missing) {
+        await runAsync(
+          `INSERT INTO sentiment_emotion_phrases (phrase_text_normalized, usage_count)
+           VALUES (?, 1)`,
+          [normalized]
+        );
+      }
+
+      // 4. Re-SELECT to return fresh rows including new IDs and post-increment counts
+      const final = await allAsync(
+        `SELECT * FROM sentiment_emotion_phrases WHERE phrase_text_normalized IN (${placeholders})`,
+        normalizedList
+      );
+      await saveDatabase();
+      return new Map(final.map((r) => [r.phrase_text_normalized, r]));
+    },
+
     async setPhraseEmbedding(id, { embedding, embedding_model }) {
       await runAsync(
         `UPDATE sentiment_emotion_phrases
