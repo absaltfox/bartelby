@@ -198,7 +198,7 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`authority_suggestion_jobs` (`running`)** → marked `failed`
 - **`sentiment_extraction_jobs` (singleton, `running`)** → marked `failed` with `error = 'Server restarted during processing'`
 - **`sentiment_extraction_jobs` (batch, `running`, finalization claimed)** → marked `failed`, claim columns nulled, `error = 'Server restarted during batch finalization'`. Note: `batch_submitted` rows are intentionally untouched — provider still owns them; `pollRunningSentimentBatchesTick` resumes them on next tick.
-- **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending-%'`)** → marked `failed` with the correlation id logged in the error message. Indicates a crash during batch submission; the provider may have an orphaned batch (recoverable by a future Phase 1.6 reconciliation tick).
+- **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending-%'`)** → marked `failed` with the correlation id logged in the error message. Indicates a crash during batch submission; the provider may have an orphaned batch. The Phase 1.6a reconciliation tick (see below) recovers these inside the grace window before this backstop fires.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id IS NULL`)** → marked `failed`. Indicates a crash before the pre-stage write; no provider call was made.
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
@@ -210,6 +210,36 @@ main worker that has just claimed an unrelated job. Without the opt-out,
 the grouping recovery sweep marks any in-flight grouping submission
 (`processing`, no `batch_remote_id`) as failed, even when a live worker is
 still uploading its inputs.
+
+### Sentiment provider batch reconciliation (Phase 1.6a)
+
+The `pending-<uuid>` correlation placeholder is written to
+`sentiment_extraction_jobs.batch_remote_id` by `markBatchPending` before
+the provider call lands. The orphan window — where the worker crashes
+between placeholder-write and the real `batch_remote_id` flip — is:
+
+- `status = 'running'` AND `kind = 'batch'`
+- `batch_remote_id LIKE 'pending-%'`
+
+Two layers cover this scenario:
+
+1. **`tickSentimentReconciliation`** (every 10 min by default, env
+   `SENTIMENT_RECONCILIATION_INTERVAL_MS`): lists provider-side batches
+   inside a windowed range (env `SENTIMENT_RECONCILIATION_LIST_WINDOW_HOURS`,
+   default 24h), matches by per-provider correlation token, and atomically
+   flips matched rows to the real `batch_remote_id` (and `status =
+   'batch_submitted'`). The existing `pollRunningSentimentBatches` then
+   finalizes via `fetchSentimentBatchResults`. The admin button at
+   `/admin/jobs` runs the same cycle on demand.
+2. **Stale-claim recovery in `initializeSchema()`** (backstop, runs
+   once per server startup): after
+   `SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS` (default 30 min),
+   pending rows are marked `failed` with the correlation id surfaced
+   in the error message for manual operator recovery.
+
+`markBatchPending` sets `provider` on the row at placeholder-write time
+so the reconciliation tick can route to the correct provider API
+without needing to guess.
 
 ---
 
