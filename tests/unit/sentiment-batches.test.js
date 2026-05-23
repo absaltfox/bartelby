@@ -260,6 +260,44 @@ describe('Anthropic sentiment batch primitives', () => {
     expect(results[0].usage.input_tokens).toBe(40);
     expect(results[0].model_name).toBe('claude-3-5-haiku-latest');
   });
+
+  test('listSentimentBatchesByCorrelation returns matches by metadata.bartelby_correlation_id, paginates and stops on stale items', async () => {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    let listCalls = 0;
+    global.fetch = jest.fn(async (url) => {
+      if (!url.includes('/v1/messages/batches')) throw new Error(`unexpected: ${url}`);
+      listCalls += 1;
+      if (listCalls === 1) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({
+          data: [
+            { id: 'msgbatch_a', created_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+              metadata: { bartelby_correlation_id: 'pending-an1' }, processing_status: 'in_progress' },
+            { id: 'msgbatch_b', created_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+              metadata: { bartelby_correlation_id: 'pending-zzz' }, processing_status: 'ended' }
+          ],
+          has_more: true,
+          last_id: 'msgbatch_b'
+        }) };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({
+        data: [
+          { id: 'msgbatch_c', created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            metadata: {}, processing_status: 'ended' }
+        ],
+        has_more: false
+      }) };
+    });
+
+    const result = await sentimentBatches.listSentimentBatchesByCorrelation({
+      provider: 'claude',
+      runtimeConfig: { apiKey: 'k' },
+      since,
+      correlationIds: new Set(['pending-an1'])
+    });
+    expect(result).toEqual([
+      { correlationId: 'pending-an1', batchId: 'msgbatch_a', providerState: 'in_progress' }
+    ]);
+  });
 });
 
 describe('Gemini sentiment batch primitives', () => {

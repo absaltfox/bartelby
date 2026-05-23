@@ -393,8 +393,42 @@ async function fetchAnthropicSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
-async function listAnthropicSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
-  throw new Error('Anthropic sentiment batch reconciliation: not implemented');
+async function listAnthropicSentimentBatchesByCorrelation({ runtimeConfig, since, correlationIds }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Anthropic sentiment list: missing apiKey.');
+  const sinceMs = new Date(since).getTime();
+  const wanted = correlationIds instanceof Set ? correlationIds : new Set(correlationIds || []);
+  const matches = [];
+  let afterId = '';
+  for (let page = 0; page < 25; page += 1) {
+    const url = afterId
+      ? `${ANTHROPIC_BATCH_URL}?limit=100&after_id=${encodeURIComponent(afterId)}`
+      : `${ANTHROPIC_BATCH_URL}?limit=100`;
+    const resp = await fetchJson(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'anthropic-beta': ANTHROPIC_BETA
+      }
+    }, 'Anthropic batches list');
+    const items = Array.isArray(resp.data) ? resp.data : [];
+    if (items.length === 0) break;
+    let sawStaleItem = false;
+    for (const item of items) {
+      if (item.created_at && new Date(item.created_at).getTime() < sinceMs) {
+        sawStaleItem = true; continue;
+      }
+      const corr = item.metadata?.bartelby_correlation_id;
+      if (corr && wanted.has(corr)) {
+        matches.push({ correlationId: corr, batchId: item.id, providerState: item.processing_status || null });
+      }
+    }
+    if (sawStaleItem || !resp.has_more) break;
+    afterId = resp.last_id || items[items.length - 1]?.id || '';
+    if (!afterId) break;
+  }
+  return matches;
 }
 
 // ────────────────── Gemini ──────────────────
