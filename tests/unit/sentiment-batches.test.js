@@ -32,6 +32,19 @@ describe('utils/sentiment-batches dispatch layer', () => {
       provider: 'ollama', requests: [{ request_id: '1', prompt: 'p' }], runtimeConfig: {}
     })).rejects.toThrow(/unsupported provider/i);
   });
+
+  test('listSentimentBatchesByCorrelation throws for unsupported provider', async () => {
+    await expect(sentimentBatches.listSentimentBatchesByCorrelation({
+      provider: 'ollama',
+      runtimeConfig: {},
+      since: new Date().toISOString(),
+      correlationIds: new Set(['pending-x'])
+    })).rejects.toThrow(/unsupported provider/i);
+  });
+
+  test('exports listSentimentBatchesByCorrelation', () => {
+    expect(typeof sentimentBatches.listSentimentBatchesByCorrelation).toBe('function');
+  });
 });
 
 describe('OpenAI sentiment batch primitives', () => {

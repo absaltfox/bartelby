@@ -237,6 +237,10 @@ async function fetchOpenAiSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
+async function listOpenAiSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
+  throw new Error('OpenAI sentiment batch reconciliation: not implemented');
+}
+
 // ────────────────── Anthropic ──────────────────
 
 const ANTHROPIC_BATCH_URL = 'https://api.anthropic.com/v1/messages/batches';
@@ -360,6 +364,10 @@ async function fetchAnthropicSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
+async function listAnthropicSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
+  throw new Error('Anthropic sentiment batch reconciliation: not implemented');
+}
+
 // ────────────────── Gemini ──────────────────
 
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
@@ -473,6 +481,10 @@ async function fetchGeminiSentimentResults({ batchId, runtimeConfig }) {
       model_name: entry.response?.modelVersion || null
     };
   });
+}
+
+async function listGeminiSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
+  throw new Error('Gemini sentiment batch reconciliation: not implemented');
 }
 
 // ────────────────── Vertex ──────────────────
@@ -827,6 +839,10 @@ async function fetchVertexSentimentResults({ batchId, runtimeConfig, descriptors
   return rows;
 }
 
+async function listVertexSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
+  throw new Error('Vertex sentiment batch reconciliation: not implemented');
+}
+
 // ── public dispatch functions ──────────────────────────────────────────────
 
 async function submitSentimentBatch({ provider, requests, runtimeConfig = {} }) {
@@ -896,9 +912,33 @@ async function fetchSentimentBatchResults({ provider, batchId, jobs = [], runtim
   }
 }
 
+// Reconciliation: list provider-side batches whose correlation token matches
+// any of `correlationIds`, restricted to batches created since `since`. Used
+// by utils/worker-sentiment-reconciliation.js to flip orphaned pending-<uuid>
+// rows to their real provider id.
+async function listSentimentBatchesByCorrelation({ provider, runtimeConfig = {}, since, correlationIds }) {
+  if (!supportsSentimentBatchProvider(provider)) {
+    throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
+  }
+  const resolvedRuntime = await resolveSentimentRuntime(provider, runtimeConfig);
+  switch (provider) {
+    case 'openai':
+      return listOpenAiSentimentBatchesByCorrelation({ runtimeConfig: resolvedRuntime, since, correlationIds });
+    case 'claude':
+      return listAnthropicSentimentBatchesByCorrelation({ runtimeConfig: resolvedRuntime, since, correlationIds });
+    case 'gemini':
+      return listGeminiSentimentBatchesByCorrelation({ runtimeConfig: resolvedRuntime, since, correlationIds });
+    case 'vertex':
+      return listVertexSentimentBatchesByCorrelation({ runtimeConfig: resolvedRuntime, since, correlationIds });
+    default:
+      throw new Error(`Sentiment batch path: unsupported provider '${provider}'.`);
+  }
+}
+
 module.exports = {
   submitSentimentBatch,
   pollSentimentBatch,
   fetchSentimentBatchResults,
+  listSentimentBatchesByCorrelation,
   supportsSentimentBatchProvider
 };
