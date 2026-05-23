@@ -198,6 +198,59 @@ describe('worker-sentiment singleton path', () => {
     expect(annB[0].approval_status).toBe('pending');
   });
 
+  test('resolves phrases in one batch when multiple annotations share the same emotion phrase', async () => {
+  // Override the seeded transcript to contain content covering both phrases at known spans.
+  // "weariness weariness joy text" → 0–9 = 'weariness', 10–19 = 'weariness', 20–23 = 'joy'.
+  await db.runAsync(
+    `UPDATE transcripts SET content = ? WHERE id = 1`,
+    ['weariness weariness joy text']
+  );
+
+  // Override the singleton mock to return 3 annotations with 2 duplicate phrases
+  const provider = require('../../utils/sentiment/provider');
+  provider.callSingleton.mockResolvedValueOnce({
+    text: JSON.stringify({
+      annotations: [
+        { span_start: 0, span_end: 9, emotion_phrase_verbatim: 'weariness',
+          polarity: 'negative', intensity: 'low', voice_role: 'author',
+          target_kind: 'phrase', target_phrase: 'weariness', confidence: 0.92 },
+        { span_start: 10, span_end: 19, emotion_phrase_verbatim: 'weariness',
+          polarity: 'negative', intensity: 'low', voice_role: 'author',
+          target_kind: 'phrase', target_phrase: 'weariness', confidence: 0.92 },
+        { span_start: 20, span_end: 23, emotion_phrase_verbatim: 'joy',
+          polarity: 'positive', intensity: 'moderate', voice_role: 'author',
+          target_kind: 'phrase', target_phrase: 'joy', confidence: 0.92 }
+      ]
+    }),
+    usage: { input_tokens: 100, output_tokens: 30 }
+  });
+
+  const jobId = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+  await runSentimentExtractionCycle();
+
+  // Verify the job completed (not stalled or failed by parse/validate)
+  const job = await db.sentimentAsync.getJobById(jobId);
+  expect(job.status).toBe('done');
+
+  // 3 annotations written, only 2 unique phrase IDs across them
+  const annRows = await db.sentimentAsync.getAnnotationsByJobId(jobId);
+  expect(annRows).toHaveLength(3);
+  const uniquePhraseIds = new Set(annRows.map((r) => r.emotion_phrase_id));
+  expect(uniquePhraseIds.size).toBe(2);
+
+  // usage_count for 'weariness' should be 1 (per-call), NOT 2 (per-annotation)
+  const wearinessRow = await db.getAsync(
+    `SELECT usage_count FROM sentiment_emotion_phrases WHERE phrase_text_normalized = ?`,
+    ['weariness']
+  );
+  expect(wearinessRow.usage_count).toBe(1);
+
+  // embedTexts called once with both unique phrases
+  const embed = require('../../utils/sentiment/embed');
+  expect(embed.embedTexts).toHaveBeenCalledTimes(1);
+  expect(embed.embedTexts.mock.calls[0][0].sort()).toEqual(['joy', 'weariness']);
+});
+
   test('batch finalization: per-row result.error marks job failed (not done)', async () => {
     const provider = require('../../utils/sentiment/provider');
     provider.submitBatch.mockResolvedValueOnce({ batch_id: 'remote-err', provider: 'vertex' });

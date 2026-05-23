@@ -50,17 +50,34 @@ async function loadKnownEntities(documentId) {
   return (rows || []).map((e) => ({ id: e.id, name: e.name || e.canonical_name, entity_type: e.entity_type }));
 }
 
-async function ensurePhraseAndEmbedding(verbatim) {
-  const phrase = await db.sentimentAsync.upsertEmotionPhrase(verbatim);
-  if (!phrase.embedding) {
-    const [vec] = await embedTexts([phrase.phrase_text_normalized]);
-    if (vec && vec.length) {
-      await db.sentimentAsync.setPhraseEmbedding(phrase.id, {
-        embedding: vec, embedding_model: EMBED_MODEL_ID
-      });
+async function resolvePhrasesForJob(verbatims) {
+  if (!Array.isArray(verbatims) || verbatims.length === 0) return new Map();
+  const normalizedPhraseMap = await db.sentimentAsync.bulkUpsertEmotionPhrases(verbatims);
+  const needEmbedding = [...normalizedPhraseMap.values()].filter((p) => !p.embedding);
+  if (needEmbedding.length > 0) {
+    try {
+      const vectors = await embedTexts(
+        needEmbedding.map((p) => p.phrase_text_normalized)
+      );
+      const rows = needEmbedding
+        .map((p, i) => ({ id: p.id, embedding: vectors[i], embedding_model: EMBED_MODEL_ID }))
+        .filter((r) => Array.isArray(r.embedding) && r.embedding.length > 0);
+      if (rows.length > 0) {
+        await db.sentimentAsync.bulkSetPhraseEmbeddings(rows);
+      }
+    } catch (err) {
+      console.warn(`[worker-sentiment] embedding batch failed: ${err.message} (annotations still written)`);
     }
   }
-  return phrase;
+  // Build verbatim-keyed map for the caller's convenience.
+  const byVerbatim = new Map();
+  for (const verbatim of verbatims) {
+    const normalized = db.normalizeSentimentPhrase(verbatim);
+    if (normalizedPhraseMap.has(normalized)) {
+      byVerbatim.set(verbatim, normalizedPhraseMap.get(normalized));
+    }
+  }
+  return byVerbatim;
 }
 
 async function processSingletonJob(job, config) {
@@ -106,9 +123,10 @@ async function processSingletonJob(job, config) {
     reviewFloor: config.reviewFloor, autoApproveThreshold: config.autoApproveThreshold
   });
 
+  const phraseMap = await resolvePhrasesForJob(annotations.map((a) => a.emotion_phrase_verbatim));
   const enriched = [];
   for (const ann of annotations) {
-    const phrase = await ensurePhraseAndEmbedding(ann.emotion_phrase_verbatim);
+    const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
     enriched.push({
       ...ann,
       notes: ann.notes ?? null,
@@ -299,9 +317,10 @@ async function pollRunningSentimentBatches() {
           preExistingIds = await db.sentimentAsync.getAnnotationIdsByTranscript(job.transcript_id);
         }
 
+        const phraseMap = await resolvePhrasesForJob(annotations.map((a) => a.emotion_phrase_verbatim));
         const enriched = [];
         for (const ann of annotations) {
-          const phrase = await ensurePhraseAndEmbedding(ann.emotion_phrase_verbatim);
+          const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
           enriched.push({
             ...ann,
             notes: ann.notes ?? null,
