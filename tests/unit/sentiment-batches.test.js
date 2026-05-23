@@ -145,6 +145,46 @@ describe('OpenAI sentiment batch primitives', () => {
     expect(results[0].usage.output_tokens).toBe(10);
     expect(results[0].model_name).toBe('gpt-4o-mini-2026-01');
   });
+
+  test('listSentimentBatchesByCorrelation returns matches by metadata.bartelby_correlation_id, terminates pagination on stale items', async () => {
+    const sinceIso = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago
+    const sinceEpoch = Math.floor(new Date(sinceIso).getTime() / 1000);
+    let listCalls = 0;
+    global.fetch = jest.fn(async (url) => {
+      if (!url.includes('/v1/batches')) throw new Error(`unexpected: ${url}`);
+      listCalls += 1;
+      // Page 1: two items, one matches, one doesn't but is fresh
+      if (listCalls === 1) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({
+          data: [
+            { id: 'batch_aaa', created_at: sinceEpoch + 300, metadata: { bartelby_correlation_id: 'pending-c1' }, status: 'in_progress' },
+            { id: 'batch_bbb', created_at: sinceEpoch + 200, metadata: { bartelby_correlation_id: 'pending-zzz' }, status: 'completed' }
+          ],
+          has_more: true,
+          last_id: 'batch_bbb'
+        }) };
+      }
+      // Page 2: one stale item — terminates pagination
+      return { ok: true, status: 200, text: async () => JSON.stringify({
+        data: [
+          { id: 'batch_ccc', created_at: sinceEpoch - 1000, metadata: {}, status: 'completed' }
+        ],
+        has_more: false
+      }) };
+    });
+
+    const result = await sentimentBatches.listSentimentBatchesByCorrelation({
+      provider: 'openai',
+      runtimeConfig: { apiKey: 'k' },
+      since: sinceIso,
+      correlationIds: new Set(['pending-c1', 'pending-c2'])
+    });
+
+    expect(result).toEqual([
+      { correlationId: 'pending-c1', batchId: 'batch_aaa', providerState: 'in_progress' }
+    ]);
+    expect(listCalls).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('Anthropic sentiment batch primitives', () => {

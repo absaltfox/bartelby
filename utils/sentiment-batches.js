@@ -237,8 +237,37 @@ async function fetchOpenAiSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
-async function listOpenAiSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
-  throw new Error('OpenAI sentiment batch reconciliation: not implemented');
+async function listOpenAiSentimentBatchesByCorrelation({ runtimeConfig, since, correlationIds }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('OpenAI sentiment list: missing apiKey.');
+  const sinceEpoch = Math.floor(new Date(since).getTime() / 1000);
+  const wanted = correlationIds instanceof Set ? correlationIds : new Set(correlationIds || []);
+  const matches = [];
+  let after = '';
+  // Bound page count defensively (1000 batches at limit=100 = 10 pages worst case)
+  for (let page = 0; page < 25; page += 1) {
+    const url = after
+      ? `${OPENAI_BATCH_URL}?limit=100&after=${encodeURIComponent(after)}`
+      : `${OPENAI_BATCH_URL}?limit=100`;
+    const resp = await fetchJson(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` }
+    }, 'OpenAI batches list');
+    const items = Array.isArray(resp.data) ? resp.data : [];
+    if (items.length === 0) break;
+    let sawStaleItem = false;
+    for (const item of items) {
+      if (Number(item.created_at) < sinceEpoch) { sawStaleItem = true; continue; }
+      const corr = item.metadata?.bartelby_correlation_id;
+      if (corr && wanted.has(corr)) {
+        matches.push({ correlationId: corr, batchId: item.id, providerState: item.status || null });
+      }
+    }
+    if (sawStaleItem || !resp.has_more) break;
+    after = resp.last_id || items[items.length - 1]?.id || '';
+    if (!after) break;
+  }
+  return matches;
 }
 
 // ────────────────── Anthropic ──────────────────
