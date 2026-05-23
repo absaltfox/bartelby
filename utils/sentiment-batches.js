@@ -397,7 +397,8 @@ async function submitGeminiSentimentBatch({ requests, runtimeConfig }) {
     apiKey,
     model = 'gemini-2.5-flash',
     systemPrompt = null,
-    temperature = 0
+    temperature = 0,
+    correlationId = null
   } = runtimeConfig;
   if (!apiKey) throw new Error('Gemini sentiment batch: missing apiKey.');
 
@@ -412,6 +413,13 @@ async function submitGeminiSentimentBatch({ requests, runtimeConfig }) {
       metadata: { bartelby_request_id: String(r.request_id) }
     }))
   };
+  // display_name is a top-level batch envelope field (per the Gemini Batch API
+  // docs, https://ai.google.dev/gemini-api/docs/batch-api). The Phase 1.6a
+  // reconciliation tick reads it back via GET /v1beta/batches to match an
+  // orphaned pending-<uuid> row to a live provider batch.
+  if (correlationId) {
+    body.display_name = `sentiment-batch-${correlationId}`;
+  }
   const resp = await fetchJson(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

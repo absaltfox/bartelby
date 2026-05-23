@@ -247,6 +247,25 @@ describe('Gemini sentiment batch primitives', () => {
     expect(posted.requests[1].metadata?.bartelby_request_id).toBe('2');
   });
 
+  test('submitSentimentBatch sets display_name with correlation id at envelope level', async () => {
+    let posted;
+    global.fetch = jest.fn(async (url, opts) => {
+      if (opts.method === 'POST' && url.includes(':batchGenerateContent')) {
+        posted = JSON.parse(opts.body);
+        return { ok: true, status: 200, text: async () => JSON.stringify({ name: 'batches/12345' }) };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    await sentimentBatches.submitSentimentBatch({
+      provider: 'gemini',
+      requests: [{ request_id: '1', prompt: 'p1' }],
+      runtimeConfig: { apiKey: 'g-key', model: 'gemini-2.5-flash', correlationId: 'pending-g-corr-1' }
+    });
+
+    expect(posted.display_name).toBe('sentiment-batch-pending-g-corr-1');
+  });
+
   test('pollSentimentBatch resolves operation state', async () => {
     global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
       name: 'operations/op-1', done: true,
