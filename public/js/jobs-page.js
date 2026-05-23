@@ -643,6 +643,41 @@
   var config = getConfig();
   if (!config) return;
 
+  function initSentimentReconcileButton() {
+    var btn = document.getElementById('sentiment-reconcile-btn');
+    if (!btn) return;
+    var status = document.getElementById('sentiment-reconcile-status');
+    btn.addEventListener('click', async function() {
+      btn.disabled = true;
+      if (status) status.textContent = 'Reconciling…';
+      try {
+        var resp = await fetch('/admin/jobs/api/sentiment/reconcile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        var body = await resp.json();
+        if (!resp.ok) throw new Error(body.error || 'reconcile failed');
+        var providerSummary = Object.keys(body.providers || {})
+          .filter(function(p) { return body.providers[p] > 0; })
+          .map(function(p) { return p + '=' + body.providers[p]; })
+          .join(', ');
+        var msg = 'Reconciled ' + body.matched + ' row' + (body.matched === 1 ? '' : 's')
+          + (providerSummary ? ' (' + providerSummary + ')' : '')
+          + ' in ' + body.durationMs + 'ms';
+        if (status) status.textContent = msg;
+        if (body.matched > 0) {
+          window.setTimeout(function() { window.location.reload(); }, 1500);
+        } else {
+          window.setTimeout(function() { if (status) status.textContent = ''; btn.disabled = false; }, 10000);
+        }
+      } catch (err) {
+        if (status) status.textContent = 'Error: ' + err.message;
+        btn.disabled = false;
+      }
+    });
+  }
+
   initToggleLogs(config);
   initRetryButtons(config);
   initDeleteButtons(config);
@@ -650,4 +685,5 @@
   initEditJobModal(config);
   initBulkActions(config);
   initPolling(config);
+  initSentimentReconcileButton();
 })();

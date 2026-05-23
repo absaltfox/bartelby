@@ -43,11 +43,17 @@ router.get('/', asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  const [{ counts, typeCounts }, jobs, configuredProviders] = await Promise.all([
+  const [{ counts, typeCounts }, jobs, configuredProviders, pendingReconcileRow] = await Promise.all([
     adminJobsAsync.getCounts(filter, typeFilter),
     adminJobsAsync.getPage(PAGE_SIZE, offset, filter, typeFilter),
-    listConfiguredProviders()
+    listConfiguredProviders(),
+    // Phase 1.6a — count of orphaned pending-<uuid> rows the button can reconcile.
+    require('../database/db').getAsync(`
+      SELECT COUNT(*) AS count FROM sentiment_extraction_jobs
+       WHERE status = 'running' AND kind = 'batch' AND batch_remote_id LIKE 'pending-%'
+    `)
   ]);
+  const pendingReconcileCount = Number(pendingReconcileRow?.count || 0);
 
   // counts is the per-status COUNT map already scoped to typeFilter, so the
   // page total is just counts.total (status='all') or counts[filter]. This
@@ -66,7 +72,8 @@ router.get('/', asyncHandler(async (req, res) => {
     page,
     totalPages,
     filteredTotal,
-    configuredProviders
+    configuredProviders,
+    pendingReconcileCount
   });
 }));
 

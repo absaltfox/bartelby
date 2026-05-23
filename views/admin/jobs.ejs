@@ -62,6 +62,14 @@
     </a>
   </div>
 
+  <% if (pendingReconcileCount > 0) { %>
+    <div class="jobs-reconcile-banner">
+      <span class="muted"><%= pendingReconcileCount %> orphaned sentiment batch row<%= pendingReconcileCount === 1 ? '' : 's' %> awaiting reconciliation.</span>
+      <button type="button" class="btn-secondary btn-sm" id="sentiment-reconcile-btn">Reconcile now</button>
+      <span class="save-status" id="sentiment-reconcile-status"></span>
+    </div>
+  <% } %>
+
   <!-- Bulk action bar -->
   <div class="jobs-toolbar is-hidden" id="jobs-toolbar">
     <label class="jobs-toolbar-select-all">
