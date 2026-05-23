@@ -322,6 +322,19 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       await saveDatabase();
     },
 
+    async bulkSetPhraseEmbeddings(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      for (const { id, embedding, embedding_model } of rows) {
+        await runAsync(
+          `UPDATE sentiment_emotion_phrases
+              SET embedding = ?, embedding_model = ?
+            WHERE id = ?`,
+          [Buffer.from(new Float32Array(embedding).buffer), embedding_model, id]
+        );
+      }
+      await saveDatabase();
+    },
+
     async getPhrasesMissingEmbedding(limit = 100) {
       return allAsync(
         `SELECT id, phrase_text_normalized FROM sentiment_emotion_phrases

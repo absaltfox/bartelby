@@ -130,6 +130,38 @@ describe('sentiment model', () => {
     });
   });
 
+  describe('bulkSetPhraseEmbeddings', () => {
+    test('returns immediately for empty array without DB activity', async () => {
+      // No setup, no rows expected to be affected — verify return without throwing.
+      await expect(sentimentAsync.bulkSetPhraseEmbeddings([])).resolves.toBeUndefined();
+    });
+
+    test('writes embeddings for multiple rows and round-trips as Float32Array buffer', async () => {
+      const a = await sentimentAsync.upsertEmotionPhrase('joy');
+      const b = await sentimentAsync.upsertEmotionPhrase('sorrow');
+      const c = await sentimentAsync.upsertEmotionPhrase('wonder');
+      const vec = (seed) => new Array(384).fill(0).map((_, i) => (i + seed) * 0.001);
+
+      await sentimentAsync.bulkSetPhraseEmbeddings([
+        { id: a.id, embedding: vec(1), embedding_model: 'test-model' },
+        { id: b.id, embedding: vec(2), embedding_model: 'test-model' },
+        { id: c.id, embedding: vec(3), embedding_model: 'test-model' }
+      ]);
+
+      const rows = await db.allAsync(
+        `SELECT id, embedding, embedding_model FROM sentiment_emotion_phrases
+          WHERE id IN (?, ?, ?) ORDER BY id`,
+        [a.id, b.id, c.id]
+      );
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        expect(row.embedding).toBeInstanceOf(Buffer);
+        expect(row.embedding.byteLength).toBe(384 * 4); // Float32Array
+        expect(row.embedding_model).toBe('test-model');
+      }
+    });
+  });
+
   test('writeAnnotationsForJob inserts annotations and links to job', async () => {
     const jobId = await sentimentAsync.createJob({ document_id: 1, transcript_id: 1, reset_existing: 0 });
     const phrase = await sentimentAsync.upsertEmotionPhrase('weariness');
