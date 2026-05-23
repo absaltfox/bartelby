@@ -546,8 +546,31 @@ async function fetchGeminiSentimentResults({ batchId, runtimeConfig }) {
   });
 }
 
-async function listGeminiSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
-  throw new Error('Gemini sentiment batch reconciliation: not implemented');
+async function listGeminiSentimentBatchesByCorrelation({ runtimeConfig, since, correlationIds }) {
+  const { apiKey } = runtimeConfig;
+  if (!apiKey) throw new Error('Gemini sentiment list: missing apiKey.');
+  const sinceMs = new Date(since).getTime();
+  const wanted = correlationIds instanceof Set ? correlationIds : new Set(correlationIds || []);
+  const wantedNames = new Set([...wanted].map((corr) => `sentiment-batch-${corr}`));
+  const matches = [];
+  let pageToken = '';
+  for (let page = 0; page < 25; page += 1) {
+    const sep = pageToken ? '&' : '';
+    const url = `${GEMINI_BASE_URL}/batches?pageSize=100${sep}${pageToken ? `pageToken=${encodeURIComponent(pageToken)}` : ''}&key=${encodeURIComponent(apiKey)}`;
+    const resp = await fetchJson(url, { method: 'GET' }, 'Gemini batches list');
+    const items = Array.isArray(resp.batches) ? resp.batches : [];
+    if (items.length === 0) break;
+    for (const item of items) {
+      if (item.createTime && new Date(item.createTime).getTime() < sinceMs) continue;
+      const dn = item.displayName || '';
+      if (!wantedNames.has(dn)) continue;
+      const corr = dn.replace(/^sentiment-batch-/, '');
+      matches.push({ correlationId: corr, batchId: item.name, providerState: item.state || null });
+    }
+    pageToken = resp.nextPageToken || '';
+    if (!pageToken) break;
+  }
+  return matches;
 }
 
 // ────────────────── Vertex ──────────────────

@@ -391,6 +391,36 @@ describe('Gemini sentiment batch primitives', () => {
     expect(results[0].text).toBe('r1');
     expect(results[0].model_name).toBe('gemini-2.5-flash-001');
   });
+
+  test('listSentimentBatchesByCorrelation matches by display_name, filters by createTime client-side', async () => {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    global.fetch = jest.fn(async (url) => {
+      if (!url.includes('/v1beta/batches')) throw new Error(`unexpected: ${url}`);
+      return { ok: true, status: 200, text: async () => JSON.stringify({
+        batches: [
+          { name: 'batches/aaa', displayName: 'sentiment-batch-pending-g1',
+            createTime: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            state: 'BATCH_STATE_PENDING' },
+          { name: 'batches/bbb', displayName: 'sentiment-batch-pending-other',
+            createTime: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            state: 'BATCH_STATE_SUCCEEDED' },
+          { name: 'batches/ccc', displayName: 'sentiment-batch-pending-g1-stale',
+            createTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            state: 'BATCH_STATE_PENDING' }
+        ]
+      }) };
+    });
+
+    const result = await sentimentBatches.listSentimentBatchesByCorrelation({
+      provider: 'gemini',
+      runtimeConfig: { apiKey: 'k' },
+      since,
+      correlationIds: new Set(['pending-g1'])
+    });
+    expect(result).toEqual([
+      { correlationId: 'pending-g1', batchId: 'batches/aaa', providerState: 'BATCH_STATE_PENDING' }
+    ]);
+  });
 });
 
 describe('Vertex sentiment batch primitives', () => {
