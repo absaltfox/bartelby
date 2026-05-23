@@ -318,6 +318,23 @@ router.post('/api/sentiment/:id/retry', asyncHandler(async (req, res) => {
   res.json({ success: true });
 }));
 
+// API: trigger one sentiment reconciliation cycle synchronously (admin-only)
+// Per docs/superpowers/specs/2026-05-19-sentiment-phase-1.6a-reconciliation-design.md.
+router.post('/api/sentiment/reconcile', express.json(), asyncHandler(async (req, res) => {
+  const { reconcileSentimentBatches } = require('../utils/worker-sentiment-reconciliation');
+  const result = await reconcileSentimentBatches({ source: 'admin' });
+  if (result.skipped === 'busy') {
+    return res.status(409).json({ error: 'A reconciliation cycle is already in progress.' });
+  }
+  audit.log('admin.sentiment_reconcile_triggered', {
+    ...audit.reqContext(req),
+    matched: result.matched,
+    providers: result.providers,
+    durationMs: result.durationMs
+  });
+  res.json({ success: true, ...result });
+}));
+
 // API: delete sentiment job record
 router.delete('/api/sentiment/:id', express.json(), asyncHandler(async (req, res) => {
   const jobId = parseInt(req.params.id);
