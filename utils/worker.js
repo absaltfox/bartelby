@@ -26,6 +26,7 @@ let authorityResolutionBusy = false;
 let authoritySuggestionBusy = false;
 let sentimentExtractionBusy = false;
 let sentimentBatchPollBusy = false;
+let sentimentReconciliationBusy = false;
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
@@ -42,6 +43,11 @@ function startWorker() {
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
   setInterval(tickSentimentExtractionJobs, 5000);
   setInterval(pollRunningSentimentBatchesTick, BATCH_POLL_MS);
+  const reconciliationMs = parseInt(process.env.SENTIMENT_RECONCILIATION_INTERVAL_MS, 10);
+  const reconciliationIntervalMs = Number.isFinite(reconciliationMs) ? reconciliationMs : 600000;
+  if (reconciliationIntervalMs > 0) {
+    setInterval(tickSentimentReconciliation, reconciliationIntervalMs);
+  }
   setInterval(checkStaleImportJobs, 60000);
   setInterval(async () => {
     try {
@@ -181,6 +187,19 @@ async function pollRunningSentimentBatchesTick() {
     console.error('[worker] sentiment batch poll failed:', err.message);
   } finally {
     sentimentBatchPollBusy = false;
+  }
+}
+
+async function tickSentimentReconciliation() {
+  if (sentimentReconciliationBusy) return;
+  sentimentReconciliationBusy = true;
+  try {
+    const { reconcileSentimentBatches } = require('./worker-sentiment-reconciliation');
+    await reconcileSentimentBatches({ source: 'tick' });
+  } catch (err) {
+    console.error('[worker] sentiment reconciliation tick failed:', err.message);
+  } finally {
+    sentimentReconciliationBusy = false;
   }
 }
 
