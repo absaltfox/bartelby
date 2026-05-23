@@ -902,8 +902,32 @@ async function fetchVertexSentimentResults({ batchId, runtimeConfig, descriptors
   return rows;
 }
 
-async function listVertexSentimentBatchesByCorrelation(/* { runtimeConfig, since, correlationIds } */) {
-  throw new Error('Vertex sentiment batch reconciliation: not implemented');
+async function listVertexSentimentBatchesByCorrelation({ runtimeConfig, since, correlationIds }) {
+  const { accessToken, project, location = 'global' } = runtimeConfig;
+  if (!project) throw new Error('Vertex sentiment list: missing project in runtimeConfig.');
+  const wanted = correlationIds instanceof Set ? correlationIds : new Set(correlationIds || []);
+  const wantedPrefixes = new Set([...wanted].map((corr) => `sentiment-batch-${corr}`));
+  // Vertex supports a server-side `filter` parameter using AIP-160 syntax;
+  // create_time > "<RFC3339>" limits scope to the reconciliation window.
+  const prefix = vertexEndpointPrefix(location);
+  const baseUrl = `https://${prefix}aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(location)}/batchPredictionJobs`;
+  const filter = encodeURIComponent(`create_time>"${since}"`);
+  const url = `${baseUrl}?filter=${filter}&pageSize=200`;
+
+  const resp = await fetchJson(url, {
+    method: 'GET',
+    headers: vertexAuthHeaders(accessToken)
+  }, 'Vertex batchPredictionJobs list');
+
+  const items = Array.isArray(resp.batchPredictionJobs) ? resp.batchPredictionJobs : [];
+  const matches = [];
+  for (const item of items) {
+    const dn = item.displayName || '';
+    if (!wantedPrefixes.has(dn)) continue;
+    const corr = dn.replace(/^sentiment-batch-/, '');
+    matches.push({ correlationId: corr, batchId: item.name, providerState: item.state || null });
+  }
+  return matches;
 }
 
 // ── public dispatch functions ──────────────────────────────────────────────

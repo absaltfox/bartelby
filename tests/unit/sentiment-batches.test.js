@@ -578,4 +578,42 @@ describe('Vertex sentiment batch primitives', () => {
     expect(results[0].error).toMatch(/no such field/);
     expect(results[0].text).toBe('');
   });
+
+  test('listSentimentBatchesByCorrelation matches by displayName prefix, applies server-side create_time filter', async () => {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    let listCalls = 0;
+    let capturedUrl;
+    global.fetch = jest.fn(async (url) => {
+      if (!url.includes('batchPredictionJobs')) throw new Error(`unexpected: ${url}`);
+      listCalls += 1;
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => JSON.stringify({
+        batchPredictionJobs: [
+          { name: 'projects/p/locations/global/batchPredictionJobs/111',
+            displayName: 'sentiment-batch-pending-v1', state: 'JOB_STATE_PENDING',
+            createTime: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
+          { name: 'projects/p/locations/global/batchPredictionJobs/222',
+            displayName: 'sentiment-batch-pending-other', state: 'JOB_STATE_SUCCEEDED',
+            createTime: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+          { name: 'projects/p/locations/global/batchPredictionJobs/333',
+            displayName: 'some-other-batch', state: 'JOB_STATE_SUCCEEDED',
+            createTime: new Date(Date.now() - 15 * 60 * 1000).toISOString() }
+        ]
+      }) };
+    });
+
+    const result = await sentimentBatches.listSentimentBatchesByCorrelation({
+      provider: 'vertex',
+      runtimeConfig: { accessToken: 't', project: 'p', location: 'global' },
+      since,
+      correlationIds: new Set(['pending-v1'])
+    });
+    expect(result).toEqual([
+      { correlationId: 'pending-v1',
+        batchId: 'projects/p/locations/global/batchPredictionJobs/111',
+        providerState: 'JOB_STATE_PENDING' }
+    ]);
+    // Server-side create_time filter encoded in the URL
+    expect(capturedUrl).toMatch(/filter=create_time/);
+  });
 });
