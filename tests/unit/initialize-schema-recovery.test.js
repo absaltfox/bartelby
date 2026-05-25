@@ -154,6 +154,43 @@ describe('sentiment batch stale-claim recovery', () => {
   });
 });
 
+describe('Phase 2a clustering schema (migration v70)', () => {
+  let dbModule;
+  let dbDriver;
+
+  beforeAll(async () => {
+    process.env.SESSION_SECRET = 'test-session-secret-for-jest-only-32ch';
+    process.env.DATABASE_DRIVER = 'sqljs';
+    process.env.DISABLE_BACKGROUND_WORKER = '1';
+    jest.resetModules();
+    dbModule = require('../../database/db');
+    await dbModule.initializeSchema();
+    dbDriver = dbModule.getDb();
+  });
+
+  it('creates sentiment_phrase_cluster_runs with expected columns', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_phrase_cluster_runs)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'id', 'status', 'params_json', 'cluster_count', 'noise_count',
+      'phrase_count', 'error', 'attempts', 'triggered_by_user_id',
+      'created_at', 'started_at', 'completed_at'
+    ]));
+  });
+
+  it('creates sentiment_phrase_clusters with run_id FK', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_phrase_clusters)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining(['id', 'run_id', 'cluster_index', 'size', 'created_at']));
+  });
+
+  it('creates sentiment_phrase_cluster_members with composite PK', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_phrase_cluster_members)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining(['cluster_id', 'phrase_id', 'distance_to_centroid']));
+  });
+});
+
 describe('pdf-worker standalone wiring', () => {
   it('runStandalone opts out of stale-job recovery', () => {
     const src = fs.readFileSync(

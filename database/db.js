@@ -517,6 +517,47 @@ MIGRATIONS.push(`
   ALTER TABLE sentiment_annotations ADD COLUMN notes TEXT;
 `);
 
+// v70 — sentiment phrase clustering runs (Phase 2a)
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS sentiment_phrase_cluster_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    params_json TEXT,
+    cluster_count INTEGER,
+    noise_count INTEGER,
+    phrase_count INTEGER,
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    triggered_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_sentiment_phrase_cluster_runs_status
+    ON sentiment_phrase_cluster_runs(status);
+
+  CREATE TABLE IF NOT EXISTS sentiment_phrase_clusters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES sentiment_phrase_cluster_runs(id) ON DELETE CASCADE,
+    cluster_index INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_sentiment_phrase_clusters_run
+    ON sentiment_phrase_clusters(run_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_phrase_clusters_run_index
+    ON sentiment_phrase_clusters(run_id, cluster_index);
+
+  CREATE TABLE IF NOT EXISTS sentiment_phrase_cluster_members (
+    cluster_id INTEGER NOT NULL REFERENCES sentiment_phrase_clusters(id) ON DELETE CASCADE,
+    phrase_id INTEGER NOT NULL REFERENCES sentiment_emotion_phrases(id) ON DELETE CASCADE,
+    distance_to_centroid REAL,
+    PRIMARY KEY (cluster_id, phrase_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_sentiment_phrase_cluster_members_phrase
+    ON sentiment_phrase_cluster_members(phrase_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
