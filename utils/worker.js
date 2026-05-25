@@ -27,6 +27,7 @@ let authoritySuggestionBusy = false;
 let sentimentExtractionBusy = false;
 let sentimentBatchPollBusy = false;
 let sentimentReconciliationBusy = false;
+let sentimentClusteringBusy = false;
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
@@ -48,6 +49,7 @@ function startWorker() {
   if (reconciliationIntervalMs > 0) {
     setInterval(tickSentimentReconciliation, reconciliationIntervalMs);
   }
+  setInterval(tickSentimentClusteringJobs, 5000);
   setInterval(checkStaleImportJobs, 60000);
   setInterval(async () => {
     try {
@@ -200,6 +202,19 @@ async function tickSentimentReconciliation() {
     console.error('[worker] sentiment reconciliation tick failed:', err.message);
   } finally {
     sentimentReconciliationBusy = false;
+  }
+}
+
+async function tickSentimentClusteringJobs() {
+  if (sentimentClusteringBusy) return;
+  sentimentClusteringBusy = true;
+  try {
+    const { processQueuedClusteringRun } = require('./worker-sentiment-clustering');
+    await processQueuedClusteringRun();
+  } catch (err) {
+    console.error('[worker] sentiment clustering tick failed:', err.message);
+  } finally {
+    sentimentClusteringBusy = false;
   }
 }
 
