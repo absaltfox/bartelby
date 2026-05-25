@@ -189,6 +189,42 @@ describe('Phase 2a clustering schema (migration v70)', () => {
     const names = cols.map((c) => c.name);
     expect(names).toEqual(expect.arrayContaining(['cluster_id', 'phrase_id', 'distance_to_centroid']));
   });
+
+  it('marks running cluster runs as failed on schema init (server-restart recovery)', async () => {
+    // Use a fresh DB in a tmp dir so the recovery sweep is observable
+    const os = require('os');
+    const fs = require('fs');
+    const path = require('path');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-recovery-'));
+    process.env.DATABASE_URL = `file:${path.join(tmpDir, 'test.db')}`;
+    process.env.DATABASE_DRIVER = 'sqljs';
+    process.env.DISABLE_BACKGROUND_WORKER = '1';
+    jest.resetModules();
+
+    const db = require('../../database/db');
+    await db.initializeSchema({ runStaleJobRecovery: false });
+
+    // Plant a 'running' row
+    const result = await db.runAsync(
+      `INSERT INTO sentiment_phrase_cluster_runs (status, started_at)
+       VALUES ('running', datetime('now', '-5 minutes'))`
+    );
+    const runId = result.lastInsertRowid;
+
+    // Sweep should mark it failed
+    await db.initializeSchema();
+
+    const row = await db.getAsync(
+      `SELECT status, error, completed_at FROM sentiment_phrase_cluster_runs WHERE id = ?`,
+      [runId]
+    );
+    expect(row.status).toBe('failed');
+    expect(row.error).toMatch(/Server restarted during clustering run/);
+    expect(row.completed_at).not.toBeNull();
+
+    await db.closeAsync?.();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
 
 describe('pdf-worker standalone wiring', () => {

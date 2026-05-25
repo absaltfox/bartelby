@@ -1103,6 +1103,25 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleSentimentBatchUnsubmittedCount} stale sentiment batch-unsubmitted job(s) as failed.`);
   }
 
+  // Phase 2a: sentiment_phrase_cluster_runs left in 'running' after a
+  // server restart get marked 'failed' (worker subprocess died with the
+  // server; no recovery is possible — admin can re-trigger).
+  const staleClusterRuns = await getAsync(`
+    SELECT COUNT(*) as count FROM sentiment_phrase_cluster_runs
+     WHERE status = 'running'
+  `);
+  const staleClusterRunCount = staleClusterRuns?.count || 0;
+  if (staleClusterRunCount > 0) {
+    await db.run(`
+      UPDATE sentiment_phrase_cluster_runs
+         SET status = 'failed',
+             error = 'Server restarted during clustering run',
+             completed_at = CURRENT_TIMESTAMP
+       WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleClusterRunCount} stale sentiment cluster run(s) as failed.`);
+  }
+
   if (
     staleRenderImportCount > 0
     || staleSubmitImportCount > 0
@@ -1119,6 +1138,7 @@ async function initializeSchema(options = {}) {
     || staleSentimentBatchClaimedCount > 0
     || staleSentimentBatchPendingCount > 0
     || staleSentimentBatchUnsubmittedCount > 0
+    || staleClusterRunCount > 0
   ) {
     await saveDatabase();
   }
