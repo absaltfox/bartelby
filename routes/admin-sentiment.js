@@ -183,4 +183,54 @@ router.get('/clusters/api/runs/:id', asyncHandler(async (req, res) => {
   res.json(run);
 }));
 
+// GET: read-only cluster report page
+router.get('/clusters', asyncHandler(async (req, res) => {
+  // Recent runs (latest 10)
+  const recentRuns = await db.allAsync(
+    `SELECT id, status, cluster_count, noise_count, phrase_count, error,
+            created_at, started_at, completed_at
+       FROM sentiment_phrase_cluster_runs
+      ORDER BY created_at DESC LIMIT 10`
+  );
+
+  // Latest completed run + its clusters (with up to 5 sample phrases each)
+  const latestDone = recentRuns.find((r) => r.status === 'done');
+  let clusters = [];
+  if (latestDone) {
+    const clusterRows = await db.allAsync(
+      `SELECT id, cluster_index, size FROM sentiment_phrase_clusters
+        WHERE run_id = ? ORDER BY size DESC, cluster_index ASC`,
+      [latestDone.id]
+    );
+    // For each cluster, fetch up to 5 sample phrases (closest to centroid first)
+    for (const c of clusterRows) {
+      const samples = await db.allAsync(
+        `SELECT p.phrase_text_normalized
+           FROM sentiment_phrase_cluster_members m
+           JOIN sentiment_emotion_phrases p ON p.id = m.phrase_id
+          WHERE m.cluster_id = ?
+          ORDER BY m.distance_to_centroid ASC NULLS LAST
+          LIMIT 5`,
+        [c.id]
+      );
+      clusters.push({
+        cluster_index: c.cluster_index,
+        size: c.size,
+        sample_phrases: samples.map((s) => s.phrase_text_normalized)
+      });
+    }
+  }
+
+  // If there's a queued/running run, the UI uses it to disable the button + poll
+  const inFlightRun = recentRuns.find((r) => r.status === 'queued' || r.status === 'running');
+
+  res.render('admin/sentiment-clusters', {
+    pageTitle: 'Sentiment Phrase Clusters',
+    recentRuns,
+    latestDone,
+    clusters,
+    inFlightRun
+  });
+}));
+
 module.exports = router;

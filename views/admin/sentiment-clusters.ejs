@@ -1,0 +1,98 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-clusters' }) %>
+
+  <div class="admin-header">
+    <h1>Sentiment Phrase Clusters</h1>
+    <p class="subtitle">
+      Read-only view of the latest sentiment phrase clustering run. The curator
+      workflow for labeling clusters is forthcoming in Phase 2b.
+    </p>
+  </div>
+
+  <div class="admin-content">
+    <div class="cluster-actions" style="margin-bottom: 1rem;">
+      <button type="button" class="btn-primary"
+              id="sentiment-cluster-run-btn"
+              <% if (inFlightRun) { %>disabled<% } %>
+              data-in-flight-run-id="<%= inFlightRun ? inFlightRun.id : '' %>">
+        <% if (inFlightRun) { %>
+          Run #<%= inFlightRun.id %> in progress (<%= inFlightRun.status %>)&hellip;
+        <% } else { %>
+          Run clustering now
+        <% } %>
+      </button>
+      <span class="save-status" id="sentiment-cluster-status"></span>
+    </div>
+
+    <h2>Recent runs</h2>
+    <% if (recentRuns.length === 0) { %>
+      <p class="muted">No clustering runs yet. Click &ldquo;Run clustering now&rdquo; to start one.</p>
+    <% } else { %>
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% for (const r of recentRuns) { %>
+            <tr>
+              <td>#<%= r.id %></td>
+              <td><%= r.status %></td>
+              <td><%= r.created_at %></td>
+              <td>
+                <% if (r.status === 'done') { %>
+                  <%= r.cluster_count %> clusters &middot; <%= r.noise_count %> noise &middot; <%= r.phrase_count %> phrases
+                <% } else if (r.status === 'failed') { %>
+                  <span class="muted">error: <%= r.error %></span>
+                <% } else { %>
+                  <span class="muted">&mdash;</span>
+                <% } %>
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <% if (latestDone) { %>
+      <h2>Latest run (#<%= latestDone.id %>) &mdash; clusters</h2>
+      <% if (clusters.length === 0) { %>
+        <p class="muted">No clusters produced (everything was noise or the corpus was too small).</p>
+      <% } else { %>
+        <table class="workflows-table">
+          <thead>
+            <tr>
+              <th>Cluster</th>
+              <th>Size</th>
+              <th>Sample phrases (closest to centroid first)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% for (const c of clusters) { %>
+              <tr>
+                <td>#<%= c.cluster_index %></td>
+                <td><%= c.size %></td>
+                <td>
+                  <%= c.sample_phrases.join(' · ') %>
+                  <% if (c.size > c.sample_phrases.length) { %>
+                    <span class="muted">(+<%= c.size - c.sample_phrases.length %> more)</span>
+                  <% } %>
+                </td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      <% } %>
+    <% } %>
+  </div>
+</div>
+
+<script src="/js/sentiment-clusters-page.js" defer></script>
+<%- include('../partials/footer') %>
