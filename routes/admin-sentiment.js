@@ -13,6 +13,7 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -144,6 +145,42 @@ router.post('/review/:id/delete', express.json(), asyncHandler(async (req, res) 
   const ok = await db.sentimentAsync.deleteAnnotationById(id);
   if (!ok) return res.status(404).json({ error: 'Annotation not found.' });
   return res.json({ success: true, annotationId: id });
+}));
+
+// ── Phase 2a clustering API ────────────────────────────────────────────────
+// Per docs/superpowers/specs/2026-05-23-sentiment-phase-2a-clustering-design.md § 6.
+
+// POST: queue a new clustering run
+router.post('/clusters/api/runs', express.json(), asyncHandler(async (req, res) => {
+  const params = {
+    umap_n_components: Number(process.env.SENTIMENT_CLUSTER_UMAP_N_COMPONENTS || 5),
+    umap_n_neighbors: Number(process.env.SENTIMENT_CLUSTER_UMAP_N_NEIGHBORS || 15),
+    hdbscan_min_cluster_size: Number(process.env.SENTIMENT_CLUSTER_HDBSCAN_MIN_CLUSTER_SIZE || 3),
+    hdbscan_min_samples: Number(process.env.SENTIMENT_CLUSTER_HDBSCAN_MIN_SAMPLES || 2),
+    random_state: 42
+  };
+  const result = await db.runAsync(
+    `INSERT INTO sentiment_phrase_cluster_runs (status, params_json, triggered_by_user_id)
+     VALUES ('queued', ?, ?)`,
+    [JSON.stringify(params), req.user?.id || null]
+  );
+  audit.log('admin.sentiment_clustering_queued', {
+    ...audit.reqContext(req),
+    runId: result.lastInsertRowid
+  });
+  res.status(202).json({ success: true, run_id: result.lastInsertRowid });
+}));
+
+// GET: status of a specific run (UI polls this every 3s while queued/running)
+router.get('/clusters/api/runs/:id', asyncHandler(async (req, res) => {
+  const run = await db.getAsync(
+    `SELECT id, status, cluster_count, noise_count, phrase_count, error,
+            created_at, started_at, completed_at
+       FROM sentiment_phrase_cluster_runs WHERE id = ?`,
+    [parseInt(req.params.id)]
+  );
+  if (!run) return res.status(404).json({ error: 'Not found' });
+  res.json(run);
 }));
 
 module.exports = router;
