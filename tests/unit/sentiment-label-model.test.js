@@ -124,4 +124,67 @@ describe('sentiment label model', () => {
       expect(result.unlabeled_phrase_count).toBe(0);
     });
   });
+
+  describe('applyLabelToPhrases', () => {
+    test('sets canonical_label_id on multiple phrase rows', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const a = await sentimentAsync.upsertEmotionPhrase('happiness');
+      const b = await sentimentAsync.upsertEmotionPhrase('delight');
+      const result = await sentimentAsync.applyLabelToPhrases(joy.id, [a.id, b.id]);
+      expect(result.updated_count).toBe(2);
+      const aRow = await db.getAsync(`SELECT canonical_label_id FROM sentiment_emotion_phrases WHERE id = ?`, [a.id]);
+      expect(aRow.canonical_label_id).toBe(joy.id);
+    });
+
+    test('overwrites previous label (intentional)', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const { row: sorrow } = await sentimentAsync.createOrFetchLabel('sorrow');
+      const a = await sentimentAsync.upsertEmotionPhrase('confusing-feeling');
+      await sentimentAsync.applyLabelToPhrases(joy.id, [a.id]);
+      const result = await sentimentAsync.applyLabelToPhrases(sorrow.id, [a.id]);
+      expect(result.updated_count).toBe(1);
+      const aRow = await db.getAsync(`SELECT canonical_label_id FROM sentiment_emotion_phrases WHERE id = ?`, [a.id]);
+      expect(aRow.canonical_label_id).toBe(sorrow.id);
+    });
+
+    test('returns updated_count = 0 for empty phrase_ids without DB hit', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const result = await sentimentAsync.applyLabelToPhrases(joy.id, []);
+      expect(result.updated_count).toBe(0);
+    });
+
+    test('silently skips phrase_ids that do not exist', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const a = await sentimentAsync.upsertEmotionPhrase('happiness');
+      const result = await sentimentAsync.applyLabelToPhrases(joy.id, [a.id, 99999]);
+      expect(result.updated_count).toBe(1); // only a.id matched
+    });
+  });
+
+  describe('clearLabelsFromPhrases', () => {
+    test('sets canonical_label_id = NULL on previously-labeled rows', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const a = await sentimentAsync.upsertEmotionPhrase('happiness');
+      const b = await sentimentAsync.upsertEmotionPhrase('delight');
+      await sentimentAsync.applyLabelToPhrases(joy.id, [a.id, b.id]);
+      const result = await sentimentAsync.clearLabelsFromPhrases([a.id, b.id]);
+      expect(result.cleared_count).toBe(2);
+      const aRow = await db.getAsync(`SELECT canonical_label_id FROM sentiment_emotion_phrases WHERE id = ?`, [a.id]);
+      expect(aRow.canonical_label_id).toBeNull();
+    });
+
+    test('returns cleared_count reflecting only actually-cleared rows', async () => {
+      const { row: joy } = await sentimentAsync.createOrFetchLabel('joy');
+      const a = await sentimentAsync.upsertEmotionPhrase('happiness');
+      await sentimentAsync.applyLabelToPhrases(joy.id, [a.id]);
+      const b = await sentimentAsync.upsertEmotionPhrase('unlabeled-phrase');
+      const result = await sentimentAsync.clearLabelsFromPhrases([a.id, b.id]);
+      expect(result.cleared_count).toBe(1); // only a was labeled
+    });
+
+    test('returns cleared_count = 0 for empty phrase_ids', async () => {
+      const result = await sentimentAsync.clearLabelsFromPhrases([]);
+      expect(result.cleared_count).toBe(0);
+    });
+  });
 });

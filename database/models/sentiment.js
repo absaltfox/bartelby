@@ -407,6 +407,37 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return { unlabeled_phrase_count: before?.count || 0 };
     },
 
+    async applyLabelToPhrases(labelId, phraseIds) {
+      if (!Array.isArray(phraseIds) || phraseIds.length === 0) {
+        return { updated_count: 0 };
+      }
+      const placeholders = phraseIds.map(() => '?').join(', ');
+      const result = await runAsync(
+        `UPDATE sentiment_emotion_phrases
+            SET canonical_label_id = ?
+          WHERE id IN (${placeholders})`,
+        [labelId, ...phraseIds]
+      );
+      await saveDatabase();
+      return { updated_count: result.changes || 0 };
+    },
+
+    async clearLabelsFromPhrases(phraseIds) {
+      if (!Array.isArray(phraseIds) || phraseIds.length === 0) {
+        return { cleared_count: 0 };
+      }
+      const placeholders = phraseIds.map(() => '?').join(', ');
+      const result = await runAsync(
+        `UPDATE sentiment_emotion_phrases
+            SET canonical_label_id = NULL
+          WHERE id IN (${placeholders})
+            AND canonical_label_id IS NOT NULL`,
+        phraseIds
+      );
+      await saveDatabase();
+      return { cleared_count: result.changes || 0 };
+    },
+
     async getPhrasesMissingEmbedding(limit = 100) {
       return allAsync(
         `SELECT id, phrase_text_normalized FROM sentiment_emotion_phrases
