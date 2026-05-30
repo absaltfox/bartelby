@@ -351,4 +351,26 @@ router.post('/labels/clear', express.json(), asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+// GET: drawer data — full member list of a cluster with current labels
+router.get('/clusters/api/clusters/:id/members', asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+  const result = await db.sentimentAsync.getClusterMembersWithLabels(id);
+  if (!result) return res.status(404).json({ error: 'cluster not found' });
+  res.json(result);
+}));
+
+// GET: noise tab data — paginated noise phrases from the latest done run
+router.get('/clusters/noise.json', asyncHandler(async (req, res) => {
+  const latestRun = await db.getAsync(
+    `SELECT id FROM sentiment_phrase_cluster_runs
+      WHERE status = 'done' ORDER BY completed_at DESC LIMIT 1`
+  );
+  if (!latestRun) return res.json({ total_noise_count: 0, page: 1, page_size: 50, total_pages: 0, phrases: [] });
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(200, Math.max(1, parseInt(req.query.page_size, 10) || 50));
+  const result = await db.sentimentAsync.getNoisePhrasesForRun(latestRun.id, { page, pageSize });
+  res.json({ run_id: latestRun.id, ...result });
+}));
+
 module.exports = router;
