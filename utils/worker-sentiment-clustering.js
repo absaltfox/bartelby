@@ -75,9 +75,11 @@ async function processQueuedClusteringRun() {
               cluster_count = ?,
               noise_count = ?,
               phrase_count = ?,
+              noise_phrase_ids_json = ?,
               completed_at = CURRENT_TIMESTAMP
         WHERE id = ?`,
-      [result.clusters.length, result.noise_phrase_ids.length, phrases.length, run.id]
+      [result.clusters.length, result.noise_phrase_ids.length, phrases.length,
+       JSON.stringify(result.noise_phrase_ids || []), run.id]
     );
     await db.saveDatabase?.();
 

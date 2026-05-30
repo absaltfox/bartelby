@@ -130,6 +130,8 @@ describe('worker-sentiment-clustering', () => {
     expect(members).toHaveLength(1);
     expect(members[0].phrase_id).toBe(1);
     expect(members[0].distance_to_centroid).toBeCloseTo(0.123, 3);
+    // Phase 2b: noise_phrase_ids_json is now persisted on the run
+    expect(run.noise_phrase_ids_json).toBe('[]');
   });
 
   test('on Python non-zero exit marks run failed with stderr', async () => {
@@ -165,10 +167,11 @@ describe('worker-sentiment-clustering', () => {
     await new Promise((r) => setImmediate(r));
     emitPythonSuccess({ status: 'ok', clusters: [], noise_phrase_ids: [] });
     await promise;
-    const run = await db.getAsync(`SELECT status, cluster_count, phrase_count FROM sentiment_phrase_cluster_runs WHERE id = ?`, [runId]);
+    const run = await db.getAsync(`SELECT status, cluster_count, phrase_count, noise_phrase_ids_json FROM sentiment_phrase_cluster_runs WHERE id = ?`, [runId]);
     expect(run.status).toBe('done');
     expect(run.cluster_count).toBe(0);
     expect(run.phrase_count).toBe(0);
+    expect(run.noise_phrase_ids_json).toBe('[]');
   });
 
   test('two queued rows: only the oldest is processed per call', async () => {
@@ -184,6 +187,26 @@ describe('worker-sentiment-clustering', () => {
     const newer = await db.getAsync(`SELECT status FROM sentiment_phrase_cluster_runs WHERE id = ?`, [newerId]);
     expect(older.status).toBe('done');
     expect(newer.status).toBe('queued');
+  });
+
+  test('persists noise_phrase_ids_json with the noise list from Python', async () => {
+    const runId = await queueRun();
+    const promise = processQueuedClusteringRun();
+    await new Promise((r) => setImmediate(r));
+    emitPythonSuccess({
+      status: 'ok',
+      clusters: [
+        { cluster_index: 0, members: [{ phrase_id: 1, distance_to_centroid: 0.01 }] }
+      ],
+      noise_phrase_ids: [42, 73, 99]
+    });
+    await promise;
+    const run = await db.getAsync(
+      `SELECT noise_phrase_ids_json, noise_count FROM sentiment_phrase_cluster_runs WHERE id = ?`,
+      [runId]
+    );
+    expect(run.noise_count).toBe(3);
+    expect(JSON.parse(run.noise_phrase_ids_json)).toEqual([42, 73, 99]);
   });
 
   test('subprocess exceeding timeout is killed and marked failed', async () => {
