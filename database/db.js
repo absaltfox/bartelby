@@ -558,6 +558,28 @@ MIGRATIONS.push(`
     ON sentiment_phrase_cluster_members(phrase_id);
 `);
 
+// v71 — Phase 2b: canonical labels for sentiment phrases (plus noise_phrase_ids_json on runs)
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS sentiment_phrase_labels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  ALTER TABLE sentiment_emotion_phrases
+    ADD COLUMN canonical_label_id INTEGER
+         REFERENCES sentiment_phrase_labels(id) ON DELETE SET NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_sentiment_emotion_phrases_canonical_label
+    ON sentiment_emotion_phrases(canonical_label_id);
+
+  ALTER TABLE sentiment_phrase_cluster_runs
+    ADD COLUMN noise_phrase_ids_json TEXT;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

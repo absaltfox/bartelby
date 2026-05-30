@@ -227,6 +227,51 @@ describe('Phase 2a clustering schema (migration v70)', () => {
   });
 });
 
+describe('Phase 2b labels schema (migration v71)', () => {
+  let dbModule;
+  let dbDriver;
+
+  beforeAll(async () => {
+    process.env.SESSION_SECRET = 'test-session-secret-for-jest-only-32ch';
+    process.env.DATABASE_DRIVER = 'sqljs';
+    process.env.DISABLE_BACKGROUND_WORKER = '1';
+    jest.resetModules();
+    dbModule = require('../../database/db');
+    await dbModule.initializeSchema();
+    dbDriver = dbModule.getDb();
+  });
+
+  it('creates sentiment_phrase_labels with expected columns', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_phrase_labels)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual(expect.arrayContaining([
+      'id', 'name', 'description', 'created_by_user_id',
+      'created_at', 'updated_at'
+    ]));
+    // name should be NOT NULL
+    expect(cols.find((c) => c.name === 'name').notnull).toBe(1);
+  });
+
+  it('adds canonical_label_id column to sentiment_emotion_phrases', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_emotion_phrases)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('canonical_label_id');
+  });
+
+  it('adds noise_phrase_ids_json column to sentiment_phrase_cluster_runs', () => {
+    const cols = dbDriver.all(`PRAGMA table_info(sentiment_phrase_cluster_runs)`);
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('noise_phrase_ids_json');
+  });
+
+  it('enforces UNIQUE constraint on label name', async () => {
+    await dbModule.runAsync(`INSERT INTO sentiment_phrase_labels (name) VALUES ('joy')`);
+    await expect(
+      dbModule.runAsync(`INSERT INTO sentiment_phrase_labels (name) VALUES ('joy')`)
+    ).rejects.toThrow(/UNIQUE/i);
+  });
+});
+
 describe('pdf-worker standalone wiring', () => {
   it('runStandalone opts out of stale-job recovery', () => {
     const src = fs.readFileSync(
