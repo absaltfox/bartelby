@@ -7,6 +7,9 @@
 // Per docs/superpowers/specs/2026-05-23-sentiment-phase-2a-clustering-design.md § 5.
 
 const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const db = require('../database/db');
 const { resolvePythonBin } = require('./python-runtime');
 
@@ -96,50 +99,60 @@ async function processQueuedClusteringRun() {
   }
 }
 
-function runClusteringSubprocess({ phrases, params }) {
-  return new Promise((resolve, reject) => {
-    const timeoutSec = Number(process.env.SENTIMENT_CLUSTER_TIMEOUT_SEC) || TIMEOUT_SEC_DEFAULT;
-    const proc = spawn(resolvePythonBin(), [PYTHON_SCRIPT], {
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
-    });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let sigkillTimer = null;
+async function runClusteringSubprocess({ phrases, params }) {
+  // The payload for 2k+ phrases is ~17MB. Piping that via stdin to a Python
+  // subprocess that only reads it after json.load(sys.stdin) means the OS pipe
+  // buffer (64KB on macOS) fills up and the writer blocks on backpressure
+  // throughout the read, adding 5–6× overhead versus reading from a file.
+  // Write to a temp file instead; the Python script reads it via --input.
+  const tmpPath = path.join(os.tmpdir(), `sentiment-cluster-${process.pid}-${Date.now()}.json`);
+  fs.writeFileSync(tmpPath, JSON.stringify({ phrases, params }));
 
-    const sigtermTimer = setTimeout(() => {
-      timedOut = true;
-      proc.kill('SIGTERM');
-      sigkillTimer = setTimeout(() => {
-        proc.kill('SIGKILL');
-      }, SIGKILL_GRACE_MS);
-    }, timeoutSec * 1000);
+  try {
+    return await new Promise((resolve, reject) => {
+      const timeoutSec = Number(process.env.SENTIMENT_CLUSTER_TIMEOUT_SEC) || TIMEOUT_SEC_DEFAULT;
+      const proc = spawn(resolvePythonBin(), [PYTHON_SCRIPT, '--input', tmpPath], {
+        env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      });
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      let sigkillTimer = null;
 
-    proc.stdout.on('data', (d) => { stdout += d; });
-    proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (err) => {
-      clearTimeout(sigtermTimer);
-      if (sigkillTimer) clearTimeout(sigkillTimer);
-      reject(err);
+      const sigtermTimer = setTimeout(() => {
+        timedOut = true;
+        proc.kill('SIGTERM');
+        sigkillTimer = setTimeout(() => {
+          proc.kill('SIGKILL');
+        }, SIGKILL_GRACE_MS);
+      }, timeoutSec * 1000);
+
+      proc.stdout.on('data', (d) => { stdout += d; });
+      proc.stderr.on('data', (d) => { stderr += d; });
+      proc.on('error', (err) => {
+        clearTimeout(sigtermTimer);
+        if (sigkillTimer) clearTimeout(sigkillTimer);
+        reject(err);
+      });
+      proc.on('close', (code) => {
+        clearTimeout(sigtermTimer);
+        if (sigkillTimer) clearTimeout(sigkillTimer);
+        if (timedOut) {
+          return reject(new Error(`Clustering exceeded ${timeoutSec} second timeout`));
+        }
+        if (code !== 0) {
+          return reject(new Error(`sentiment_cluster.py exited ${code}: ${stderr.slice(-500)}`));
+        }
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (e) {
+          reject(new Error(`bad JSON from sentiment_cluster.py: ${e.message}`));
+        }
+      });
     });
-    proc.on('close', (code) => {
-      clearTimeout(sigtermTimer);
-      if (sigkillTimer) clearTimeout(sigkillTimer);
-      if (timedOut) {
-        return reject(new Error(`Clustering exceeded ${timeoutSec} second timeout`));
-      }
-      if (code !== 0) {
-        return reject(new Error(`sentiment_cluster.py exited ${code}: ${stderr.slice(-500)}`));
-      }
-      try {
-        resolve(JSON.parse(stdout));
-      } catch (e) {
-        reject(new Error(`bad JSON from sentiment_cluster.py: ${e.message}`));
-      }
-    });
-    proc.stdin.write(JSON.stringify({ phrases, params }));
-    proc.stdin.end();
-  });
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) { /* best-effort cleanup */ }
+  }
 }
 
 module.exports = { processQueuedClusteringRun };

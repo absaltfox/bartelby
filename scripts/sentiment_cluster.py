@@ -2,7 +2,10 @@
 """
 Sentiment phrase clustering — Phase 2a.
 
-Reads JSON from stdin:
+Input: pass `--input <path>` (preferred; avoids stdin pipe-buffer thrash on
+large payloads) OR pipe JSON via stdin (fallback for ad-hoc invocation).
+
+Input JSON shape:
   {
     "phrases": [{"id": int, "embedding": [float, ...]}, ...],
     "params": {
@@ -28,6 +31,7 @@ On failure: traceback on stderr, non-zero exit code.
 
 Per docs/superpowers/specs/2026-05-23-sentiment-phase-2a-clustering-design.md § 4.
 """
+import argparse
 import json
 import sys
 
@@ -37,7 +41,16 @@ import hdbscan
 
 
 def main():
-    payload = json.load(sys.stdin)
+    parser = argparse.ArgumentParser(description="Sentiment phrase clustering")
+    parser.add_argument("--input", help="Path to JSON input file (preferred over stdin for large payloads)")
+    args = parser.parse_args()
+
+    if args.input:
+        with open(args.input, "r") as f:
+            payload = json.load(f)
+    else:
+        payload = json.load(sys.stdin)
+
     phrases = payload["phrases"]
     params = payload["params"]
 
