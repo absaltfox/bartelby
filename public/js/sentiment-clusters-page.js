@@ -59,13 +59,29 @@
     window.setTimeout(poll, 3000);
   }
 
+  function initClusterLabelButtons() {
+    var btns = document.querySelectorAll('.sentiment-cluster-label-btn');
+    btns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        if (typeof window.openSentimentClusterDrawer !== 'function') return;
+        window.openSentimentClusterDrawer(
+          parseInt(btn.dataset.clusterId, 10),
+          btn.dataset.clusterIndex,
+          parseInt(btn.dataset.clusterSize, 10)
+        );
+      });
+    });
+  }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function() {
       initRunButton();
       initPolling();
+      initClusterLabelButtons();
     });
   } else {
     initRunButton();
     initPolling();
+    initClusterLabelButtons();
   }
 })();
