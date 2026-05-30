@@ -335,6 +335,78 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       await saveDatabase();
     },
 
+    async createOrFetchLabel(name, { description = null, createdByUserId = null } = {}) {
+      const normalized = normalizePhrase(name);
+      if (!normalized) throw new Error('label name normalized to empty string');
+      // INSERT OR IGNORE handles races; we SELECT afterward for the canonical row
+      const insertResult = await runAsync(
+        `INSERT OR IGNORE INTO sentiment_phrase_labels (name, description, created_by_user_id)
+         VALUES (?, ?, ?)`,
+        [normalized, description, createdByUserId]
+      );
+      const created = insertResult.changes > 0;
+      const row = await getAsync(
+        `SELECT * FROM sentiment_phrase_labels WHERE name = ?`,
+        [normalized]
+      );
+      await saveDatabase();
+      return { row, created };
+    },
+
+    async listLabels() {
+      return allAsync(`
+        SELECT l.id, l.name, l.description, l.created_by_user_id,
+               l.created_at, l.updated_at,
+               COALESCE(c.phrase_count, 0) AS phrase_count
+          FROM sentiment_phrase_labels l
+          LEFT JOIN (
+            SELECT canonical_label_id, COUNT(*) AS phrase_count
+              FROM sentiment_emotion_phrases
+             WHERE canonical_label_id IS NOT NULL
+             GROUP BY canonical_label_id
+          ) c ON c.canonical_label_id = l.id
+         ORDER BY phrase_count DESC, l.name ASC
+      `);
+    },
+
+    async renameLabel(id, newName, { description } = {}) {
+      const normalized = normalizePhrase(newName);
+      if (!normalized) throw new Error('label name normalized to empty string');
+      // Check for conflict
+      const existing = await getAsync(
+        `SELECT id FROM sentiment_phrase_labels WHERE name = ? AND id != ?`,
+        [normalized, id]
+      );
+      if (existing) {
+        return { conflict: true, existing_label_id: existing.id };
+      }
+      const fields = ['name = ?', 'updated_at = CURRENT_TIMESTAMP'];
+      const args = [normalized];
+      if (description !== undefined) {
+        fields.push('description = ?');
+        args.push(description);
+      }
+      args.push(id);
+      await runAsync(
+        `UPDATE sentiment_phrase_labels SET ${fields.join(', ')} WHERE id = ?`,
+        args
+      );
+      const row = await getAsync(`SELECT * FROM sentiment_phrase_labels WHERE id = ?`, [id]);
+      await saveDatabase();
+      return { row };
+    },
+
+    async deleteLabel(id) {
+      const before = await getAsync(
+        `SELECT COUNT(*) AS count FROM sentiment_emotion_phrases WHERE canonical_label_id = ?`,
+        [id]
+      );
+      await runAsync(`DELETE FROM sentiment_phrase_labels WHERE id = ?`, [id]);
+      // ON DELETE SET NULL handles the phrase rows
+      await saveDatabase();
+      return { unlabeled_phrase_count: before?.count || 0 };
+    },
+
     async getPhrasesMissingEmbedding(limit = 100) {
       return allAsync(
         `SELECT id, phrase_text_normalized FROM sentiment_emotion_phrases
