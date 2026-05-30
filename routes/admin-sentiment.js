@@ -233,4 +233,90 @@ router.get('/clusters', asyncHandler(async (req, res) => {
   });
 }));
 
+// ── Phase 2b labels API ────────────────────────────────────────────────────
+// Per docs/superpowers/specs/2026-05-29-sentiment-phase-2b-curator-labeling-design.md § 4.1–4.4.
+
+// POST: create-or-fetch label (idempotent by normalized name)
+router.post('/labels', express.json(), asyncHandler(async (req, res) => {
+  const { name, description } = req.body || {};
+  if (typeof name !== 'string') return res.status(400).json({ error: 'name is required' });
+  let result;
+  try {
+    result = await db.sentimentAsync.createOrFetchLabel(name, {
+      description: description ?? null,
+      createdByUserId: req.user?.id ?? null
+    });
+  } catch (err) {
+    if (/empty/i.test(err.message)) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  if (result.created) {
+    audit.log('admin.sentiment_label_created', {
+      ...audit.reqContext(req),
+      labelId: result.row.id,
+      name: result.row.name
+    });
+  }
+  res.status(result.created ? 201 : 200).json(result.row);
+}));
+
+// GET: list all labels with phrase counts (JSON for the labels page client JS)
+router.get('/labels.json', asyncHandler(async (req, res) => {
+  const labels = await db.sentimentAsync.listLabels();
+  const totalLabeledPhrases = labels.reduce((sum, l) => sum + l.phrase_count, 0);
+  const totalPhrasesRow = await db.getAsync(`SELECT COUNT(*) AS count FROM sentiment_emotion_phrases`);
+  res.json({
+    total_labels: labels.length,
+    total_labeled_phrases: totalLabeledPhrases,
+    total_phrases: totalPhrasesRow?.count || 0,
+    labels
+  });
+}));
+
+// PATCH: rename / edit description
+router.patch('/labels/:id', express.json(), asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+  const { name, description } = req.body || {};
+  if (typeof name !== 'string') return res.status(400).json({ error: 'name is required' });
+  const before = await db.getAsync(`SELECT name FROM sentiment_phrase_labels WHERE id = ?`, [id]);
+  if (!before) return res.status(404).json({ error: 'label not found' });
+  let result;
+  try {
+    result = await db.sentimentAsync.renameLabel(id, name, { description });
+  } catch (err) {
+    if (/empty/i.test(err.message)) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  if (result.conflict) {
+    return res.status(409).json({
+      error: 'name already exists',
+      existing_label_id: result.existing_label_id
+    });
+  }
+  audit.log('admin.sentiment_label_renamed', {
+    ...audit.reqContext(req),
+    labelId: id,
+    oldName: before.name,
+    newName: result.row.name
+  });
+  res.json(result.row);
+}));
+
+// DELETE: remove label, unlabel its phrases (via ON DELETE SET NULL)
+router.delete('/labels/:id', express.json(), asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+  const before = await db.getAsync(`SELECT name FROM sentiment_phrase_labels WHERE id = ?`, [id]);
+  if (!before) return res.status(404).json({ error: 'label not found' });
+  const result = await db.sentimentAsync.deleteLabel(id);
+  audit.log('admin.sentiment_label_deleted', {
+    ...audit.reqContext(req),
+    labelId: id,
+    name: before.name,
+    unlabeledPhraseCount: result.unlabeled_phrase_count
+  });
+  res.json({ deleted_label_id: id, ...result });
+}));
+
 module.exports = router;
