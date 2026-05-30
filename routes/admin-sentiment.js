@@ -319,4 +319,36 @@ router.delete('/labels/:id', express.json(), asyncHandler(async (req, res) => {
   res.json({ deleted_label_id: id, ...result });
 }));
 
+// POST: bulk apply a label to phrase IDs
+router.post('/labels/apply', express.json(), asyncHandler(async (req, res) => {
+  const { label_id, phrase_ids } = req.body || {};
+  if (!Number.isFinite(label_id)) return res.status(400).json({ error: 'label_id is required' });
+  if (!Array.isArray(phrase_ids)) return res.status(400).json({ error: 'phrase_ids must be an array' });
+  if (phrase_ids.length === 0) return res.json({ updated_count: 0 });
+  const label = await db.getAsync(`SELECT id, name FROM sentiment_phrase_labels WHERE id = ?`, [label_id]);
+  if (!label) return res.status(404).json({ error: 'label not found' });
+  const result = await db.sentimentAsync.applyLabelToPhrases(label_id, phrase_ids);
+  audit.log('admin.sentiment_labels_applied', {
+    ...audit.reqContext(req),
+    labelId: label_id,
+    labelName: label.name,
+    phraseCount: result.updated_count,
+    phraseIds: phrase_ids.length <= 50 ? phrase_ids : phrase_ids.slice(0, 50)
+  });
+  res.json(result);
+}));
+
+// POST: bulk clear labels from phrase IDs
+router.post('/labels/clear', express.json(), asyncHandler(async (req, res) => {
+  const { phrase_ids } = req.body || {};
+  if (!Array.isArray(phrase_ids)) return res.status(400).json({ error: 'phrase_ids must be an array' });
+  if (phrase_ids.length === 0) return res.json({ cleared_count: 0 });
+  const result = await db.sentimentAsync.clearLabelsFromPhrases(phrase_ids);
+  audit.log('admin.sentiment_labels_cleared', {
+    ...audit.reqContext(req),
+    phraseCount: result.cleared_count
+  });
+  res.json(result);
+}));
+
 module.exports = router;
