@@ -438,6 +438,104 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return { cleared_count: result.changes || 0 };
     },
 
+    async getClustersWithLabelState(runId) {
+      const rows = await allAsync(`
+        SELECT
+          c.id AS cluster_id,
+          c.cluster_index,
+          c.size,
+          COUNT(p.canonical_label_id) AS labeled_count,
+          COUNT(DISTINCT p.canonical_label_id) AS distinct_label_count,
+          MAX(l.id) AS sample_label_id,
+          MAX(l.name) AS sample_label_name
+          FROM sentiment_phrase_clusters c
+          JOIN sentiment_phrase_cluster_members m ON m.cluster_id = c.id
+          JOIN sentiment_emotion_phrases p ON p.id = m.phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+         WHERE c.run_id = ?
+         GROUP BY c.id
+         ORDER BY c.size DESC, c.cluster_index ASC
+      `, [runId]);
+
+      return rows.map((r) => {
+        let label_state;
+        if (r.labeled_count === 0) {
+          label_state = 'unlabeled';
+        } else if (r.distinct_label_count > 1) {
+          label_state = 'mixed';
+        } else if (r.labeled_count < r.size) {
+          label_state = 'partial';
+        } else {
+          label_state = 'full';
+        }
+        return {
+          ...r,
+          label_state,
+          dominant_label_id: r.distinct_label_count === 1 ? r.sample_label_id : null,
+          dominant_label_name: r.distinct_label_count === 1 ? r.sample_label_name : null
+        };
+      });
+    },
+
+    async getClusterMembersWithLabels(clusterId) {
+      const cluster = await getAsync(
+        `SELECT id, cluster_index, size FROM sentiment_phrase_clusters WHERE id = ?`,
+        [clusterId]
+      );
+      if (!cluster) return null;
+      const members = await allAsync(`
+        SELECT m.phrase_id, m.distance_to_centroid,
+               p.phrase_text_normalized,
+               p.canonical_label_id,
+               l.name AS canonical_label_name
+          FROM sentiment_phrase_cluster_members m
+          JOIN sentiment_emotion_phrases p ON p.id = m.phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+         WHERE m.cluster_id = ?
+         ORDER BY (m.distance_to_centroid IS NULL), m.distance_to_centroid ASC
+      `, [clusterId]);
+      return {
+        cluster_id: cluster.id,
+        cluster_index: cluster.cluster_index,
+        size: cluster.size,
+        members
+      };
+    },
+
+    async getNoisePhrasesForRun(runId, { page = 1, pageSize = 50 } = {}) {
+      const run = await getAsync(
+        `SELECT noise_phrase_ids_json FROM sentiment_phrase_cluster_runs WHERE id = ?`,
+        [runId]
+      );
+      if (!run || !run.noise_phrase_ids_json) {
+        return { total_noise_count: 0, page, page_size: pageSize, total_pages: 0, phrases: [] };
+      }
+      const ids = JSON.parse(run.noise_phrase_ids_json);
+      const totalCount = ids.length;
+      const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+      const offset = (page - 1) * pageSize;
+      const pageIds = ids.slice(offset, offset + pageSize);
+      if (pageIds.length === 0) {
+        return { total_noise_count: totalCount, page, page_size: pageSize, total_pages: totalPages, phrases: [] };
+      }
+      const placeholders = pageIds.map(() => '?').join(', ');
+      const phrases = await allAsync(`
+        SELECT p.id AS phrase_id, p.phrase_text_normalized,
+               p.canonical_label_id, l.name AS canonical_label_name
+          FROM sentiment_emotion_phrases p
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+         WHERE p.id IN (${placeholders})
+         ORDER BY p.phrase_text_normalized ASC
+      `, pageIds);
+      return {
+        total_noise_count: totalCount,
+        page,
+        page_size: pageSize,
+        total_pages: totalPages,
+        phrases
+      };
+    },
+
     async getPhrasesMissingEmbedding(limit = 100) {
       return allAsync(
         `SELECT id, phrase_text_normalized FROM sentiment_emotion_phrases
