@@ -1,0 +1,55 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+<%- include('../partials/admin-nav') %>
+<%- include('../partials/knowledge-nav') %>
+
+<div class="admin-page">
+  <h1>Sentiment Phrase Labels</h1>
+
+  <nav class="tab-strip">
+    <a href="/admin/knowledge/sentiment/clusters" class="tab">Clusters</a>
+    <a href="/admin/knowledge/sentiment/clusters?tab=noise" class="tab">Noise</a>
+    <a href="/admin/knowledge/sentiment/labels" class="tab tab--active">
+      Labels <span class="tab-badge"><%= summary.total_labels %></span>
+    </a>
+  </nav>
+
+  <p class="muted">
+    <%= summary.total_labels %> labels covering
+    <%= summary.total_labeled_phrases %> of <%= summary.total_phrases %> phrases
+    (<%= summary.total_phrases > 0
+        ? ((summary.total_labeled_phrases / summary.total_phrases) * 100).toFixed(1)
+        : '0.0' %>%)
+  </p>
+
+  <% if (labels.length === 0) { %>
+    <p class="muted">No labels yet. Visit the Clusters tab and click "Label →" on any cluster to create your first label.</p>
+  <% } else { %>
+    <table class="workflows-table" id="labels-table">
+      <thead>
+        <tr>
+          <th>Label</th>
+          <th>Phrases</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const l of labels) { %>
+          <tr data-label-id="<%= l.id %>">
+            <td class="labels-name-cell"><span class="labels-name-text"><%= l.name %></span></td>
+            <td class="labels-count-cell"><%= l.phrase_count %></td>
+            <td><%= l.created_at %></td>
+            <td>
+              <button type="button" class="btn-link btn-sm labels-rename-btn">rename</button>
+              <button type="button" class="btn-link btn-sm labels-delete-btn">delete</button>
+              <span class="save-status labels-row-status"></span>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<script src="/js/sentiment-labels-page.js" defer></script>
+<%- include('../partials/footer') %>

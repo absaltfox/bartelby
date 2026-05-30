@@ -393,4 +393,22 @@ router.get('/clusters/noise.json', asyncHandler(async (req, res) => {
   res.json({ run_id: latestRun.id, ...result });
 }));
 
+// GET: labels management page
+router.get('/labels', asyncHandler(async (req, res) => {
+  // The actual list is fetched by the page JS via /labels.json, but we render
+  // initial counts for the SSR view so the page isn't blank during JS load.
+  const labels = await db.sentimentAsync.listLabels();
+  const totalLabeledPhrases = labels.reduce((sum, l) => sum + l.phrase_count, 0);
+  const totalPhrasesRow = await db.getAsync(`SELECT COUNT(*) AS count FROM sentiment_emotion_phrases`);
+  res.render('admin/sentiment-labels', {
+    pageTitle: 'Sentiment Phrase Labels',
+    labels,
+    summary: {
+      total_labels: labels.length,
+      total_labeled_phrases: totalLabeledPhrases,
+      total_phrases: totalPhrasesRow?.count || 0
+    }
+  });
+}));
+
 module.exports = router;
