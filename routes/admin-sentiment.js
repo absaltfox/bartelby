@@ -183,8 +183,11 @@ router.get('/clusters/api/runs/:id', asyncHandler(async (req, res) => {
   res.json(run);
 }));
 
-// GET: read-only cluster report page
+// GET: cluster labeling workspace page
 router.get('/clusters', asyncHandler(async (req, res) => {
+  const stateFilter = req.query.state || 'all'; // all | unlabeled | partial | mixed | full
+  const tab = req.query.tab || 'clusters';     // clusters | noise | labels
+
   // Recent runs (latest 10)
   const recentRuns = await db.allAsync(
     `SELECT id, status, cluster_count, noise_count, phrase_count, error,
@@ -193,43 +196,60 @@ router.get('/clusters', asyncHandler(async (req, res) => {
       ORDER BY created_at DESC LIMIT 10`
   );
 
-  // Latest completed run + its clusters (with up to 5 sample phrases each)
+  // Latest completed run + its clusters with derived state
   const latestDone = recentRuns.find((r) => r.status === 'done');
   let clusters = [];
   if (latestDone) {
-    const clusterRows = await db.allAsync(
-      `SELECT id, cluster_index, size FROM sentiment_phrase_clusters
-        WHERE run_id = ? ORDER BY size DESC, cluster_index ASC`,
-      [latestDone.id]
-    );
-    // For each cluster, fetch up to 5 sample phrases (closest to centroid first)
-    for (const c of clusterRows) {
+    const allClusters = await db.sentimentAsync.getClustersWithLabelState(latestDone.id);
+    // Apply state filter
+    const filtered = stateFilter === 'all'
+      ? allClusters
+      : allClusters.filter((c) => c.label_state === stateFilter);
+    // For each cluster, fetch up to 5 sample phrases for display (members closest to centroid)
+    for (const c of filtered) {
       const samples = await db.allAsync(
         `SELECT p.phrase_text_normalized
            FROM sentiment_phrase_cluster_members m
            JOIN sentiment_emotion_phrases p ON p.id = m.phrase_id
           WHERE m.cluster_id = ?
-          ORDER BY m.distance_to_centroid ASC NULLS LAST
+          ORDER BY (m.distance_to_centroid IS NULL), m.distance_to_centroid ASC
           LIMIT 5`,
-        [c.id]
+        [c.cluster_id]
       );
       clusters.push({
+        cluster_id: c.cluster_id,
         cluster_index: c.cluster_index,
         size: c.size,
+        label_state: c.label_state,
+        labeled_count: c.labeled_count,
+        dominant_label_id: c.dominant_label_id,
+        dominant_label_name: c.dominant_label_name,
         sample_phrases: samples.map((s) => s.phrase_text_normalized)
       });
     }
   }
 
-  // If there's a queued/running run, the UI uses it to disable the button + poll
+  // In-flight run for button-disabled state + polling
   const inFlightRun = recentRuns.find((r) => r.status === 'queued' || r.status === 'running');
+
+  // Counts for the tab badges
+  const labelCountRow = await db.getAsync(`SELECT COUNT(*) AS count FROM sentiment_phrase_labels`);
+  const noiseCount = latestDone?.noise_count || 0;
+  const clusterCount = latestDone?.cluster_count || 0;
 
   res.render('admin/sentiment-clusters', {
     pageTitle: 'Sentiment Phrase Clusters',
     recentRuns,
     latestDone,
     clusters,
-    inFlightRun
+    inFlightRun,
+    stateFilter,
+    tab,
+    tabCounts: {
+      clusters: clusterCount,
+      noise: noiseCount,
+      labels: labelCountRow?.count || 0
+    }
   });
 }));
 

@@ -4,85 +4,70 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-clusters' }) %>
 
-  <div class="admin-header">
-    <h1>Sentiment Phrase Clusters</h1>
-    <p class="subtitle">
-      Read-only view of the latest sentiment phrase clustering run. The curator
-      workflow for labeling clusters is forthcoming in Phase 2b.
-    </p>
-  </div>
-
   <div class="admin-content">
-    <div class="cluster-actions" style="margin-bottom: 1rem;">
-      <button type="button" class="btn-primary"
-              id="sentiment-cluster-run-btn"
-              <% if (inFlightRun) { %>disabled<% } %>
-              data-in-flight-run-id="<%= inFlightRun ? inFlightRun.id : '' %>">
-        <% if (inFlightRun) { %>
-          Run #<%= inFlightRun.id %> in progress (<%= inFlightRun.status %>)&hellip;
-        <% } else { %>
-          Run clustering now
-        <% } %>
-      </button>
-      <span class="save-status" id="sentiment-cluster-status"></span>
-    </div>
+    <h1>Sentiment Phrase Clusters</h1>
 
-    <h2>Recent runs</h2>
-    <% if (recentRuns.length === 0) { %>
-      <p class="muted">No clustering runs yet. Click &ldquo;Run clustering now&rdquo; to start one.</p>
-    <% } else { %>
-      <table class="workflows-table">
-        <thead>
-          <tr>
-            <th>Run</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th>Result</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% for (const r of recentRuns) { %>
-            <tr>
-              <td>#<%= r.id %></td>
-              <td><%= r.status %></td>
-              <td><%= r.created_at %></td>
-              <td>
-                <% if (r.status === 'done') { %>
-                  <%= r.cluster_count %> clusters &middot; <%= r.noise_count %> noise &middot; <%= r.phrase_count %> phrases
-                <% } else if (r.status === 'failed') { %>
-                  <span class="muted">error: <%= r.error %></span>
-                <% } else { %>
-                  <span class="muted">&mdash;</span>
-                <% } %>
-              </td>
-            </tr>
+    <nav class="tab-strip">
+      <a href="?tab=clusters" class="tab <%= tab === 'clusters' ? 'tab--active' : '' %>">
+        Clusters <span class="tab-badge"><%= tabCounts.clusters %></span>
+      </a>
+      <a href="?tab=noise" class="tab <%= tab === 'noise' ? 'tab--active' : '' %>">
+        Noise <span class="tab-badge"><%= tabCounts.noise %></span>
+      </a>
+      <a href="/admin/knowledge/sentiment/labels" class="tab">
+        Labels <span class="tab-badge"><%= tabCounts.labels %></span>
+      </a>
+    </nav>
+
+    <% if (tab === 'clusters') { %>
+      <p class="muted">
+        Each cluster shows its derived label state from member phrases. Click "Label" to open the drawer,
+        review members, and apply or change labels. Labels persist across re-clustering.
+      </p>
+
+      <div class="cluster-actions">
+        <button type="button" class="btn-primary"
+                id="sentiment-cluster-run-btn"
+                <% if (inFlightRun) { %>disabled<% } %>
+                data-in-flight-run-id="<%= inFlightRun ? inFlightRun.id : '' %>">
+          <% if (inFlightRun) { %>
+            Run #<%= inFlightRun.id %> in progress (<%= inFlightRun.status %>)…
+          <% } else { %>
+            Run clustering now
           <% } %>
-        </tbody>
-      </table>
-    <% } %>
+        </button>
+        <span class="save-status" id="sentiment-cluster-status"></span>
+      </div>
 
-    <% if (latestDone) { %>
-      <h2>Latest run (#<%= latestDone.id %>) &mdash; clusters</h2>
-      <% if (clusters.length === 0) { %>
-        <p class="muted">No clusters produced (everything was noise or the corpus was too small).</p>
+      <div class="filter-bar">
+        <label>Show:
+          <a href="?tab=clusters&state=all" class="<%= stateFilter === 'all' ? 'active' : '' %>">all</a> ·
+          <a href="?tab=clusters&state=unlabeled" class="<%= stateFilter === 'unlabeled' ? 'active' : '' %>">unlabeled</a> ·
+          <a href="?tab=clusters&state=partial" class="<%= stateFilter === 'partial' ? 'active' : '' %>">partial</a> ·
+          <a href="?tab=clusters&state=mixed" class="<%= stateFilter === 'mixed' ? 'active' : '' %>">mixed</a> ·
+          <a href="?tab=clusters&state=full" class="<%= stateFilter === 'full' ? 'active' : '' %>">full</a>
+        </label>
+      </div>
+
+      <h2>Recent runs</h2>
+      <% if (recentRuns.length === 0) { %>
+        <p class="muted">No clustering runs yet. Click "Run clustering now" to start one.</p>
       <% } else { %>
         <table class="workflows-table">
-          <thead>
-            <tr>
-              <th>Cluster</th>
-              <th>Size</th>
-              <th>Sample phrases (closest to centroid first)</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Run</th><th>Status</th><th>Created</th><th>Result</th></tr></thead>
           <tbody>
-            <% for (const c of clusters) { %>
+            <% for (const r of recentRuns) { %>
               <tr>
-                <td>#<%= c.cluster_index %></td>
-                <td><%= c.size %></td>
+                <td>#<%= r.id %></td>
+                <td><%= r.status %></td>
+                <td><%= r.created_at %></td>
                 <td>
-                  <%= c.sample_phrases.join(' · ') %>
-                  <% if (c.size > c.sample_phrases.length) { %>
-                    <span class="muted">(+<%= c.size - c.sample_phrases.length %> more)</span>
+                  <% if (r.status === 'done') { %>
+                    <%= r.cluster_count %> clusters · <%= r.noise_count %> noise · <%= r.phrase_count %> phrases
+                  <% } else if (r.status === 'failed') { %>
+                    <span class="muted">error: <%= r.error %></span>
+                  <% } else { %>
+                    <span class="muted">—</span>
                   <% } %>
                 </td>
               </tr>
@@ -90,6 +75,88 @@
           </tbody>
         </table>
       <% } %>
+
+      <% if (latestDone) { %>
+        <h2>Run #<%= latestDone.id %> — clusters</h2>
+        <% if (clusters.length === 0) { %>
+          <p class="muted">No clusters match the current filter.</p>
+        <% } else { %>
+          <table class="workflows-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Size</th>
+                <th>State</th>
+                <th>Sample / Label</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% for (const c of clusters) { %>
+                <tr data-cluster-id="<%= c.cluster_id %>">
+                  <td>#<%= c.cluster_index %></td>
+                  <td><%= c.size %></td>
+                  <td>
+                    <% if (c.label_state === 'unlabeled') { %>
+                      ─ unlabeled
+                    <% } else if (c.label_state === 'partial') { %>
+                      ◐ partial <%= c.labeled_count %>/<%= c.size %>
+                      <span class="muted">(<%= c.dominant_label_name %>)</span>
+                    <% } else if (c.label_state === 'full') { %>
+                      ● full <%= c.labeled_count %>/<%= c.size %>
+                      <span class="muted">(<%= c.dominant_label_name %>)</span>
+                    <% } else { %>
+                      ⚠ mixed
+                    <% } %>
+                  </td>
+                  <td>
+                    <%= c.sample_phrases.join(' · ') %>
+                    <% if (c.size > c.sample_phrases.length) { %>
+                      <span class="muted">(+<%= c.size - c.sample_phrases.length %>)</span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <button type="button" class="btn-secondary btn-sm sentiment-cluster-label-btn"
+                            data-cluster-id="<%= c.cluster_id %>"
+                            data-cluster-index="<%= c.cluster_index %>"
+                            data-cluster-size="<%= c.size %>">
+                      Label →
+                    </button>
+                  </td>
+                </tr>
+              <% } %>
+            </tbody>
+          </table>
+        <% } %>
+      <% } %>
+
+      <!-- Side drawer markup (hidden until Label → clicked, populated by Task 10's JS) -->
+      <div id="sentiment-cluster-drawer" class="drawer is-hidden" aria-hidden="true">
+        <div class="drawer__backdrop"></div>
+        <aside class="drawer__panel" role="dialog" aria-labelledby="drawer-title">
+          <header class="drawer__header">
+            <h2 id="drawer-title">Cluster #<span id="drawer-cluster-index">—</span> · size <span id="drawer-cluster-size">—</span></h2>
+            <button type="button" class="drawer__close" aria-label="Close drawer">×</button>
+          </header>
+          <div class="drawer__body">
+            <input type="text" id="drawer-filter" placeholder="Filter members…" class="drawer__filter">
+            <ul id="drawer-members" class="drawer__members"></ul>
+          </div>
+          <footer class="drawer__footer">
+            <label>Label: <input type="text" id="drawer-label-input" list="drawer-label-options" placeholder="type or pick existing"></label>
+            <datalist id="drawer-label-options"></datalist>
+            <button type="button" class="btn-primary" id="drawer-apply-btn">Apply to selected</button>
+            <button type="button" class="btn-secondary" id="drawer-clear-btn">Clear labels</button>
+            <span class="save-status" id="drawer-status"></span>
+          </footer>
+        </aside>
+      </div>
+
+    <% } else if (tab === 'noise') { %>
+      <!-- Noise tab content rendered by client JS in Task 12 -->
+      <div id="sentiment-noise-container">
+        <p class="muted">Loading noise phrases…</p>
+      </div>
     <% } %>
   </div>
 </div>
