@@ -38,7 +38,7 @@
     if (!bar) return;
     if (selection.mode === 'all-pages') {
       bar.style.display = '';
-      bar.className = 'bulk-action-bar bulk-action-bar--all';
+      bar.className = 'bulk-toolbar bulk-toolbar--sticky bulk-toolbar--all';
       bar.innerHTML = ''
         + '<div>Selecting all ' + selection.allPagesTotal + ' noise phrases · '
         +   '<button type="button" class="btn-link" id="noise-clear-selection">Clear selection</button>'
@@ -58,7 +58,7 @@
     var count = selection.rowIds.size;
     if (count === 0) { bar.style.display = 'none'; return; }
     bar.style.display = '';
-    bar.className = 'bulk-action-bar';
+    bar.className = 'bulk-toolbar bulk-toolbar--sticky';
     var allOnPage = state.lastData && count === state.lastData.phrases.length;
     var promoteHtml = allOnPage && state.lastData && state.lastData.total_noise_count > count
       ? '<button type="button" class="btn-link" id="noise-select-all-pages">Select all ' + state.lastData.total_noise_count + ' across all pages</button>'
@@ -136,7 +136,7 @@
     container.innerHTML = ''
       + '<p class="muted">Noise phrases from run #' + data.run_id + ' — ' + data.total_noise_count + ' phrases that didn\'t fit any cluster.</p>'
       + '<datalist id="noise-label-options">' + datalistOptions + '</datalist>'
-      + '<div id="noise-bulk-bar" class="bulk-action-bar" style="display:none;"></div>'
+      + '<div id="noise-bulk-bar" class="bulk-toolbar bulk-toolbar--sticky" style="display:none;"></div>'
       + '<table class="workflows-table">'
       +   '<thead>'
       +     '<tr><th><input type="checkbox" id="noise-select-page-cb"></th><th>Phrase</th><th>Label</th><th>Action</th></tr>'

@@ -5,11 +5,11 @@
 <div class="admin-page">
   <h1>Sentiment Phrase Labels</h1>
 
-  <nav class="tab-strip">
-    <a href="/admin/knowledge/sentiment/clusters" class="tab">Clusters</a>
-    <a href="/admin/knowledge/sentiment/clusters?tab=noise" class="tab">Noise</a>
-    <a href="/admin/knowledge/sentiment/labels" class="tab tab--active">
-      Labels <span class="tab-badge"><%= summary.total_labels %></span>
+  <nav class="filter-tabs">
+    <a href="/admin/knowledge/sentiment/clusters" class="filter-tab">Clusters</a>
+    <a href="/admin/knowledge/sentiment/clusters?tab=noise" class="filter-tab">Noise</a>
+    <a href="/admin/knowledge/sentiment/labels" class="filter-tab active">
+      Labels <span class="filter-count"><%= summary.total_labels %></span>
     </a>
   </nav>
 

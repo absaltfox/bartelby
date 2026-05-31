@@ -7,15 +7,15 @@
   <div class="admin-content">
     <h1>Sentiment Phrase Clusters</h1>
 
-    <nav class="tab-strip">
-      <a href="?tab=clusters" class="tab <%= tab === 'clusters' ? 'tab--active' : '' %>">
-        Clusters <span class="tab-badge"><%= tabCounts.clusters %></span>
+    <nav class="filter-tabs">
+      <a href="?tab=clusters" class="filter-tab <%= tab === 'clusters' ? 'active' : '' %>">
+        Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
       </a>
-      <a href="?tab=noise" class="tab <%= tab === 'noise' ? 'tab--active' : '' %>">
-        Noise <span class="tab-badge"><%= tabCounts.noise %></span>
+      <a href="?tab=noise" class="filter-tab <%= tab === 'noise' ? 'active' : '' %>">
+        Noise <span class="filter-count"><%= tabCounts.noise %></span>
       </a>
-      <a href="/admin/knowledge/sentiment/labels" class="tab">
-        Labels <span class="tab-badge"><%= tabCounts.labels %></span>
+      <a href="/admin/knowledge/sentiment/labels" class="filter-tab">
+        Labels <span class="filter-count"><%= tabCounts.labels %></span>
       </a>
     </nav>
 
