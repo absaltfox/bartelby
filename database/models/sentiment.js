@@ -558,6 +558,18 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       };
     },
 
+    async getClusterIdsContainingLabel(runId, labelId) {
+      const rows = await allAsync(`
+        SELECT DISTINCT m.cluster_id
+          FROM sentiment_phrase_cluster_members m
+          JOIN sentiment_emotion_phrases p ON p.id = m.phrase_id
+          JOIN sentiment_phrase_clusters c ON c.id = m.cluster_id
+         WHERE c.run_id = ?
+           AND p.canonical_label_id = ?
+      `, [runId, labelId]);
+      return new Set(rows.map((r) => r.cluster_id));
+    },
+
     async getPhrasesMissingEmbedding(limit = 100) {
       return allAsync(
         `SELECT id, phrase_text_normalized FROM sentiment_emotion_phrases

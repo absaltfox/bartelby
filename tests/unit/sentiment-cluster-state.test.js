@@ -145,4 +145,48 @@ describe('sentiment cluster derived state', () => {
       expect(page3.phrases).toHaveLength(1);
     });
   });
+
+  describe('getClusterIdsContainingLabel', () => {
+    test('returns Set of cluster IDs in the run whose members include the label', async () => {
+      await sentimentAsync.applyLabelToPhrases(labelJoy.id, [phraseA.id, phraseC.id]);
+      const result = await sentimentAsync.getClusterIdsContainingLabel(runId, labelJoy.id);
+      expect(result).toBeInstanceOf(Set);
+      expect(result.has(clusterId)).toBe(true);
+      expect(result.size).toBe(1);
+    });
+
+    test('returns empty Set when no clusters in the run contain the label', async () => {
+      const result = await sentimentAsync.getClusterIdsContainingLabel(runId, labelJoy.id);
+      expect(result).toBeInstanceOf(Set);
+      expect(result.size).toBe(0);
+    });
+
+    test('does not return cluster IDs from other runs (run scope correctness)', async () => {
+      // Create a second run with its own cluster + members + label assignment
+      const run2Insert = await db.runAsync(
+        `INSERT INTO sentiment_phrase_cluster_runs (status, params_json, cluster_count, noise_count, phrase_count, noise_phrase_ids_json)
+         VALUES ('done', '{}', 1, 0, 1, '[]')`
+      );
+      const runId2 = run2Insert.lastInsertRowid;
+      const cluster2Insert = await db.runAsync(
+        `INSERT INTO sentiment_phrase_clusters (run_id, cluster_index, size) VALUES (?, 0, 1)`,
+        [runId2]
+      );
+      const clusterId2 = cluster2Insert.lastInsertRowid;
+      const isolated = await sentimentAsync.upsertEmotionPhrase('isolated-phrase');
+      await db.runAsync(
+        `INSERT INTO sentiment_phrase_cluster_members (cluster_id, phrase_id, distance_to_centroid) VALUES (?, ?, 0)`,
+        [clusterId2, isolated.id]
+      );
+      await sentimentAsync.applyLabelToPhrases(labelJoy.id, [isolated.id, phraseA.id]);
+
+      const result1 = await sentimentAsync.getClusterIdsContainingLabel(runId, labelJoy.id);
+      expect(result1.has(clusterId)).toBe(true);
+      expect(result1.has(clusterId2)).toBe(false);
+
+      const result2 = await sentimentAsync.getClusterIdsContainingLabel(runId2, labelJoy.id);
+      expect(result2.has(clusterId2)).toBe(true);
+      expect(result2.has(clusterId)).toBe(false);
+    });
+  });
 });
