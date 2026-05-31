@@ -256,6 +256,7 @@ router.get('/clusters', asyncHandler(async (req, res) => {
 
   res.render('admin/sentiment-clusters', {
     pageTitle: 'Sentiment Phrase Clusters',
+    activeKnowledgePage: 'sentiment-clusters',
     recentRuns,
     latestDone,
     clusters,
@@ -467,6 +468,7 @@ router.get('/labels', asyncHandler(async (req, res) => {
   const totalPhrasesRow = await db.getAsync(`SELECT COUNT(*) AS count FROM sentiment_emotion_phrases`);
   res.render('admin/sentiment-labels', {
     pageTitle: 'Sentiment Phrase Labels',
+    activeKnowledgePage: 'sentiment-clusters',
     labels,
     summary: {
       total_labels: labels.length,
