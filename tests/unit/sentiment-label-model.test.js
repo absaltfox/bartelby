@@ -187,4 +187,51 @@ describe('sentiment label model', () => {
       expect(result.cleared_count).toBe(0);
     });
   });
+
+  describe('mergeLabel', () => {
+    test('transfers phrases from source to target label and deletes source row', async () => {
+      const { row: source } = await sentimentAsync.createOrFetchLabel('illness');
+      const { row: target } = await sentimentAsync.createOrFetchLabel('wellness');
+      const a = await sentimentAsync.upsertEmotionPhrase('bronchitis');
+      const b = await sentimentAsync.upsertEmotionPhrase('bad cold');
+      const c = await sentimentAsync.upsertEmotionPhrase('mild fever');
+      await sentimentAsync.applyLabelToPhrases(source.id, [a.id, b.id, c.id]);
+
+      const result = await sentimentAsync.mergeLabel(source.id, target.id);
+
+      expect(result.merged_phrase_count).toBe(3);
+      // Source label row gone
+      const sourceRow = await db.getAsync(`SELECT id FROM sentiment_phrase_labels WHERE id = ?`, [source.id]);
+      expect(sourceRow).toBeFalsy();
+      // All three phrases now point at target
+      const phrases = await db.allAsync(`SELECT canonical_label_id FROM sentiment_emotion_phrases WHERE id IN (?, ?, ?)`, [a.id, b.id, c.id]);
+      for (const p of phrases) expect(p.canonical_label_id).toBe(target.id);
+    });
+
+    test('source label with zero phrases: deletes the row, returns merged_phrase_count = 0', async () => {
+      const { row: source } = await sentimentAsync.createOrFetchLabel('empty-source');
+      const { row: target } = await sentimentAsync.createOrFetchLabel('target');
+      const result = await sentimentAsync.mergeLabel(source.id, target.id);
+      expect(result.merged_phrase_count).toBe(0);
+      const sourceRow = await db.getAsync(`SELECT id FROM sentiment_phrase_labels WHERE id = ?`, [source.id]);
+      expect(sourceRow).toBeFalsy();
+    });
+
+    test('preserves target label and its existing phrase count', async () => {
+      const { row: source } = await sentimentAsync.createOrFetchLabel('source');
+      const { row: target } = await sentimentAsync.createOrFetchLabel('target');
+      const a = await sentimentAsync.upsertEmotionPhrase('p1');
+      const b = await sentimentAsync.upsertEmotionPhrase('p2');
+      const c = await sentimentAsync.upsertEmotionPhrase('p3');
+      await sentimentAsync.applyLabelToPhrases(target.id, [a.id]); // target has 1
+      await sentimentAsync.applyLabelToPhrases(source.id, [b.id, c.id]); // source has 2
+
+      await sentimentAsync.mergeLabel(source.id, target.id);
+
+      const list = await sentimentAsync.listLabels();
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe(target.id);
+      expect(list[0].phrase_count).toBe(3); // 1 original + 2 merged in
+    });
+  });
 });

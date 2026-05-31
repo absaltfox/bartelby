@@ -438,6 +438,28 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return { cleared_count: result.changes || 0 };
     },
 
+    async mergeLabel(fromId, intoId) {
+      await runAsync('BEGIN');
+      try {
+        const update = await runAsync(
+          `UPDATE sentiment_emotion_phrases
+              SET canonical_label_id = ?
+            WHERE canonical_label_id = ?`,
+          [intoId, fromId]
+        );
+        await runAsync(
+          `DELETE FROM sentiment_phrase_labels WHERE id = ?`,
+          [fromId]
+        );
+        await runAsync('COMMIT');
+        await saveDatabase();
+        return { merged_phrase_count: update.changes || 0 };
+      } catch (err) {
+        try { await runAsync('ROLLBACK'); } catch (_) { /* swallow */ }
+        throw err;
+      }
+    },
+
     async getClustersWithLabelState(runId) {
       const rows = await allAsync(`
         SELECT
