@@ -339,6 +339,34 @@ router.delete('/labels/:id', express.json(), asyncHandler(async (req, res) => {
   res.json({ deleted_label_id: id, ...result });
 }));
 
+// POST: atomic merge — transfer phrases from source label to target, delete source
+// Per docs/superpowers/specs/2026-05-30-sentiment-phase-2c-curator-workflow-completion-design.md § 4.1.
+router.post('/labels/:id/merge', express.json(), asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+  const { into_id } = req.body || {};
+  if (!Number.isFinite(into_id)) return res.status(400).json({ error: 'into_id is required' });
+  if (id === into_id) return res.status(400).json({ error: 'cannot merge a label into itself' });
+  const source = await db.getAsync(`SELECT id, name FROM sentiment_phrase_labels WHERE id = ?`, [id]);
+  if (!source) return res.status(404).json({ error: 'label not found' });
+  const target = await db.getAsync(`SELECT id, name FROM sentiment_phrase_labels WHERE id = ?`, [into_id]);
+  if (!target) return res.status(404).json({ error: 'target label not found' });
+  const result = await db.sentimentAsync.mergeLabel(id, into_id);
+  audit.log('admin.sentiment_label_merged', {
+    ...audit.reqContext(req),
+    fromLabelId: id,
+    fromLabelName: source.name,
+    intoLabelId: into_id,
+    intoLabelName: target.name,
+    mergedPhraseCount: result.merged_phrase_count
+  });
+  res.json({
+    merged_phrase_count: result.merged_phrase_count,
+    target_label_id: target.id,
+    target_label_name: target.name
+  });
+}));
+
 // POST: bulk apply a label to phrase IDs
 router.post('/labels/apply', express.json(), asyncHandler(async (req, res) => {
   const { label_id, phrase_ids } = req.body || {};
