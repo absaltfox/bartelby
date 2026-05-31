@@ -81,20 +81,16 @@
     });
   }
 
-  async function mergeInto(oldLabelId, existingLabelId) {
-    // Fetch the phrase IDs currently using the old label, apply existing label, then delete old label.
-    // The /labels.json endpoint doesn't expose per-label phrase IDs, so we use a different approach:
-    // we just apply the existing label to all phrases via a dedicated SQL path. For 2b MVP,
-    // we approximate by issuing the delete (unlabels the old label's phrases), then telling the
-    // curator to re-label them. A future task can add a dedicated merge endpoint.
-    if (!window.confirm('Merge: this will delete the old label and unlabel its phrases. You will need to apply the existing label manually. Continue?')) return;
+  async function mergeInto(fromLabelId, intoLabelId) {
+    if (!window.confirm('Merge: phrases currently labeled with this label will be re-labeled with the existing one, and this label will be deleted. Continue?')) return;
     try {
-      var resp = await fetch('/admin/knowledge/sentiment/labels/' + oldLabelId, {
-        method: 'DELETE',
-        headers: { 'X-CSRF-Token': getCsrfToken() }
+      var resp = await fetch('/admin/knowledge/sentiment/labels/' + fromLabelId + '/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken() },
+        body: JSON.stringify({ into_id: intoLabelId })
       });
       var body = await resp.json();
-      if (!resp.ok) throw new Error(body.error);
+      if (!resp.ok) throw new Error(body.error || 'merge failed');
       window.location.reload();
     } catch (err) {
       window.alert('Error: ' + err.message);
