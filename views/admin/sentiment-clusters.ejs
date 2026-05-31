@@ -47,6 +47,20 @@
           <a href="?tab=clusters&state=mixed" class="<%= stateFilter === 'mixed' ? 'active' : '' %>">mixed</a> ·
           <a href="?tab=clusters&state=full" class="<%= stateFilter === 'full' ? 'active' : '' %>">full</a>
         </label>
+        <form method="get" class="filter-label-form" style="display:inline-block; margin-left:1rem;">
+          <% if (tab !== 'clusters') { %><input type="hidden" name="tab" value="<%= tab %>"><% } %>
+          <% if (stateFilter !== 'all') { %><input type="hidden" name="state" value="<%= stateFilter %>"><% } %>
+          Label:
+          <select name="label_id" onchange="this.form.submit()">
+            <option value="">All labels</option>
+            <% for (const l of labelsForFilter) { %>
+              <option value="<%= l.id %>" <%= selectedLabelId === l.id ? 'selected' : '' %>><%= l.name %></option>
+            <% } %>
+          </select>
+          <% if (selectedLabelId !== null) { %>
+            <a href="?tab=<%= tab %>&state=<%= stateFilter %>" class="btn-link btn-sm">clear</a>
+          <% } %>
+        </form>
       </div>
 
       <h2>Recent runs</h2>
@@ -77,9 +91,18 @@
       <% } %>
 
       <% if (latestDone) { %>
-        <h2>Run #<%= latestDone.id %> — clusters</h2>
+        <h2>
+          Run #<%= latestDone.id %> — clusters
+          <% if (selectedLabelName) { %>
+            containing label <em>'<%= selectedLabelName %>'</em>
+          <% } %>
+        </h2>
         <% if (clusters.length === 0) { %>
-          <p class="muted">No clusters match the current filter.</p>
+          <% if (selectedLabelName) { %>
+            <p class="muted">No clusters in run #<%= latestDone.id %> contain label '<%= selectedLabelName %>'.</p>
+          <% } else { %>
+            <p class="muted">No clusters match the current filter.</p>
+          <% } %>
         <% } else { %>
           <table class="workflows-table">
             <thead>
