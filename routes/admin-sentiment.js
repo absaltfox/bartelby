@@ -187,6 +187,8 @@ router.get('/clusters/api/runs/:id', asyncHandler(async (req, res) => {
 router.get('/clusters', asyncHandler(async (req, res) => {
   const stateFilter = req.query.state || 'all'; // all | unlabeled | partial | mixed | full
   const tab = req.query.tab || 'clusters';     // clusters | noise | labels
+  const labelIdRaw = parseInt(req.query.label_id, 10);
+  const selectedLabelId = Number.isFinite(labelIdRaw) ? labelIdRaw : null;
 
   // Recent runs (latest 10)
   const recentRuns = await db.allAsync(
@@ -202,9 +204,14 @@ router.get('/clusters', asyncHandler(async (req, res) => {
   if (latestDone) {
     const allClusters = await db.sentimentAsync.getClustersWithLabelState(latestDone.id);
     // Apply state filter
-    const filtered = stateFilter === 'all'
+    let filtered = stateFilter === 'all'
       ? allClusters
       : allClusters.filter((c) => c.label_state === stateFilter);
+    // Apply label filter (AND semantics with state)
+    if (selectedLabelId !== null) {
+      const matchingIds = await db.sentimentAsync.getClusterIdsContainingLabel(latestDone.id, selectedLabelId);
+      filtered = filtered.filter((c) => matchingIds.has(c.cluster_id));
+    }
     // For each cluster, fetch up to 5 sample phrases for display (members closest to centroid)
     for (const c of filtered) {
       const samples = await db.allAsync(
@@ -237,6 +244,16 @@ router.get('/clusters', asyncHandler(async (req, res) => {
   const noiseCount = latestDone?.noise_count || 0;
   const clusterCount = latestDone?.cluster_count || 0;
 
+  // Lightweight label list for the filter dropdown
+  const labelsForFilter = await db.allAsync(
+    `SELECT id, name FROM sentiment_phrase_labels ORDER BY name ASC`
+  );
+  let selectedLabelName = null;
+  if (selectedLabelId !== null) {
+    const found = labelsForFilter.find((l) => l.id === selectedLabelId);
+    selectedLabelName = found ? found.name : null;
+  }
+
   res.render('admin/sentiment-clusters', {
     pageTitle: 'Sentiment Phrase Clusters',
     recentRuns,
@@ -249,7 +266,10 @@ router.get('/clusters', asyncHandler(async (req, res) => {
       clusters: clusterCount,
       noise: noiseCount,
       labels: labelCountRow?.count || 0
-    }
+    },
+    selectedLabelId,
+    selectedLabelName,
+    labelsForFilter
   });
 }));
 
@@ -419,6 +439,23 @@ router.get('/clusters/noise.json', asyncHandler(async (req, res) => {
   const pageSize = Math.min(200, Math.max(1, parseInt(req.query.page_size, 10) || 50));
   const result = await db.sentimentAsync.getNoisePhrasesForRun(latestRun.id, { page, pageSize });
   res.json({ run_id: latestRun.id, ...result });
+}));
+
+// GET: full noise phrase ID list (no pagination, no rich rows — just IDs)
+// Used by Task 6 (noise tab JS) for cross-page bulk apply.
+// Per docs/superpowers/specs/2026-05-30-sentiment-phase-2c-curator-workflow-completion-design.md § 4.2.
+router.get('/clusters/noise/all-ids', asyncHandler(async (req, res) => {
+  const latestRun = await db.getAsync(
+    `SELECT id, noise_phrase_ids_json FROM sentiment_phrase_cluster_runs
+      WHERE status = 'done' ORDER BY completed_at DESC LIMIT 1`
+  );
+  if (!latestRun || !latestRun.noise_phrase_ids_json) {
+    return res.json({ run_id: latestRun ? latestRun.id : null, phrase_ids: [] });
+  }
+  res.json({
+    run_id: latestRun.id,
+    phrase_ids: JSON.parse(latestRun.noise_phrase_ids_json)
+  });
 }));
 
 // GET: labels management page
