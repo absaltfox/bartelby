@@ -37,6 +37,28 @@ with its archival, operational, and usability goals.
   permission boundaries
 - Admin-only operations should remain explicit and easy to reason about
 
+### Curator Is the Expert; LLM Is Scaffolding
+
+- The historian/curator is the authoritative expert on the knowledge being
+  modeled. The LLM accelerates extraction and review but does not replace
+  curator judgment.
+- Curators must be able to author entities, relationships, dates, and other
+  graph artifacts from scratch — not only approve or reject LLM-produced
+  versions. Curator-authored data must still carry evidence traceability
+  (citations, transcript spans) per Keep Evidence Traceable above.
+- Curators must be able to modify entity attributes, relationships, controlled
+  vocabularies (entity types, relationship types, generic terms), and
+  annotation fields after creation. The system surfaces LLM proposals;
+  the curator decides.
+- Automation patterns ("skip review", "auto-approve", "auto-trigger" on
+  pipeline-healthy or fix-deployed) reduce curator authority and require
+  deliberate justification, not default acceptance. Background operations
+  that mutate corpus state (re-extractions, re-suggestion runs, backfills,
+  bulk merges) require explicit admin trigger.
+- When designing curator UX, ask whether the same workflow would function
+  if the LLM never ran. If not, the system has gaps in curator authority
+  that should be flagged.
+
 ## Engineering Principles
 
 ### Local, Docker, and Fly Should Stay Aligned
@@ -101,6 +123,24 @@ with its archival, operational, and usability goals.
   overconfident claims
 - Interpretation must always be grounded in the evidence, free from bias, and follow the norms of historiographical practice
 - Where possible, keep human review loops for higher-risk interpretation
+
+### Trust LLM Verbatim, Not LLM Offsets
+
+- When an LLM extracts structured data anchored to a transcript span, treat
+  the LLM's verbatim quote as authoritative and its reported character
+  offsets as a hint at best. LLMs cannot count characters reliably; spans
+  drift even when the quote is exact.
+- Resolve span position by locating the verbatim in the transcript and
+  disambiguating (when the verbatim occurs multiple times) using the LLM's
+  claimed offset as a tiebreaker.
+- Drop the extracted artifact when the verbatim cannot be located — never
+  store LLM-invented text as if it were transcript evidence. Per Keep
+  Evidence Traceable above, unverifiable evidence is not evidence.
+- Track verbatim-mismatch and unresolved-mention drops as per-job counters
+  so operators can see the quality signal of each extraction run rather than
+  spelunking through log text.
+- See `utils/sentiment/parse.js` for the canonical implementation;
+  extraction workers should port the same pattern.
 
 ## Documentation Principle
 
