@@ -202,6 +202,16 @@
                       <%= job.suggestion_count || 0 %> suggestions
                       <% if (job.auto_approved_count) { %> • <%= job.auto_approved_count %> auto-approved<% } %>
                     </small>
+                    <% if (job.suggestion_count > 0) { %>
+                      <small class="muted">
+                        confidence: min <%= (job.confidence_min || 0).toFixed(4) %>,
+                        max <%= (job.confidence_max || 0).toFixed(4) %>,
+                        distinct <%= job.confidence_distinct_count || 0 %>
+                        <% if (job.confidence_distinct_count <= 1 && job.suggestion_count > 1) { %>
+                          <strong class="status-badge status-failed">⚠ uniform — investigate scorePairs</strong>
+                        <% } %>
+                      </small>
+                    <% } %>
                   <% } %>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
