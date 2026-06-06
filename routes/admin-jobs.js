@@ -96,6 +96,8 @@ router.post('/api/bulk/retry', express.json(), asyncHandler(async (req, res) => 
         await extractionJobsAsync.retry(parseInt(id));
       } else if (type === 'sentiment') {
         await sentimentAsync.retry(parseInt(id));
+      } else if (type === 'authority_suggestion') {
+        await authoritySuggestionJobsAsync.retry(parseInt(id));
       } else {
         await transcriptionJobsAsync.retry(parseInt(id));
       }
