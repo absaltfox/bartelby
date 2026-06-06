@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, sentimentAsync, adminJobsAsync } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, sentimentAsync, adminJobsAsync, authoritySuggestionJobsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { listConfiguredProviders } = require('../utils/llm');
@@ -20,6 +20,7 @@ async function getJobByType(type, id) {
   if (type === 'import') return await importJobsAsync.getById(id);
   if (type === 'extraction') return await extractionJobsAsync.getById(id);
   if (type === 'sentiment') return await sentimentAsync.getJobById(id);
+  if (type === 'authority_suggestion') return await authoritySuggestionJobsAsync.getById(id);
   return await transcriptionJobsAsync.getById(id);
 }
 
@@ -95,6 +96,8 @@ router.post('/api/bulk/retry', express.json(), asyncHandler(async (req, res) => 
         await extractionJobsAsync.retry(parseInt(id));
       } else if (type === 'sentiment') {
         await sentimentAsync.retry(parseInt(id));
+      } else if (type === 'authority_suggestion') {
+        await authoritySuggestionJobsAsync.retry(parseInt(id));
       } else {
         await transcriptionJobsAsync.retry(parseInt(id));
       }
@@ -126,6 +129,8 @@ router.post('/api/bulk/delete', express.json(), asyncHandler(async (req, res) =>
         await extractionJobsAsync.delete(numericId);
       } else if (type === 'sentiment') {
         await sentimentAsync.delete(numericId);
+      } else if (type === 'authority_suggestion') {
+        await authoritySuggestionJobsAsync.delete(numericId);
       } else {
         await transcriptionJobsAsync.delete(numericId);
       }
@@ -352,6 +357,48 @@ router.delete('/api/sentiment/:id', express.json(), asyncHandler(async (req, res
     ...audit.reqContext(req),
     jobId,
     jobType: 'sentiment'
+  });
+  res.json({ success: true });
+}));
+
+// API: single authority_suggestion job with log
+router.get('/api/authority-suggestion/:id', asyncHandler(async (req, res) => {
+  const job = await authoritySuggestionJobsAsync.getById(parseInt(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json(job);
+}));
+
+// API: retry failed authority_suggestion job — creates a NEW queued row,
+// preserves the failed row for audit. Per
+// docs/reviews/2026-05-31-entity-extraction-historian-lens.md A1.2 and the
+// auto-memory rule that failed jobs require admin-triggered retry.
+router.post('/api/authority-suggestion/:id/retry', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const result = await authoritySuggestionJobsAsync.retry(jobId);
+  if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+  if (result.status === 'not_failed') return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  if (result.status === 'already_queued') {
+    return res.json({ success: true, newJobId: result.existingJobId, alreadyQueued: true });
+  }
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'authority_suggestion',
+    newJobId: result.newJobId
+  });
+  res.json({ success: true, newJobId: result.newJobId });
+}));
+
+// API: delete authority_suggestion job record
+router.delete('/api/authority-suggestion/:id', express.json(), asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const job = await authoritySuggestionJobsAsync.getById(jobId);
+  assertJobDeletable(job, 'authority_suggestion');
+  await authoritySuggestionJobsAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'authority_suggestion'
   });
   res.json({ success: true });
 }));

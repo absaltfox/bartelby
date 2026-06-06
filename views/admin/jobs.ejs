@@ -60,6 +60,9 @@
     <a href="<%= filterHref(filter, 'sentiment') %>" class="filter-tab filter-tab-type <%= typeFilter === 'sentiment' ? 'active' : '' %>">
       Sentiment <span class="filter-count"><%= typeCounts.sentiment %></span>
     </a>
+    <a href="<%= filterHref(filter, 'authority_suggestion') %>" class="filter-tab filter-tab-type <%= typeFilter === 'authority_suggestion' ? 'active' : '' %>">
+      Authority Suggestion <span class="filter-count"><%= typeCounts.authority_suggestion %></span>
+    </a>
   </div>
 
   <% if (pendingReconcileCount > 0) { %>
@@ -119,11 +122,17 @@
               const isImportGrouping = isImport && job.job_kind === 'grouping';
               const isSentiment = job.job_type === 'sentiment';
               const isBatch = !isImport && !isSentiment && job.job_kind === 'batch';
+              const isAuthoritySuggestion = job.job_type === 'authority_suggestion';
               const canDelete = job.status === 'done' || job.status === 'failed';
-              const canRetry = job.status === 'failed' && (!isImport || isImportSubmit);
+              const canRetry = job.status === 'failed' && (
+                isAuthoritySuggestion
+                  ? true
+                  : (!isImport || isImportSubmit)
+              );
               // Sentiment has no provider-edit flow (model is resolved per-cycle
               // from settings, not stored per-job in an editable form).
-              const canEdit = job.status === 'failed' && !isImport && !isSentiment;
+              // Authority suggestion has no provider to edit either.
+              const canEdit = job.status === 'failed' && !isImport && !isSentiment && !isAuthoritySuggestion;
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
                 data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
@@ -138,6 +147,7 @@
                     : isImport ? 'Import'
                     : job.job_type === 'extraction' ? 'Extraction'
                     : isSentiment ? 'Sentiment'
+                    : isAuthoritySuggestion ? 'Authority Suggestion'
                     : 'Transcription' %>
                 </span>
               </td>
@@ -181,6 +191,28 @@
                     <% if (job.batch_page_count) { %> • <%= job.batch_page_count %> pages<% } %>
                     <% if (job.batch_remote_status) { %> • <%= job.batch_remote_status %><% } %>
                   </small>
+                <% } else if (isAuthoritySuggestion) { %>
+                  <span><%= job.subject_label || (job.collection_id == null ? 'Full corpus' : 'Collection #' + job.collection_id) %></span>
+                  <% if (job.status === 'failed' && job.error) { %>
+                    <div class="job-error job-error--inline" data-job-error="true"><%= job.error %></div>
+                  <% } else if (job.status === 'done') { %>
+                    <small class="muted">
+                      <%= job.entity_count || 0 %> entities •
+                      <%= job.candidate_count || 0 %> candidate pairs •
+                      <%= job.suggestion_count || 0 %> suggestions
+                      <% if (job.auto_approved_count) { %> • <%= job.auto_approved_count %> auto-approved<% } %>
+                    </small>
+                    <% if (job.suggestion_count > 0) { %>
+                      <small class="muted">
+                        confidence: min <%= (job.confidence_min || 0).toFixed(4) %>,
+                        max <%= (job.confidence_max || 0).toFixed(4) %>,
+                        distinct <%= job.confidence_distinct_count || 0 %>
+                        <% if (job.confidence_distinct_count <= 1 && job.suggestion_count > 1) { %>
+                          <strong class="status-badge status-failed">⚠ uniform — investigate scorePairs</strong>
+                        <% } %>
+                      </small>
+                    <% } %>
+                  <% } %>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
                 <% } else { %>
@@ -286,7 +318,8 @@
     transcription: jobsApiBase + '/',
     extraction: jobsApiBase + '/extraction/',
     import: jobsApiBase + '/import/',
-    sentiment: jobsApiBase + '/sentiment/'
+    sentiment: jobsApiBase + '/sentiment/',
+    authority_suggestion: jobsApiBase + '/authority-suggestion/'
   },
   pollUrl: jobsApiBase + '/all',
   activePollUrl: jobsApiBase + '/all',
