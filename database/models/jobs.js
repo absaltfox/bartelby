@@ -2228,6 +2228,44 @@ const authoritySuggestionJobs = {
       WHERE id = ?
     `, [error || 'Unknown error', id]);
     await saveDatabase();
+  },
+
+  async retry(id) {
+    const failed = await getAsync(
+      'SELECT * FROM authority_suggestion_jobs WHERE id = ?',
+      [id]
+    );
+    if (!failed) {
+      return { status: 'not_found' };
+    }
+    if (failed.status !== 'failed') {
+      return { status: 'not_failed', existingStatus: failed.status };
+    }
+
+    // Idempotency: if another queued/running job already covers this scope,
+    // surface it instead of creating a duplicate. Matches the
+    // hasPendingOrRunningForCollection check used at
+    // utils/worker-extraction.js:368, preserving "One Canonical Backend Path
+    // per Workflow" (docs/development-principles.md).
+    const existing = await getAsync(`
+      SELECT id FROM authority_suggestion_jobs
+      WHERE collection_id IS ?
+        AND status IN ('queued', 'running')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [failed.collection_id]);
+    if (existing) {
+      return { status: 'already_queued', existingJobId: existing.id };
+    }
+
+    const newJobId = await this.create({
+      collection_id: failed.collection_id,
+      fuzzy_threshold: failed.fuzzy_threshold,
+      pending_threshold: failed.pending_threshold,
+      auto_approve_threshold: failed.auto_approve_threshold,
+      requested_by_user_id: failed.requested_by_user_id
+    });
+    return { status: 'queued', newJobId };
   }
 };
 
