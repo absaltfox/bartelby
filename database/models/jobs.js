@@ -38,7 +38,7 @@ function matchesStatusFilter(status, statusFilter) {
   return status === normalized;
 }
 
-function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment']) {
+function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment', 'authority_suggestion']) {
   const normalized = String(typeFilter || 'all').toLowerCase();
   return allowed.includes(normalized) ? normalized : 'all';
 }
@@ -1351,6 +1351,18 @@ const adminJobsAsync = {
         : counts[normalizedStatus] || 0;
   },
 
+  async getAuthoritySuggestionCounts(statusFilter = 'all') {
+    const counts = await authoritySuggestionJobs.getCounts();
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    if (normalized === 'all') return counts;
+    if (normalized === 'running') return counts.running;
+    return counts[normalized] || 0;
+  },
+
+  async getAuthoritySuggestionSummaries(opts = {}) {
+    return await authoritySuggestionJobs.getSummaries(opts);
+  },
+
   async getTranscriptionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
     const normalizedStatus = normalizeStatusFilter(statusFilter);
     const params = [];
@@ -1506,11 +1518,12 @@ const adminJobsAsync = {
     const normalizedType = normalizeTypeFilter(typeFilter);
     const normalizedStatus = normalizeStatusFilter(statusFilter);
 
-    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts] = await Promise.all([
+    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts] = await Promise.all([
       this.getTranscriptionCounts(),
       this.getImportCounts(),
       this.getExtractionCounts(),
-      this.getSentimentCounts()
+      this.getSentimentCounts(),
+      this.getAuthoritySuggestionCounts()
     ]);
 
     // Status tab counts: scoped to typeFilter (shows the breakdown for the selected type)
@@ -1519,7 +1532,8 @@ const adminJobsAsync = {
     else if (normalizedType === 'import') statusCounts = importCounts;
     else if (normalizedType === 'extraction') statusCounts = extractionCounts;
     else if (normalizedType === 'sentiment') statusCounts = sentimentCounts;
-    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts);
+    else if (normalizedType === 'authority_suggestion') statusCounts = authoritySuggestionCounts;
+    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts);
 
     // Type tab counts: scoped to statusFilter (shows how many of each type match the current status)
     const getCount = (countMap) => {
@@ -1534,7 +1548,8 @@ const adminJobsAsync = {
         import: getCount(importCounts),
         transcription: getCount(transcriptionCounts),
         extraction: getCount(extractionCounts),
-        sentiment: getCount(sentimentCounts)
+        sentiment: getCount(sentimentCounts),
+        authority_suggestion: getCount(authoritySuggestionCounts)
       }
     };
   },
@@ -1543,25 +1558,19 @@ const adminJobsAsync = {
   async getFilteredCount(statusFilter, typeFilter) {
     const normalizedType = normalizeTypeFilter(typeFilter);
     const normalizedStatus = normalizeStatusFilter(statusFilter);
-    if (normalizedType === 'transcription') {
-      return await this.getTranscriptionCounts(normalizedStatus);
-    }
-    if (normalizedType === 'import') {
-      return await this.getImportCounts(normalizedStatus);
-    }
-    if (normalizedType === 'extraction') {
-      return await this.getExtractionCounts(normalizedStatus);
-    }
-    if (normalizedType === 'sentiment') {
-      return await this.getSentimentCounts(normalizedStatus);
-    }
-    const [transcriptionCount, importCount, extractionCount, sentimentCount] = await Promise.all([
+    if (normalizedType === 'transcription') return await this.getTranscriptionCounts(normalizedStatus);
+    if (normalizedType === 'import') return await this.getImportCounts(normalizedStatus);
+    if (normalizedType === 'extraction') return await this.getExtractionCounts(normalizedStatus);
+    if (normalizedType === 'sentiment') return await this.getSentimentCounts(normalizedStatus);
+    if (normalizedType === 'authority_suggestion') return await this.getAuthoritySuggestionCounts(normalizedStatus);
+    const [transcriptionCount, importCount, extractionCount, sentimentCount, authoritySuggestionCount] = await Promise.all([
       this.getTranscriptionCounts(normalizedStatus),
       this.getImportCounts(normalizedStatus),
       this.getExtractionCounts(normalizedStatus),
-      this.getSentimentCounts(normalizedStatus)
+      this.getSentimentCounts(normalizedStatus),
+      this.getAuthoritySuggestionCounts(normalizedStatus)
     ]);
-    return transcriptionCount + importCount + extractionCount + sentimentCount;
+    return transcriptionCount + importCount + extractionCount + sentimentCount + authoritySuggestionCount;
   },
 
   // Paginated combined job list
@@ -1582,6 +1591,9 @@ const adminJobsAsync = {
         : [],
       normalizedType === 'all' || normalizedType === 'sentiment'
         ? this.getSentimentSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'authority_suggestion'
+        ? this.getAuthoritySuggestionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
         : []
     ]);
 
@@ -1593,13 +1605,14 @@ const adminJobsAsync = {
 
   // Active jobs only (for AJAX polling — avoids historical scans)
   async getActive() {
-    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs] = await Promise.all([
+    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs, authoritySuggestionJobsActive] = await Promise.all([
       this.getTranscriptionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getImportSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 }),
-      this.getSentimentSummaries({ statusFilter: 'running', limit: 1000 })
+      this.getSentimentSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getAuthoritySuggestionSummaries({ statusFilter: 'running', limit: 1000 })
     ]);
-    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs].sort(sortJobsByCreatedAtDesc);
+    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs, ...authoritySuggestionJobsActive].sort(sortJobsByCreatedAtDesc);
   }
 };
 
@@ -2228,6 +2241,61 @@ const authoritySuggestionJobs = {
       WHERE id = ?
     `, [error || 'Unknown error', id]);
     await saveDatabase();
+  },
+
+  async getCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM authority_suggestion_jobs
+      GROUP BY status
+    `);
+    return rows.reduce((acc, row) => {
+      const n = Number(row.count || 0);
+      acc.total += n;
+      if (row.status === 'queued') acc.queued += n;
+      else if (row.status === 'running' || row.status === 'processing') acc.running += n;
+      else if (row.status === 'done') acc.done += n;
+      else if (row.status === 'failed') acc.failed += n;
+      return acc;
+    }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+  },
+
+  async getSummaries({ statusFilter = 'all', limit = 50 } = {}) {
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    const params = [];
+    let statusClause = '';
+    if (normalized === 'running') {
+      statusClause = "WHERE j.status IN ('running', 'processing')";
+    } else if (['queued', 'done', 'failed'].includes(normalized)) {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalized);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id,
+        j.created_at,
+        j.status,
+        j.started_at,
+        j.completed_at,
+        j.error,
+        j.collection_id,
+        j.entity_count,
+        j.candidate_count,
+        j.suggestion_count,
+        j.auto_approved_count,
+        c.name AS collection_name
+      FROM authority_suggestion_jobs j
+      LEFT JOIN collections c ON c.id = j.collection_id
+      ${statusClause}
+      ORDER BY j.created_at DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => ({
+      ...row,
+      job_type: 'authority_suggestion',
+      subject_label: row.collection_id == null ? 'Full corpus' : (row.collection_name || `Collection #${row.collection_id}`)
+    }));
   },
 
   async retry(id) {
