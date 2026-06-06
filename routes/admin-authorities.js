@@ -762,6 +762,24 @@ router.post('/bulk/merge', express.urlencoded({ extended: false }), asyncHandler
   return res.redirect(appendRedirectParams(returnTo, { bulkMerged: mergeIds.length }));
 }));
 
+// GET /admin/knowledge/authorities/backfill — per-collection sentiment-priority list
+// with entity-count preview-of-scope. Per
+// docs/reviews/2026-05-31-entity-extraction-historian-lens.md A1.3 and
+// docs/development-principles.md "One Canonical Backend Path per Workflow"
+// (the per-row submit reuses POST /suggestion-jobs/collection/:id).
+// Must be registered BEFORE router.get('/:id') to prevent the wildcard from
+// intercepting /backfill.
+router.get('/backfill', asyncHandler(async (req, res) => {
+  const collections = await db.collectionsAsync.listSentimentPriorityForBackfill();
+  res.render('admin/authority-backfill', {
+    pageTitle: 'Authority Backfill',
+    collections,
+    activeKnowledgePage: 'authority-backfill',
+    queuedJobId: req.query.suggestionJobQueued || null,
+    errorMessage: req.query.error || null
+  });
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
@@ -893,13 +911,13 @@ router.post('/suggestion-jobs/collection/:id', express.urlencoded({ extended: fa
   }
   const alreadyQueued = await db.authoritySuggestionJobsAsync.hasPendingOrRunningForCollection(collectionId);
   if (alreadyQueued) {
-    return res.redirect(knowledgePath('/authorities?error=' + encodeURIComponent('An authority suggestion job for this collection is already running or queued.')));
+    return res.redirect(knowledgePath('/authorities/backfill?error=' + encodeURIComponent('An authority suggestion job for this collection is already running or queued.')));
   }
   const jobId = await db.authoritySuggestionJobsAsync.create({
     collection_id: collectionId,
     requested_by_user_id: req.user ? req.user.id : null
   });
-  return res.redirect(knowledgePath(`/authorities?suggestionJobQueued=${jobId}`));
+  return res.redirect(knowledgePath(`/authorities/backfill?suggestionJobQueued=${jobId}`));
 }));
 
 module.exports = router;

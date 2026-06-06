@@ -1,0 +1,68 @@
+<%- include('../partials/header', { pageTitle: 'Authority Backfill', query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: typeof activeKnowledgePage !== 'undefined' ? activeKnowledgePage : 'authority-backfill' }) %>
+
+  <div class="admin-header">
+    <h1>Authority Backfill</h1>
+    <p class="subtitle">Run the authority suggestion pipeline per collection. Collections with sentiment enabled appear first.</p>
+  </div>
+
+  <% if (queuedJobId) { %>
+    <div class="callout callout--info">Queued authority suggestion job #<%= queuedJobId %>.</div>
+  <% } %>
+  <% if (errorMessage) { %>
+    <div class="callout callout--error"><%= errorMessage %></div>
+  <% } %>
+
+  <% if (!collections || collections.length === 0) { %>
+    <div class="empty-state"><p>No collections found.</p></div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table workflows-table--auto">
+        <thead>
+          <tr>
+            <th scope="col">Collection</th>
+            <th scope="col">Sentiment</th>
+            <th scope="col">Entities (preview of scope)</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% collections.forEach(function(c) { %>
+            <tr>
+              <td><a href="/admin/collections/<%= c.id %>"><%= c.name %></a></td>
+              <td>
+                <% if (c.sentiment_enabled) { %>
+                  <span class="status-badge status-done">enabled</span>
+                <% } else { %>
+                  <span class="status-badge muted">disabled</span>
+                <% } %>
+              </td>
+              <td><%= c.entity_count %> entities</td>
+              <td>
+                <% if (c.has_pending_suggestion_job) { %>
+                  <span class="status-badge status-running">pending / running</span>
+                <% } else { %>
+                  <span class="muted">idle</span>
+                <% } %>
+              </td>
+              <td class="col-actions">
+                <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs/collection/<%= c.id %>" style="display:inline">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="btn-primary btn-sm"<%= c.has_pending_suggestion_job ? ' disabled' : '' %>>
+                    Run backfill (<%= c.entity_count %> entities)
+                  </button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>
