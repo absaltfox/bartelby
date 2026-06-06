@@ -243,6 +243,29 @@ without needing to guess.
 
 ---
 
+## Authority suggestion failure visibility & retry (added 2026-06-05 per A1)
+
+`authority_suggestion_jobs` now appear as a first-class type in
+`/admin/jobs`. Failed rows render the full provider/runtime error
+inline (not truncated), with a Retry button. Retry semantics differ
+from other job types: it creates a *new* queued row mirroring the
+failed job's scope and thresholds; the failed row is preserved as the
+audit trail. Retry is idempotent — if a queued/running job already
+covers the same scope, the API returns `{success:true, alreadyQueued:true}`
+without enqueuing a duplicate.
+
+Backfill is triggered per-collection from `/admin/knowledge/authorities/backfill`,
+which orders collections by `sentiment_enabled DESC, name ASC` and shows
+an entity-count preview before the operator clicks. The per-row submit
+reuses the existing idempotent `POST /admin/knowledge/authorities/suggestion-jobs/collection/:id`
+endpoint, preserving "One Canonical Backend Path per Workflow"
+([docs/development-principles.md](./development-principles.md)).
+
+Per the standing project rule, no automatic retries are scheduled —
+all retries are admin-triggered.
+
+---
+
 ## Adding a New Worker Task
 
 1. **Create the job table** — add a migration in `database/db.js` with status

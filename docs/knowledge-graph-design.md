@@ -188,6 +188,17 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
   the same approval path as manual review and defaults to a dry run unless
   `--apply` is passed.
 
+**Per-collection backfill (admin-triggered):** When the authority
+suggestion pipeline must be re-run across the corpus — after a fix to
+the embedding worker, the fuzzy pre-filter, or any other pipeline
+component — the canonical admin path is `/admin/knowledge/authorities/backfill`.
+The page lists collections in `sentiment_enabled DESC` order with
+entity-count preview-of-scope; one click per collection. The per-row
+submit reuses the same idempotent POST endpoint as post-extraction
+auto-queueing, ensuring a single canonical write path. See
+[docs/background-jobs.md](./background-jobs.md) for retry semantics
+and failure visibility.
+
 ## Review and Curation
 
 ### Review Extra Evidence
