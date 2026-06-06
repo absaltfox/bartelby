@@ -346,6 +346,30 @@ const collectionsAsync = {
     await runAsync('UPDATE collections SET sentiment_enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
+  async listSentimentPriorityForBackfill() {
+    return await allAsync(`
+      SELECT
+        c.id,
+        c.name,
+        c.sentiment_enabled,
+        (
+          SELECT COUNT(DISTINCT e.id)
+          FROM entities e
+          INNER JOIN citations ct ON ct.entity_id = e.id
+          INNER JOIN document_collections dc ON dc.document_id = ct.document_id
+          WHERE dc.collection_id = c.id
+        ) AS entity_count,
+        (
+          SELECT COUNT(*)
+          FROM authority_suggestion_jobs asj
+          WHERE asj.collection_id = c.id
+            AND asj.status IN ('queued', 'running')
+        ) > 0 AS has_pending_suggestion_job
+      FROM collections c
+      ORDER BY c.sentiment_enabled DESC, c.name COLLATE NOCASE ASC
+    `);
+  },
+
   async delete(id) {
     return await runAsync('DELETE FROM collections WHERE id = ?', [id]);
   }
