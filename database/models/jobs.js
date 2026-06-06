@@ -2298,6 +2298,10 @@ const authoritySuggestionJobs = {
     }));
   },
 
+  async delete(id) {
+    return await runAsync('DELETE FROM authority_suggestion_jobs WHERE id = ?', [id]);
+  },
+
   async retry(id) {
     const failed = await getAsync(
       'SELECT * FROM authority_suggestion_jobs WHERE id = ?',
