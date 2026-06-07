@@ -87,6 +87,73 @@ function normalizeForMatching(value) {
 }
 
 /**
+ * Seed the mention→entityId lookup map with all normalization forms.
+ * Tracks collisions: when the same normalized key is set with a different
+ * entityId than already present, the key is added to `collidedKeys` and
+ * the original entry is removed so that resolveMentionToEntity refuses
+ * to route any lookup through that ambiguous key.
+ *
+ * Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md E3.1/E3.2.
+ */
+function seedMentionLookup({ mention, normalized, entityId, mentionToEntityId, collidedKeys }) {
+  const baseMention = String(mention || '');
+  const baseNormalized = String(normalized || mention || '');
+  const keys = [
+    baseMention.toLowerCase(),
+    baseNormalized.toLowerCase(),
+    normalizeComparable(baseMention),
+    normalizeComparable(baseNormalized),
+    normalizeForMatching(baseMention),
+    normalizeForMatching(baseNormalized)
+  ];
+  for (const key of keys) {
+    if (!key) continue;
+    if (collidedKeys && collidedKeys.has(key)) {
+      // Already known-collided; do not re-introduce a routing.
+      continue;
+    }
+    const existing = mentionToEntityId.get(key);
+    if (existing != null && existing !== entityId) {
+      mentionToEntityId.delete(key);
+      if (collidedKeys) collidedKeys.add(key);
+      continue;
+    }
+    mentionToEntityId.set(key, entityId);
+  }
+}
+
+/**
+ * Resolve a mention string to an entityId by trying three normalization
+ * passes against `mentionToEntityId`. Returns null on miss or when the
+ * key is in `collidedKeys` (ambiguous — refuse to route arbitrarily).
+ *
+ * Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md E3.1.
+ */
+function resolveMentionToEntity(mention, mentionToEntityId, options = {}) {
+  if (!mentionToEntityId || mentionToEntityId.size === 0) return null;
+  const raw = String(mention || '').trim();
+  if (!raw) return null;
+  const collidedKeys = options.collidedKeys || null;
+
+  const candidates = [
+    raw.toLowerCase(),
+    normalizeComparable(raw),
+    normalizeForMatching(raw)
+  ];
+  for (const key of candidates) {
+    if (!key) continue;
+    if (collidedKeys && collidedKeys.has(key)) {
+      // Ambiguous — refuse rather than routing arbitrarily. Caller logs.
+      return null;
+    }
+    if (mentionToEntityId.has(key)) {
+      return mentionToEntityId.get(key);
+    }
+  }
+  return null;
+}
+
+/**
  * Synchronous, Map-scoped entity resolution.
  * Replaces the async DB-hitting resolveEntity for use inside an extraction run.
  * mentionToEntityId maps normalised name strings → entity IDs for entities
@@ -249,6 +316,8 @@ module.exports = {
   stripHonorifics,
   resolveEntityInScope,
   resolveEntity,
+  resolveMentionToEntity,
+  seedMentionLookup,
   suggestMerges,
   mergeEntities
 };
