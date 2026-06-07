@@ -184,6 +184,14 @@
                     <% } %>
                     <% if (job.batch_remote_status) { %> • <%= job.batch_remote_status %><% } %>
                   </small>
+                  <% if (job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                    <small class="muted">
+                      unresolved:
+                      <%= job.unresolved_relationship_count || 0 %> relationship(s),
+                      <%= job.unresolved_date_count || 0 %> date(s)
+                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                    </small>
+                  <% } %>
                 <% } else if (isBatch) { %>
                   <span><%= job.batch_display_name || 'Batch transcription job' %></span>
                   <small class="muted">
@@ -215,8 +223,24 @@
                   <% } %>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
+                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                    <small class="muted">
+                      unresolved:
+                      <%= job.unresolved_relationship_count || 0 %> relationship(s),
+                      <%= job.unresolved_date_count || 0 %> date(s)
+                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                    </small>
+                  <% } %>
                 <% } else { %>
                   <span class="muted">Document #<%= job.document_id %></span>
+                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                    <small class="muted">
+                      unresolved:
+                      <%= job.unresolved_relationship_count || 0 %> relationship(s),
+                      <%= job.unresolved_date_count || 0 %> date(s)
+                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                    </small>
+                  <% } %>
                 <% } %>
               </td>
               <td><%= job.provider || '—' %></td>
