@@ -173,6 +173,34 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
   transcript
 - Citations are always written for the transcript and document being processed
 
+### Mention resolution and ambiguity (E3, added 2026-06-07)
+
+Mentions on dates and relationships resolve to entities via the
+in-run `mentionToEntityId` lookup. The seeded map includes raw
+lowercase, `normalizeComparable`, and `normalizeForMatching` forms.
+Lookups go through `resolveMentionToEntity` which tries all three
+normalization passes on miss before returning null.
+
+When two distinct entities in the same run reduce to the same
+normalized key (e.g., "Capt. John Jessop" and "Mr. John Jessop"
+both reduce to `john jessop` under `normalizeForMatching`), the
+key is **collided**: it is removed from the routing map and added
+to a `collidedKeys` Set. Subsequent lookups through that key are
+refused and an "ambiguous mention" WARN is logged instead of
+arbitrarily routing to whichever entity won the seeding race.
+
+Per-job counters `unresolved_relationship_count` and
+`unresolved_date_count` on `extraction_jobs` accumulate the
+dropped-vs-resolved rate so the operator can verify the fix's
+effect on new extractions. Counters are surfaced inline on
+extraction done rows in `/admin/jobs`.
+
+To recover historically dropped relationships/dates (extractions
+that ran before E3 landed), an admin must re-extract the affected
+collections manually — see
+[docs/background-jobs.md](./background-jobs.md). Re-extraction is
+never auto-queued post-fix.
+
 ### Authority Suggestion (post-extraction)
 
 - After each extraction job completes, a scoped `authority_suggestion_job` is
