@@ -139,7 +139,9 @@ describe('extraction worker cycle', () => {
 
     expect(markDone).toHaveBeenCalledWith(21, {
       entity_count: 0,
-      relationship_count: 0
+      relationship_count: 0,
+      unresolved_relationship_count: 0,
+      unresolved_date_count: 0
     });
     expect(requeueForRetry).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
@@ -463,7 +465,9 @@ describe('extraction batch polling', () => {
     expect(savePartialResults).toHaveBeenCalled();
     expect(markDone).toHaveBeenCalledWith(71, {
       entity_count: 0,
-      relationship_count: 0
+      relationship_count: 0,
+      unresolved_relationship_count: 0,
+      unresolved_date_count: 0
     });
     expect(markFailed).not.toHaveBeenCalled();
   });

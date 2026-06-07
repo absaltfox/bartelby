@@ -146,10 +146,19 @@ async function materializeExtractionResult({
     preExistingCitationIds = await graphMaintenance.getPreExistingCitationIds(transcript.id);
   }
 
-  const { resolveEntityInScope, normalizeComparable, normalizeForMatching } = require('./entity-resolution');
+  const {
+    resolveEntityInScope,
+    resolveMentionToEntity,
+    seedMentionLookup,
+    normalizeComparable,
+    normalizeForMatching
+  } = require('./entity-resolution');
   const mentionToEntityId = new Map();
+  const collidedKeys = new Set();
   let entityCount = 0;
   let relationshipCount = 0;
+  let unresolvedRelationshipCount = 0;
+  let unresolvedDateCount = 0;
 
   for (const ext of extractionResult.entities) {
     try {
@@ -198,14 +207,13 @@ async function materializeExtractionResult({
         }
       }
 
-      mentionToEntityId.set(normalizeComparable(mention), entityId);
-      mentionToEntityId.set(normalizeComparable(normalized), entityId);
-      mentionToEntityId.set(normalizeForMatching(mention), entityId);
-      mentionToEntityId.set(normalizeForMatching(normalized), entityId);
-      // Also register raw lowercase forms so downstream date/relationship lookups
-      // (which use .toLowerCase()) continue to resolve correctly.
-      mentionToEntityId.set(mention.toLowerCase(), entityId);
-      mentionToEntityId.set(normalized.toLowerCase(), entityId);
+      seedMentionLookup({
+        mention,
+        normalized,
+        entityId,
+        mentionToEntityId,
+        collidedKeys
+      });
 
       const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
       const spanEnd = Number.isInteger(ext.span_end)
@@ -235,12 +243,20 @@ async function materializeExtractionResult({
     try {
       const label = String(dateExt.label || dateExt.mention || '').trim();
       const mention = String(dateExt.mention || label).trim();
-      const entityMentionKey = String(dateExt.entity_mention || '').trim().toLowerCase();
-      if (!label || !entityMentionKey) continue;
+      const rawEntityMention = String(dateExt.entity_mention || '').trim();
+      if (!label || !rawEntityMention) continue;
 
-      const entityId = mentionToEntityId.get(entityMentionKey);
+      const entityId = resolveMentionToEntity(rawEntityMention, mentionToEntityId, { collidedKeys });
       if (!entityId) {
-        await logLine(`WARN: Skipping date "${label}" — entity_mention "${dateExt.entity_mention}" not found`);
+        unresolvedDateCount += 1;
+        const ambiguous = collidedKeys.has(rawEntityMention.toLowerCase())
+          || collidedKeys.has(normalizeComparable(rawEntityMention))
+          || collidedKeys.has(normalizeForMatching(rawEntityMention));
+        if (ambiguous) {
+          await logLine(`WARN: Skipping date "${label}" — entity_mention "${dateExt.entity_mention}" is ambiguous (multiple entities reduce to the same normalized form)`);
+        } else {
+          await logLine(`WARN: Skipping date "${label}" — entity_mention "${dateExt.entity_mention}" not found`);
+        }
         continue;
       }
 
@@ -281,10 +297,24 @@ async function materializeExtractionResult({
 
   for (const rel of extractionResult.relationships) {
     try {
-      const sourceId = mentionToEntityId.get(String(rel.source_mention || '').toLowerCase());
-      const targetId = mentionToEntityId.get(String(rel.target_mention || '').toLowerCase());
+      const sourceId = resolveMentionToEntity(rel.source_mention || '', mentionToEntityId, { collidedKeys });
+      const targetId = resolveMentionToEntity(rel.target_mention || '', mentionToEntityId, { collidedKeys });
       if (!sourceId || !targetId) {
-        await logLine(`WARN: Could not resolve relationship "${rel.source_mention}" -> "${rel.target_mention}"`);
+        unresolvedRelationshipCount += 1;
+        const sourceRaw = String(rel.source_mention || '');
+        const targetRaw = String(rel.target_mention || '');
+        const ambiguous =
+          collidedKeys.has(sourceRaw.toLowerCase()) ||
+          collidedKeys.has(normalizeComparable(sourceRaw)) ||
+          collidedKeys.has(normalizeForMatching(sourceRaw)) ||
+          collidedKeys.has(targetRaw.toLowerCase()) ||
+          collidedKeys.has(normalizeComparable(targetRaw)) ||
+          collidedKeys.has(normalizeForMatching(targetRaw));
+        if (ambiguous) {
+          await logLine(`WARN: Could not resolve relationship "${rel.source_mention}" -> "${rel.target_mention}" (ambiguous mention — multiple entities reduce to the same normalized form)`);
+        } else {
+          await logLine(`WARN: Could not resolve relationship "${rel.source_mention}" -> "${rel.target_mention}"`);
+        }
         continue;
       }
 
@@ -353,7 +383,9 @@ async function materializeExtractionResult({
   if (job.job_kind !== 'batch') {
     await extractionJobs.markDone(job.id, {
       entity_count: entityCount,
-      relationship_count: relationshipCount
+      relationship_count: relationshipCount,
+      unresolved_relationship_count: unresolvedRelationshipCount,
+      unresolved_date_count: unresolvedDateCount
     });
 
     // Post-extraction: queue a scoped authority suggestion job if the document
@@ -389,7 +421,7 @@ async function materializeExtractionResult({
     }
   }
 
-  return { entityCount, relationshipCount };
+  return { entityCount, relationshipCount, unresolvedRelationshipCount, unresolvedDateCount };
 }
 
 async function processExtractionBatchSubmission(job, logLine) {
@@ -443,6 +475,8 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
   let failedDocs = job.batch_failed_count || 0;
   let totalEntityCount = job.entity_count || 0;
   let totalRelationshipCount = job.relationship_count || 0;
+  let totalUnresolvedRelationshipCount = 0;
+  let totalUnresolvedDateCount = 0;
 
   let checkpointCounter = 0;
   const silentLogger = async () => {};
@@ -500,6 +534,8 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
     completedDocs += 1;
     totalEntityCount += counts.entityCount;
     totalRelationshipCount += counts.relationshipCount;
+    totalUnresolvedRelationshipCount += counts.unresolvedRelationshipCount || 0;
+    totalUnresolvedDateCount += counts.unresolvedDateCount || 0;
     
     processedIds.add(itemResult.customId);
     checkpointCounter += 1;
@@ -533,7 +569,9 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
 
   await extractionJobs.markDone(job.id, {
     entity_count: totalEntityCount,
-    relationship_count: totalRelationshipCount
+    relationship_count: totalRelationshipCount,
+    unresolved_relationship_count: totalUnresolvedRelationshipCount,
+    unresolved_date_count: totalUnresolvedDateCount
   });
   await logLine(`Extraction batch complete. ${completedDocs} document${completedDocs !== 1 ? 's' : ''} processed.`);
 }
