@@ -1462,7 +1462,9 @@ const adminJobsAsync = {
         j.batch_document_count,
         j.batch_completed_count,
         j.batch_failed_count,
-        j.batch_remote_status
+        j.batch_remote_status,
+        j.unresolved_relationship_count,
+        j.unresolved_date_count
       FROM extraction_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
       ${statusClause}
@@ -1757,12 +1759,14 @@ const extractionJobs = {
     await appendJobLogEntry('extraction', id, text);
   },
 
-  async markDone(id, { entity_count, relationship_count } = {}) {
+  async markDone(id, { entity_count, relationship_count, unresolved_relationship_count, unresolved_date_count } = {}) {
     await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'done',
           entity_count = COALESCE(?, entity_count),
           relationship_count = COALESCE(?, relationship_count),
+          unresolved_relationship_count = COALESCE(?, unresolved_relationship_count),
+          unresolved_date_count = COALESCE(?, unresolved_date_count),
           completed_at = CURRENT_TIMESTAMP,
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL,
@@ -1771,6 +1775,8 @@ const extractionJobs = {
     `, [
       Number.isInteger(entity_count) ? entity_count : null,
       Number.isInteger(relationship_count) ? relationship_count : null,
+      Number.isInteger(unresolved_relationship_count) ? unresolved_relationship_count : null,
+      Number.isInteger(unresolved_date_count) ? unresolved_date_count : null,
       id
     ]);
     await saveDatabase();

@@ -580,6 +580,12 @@ MIGRATIONS.push(`
     ADD COLUMN noise_phrase_ids_json TEXT;
 `);
 
+// v72 — E3 unresolved-mention counters on extraction_jobs
+MIGRATIONS.push(`
+  ALTER TABLE extraction_jobs ADD COLUMN unresolved_relationship_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE extraction_jobs ADD COLUMN unresolved_date_count INTEGER NOT NULL DEFAULT 0;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
