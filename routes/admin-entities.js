@@ -8,7 +8,7 @@ const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAdmin);
 
-const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim'];
+const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'];
 const PAGE_SIZE = 25;
 
 function knowledgePath(pathname, queryString) {

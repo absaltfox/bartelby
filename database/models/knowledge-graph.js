@@ -9,7 +9,8 @@ const REVIEW_KIND_ENTITY_TYPES = new Set([
   'topic',
   'artifact',
   'claim',
-  'document'
+  'document',
+  'role'
 ]);
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, isFts5Available = () => false) => {

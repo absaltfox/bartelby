@@ -20,7 +20,8 @@ const ENTITY_TYPE_LABELS = Object.freeze({
   topic: 'Topic',
   artifact: 'Artifact',
   claim: 'Claim',
-  document: 'Document'
+  document: 'Document',
+  role: 'Role'
 });
 const REVIEW_KIND_OPTIONS = Object.freeze([
   { value: 'all', label: 'All evidence' },

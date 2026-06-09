@@ -9,7 +9,8 @@
     topic: 'Topic',
     artifact: 'Artifact',
     claim: 'Claim',
-    document: 'Document'
+    document: 'Document',
+    role: 'Role'
   };
 
   const ENTITY_TYPE_COLORS = {
@@ -20,7 +21,8 @@
     topic: '#8a7a6a',
     artifact: '#9a6324',
     claim: '#b03a5b',
-    document: '#7c4d2e'
+    document: '#7c4d2e',
+    role: '#6a4a8a'
   };
 
   function qs(selector, root) {
@@ -135,7 +137,7 @@
       groups.get(type).push(entity);
     });
 
-    const order = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'document'];
+    const order = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'document', 'role'];
     const orderedTypes = order.filter((type) => groups.has(type));
     return orderedTypes.map((type, index) => {
       const items = groups.get(type);

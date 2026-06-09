@@ -38,7 +38,7 @@
           <label for="generic-entity-type">Entity type</label>
           <select id="generic-entity-type" name="entity_type">
             <option value="">All types</option>
-            <% ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim'].forEach(function(type) { %>
+            <% ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(type) { %>
               <option value="<%= type %>"><%= type %></option>
             <% }) %>
           </select>
