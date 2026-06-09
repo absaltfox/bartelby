@@ -676,11 +676,45 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     ('related_to_topic', 'Related To Topic', NULL, NULL, 'topic', 'interpretive')
   `,
 
-  // v<next> — batch support for grouping jobs
+  // v46 — batch support for grouping jobs
   `
     ALTER TABLE import_jobs ADD COLUMN batch_remote_id TEXT;
     ALTER TABLE import_jobs ADD COLUMN batch_remote_status TEXT;
     ALTER TABLE import_jobs ADD COLUMN batch_manifest TEXT
+  `,
+
+  // v47 — prompt-revision bundle: relationship voice columns + alias table (E1/E2/E5 schema).
+  // E5.1/E5.2: voice_role NULL default keeps existing rows visibly unattributed.
+  // E2.1: relationship_type_aliases seeded with live-corpus canonical→alias mappings.
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md and
+  // docs/development-principles.md "One Canonical Backend Path per Workflow".
+  `
+  ALTER TABLE relationships ADD COLUMN voice_role TEXT
+    CHECK (voice_role IS NULL OR voice_role IN ('author','speaker','described_subject'));
+  ALTER TABLE relationships ADD COLUMN expressed_by_entity_id INTEGER
+    REFERENCES entities(id) ON DELETE SET NULL;
+  ALTER TABLE relationships ADD COLUMN described_subject_entity_id INTEGER
+    REFERENCES entities(id) ON DELETE SET NULL;
+  CREATE TABLE IF NOT EXISTS relationship_type_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_type TEXT NOT NULL,
+    alias_type TEXT NOT NULL,
+    notes TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(alias_type)
+  );
+  CREATE INDEX IF NOT EXISTS idx_relationship_type_aliases_canonical
+    ON relationship_type_aliases(canonical_type);
+  CREATE INDEX IF NOT EXISTS idx_relationship_type_aliases_alias
+    ON relationship_type_aliases(alias_type);
+  INSERT OR IGNORE INTO relationship_type_aliases (canonical_type, alias_type, notes) VALUES
+    ('mentioned_in', 'mentions',        'LLM frequently emits mentions — collapse to mentioned_in'),
+    ('mentioned_in', 'mentions_in',     'LLM frequently emits mentions_in — collapse to mentioned_in'),
+    ('mentioned_in', 'mentioned',       'LLM frequently emits mentioned — collapse to mentioned_in'),
+    ('occurred_at',  'received_at',     'LLM occasionally emits received_at for events — collapse to occurred_at'),
+    ('related_to',   'contracted_with', 'Edge case observed in live corpus — collapse to related_to'),
+    ('holds_position', 'holds_role_in', 'E1.2: soft-deprecate holds_role_in in favor of holds_position into Role node')
   `
 ];
 
