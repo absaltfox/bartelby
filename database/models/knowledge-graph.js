@@ -1239,23 +1239,27 @@ const dateExpressions = {
 };
 
 const relationships = {
-  async create({ source_entity_id, target_entity_id, relationship_type, label, properties, confidence, start_date, end_date, date_precision, date_qualifier }) {
+  async create({ source_entity_id, target_entity_id, relationship_type, label, properties, confidence, start_date, end_date, date_precision, date_qualifier, voice_role, expressed_by_entity_id, described_subject_entity_id }) {
     const result = await runAsync(`
       INSERT INTO relationships (
         source_entity_id, target_entity_id, relationship_type, label, properties,
-        confidence, start_date, end_date, date_precision, date_qualifier
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        confidence, start_date, end_date, date_precision, date_qualifier,
+        voice_role, expressed_by_entity_id, described_subject_entity_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       source_entity_id,
       target_entity_id,
       relationship_type,
       label || null,
-      JSON.stringify(properties || {}),
+      typeof properties === 'string' ? properties : JSON.stringify(properties || {}),
       confidence != null ? confidence : null,
       start_date || null,
       end_date || null,
       date_precision || null,
-      date_qualifier || null
+      date_qualifier || null,
+      voice_role || null,
+      Number.isInteger(expressed_by_entity_id) ? expressed_by_entity_id : null,
+      Number.isInteger(described_subject_entity_id) ? described_subject_entity_id : null
     ]);
     return result.lastInsertRowid;
   },

@@ -13,6 +13,7 @@ const {
   isLostFinalizationClaimError,
   parseFinalizationStaleSeconds
 } = require('./finalization-claims');
+const { isVoiceRole } = require('./constants/voice-role');
 
 const EXTRACTION_BATCH_FINALIZATION_OWNER = getFinalizationOwner('extraction-finalization');
 const EXTRACTION_BATCH_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
@@ -350,6 +351,20 @@ async function materializeExtractionResult({
         relProperties.original_relationship_type = originalRelTypeForProperties;
       }
 
+      let voiceRole = 'author';
+      let expressedByEntityId = null;
+      let describedSubjectEntityId = null;
+      if (rel.voice_role && isVoiceRole(rel.voice_role)) {
+        voiceRole = rel.voice_role;
+      }
+      if (rel.voice_attribution_mention) {
+        const resolvedAttribution = resolveMentionToEntity(rel.voice_attribution_mention, mentionToEntityId, { collidedKeys });
+        if (resolvedAttribution) {
+          if (voiceRole === 'speaker') expressedByEntityId = resolvedAttribution;
+          else if (voiceRole === 'described_subject') describedSubjectEntityId = resolvedAttribution;
+        }
+      }
+
       const existing = await relationships.findExisting(sourceId, targetId, relType);
       const relationshipId = existing
         ? existing.id
@@ -363,7 +378,10 @@ async function materializeExtractionResult({
           start_date: rel.start_date || null,
           end_date: rel.end_date || null,
           date_precision: rel.date_precision || null,
-          date_qualifier: rel.date_qualifier || null
+          date_qualifier: rel.date_qualifier || null,
+          voice_role: voiceRole,
+          expressed_by_entity_id: expressedByEntityId,
+          described_subject_entity_id: describedSubjectEntityId
         });
 
       const relSpanStart = Number.isInteger(rel.evidence_span_start) ? rel.evidence_span_start : null;
