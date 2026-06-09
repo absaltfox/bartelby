@@ -135,6 +135,7 @@ async function materializeExtractionResult({
   relationships,
   citations,
   relationshipTypes,
+  relationshipTypeAliasesAsync,
   graphMaintenance
 }) {
   // Staged reset: collect pre-existing citation IDs BEFORE writing new data so
@@ -318,10 +319,35 @@ async function materializeExtractionResult({
         continue;
       }
 
-      let relType = await relationshipTypes.resolve(rel.type);
+      const llmRelType = String(rel.type || '').trim().toLowerCase().replace(/\s+/g, '_');
+      let relType = null;
+      let originalRelTypeForProperties = null;
+
+      // E2.1 hybrid: try the curator-editable alias table first.
+      if (llmRelType && relationshipTypeAliasesAsync) {
+        const aliasResolved = await relationshipTypeAliasesAsync.resolve(llmRelType);
+        if (aliasResolved) {
+          relType = aliasResolved;
+          if (aliasResolved !== llmRelType) {
+            // We coerced a known alias to its canonical; keep the original for audit.
+            originalRelTypeForProperties = llmRelType;
+            await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
+          }
+        }
+      }
+
+      // Genuinely unknown type — coerce to related_to, preserve original.
       if (!relType) {
-        relType = String(rel.type || 'related_to').trim().toLowerCase().replace(/\s+/g, '_') || 'related_to';
-        await relationshipTypes.create({ name: relType, label: relType.replace(/_/g, ' ') });
+        if (llmRelType) {
+          originalRelTypeForProperties = llmRelType;
+          await logLine(`INFO: relationship type "${llmRelType}" not in alias table; coerced to related_to (original preserved in properties.original_relationship_type)`);
+        }
+        relType = 'related_to';
+      }
+
+      const relProperties = {};
+      if (originalRelTypeForProperties) {
+        relProperties.original_relationship_type = originalRelTypeForProperties;
       }
 
       const existing = await relationships.findExisting(sourceId, targetId, relType);
@@ -332,7 +358,7 @@ async function materializeExtractionResult({
           target_entity_id: targetId,
           relationship_type: relType,
           label: null,
-          properties: {},
+          properties: relProperties,
           confidence: rel.confidence != null ? rel.confidence : 0.8,
           start_date: rel.start_date || null,
           end_date: rel.end_date || null,
@@ -461,6 +487,7 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
     relationships,
     citations,
     relationshipTypes,
+    relationshipTypeAliasesAsync,
     graphMaintenance
   } = require('../database/db');
 
@@ -528,6 +555,7 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
       relationships,
       citations,
       relationshipTypes,
+      relationshipTypeAliasesAsync,
       graphMaintenance
     });
 
@@ -706,6 +734,7 @@ async function runExtractionWorkerCycle() {
     relationships,
     citations,
     relationshipTypes,
+    relationshipTypeAliasesAsync,
     graphMaintenance
   } = require('../database/db');
 
@@ -770,6 +799,7 @@ async function runExtractionWorkerCycle() {
       relationships,
       citations,
       relationshipTypes,
+      relationshipTypeAliasesAsync,
       graphMaintenance
     });
 

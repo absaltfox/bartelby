@@ -1455,6 +1455,7 @@ const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { sentimentAsync, normalizePhrase: normalizeSentimentPhrase } = require('./models/sentiment')(db, runAsync, getAsync, allAsync, saveDatabase);
+const relationshipTypeAliasesAsync = require('./models/relationship-type-aliases')(db, runAsync, getAsync, allAsync, saveDatabase);
 
 function getDb() { return db; }
 
@@ -1533,5 +1534,6 @@ module.exports = {
   authorityGenericTerms,
   authorityGenericTermsAsync: authorityGenericTerms,
   graphAccess,
-  graphAccessAsync: graphAccess
+  graphAccessAsync: graphAccess,
+  relationshipTypeAliasesAsync
 };
