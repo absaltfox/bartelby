@@ -196,6 +196,12 @@
               <div class="graph-detail-card">
                 <strong><%= rel.relationship_type || rel.type || 'related_to' %></strong>
                 <div class="graph-muted"><%= rel.source_name || 'Unknown source' %> → <%= rel.target_name || 'Unknown target' %></div>
+                <%- include('../partials/voice-badge', {
+                  relationship: rel,
+                  attributionEntity: (rel.voice_role === 'speaker' && rel.expressed_by_entity)
+                    || (rel.voice_role === 'described_subject' && rel.described_subject_entity)
+                    || null
+                }) %>
               </div>
             <% }) %>
           </div>

@@ -93,6 +93,25 @@
       }).join('') + '</div>';
     }
 
+    // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md E5.5:
+    // author voice quiet; speaker/described_subject distinct badges.
+    // NULL voice_role rendered as "unattributed". Attribution entity link
+    // is deferred (data not hydrated in workspace JSON) — follow-up task.
+    function renderVoiceBadge(rel) {
+      var role = rel && rel.voice_role;
+      if (role === 'speaker') {
+        return '<span class="status-badge voice-badge voice-badge--speaker" title="Quoted from a speaker; attribution linked.">speaker</span>';
+      }
+      if (role === 'described_subject') {
+        return '<span class="status-badge voice-badge voice-badge--described-subject" title="The writer is reporting this subject\'s claim/feeling; attribution linked.">described subject</span>';
+      }
+      if (role === null || role === undefined) {
+        return '<span class="status-badge muted voice-badge voice-badge--unattributed" title="Voice not attributed.">unattributed</span>';
+      }
+      // 'author' voice is intentionally not rendered — it is the default and quiet.
+      return '';
+    }
+
     function renderRelationshipEvidence(rel) {
       var evidence = Array.isArray(rel.evidence) ? rel.evidence : [];
       if (!evidence.length) return '<p class="graph-muted">No approved relationship citation excerpt recorded.</p>';
@@ -126,6 +145,7 @@
           +     '<a href="/admin/knowledge/entities/' + escapeHtml(rel.target_entity_id) + '">' + escapeHtml(rel.target_name || 'Unknown target') + '</a>'
           +   '</div>'
           +   renderDateMeta(rel)
+          +   renderVoiceBadge(rel)
           +   renderRelationshipEvidence(rel)
           + '</article>';
       }).join('') + '</div>';

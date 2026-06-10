@@ -1,0 +1,23 @@
+<%
+  // voice-badge partial — renders the voice attribution for a relationship row.
+  // Expects: relationship (with voice_role, expressed_by_entity_id,
+  //          described_subject_entity_id), attributionEntity (optional, the
+  //          person who is the speaker or described_subject — caller looks up).
+  //
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md E5.5:
+  // author voice quiet; speaker/described_subject distinct badges with
+  // linked attribution entity. NULL voice_role rendered as "unattributed" (grey).
+%>
+<% const voiceRole = relationship && relationship.voice_role; %>
+<% if (voiceRole === 'speaker') { %>
+  <span class="status-badge voice-badge voice-badge--speaker" title="Quoted from a speaker; attribution linked.">
+    speaker<% if (attributionEntity) { %>: <a href="/admin/knowledge/entities/<%= attributionEntity.id %>"><%= attributionEntity.canonical_name %></a><% } %>
+  </span>
+<% } else if (voiceRole === 'described_subject') { %>
+  <span class="status-badge voice-badge voice-badge--described-subject" title="The writer is reporting this subject's claim/feeling; attribution linked.">
+    described subject<% if (attributionEntity) { %>: <a href="/admin/knowledge/entities/<%= attributionEntity.id %>"><%= attributionEntity.canonical_name %></a><% } %>
+  </span>
+<% } else if (voiceRole === null || voiceRole === undefined) { %>
+  <span class="status-badge muted voice-badge voice-badge--unattributed" title="Voice not attributed.">unattributed</span>
+<% } %>
+<% // 'author' voice is intentionally not rendered — it is the default and quiet. %>

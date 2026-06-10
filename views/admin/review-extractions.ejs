@@ -125,6 +125,14 @@
                 <% if (item.claim_detail) { %>
                   <p class="review-extraction-detail"><%= item.claim_detail %></p>
                 <% } %>
+                <% if (item.kind === 'relationship') { %>
+                  <%- include('../partials/voice-badge', {
+                    relationship: item,
+                    attributionEntity: (item.voice_role === 'speaker' && item.expressed_by_entity)
+                      || (item.voice_role === 'described_subject' && item.described_subject_entity)
+                      || null
+                  }) %>
+                <% } %>
                 <% if (item.claim_meta) { %>
                   <p class="review-extraction-meta-line"><%= item.claim_meta %></p>
                 <% } %>
