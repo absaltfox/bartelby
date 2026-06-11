@@ -6,7 +6,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
     jest.clearAllMocks();
   });
 
-  function buildMocks({ entities, relationships, aliasResolveReturns }) {
+  function buildMocks({ entities, relationships, aliasResolveReturns, relationshipTypesResolveReturns = {} }) {
     const logLine = jest.fn(async () => {});
     const createdRelationships = [];
     const relationshipsCreate = jest.fn(async (rel) => {
@@ -42,7 +42,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
       entityAliases: { createIfMissing: async () => {} },
       dateExpressions: { createIfMissing: async () => 1 },
       relationships: { create: relationshipsCreate, findExisting: async () => null },
-      relationshipTypes: { resolve: async () => null, create: async () => {} },
+      relationshipTypes: { resolve: jest.fn(async (type) => relationshipTypesResolveReturns[type] ?? null), create: async () => {} },
       relationshipTypeAliasesAsync: {
         resolve: jest.fn(async (aliasType) => aliasResolveReturns[aliasType] ?? null)
       },
@@ -99,5 +99,23 @@ describe('worker-extraction relationship-type alias coercion', () => {
     expect(props.original_relationship_type).toBe('arbitrary_llm_invented');
     const logs = logLine.mock.calls.map(c => c[0]);
     expect(logs.some(l => /coerced.+related_to/.test(l))).toBe(true);
+  });
+
+  it('preserves canonical relationship types (e.g., "authored") via relationship_types fallback (post-fix)', async () => {
+    const { createdRelationships } = buildMocks({
+      entities: [
+        { mention: 'A', normalized: 'A', entity_type: 'person', span_start: 0, span_end: 1, confidence: 0.9, genericity: 'specific' },
+        { mention: 'B', normalized: 'B', entity_type: 'place', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
+      ],
+      relationships: [
+        { source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9 }
+      ],
+      aliasResolveReturns: {},  // no alias mapping
+      relationshipTypesResolveReturns: { 'authored': 'authored' }  // stage 2 fallback returns canonical
+    });
+    const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');
+    await runExtractionWorkerCycle();
+    expect(createdRelationships).toHaveLength(1);
+    expect(createdRelationships[0].relationship_type).toBe('authored');
   });
 });

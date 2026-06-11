@@ -41,6 +41,7 @@ describe('worker-extraction mention resolution', () => {
       dateExpressions: { createIfMissing: async () => 1 },
       relationships: { create: async () => 1, findExisting: async () => null },
       relationshipTypes: { resolve: async () => 'authored', create: async () => {} },
+      relationshipTypeAliasesAsync: { resolve: async () => null },
       citations: { create: async () => 1 },
       authorityGenericTermsAsync: { listActive: async () => [] },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: async () => true, create: async () => 1 },

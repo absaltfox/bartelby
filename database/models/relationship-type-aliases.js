@@ -2,6 +2,14 @@
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
   const relationshipTypeAliases = {
+    /**
+     * Return the canonical_type for a given alias_type, or null if the input
+     * is not an alias. Canonical pass-through is intentionally NOT done here —
+     * callers should consult relationship_types separately for canonical names.
+     * Per final-review finding on bundle commit 3db6fd1: doing canonical
+     * pass-through here gave false negatives for canonicals not seeded as
+     * aliases, silently degrading them to related_to.
+     */
     async resolve(aliasType) {
       const normalized = String(aliasType || '').trim().toLowerCase();
       if (!normalized) return null;
@@ -9,14 +17,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
         'SELECT canonical_type FROM relationship_type_aliases WHERE alias_type = ?',
         [normalized]
       );
-      if (row) return row.canonical_type;
-      // Pass-through: when the alias_type IS a known canonical (i.e., is itself the
-      // canonical_type of any alias row), return it as-is. Else null.
-      const canonicalHit = await getAsync(
-        'SELECT canonical_type FROM relationship_type_aliases WHERE canonical_type = ? LIMIT 1',
-        [normalized]
-      );
-      return canonicalHit ? canonicalHit.canonical_type : null;
+      return row ? row.canonical_type : null;
     },
 
     async list() {

@@ -324,24 +324,35 @@ async function materializeExtractionResult({
       let relType = null;
       let originalRelTypeForProperties = null;
 
-      // E2.1 hybrid: try the curator-editable alias table first.
+      // E2.1 stage 1: curator-editable alias table. If the LLM emitted a known
+      // alias, coerce to its canonical.
       if (llmRelType && relationshipTypeAliasesAsync) {
         const aliasResolved = await relationshipTypeAliasesAsync.resolve(llmRelType);
-        if (aliasResolved) {
+        if (aliasResolved && aliasResolved !== llmRelType) {
           relType = aliasResolved;
-          if (aliasResolved !== llmRelType) {
-            // We coerced a known alias to its canonical; keep the original for audit.
-            originalRelTypeForProperties = llmRelType;
-            await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
-          }
+          originalRelTypeForProperties = llmRelType;
+          await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
         }
       }
 
-      // Genuinely unknown type — coerce to related_to, preserve original.
+      // E2.1 stage 2: legacy relationship_types table (seeded with the full
+      // canonical vocabulary at migration v45). Pre-bundle behavior: if the
+      // LLM emitted a known canonical (e.g., "authored", "employed_by",
+      // "position_in"), use it as-is. Restored as the second stage to prevent
+      // canonical regressions per final-review finding on commit 3db6fd1.
+      if (!relType && llmRelType && relationshipTypes) {
+        const canonical = await relationshipTypes.resolve(llmRelType);
+        if (canonical) {
+          relType = canonical;
+        }
+      }
+
+      // E2.1 stage 3: genuinely unknown type — coerce to related_to, preserve
+      // original in properties.original_relationship_type for audit.
       if (!relType) {
         if (llmRelType) {
           originalRelTypeForProperties = llmRelType;
-          await logLine(`INFO: relationship type "${llmRelType}" not in alias table; coerced to related_to (original preserved in properties.original_relationship_type)`);
+          await logLine(`INFO: relationship type "${llmRelType}" not in alias table or canonical vocabulary; coerced to related_to (original preserved in properties.original_relationship_type)`);
         }
         relType = 'related_to';
       }

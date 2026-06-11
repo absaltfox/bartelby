@@ -21,9 +21,9 @@ describe('relationshipTypeAliasesAsync', () => {
     expect(result).toBe('mentioned_in');
   });
 
-  it('resolve("mentioned_in") returns "mentioned_in" (canonical pass-through)', async () => {
+  it('resolve("mentioned_in") returns null (canonicals are looked up via relationship_types, not the alias model)', async () => {
     const result = await db.relationshipTypeAliasesAsync.resolve('mentioned_in');
-    expect(result).toBe('mentioned_in');
+    expect(result).toBe(null);
   });
 
   it('resolve("holds_role_in") returns "holds_position" (E1.2 soft-deprecation)', async () => {
