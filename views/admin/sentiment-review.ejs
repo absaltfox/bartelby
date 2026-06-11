@@ -9,6 +9,17 @@
     <p class="subtitle">Approve, reject, or delete pending sentiment annotations. Auto-approved rows are not shown.</p>
   </div>
 
+  <form method="get" action="" class="filter-bar">
+    <label for="entity-type-filter" class="filter-bar-label">Entity type</label>
+    <select id="entity-type-filter" name="entity_type" onchange="this.form.submit()">
+      <option value="">— all —</option>
+      <% entityTypes.forEach(function(type) { %>
+        <option value="<%= type %>" <%= entityTypeFilter === type ? 'selected' : '' %>><%= type %></option>
+      <% }) %>
+    </select>
+    <noscript><button type="submit" class="btn-secondary btn-sm">Filter</button></noscript>
+  </form>
+
   <div class="bulk-toolbar bulk-toolbar--sticky suggestions-bulk-controls authority-suggestion-bulk-bar">
     <label class="bulk-toolbar-select-all suggestions-select-all authority-suggestion-select-all">
       <input type="checkbox" id="sentiment-select-all">

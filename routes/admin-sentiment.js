@@ -21,6 +21,13 @@ const PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 const BULK_LIMIT = 200;
 
+const ENTITY_TYPE_VALUES = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'];
+
+function normalizeEntityTypeFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ENTITY_TYPE_VALUES.includes(normalized) ? normalized : null;
+}
+
 function asInt(v) {
   const n = parseInt(v, 10);
   return Number.isInteger(n) ? n : null;
@@ -36,7 +43,8 @@ function buildNextCursor(annotations, limit) {
 }
 
 router.get('/review', asyncHandler(async (req, res) => {
-  const annotations = await db.sentimentAsync.listPendingAnnotations({ limit: PAGE_SIZE });
+  const entityTypeFilter = normalizeEntityTypeFilter(req.query.entity_type);
+  const annotations = await db.sentimentAsync.listPendingAnnotations({ limit: PAGE_SIZE, entityTypeFilter });
   const nextCursor = buildNextCursor(annotations, PAGE_SIZE);
   res.render('admin/sentiment-review', {
     pageTitle: 'Sentiment Review',
@@ -44,7 +52,9 @@ router.get('/review', asyncHandler(async (req, res) => {
     pageSize: PAGE_SIZE,
     nextCursor,
     activeKnowledgePage: 'sentiment-review',
-    status: 'pending'
+    status: 'pending',
+    entityTypeFilter,
+    entityTypes: ENTITY_TYPE_VALUES
   });
 }));
 

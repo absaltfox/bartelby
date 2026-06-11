@@ -641,17 +641,26 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return r.changes;
     },
 
-    async listPendingAnnotations({ limit = 25, beforeCreatedAt = null, beforeId = null } = {}) {
+    async listPendingAnnotations({ limit = 25, beforeCreatedAt = null, beforeId = null, entityTypeFilter = null } = {}) {
       const params = [];
       let cursorClause = '';
       if (beforeCreatedAt && beforeId) {
         cursorClause = `AND (extracted_at < ? OR (extracted_at = ? AND id < ?))`;
         params.push(beforeCreatedAt, beforeCreatedAt, beforeId);
       }
+      let entityTypeClause = '';
+      if (entityTypeFilter) {
+        entityTypeClause = `AND EXISTS (
+          SELECT 1 FROM entities e
+          WHERE e.id = sentiment_annotations.target_entity_id
+            AND e.entity_type = ?
+        )`;
+        params.push(entityTypeFilter);
+      }
       params.push(Math.min(Math.max(1, limit), 100));
       return allAsync(
         `SELECT * FROM sentiment_annotations
-          WHERE approval_status = 'pending' ${cursorClause}
+          WHERE approval_status = 'pending' ${cursorClause} ${entityTypeClause}
           ORDER BY extracted_at DESC, id DESC
           LIMIT ?`,
         params
