@@ -34,6 +34,14 @@ Common entity types include:
 - `topic`
 - `artifact`
 - `claim`
+- `role`
+
+The `role` entity type models positions and titles held by persons within
+organizations, enabling tripartite (Person → Role → Organization) modeling.
+A person may hold multiple roles at different organizations or at different
+times within the same organization; the role entity captures the intermediate
+node that connects a person to an organization with context about the
+position itself.
 
 The schema still supports a legacy `date` entity type, but current extraction
 does not create standalone date nodes for explorer use.
@@ -130,6 +138,29 @@ possible node at once.
 - Connect two entities with a controlled relationship type
 - May carry confidence, date bounds, and other properties
 
+### Relationship Vocabulary Aliases
+
+The `relationship_type_aliases` table enables curators to define canonical
+relationship types and maintain mappings to alternative or historical terms
+without changing extracted relationships retroactively.
+
+**Write-time coercion:** When a relationship is written, the worker queries
+the alias table first. If the extracted relationship type matches a curator-defined
+alias, the worker writes the canonical form to `relationships.relationship_type`.
+If no alias exists, the relationship type is written as-is, with the original
+extracted term preserved in `properties.original_relationship_type` for
+troubleshooting and curator review.
+
+**Seeded canonical→alias mappings** include:
+- `mentions` → `mentioned_in` (bidirectional)
+- `holds_role_in` → `holds_position`
+- (additional pairs defined per domain)
+
+Vocabulary normalization through an admin SQL migration UI (for re-mapping
+existing relationships and entities) is planned as a deferred future workstream
+(E2.2); currently, curation focuses on forward consistency and fallback
+provenance tracking via `properties.original_relationship_type`.
+
 ### Citations
 
 - Stored in `citations`
@@ -137,6 +168,38 @@ possible node at once.
 - Can point to either an entity or a relationship
 - Carry an explicit approval lifecycle: `pending`, `approved`, or `rejected`
 - Support auto-approval, manual approval, rejection, and later evidence removal
+
+### Voice Attribution
+
+Relationships (and their mirrors in `sentiment_annotations`) carry three voice
+columns to capture which party is asserting, describing, or experiencing a
+claim:
+
+- `voice_role` — A CHECK enum constraint: `author` (extracted party is the
+  text's author/narrator), `speaker` (quoted or reported speech), or
+  `described_subject` (the relationship describes a property of the entity
+  rather than an assertion by it)
+- `expressed_by_entity_id` — Foreign key to the entity making an assertion
+  (used when `voice_role = 'author'` or `'speaker'`)
+- `described_subject_entity_id` — Foreign key to the entity being described
+  (used when `voice_role = 'described_subject'`)
+
+**Default behavior:** Newly extracted relationships default to `voice_role =
+'author'` with `expressed_by_entity_id` set to the relationship source. NULL
+values on existing rows indicate unattributed relationships (relationships
+extracted before voice attribution was implemented).
+
+**UI surface:** The unified `views/partials/voice-badge.ejs` partial surfaces
+voice information across review-extractions cards, entity-detail pages, and
+authority-detail pages. The authority-detail page rendering is JavaScript-driven
+via `public/js/authority-detail-page.js` and renders voice badges alongside
+relationship assertions. Attribution entity hydration is best-effort; badge
+text renders with or without the entity link depending on link availability.
+Pinning entity references to badge rendering is a deferred follow-up.
+
+The `sentiment_annotations` schema mirrors this structure for sentiment claims,
+enabling the same voice-attribution workflow for both relationship and sentiment
+evidence.
 
 ## Extraction Workflow
 
