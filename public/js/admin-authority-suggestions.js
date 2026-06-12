@@ -460,6 +460,78 @@
     }
   }
 
+  // ── Disambiguation card handlers (Task 9, U3.2) ──────────────────────────
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.2.
+
+  function initDisambiguationCards() {
+    var cards = document.querySelectorAll('.disambiguation-card');
+    cards.forEach(function(card) {
+      var entityId = card.dataset.entityId;
+      var approveBtn = card.querySelector('.disambiguation-approve-btn');
+      var newAuthBtn = card.querySelector('.disambiguation-new-authority-btn');
+      var errorSlot = card.querySelector('.inline-error');
+
+      function setDisambigError(msg) {
+        if (!errorSlot) return;
+        if (msg) { errorSlot.textContent = msg; errorSlot.removeAttribute('hidden'); }
+        else { errorSlot.textContent = ''; errorSlot.setAttribute('hidden', ''); }
+      }
+
+      if (approveBtn) {
+        approveBtn.addEventListener('click', async function() {
+          var checked = card.querySelector('input[type="radio"]:checked');
+          if (!checked) { alert('Pick a candidate first.'); return; }
+          var authorityId = Number(checked.value);
+          var siblings = card.querySelectorAll('input[type="radio"]').length - 1;
+          if (!confirm('Approve this authority and cascade-reject the other ' + siblings + ' candidate(s)?')) return;
+          approveBtn.disabled = true;
+          setDisambigError('');
+          try {
+            var result = await postJSON(
+              '/admin/knowledge/authorities/suggestions/disambiguation/' + encodeURIComponent(entityId) + '/approve',
+              { authorityId: authorityId }
+            );
+            if (result.status >= 200 && result.status < 300 && result.data && result.data.success) {
+              window.location.reload();
+            } else {
+              approveBtn.disabled = false;
+              setDisambigError((result.data && result.data.error) ? result.data.error : 'Approve failed — try again.');
+            }
+          } catch (err) {
+            approveBtn.disabled = false;
+            setDisambigError('Network error — try again.');
+          }
+        });
+      }
+
+      if (newAuthBtn) {
+        newAuthBtn.addEventListener('click', async function() {
+          var total = card.querySelectorAll('input[type="radio"]').length;
+          if (!confirm('Reject all ' + total + ' candidate authority(ies) and create a fresh authority for this entity?')) return;
+          newAuthBtn.disabled = true;
+          setDisambigError('');
+          try {
+            var result = await postJSON(
+              '/admin/knowledge/authorities/suggestions/disambiguation/' + encodeURIComponent(entityId) + '/new-authority',
+              {}
+            );
+            if (result.status >= 200 && result.status < 300 && result.data && result.data.success) {
+              window.location.reload();
+            } else {
+              newAuthBtn.disabled = false;
+              setDisambigError((result.data && result.data.error) ? result.data.error : 'Request failed — try again.');
+            }
+          } catch (err) {
+            newAuthBtn.disabled = false;
+            setDisambigError('Network error — try again.');
+          }
+        });
+      }
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   function init() {
     var list = document.getElementById('suggestions-list');
     if (!list) return;
@@ -472,6 +544,8 @@
       if (btn.getAttribute('data-action') === 'approve') handleApprove(id);
       else if (btn.getAttribute('data-action') === 'reject') handleReject(id);
     });
+
+    initDisambiguationCards();
 
     var loadMoreBlock = document.getElementById('suggestions-load-more');
     if (loadMoreBlock) {
