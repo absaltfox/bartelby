@@ -122,6 +122,31 @@ possible node at once.
   authority
 - Remain review metadata until explicitly approved
 
+**Suggestion disambiguation grouping (curator-velocity U7, added 2026-06-12):**
+When an entity has two or more pending authority-link suggestions, they are
+grouped together to enable curators to resolve cross-authority conflicts in one
+workflow. When ≥2 pending suggestions exist for the same `entity_id`, the
+authority-suggestions review UI renders them as a single disambiguation card
+rather than separate rows.
+
+Two transactional endpoints enable grouped resolution:
+
+- `POST /admin/knowledge/authorities/suggestions/disambiguation/:entityId/approve` —
+  Approve one suggested authority link, cascade-reject all other pending
+  suggestions for that entity, and create the entity-to-authority link. Request
+  body: `{ suggestionId: number }`. Returns: `{ success, entityId,
+  approvedSuggestionId, removedSiblingIds }`.
+- `POST /admin/knowledge/authorities/suggestions/disambiguation/:entityId/new-authority` —
+  Reject all pending suggestions for the entity and create a new authority with
+  provided metadata, then link the entity to it. Request body: `{ authorityType,
+  canonicalName, description?, properties? }`. Returns: `{ success, entityId,
+  authorityId, removedSuggestionIds }`.
+
+Both endpoints preserve atomicity and audit logging. Per
+[docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md),
+disambiguation grouping improves curator UX when the embedding model returns
+multiple conflicting matches (U7).
+
 ### Dates
 
 - Stored in `date_expressions`
@@ -137,6 +162,16 @@ possible node at once.
 - Stored in `relationships`
 - Connect two entities with a controlled relationship type
 - May carry confidence, date bounds, and other properties
+
+**Relationship frequency annotation (curator-velocity U1, added 2026-06-12):** The
+`relationship_types.frequency` column holds TEXT values (`rare`, `medium`,
+`common`) to support curator annotation of link prevalence. This column is
+unrelated to the pre-existing `relationship_types.category` column, which groups
+relationship types by subject entity pairing (e.g., `person-to-organization`).
+The frequency annotation drives sorting in the citation review queue (see
+"Citation review queue sort" below). Per
+[docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md),
+frequency grouping surfaces rare relationships for expedited review (U1).
 
 ### Relationship Vocabulary Aliases
 
@@ -316,6 +351,42 @@ and failure visibility.
   `citations.date_expression_id`, so reviewers can confirm the specific
   normalized date claim rather than only the owning entity
 
+**Citation review queue sort (curator-velocity U2, added 2026-06-12):** The
+`GET /admin/knowledge/review-extractions` endpoint accepts a `?sort=` query
+parameter to reorder the pending review queue. Supported sort values are:
+
+- `rare-type-first` (default): Sorts by `relationship_types.frequency` ascending
+  (rare → medium → common), surfacing rare relationship types first per U1
+- `newest`: Sorts by `citations.created_at` descending, showing most recently
+  extracted evidence first
+- `low-confidence-first`: Sorts by `citations.confidence` ascending (lowest
+  confidence first, greatest review impact)
+
+User sort preference is persisted in `users.preferences.reviewExtractionsSort`
+(see "User preferences" below). The default sort (`rare-type-first`) applies to
+new sessions until explicitly changed. Per
+[docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md),
+sort flexibility enables curators to optimize review workflow for different
+curation goals (U2).
+
+**Bulk review-extractions endpoints (curator-velocity U3, added 2026-06-12):** The
+citation review queue supports three bulk-action endpoints for efficient triage:
+
+- `POST /admin/knowledge/review-extractions/bulk/approve` — Approves up to 200
+  citations in a single transaction. Request body: `{ ids: number[] }`. Response:
+  `{ success: true, count: number }`.
+- `POST /admin/knowledge/review-extractions/bulk/reject` — Rejects up to 200
+  citations in a single transaction. Same request/response format.
+- `POST /admin/knowledge/review-extractions/bulk/delete` — Deletes up to 200
+  citations (removes evidence). Refuses if any row is already approved. Same
+  request/response format.
+
+All bulk endpoints are audit-logged. CRITICAL implementation detail: bulk routes
+must be registered BEFORE the per-row `/:id/{approve,reject,delete}` routes in
+Express, otherwise `/bulk/reject` is matched as `/:id/reject` with `id='bulk'`.
+See [docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md)
+(U3) for motivation and rollout context.
+
 ### Merge Entities
 
 - Duplicate entities can be merged in the admin UI
@@ -324,6 +395,25 @@ and failure visibility.
   cross-document identity workflow
 - Entities assigned to different authorities must be reassigned before they can
   be merged
+
+### User Preferences
+
+The `users.preferences` column is a JSON bag for curator UI settings. The bag
+supports atomic partial updates via the `usersAsync.getPreferences` and
+`setPreferences` API: passing `null` for a key removes it from the bag; new
+keys are added or existing keys are updated on subsequent calls.
+
+**Known preference keys:**
+
+- `reviewExtractionsSort` — curator's preferred sort order for the citation
+  review queue (values: `rare-type-first`, `newest`, `low-confidence-first`;
+  persists the `?sort=` query selection). Initialized to `null`; when null, the
+  default sort (`rare-type-first`) is applied server-side.
+
+Future preference settings will piggyback on the same bag to avoid schema
+migrations. Per
+[docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md),
+the preferences column enables per-curator workflow optimization (U2).
 
 ### Authorities Workspace
 
@@ -358,6 +448,22 @@ queue to rows where the entity and suggested authority canonical names match
 case/trim-insensitively. This filter is a manual-review fast lane for
 non-auto-approved types; exact `person` and `place` names may already have been
 auto-approved by the authority suggestion job.
+
+**Match method filter (curator-velocity U8, added 2026-06-12):** The
+authority-suggestions query endpoint now accepts a `?matchMethod=` parameter
+(replacing the binary `?nameSignal=exact` filter) to filter by the underlying
+`authority_link_suggestions.match_method` column values. The `matchMethod`
+parameter accepts one or more values matching the actual embedding/matching
+strategy used: `exact_canonical`, `fuzzy_match`, `embedding_match`, etc.
+Multiple values can be passed as comma-separated or repeated query params to
+OR-combine them (e.g., `?matchMethod=exact_canonical,embedding_match`).
+
+For backward compatibility, the legacy `?nameSignal=exact` query continues to
+work and is internally mapped to `?matchMethod=exact_canonical`. Per
+[docs/reviews/2026-05-31-entity-extraction-historian-lens.md](../docs/reviews/2026-05-31-entity-extraction-historian-lens.md),
+the `matchMethod` filter provides fine-grained control over which suggestion
+sources to review, supporting both high-confidence exact matches and
+embedding-based discovery (U8).
 
 ### Generic Authority Terms
 
