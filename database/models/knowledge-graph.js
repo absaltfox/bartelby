@@ -1592,6 +1592,7 @@ const citations = {
       params.push(status);
     }
     params.push(limit, offset);
+    const orderBy = buildCitationOrderBy(opts.sort);
     return await allAsync(`
       SELECT
         c.*,
@@ -1631,6 +1632,7 @@ const citations = {
       LEFT JOIN entities e ON e.id = c.entity_id
       LEFT JOIN date_expressions de ON de.id = c.date_expression_id
       LEFT JOIN relationships r ON r.id = c.relationship_id
+      LEFT JOIN relationship_types rt ON rt.name = r.relationship_type
       LEFT JOIN entities se ON se.id = r.source_entity_id
       LEFT JOIN entities te ON te.id = r.target_entity_id
       LEFT JOIN citations ec ON ec.id = (
@@ -1647,7 +1649,7 @@ const citations = {
         AND (${collection.clause})
         AND (${kindFilter.clause})
         ${statusClause}
-      ORDER BY c.created_at DESC
+      ${orderBy}
       LIMIT ?
       OFFSET ?
     `, params);
@@ -2506,6 +2508,26 @@ function buildNearestSupportCitationSubquery(candidateAlias, entityExpression) {
           LIMIT 1
         ) ranked
       `;
+}
+
+function buildCitationOrderBy(sort) {
+  const normalized = String(sort || 'newest').toLowerCase();
+  if (normalized === 'rare-type-first') {
+    return `
+      ORDER BY
+        CASE COALESCE(rt.frequency, 'common')
+          WHEN 'rare' THEN 0
+          WHEN 'medium' THEN 1
+          ELSE 2
+        END ASC,
+        c.created_at DESC
+    `;
+  }
+  if (normalized === 'low-confidence-first') {
+    return 'ORDER BY COALESCE(c.confidence, 0) ASC, c.created_at DESC';
+  }
+  // newest (default)
+  return 'ORDER BY c.created_at DESC';
 }
 
 function buildCitationQueryConditions(opts = {}, alias = 'c') {

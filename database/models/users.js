@@ -474,6 +474,32 @@ const usersAsync = {
     // Tables with ON DELETE CASCADE (user_collection_access, user_api_keys, password_reset_tokens.user_id)
     // are handled automatically by SQLite
     return await runAsync('DELETE FROM users WHERE id = ?', [id]);
+  },
+
+  async getPreferences(userId) {
+    const row = await getAsync('SELECT preferences FROM users WHERE id = ?', [Number(userId)]);
+    if (!row || !row.preferences) return {};
+    try {
+      const parsed = JSON.parse(row.preferences);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  },
+
+  async setPreferences(userId, partial) {
+    if (!partial || typeof partial !== 'object') return;
+    const current = await this.getPreferences(userId);
+    const next = { ...current };
+    for (const [key, value] of Object.entries(partial)) {
+      if (value === null || value === undefined) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+    }
+    await runAsync('UPDATE users SET preferences = ? WHERE id = ?', [JSON.stringify(next), Number(userId)]);
+    await saveDatabase();
   }
 };
 
