@@ -59,10 +59,12 @@
           <p class="graph-empty-state">This entity does not have an authority yet.</p>
         <% } %>
 
-        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/create" class="inline-form">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button type="submit" class="btn-secondary btn-sm"><%= authority ? 'Create New Authority' : 'Create Authority' %></button>
-        </form>
+        <% if (!entity.authority_id) { %>
+          <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/create" class="inline-form">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button type="submit" class="btn-secondary btn-sm"><%= authority ? 'Create New Authority' : 'Create Authority' %></button>
+          </form>
+        <% } %>
 
         <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/assign" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= entity.entity_type %>">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
