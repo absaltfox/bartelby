@@ -23,6 +23,13 @@ const ENTITY_TYPE_LABELS = Object.freeze({
   document: 'Document',
   role: 'Role'
 });
+const ALLOWED_SORTS = Object.freeze(['rare-type-first', 'newest', 'low-confidence-first']);
+const SORT_OPTIONS = Object.freeze([
+  { value: 'rare-type-first', label: 'Rare types first (kinship, claims, roles)' },
+  { value: 'newest', label: 'Newest first' },
+  { value: 'low-confidence-first', label: 'Low confidence first' }
+]);
+
 const REVIEW_KIND_OPTIONS = Object.freeze([
   { value: 'all', label: 'All evidence' },
   { value: 'date', label: 'Date evidence' },
@@ -568,10 +575,20 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   const offset = (page - 1) * PAGE_SIZE;
   const status = normalizeStatus(req.query.status);
   const reviewKind = normalizeReviewKind(req.query.kind);
+
+  // Sort: read ?sort=, persist to user preferences, fall back to preference then default
+  const requestedSort = req.query.sort && ALLOWED_SORTS.includes(req.query.sort) ? req.query.sort : null;
+  const prefs = req.user ? await db.usersAsync.getPreferences(req.user.id) : {};
+  const sort = requestedSort
+    || (ALLOWED_SORTS.includes(prefs.reviewExtractionsSort) ? prefs.reviewExtractionsSort : 'rare-type-first');
+  if (requestedSort && req.user && prefs.reviewExtractionsSort !== requestedSort) {
+    await db.usersAsync.setPreferences(req.user.id, { reviewExtractionsSort: requestedSort });
+  }
+
   const [citations, statusCounts] = stores.citations && typeof stores.citations.getStatusCounts === 'function'
     ? await Promise.all([
       typeof stores.citations.list === 'function'
-        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind })
+        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind, sort })
         : (status === 'all'
           ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { reviewKind }).then(async (pending) => {
             const [approved, rejected] = await Promise.all([
@@ -605,6 +622,9 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
     reviewKind,
     reviewKindLabel: reviewKindLabel(reviewKind),
     reviewKindOptions: REVIEW_KIND_OPTIONS,
+    sort,
+    sorts: ALLOWED_SORTS,
+    sortOptions: SORT_OPTIONS,
     statusCounts: normalizedStatusCounts,
     graphReady: !!stores.citations,
     graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',

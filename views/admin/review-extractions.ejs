@@ -65,6 +65,24 @@
             <option value="<%= option.value %>" <%= option.value === (reviewKind || 'all') ? 'selected' : '' %>><%= option.label %></option>
           <% }) %>
         </select>
+        <% if (typeof sort !== 'undefined' && sort) { %>
+          <input type="hidden" name="sort" value="<%= sort %>">
+        <% } %>
+        <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
+      </form>
+      <form method="GET" action="/admin/knowledge/review-extractions" class="admin-search-form review-filter-form">
+        <% if (approvalStatus && approvalStatus !== 'pending') { %>
+          <input type="hidden" name="status" value="<%= approvalStatus %>">
+        <% } %>
+        <% if (reviewKind && reviewKind !== 'all') { %>
+          <input type="hidden" name="kind" value="<%= reviewKind %>">
+        <% } %>
+        <label for="review-sort" class="review-filter-label">Sort</label>
+        <select name="sort" id="review-sort" class="review-filter-select" data-submit-on-change="1" aria-label="Sort review queue">
+          <% (sortOptions || []).forEach(function(option) { %>
+            <option value="<%= option.value %>" <%= option.value === sort ? 'selected' : '' %>><%= option.label %></option>
+          <% }) %>
+        </select>
         <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
       </form>
       <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
