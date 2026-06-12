@@ -6,6 +6,7 @@ const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 const { asyncHandler } = require('../utils/async-handler');
+const audit = require('../utils/audit-log');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { buildComparisonPages } = require('../utils/document-services');
 
@@ -678,6 +679,67 @@ router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
   });
 }));
 
+// ─── Bulk actions ────────────────────────────────────────────────────────────
+// NOTE: These bulk routes MUST be registered BEFORE the per-row /:id/{confirm,reject,delete}
+// routes. Otherwise Express's first-match-wins routing dispatches
+// /review-extractions/bulk/reject to /review-extractions/:id/reject with id='bulk'.
+
+const BULK_CAP = 200;
+
+function parseBulkIds(req) {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  return ids;
+}
+
+router.post('/review-extractions/bulk/approve', express.json(), asyncHandler(async (req, res) => {
+  const ids = parseBulkIds(req);
+  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
+  if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
+  const stores = graphStores();
+  let count = 0;
+  for (const id of ids) {
+    try {
+      await stores.citations.approve(id, req.user.id, 'manual');
+      count++;
+    } catch (e) { /* skip individual failures */ }
+  }
+  audit.log('admin.citations_bulk_approved', { ...audit.reqContext(req), ids, count });
+  res.json({ success: true, count });
+}));
+
+router.post('/review-extractions/bulk/reject', express.json(), asyncHandler(async (req, res) => {
+  const ids = parseBulkIds(req);
+  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
+  if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
+  const stores = graphStores();
+  let count = 0;
+  for (const id of ids) {
+    try {
+      await stores.citations.reject(id, req.user.id);
+      count++;
+    } catch (e) { /* skip individual failures */ }
+  }
+  audit.log('admin.citations_bulk_rejected', { ...audit.reqContext(req), ids, count });
+  res.json({ success: true, count });
+}));
+
+router.post('/review-extractions/bulk/delete', express.json(), asyncHandler(async (req, res) => {
+  const ids = parseBulkIds(req);
+  if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
+  if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
+  let count = 0;
+  for (const id of ids) {
+    const row = await db.getAsync('SELECT approval_status FROM citations WHERE id = ?', [id]);
+    if (row && row.approval_status !== CITATION_APPROVAL_STATUSES.APPROVED) {
+      await db.runAsync('DELETE FROM citations WHERE id = ?', [id]);
+      count++;
+    }
+  }
+  if (count > 0 && typeof db.saveDatabase === 'function') await db.saveDatabase();
+  audit.log('admin.citations_bulk_deleted', { ...audit.reqContext(req), ids, count });
+  res.json({ success: true, count });
+}));
+
 router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
@@ -767,5 +829,6 @@ router.post('/review-extractions/:id/delete', express.urlencoded({ extended: fal
     return reviewErrorResponse(req, res, status, page, reviewKind, err.message, 500);
   }
 }));
+
 
 module.exports = router;
