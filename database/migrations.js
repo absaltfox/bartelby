@@ -715,6 +715,39 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
     ('occurred_at',  'received_at',     'LLM occasionally emits received_at for events — collapse to occurred_at'),
     ('related_to',   'contracted_with', 'Edge case observed in live corpus — collapse to related_to'),
     ('holds_position', 'holds_role_in', 'E1.2: soft-deprecate holds_role_in in favor of holds_position into Role node')
+  `,
+
+  // v48 — U1/U2/U3: curator-velocity bundle schema (frequency + preferences)
+  // Adds frequency TEXT to relationship_types (default 'common'; seeded
+  // 'rare' for kinship, claim, role-family, voice-attribution-rich edges
+  // and 'medium' for affiliations + temporal/spatial). Adds preferences
+  // TEXT JSON to users (default '{}') for U1.2 per-user sort persistence.
+  // Note: relationship_types.category already exists for entity-type grouping;
+  // frequency is a distinct column for rare/medium/common ranking.
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U1.2, U1.3
+  // and docs/development-principles.md "Curator Is the Expert".
+  `
+  ALTER TABLE relationship_types ADD COLUMN frequency TEXT NOT NULL DEFAULT 'common';
+  ALTER TABLE users ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}';
+
+  UPDATE relationship_types
+     SET frequency = 'rare'
+   WHERE name IN (
+     'parent_of', 'child_of', 'spouse_of', 'sibling_of',
+     'makes_claim', 'supports_claim', 'opposes_claim', 'claim_concerns',
+     'holds_position', 'position_in',
+     'authored', 'responds_to',
+     'born_in', 'died_in'
+   );
+
+  UPDATE relationship_types
+     SET frequency = 'medium'
+   WHERE name IN (
+     'employed_by', 'member_of', 'affiliated_with', 'founded',
+     'resided_at',
+     'participated_in', 'occurred_at', 'occurred_on',
+     'caused_by', 'created', 'owns'
+   ) AND frequency = 'common';
   `
 ];
 
