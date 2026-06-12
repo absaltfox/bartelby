@@ -53,7 +53,41 @@
   <% } %>
 
   <div id="suggestions-list" class="knowledge-citation-list">
-    <% if (!suggestions.length) { %>
+    <%
+      // U3.1/U3.4: render disambiguation groups (≥2 pending suggestions for same
+      // entity) when decisionUnits are available. Single-suggestion and non-pending
+      // statuses use the flat suggestions array below. Full group UI is Task 9;
+      // this block ensures group data is present in the HTML.
+      // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.4.
+      const disambiguationGroups = Array.isArray(decisionUnits)
+        ? decisionUnits.filter(u => u.type === 'group')
+        : [];
+    %>
+    <% disambiguationGroups.forEach(function(unit) { %>
+      <article class="knowledge-citation-card authority-suggestion-card authority-disambiguation-group"
+               data-entity-id="<%= unit.entityId %>"
+               data-disambiguation-group="1">
+        <div class="authority-suggestion-card-header">
+          <div class="authority-suggestion-title-group">
+            <span class="authority-suggestion-kicker">Disambiguation required</span>
+            <h2><a href="/admin/knowledge/entities/<%= unit.entityId %>"><%= unit.entity.canonical_name %></a></h2>
+            <div class="authority-suggestion-meta">
+              <span class="entity-type-badge entity-type-<%= unit.entity.entity_type %>"><%= unit.entity.entity_type %></span>
+              <span class="status-badge status-running">pending</span>
+              <span class="authority-suggestion-meta-note"><%= unit.candidates.length %> candidates</span>
+            </div>
+          </div>
+        </div>
+        <div class="authority-suggestion-context">
+          <ul class="authority-disambiguation-candidates">
+            <% unit.candidates.forEach(function(c) { %>
+              <li data-authority-id="<%= c.suggested_authority_id %>"><%= c.suggested_authority_name %></li>
+            <% }); %>
+          </ul>
+        </div>
+      </article>
+    <% }); %>
+    <% if (!suggestions.length && !disambiguationGroups.length) { %>
       <div class="empty-state" data-empty-state>
         <p>No authority suggestions were found for this filter.</p>
       </div>

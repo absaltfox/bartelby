@@ -352,26 +352,60 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   const status = String(req.query.status || 'pending').trim();
   const matchMethodFilter = parseMatchMethod(req);
   const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
-  const suggestions = stores.authorityLinkSuggestions
-    ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE, {
-      matchMethodFilter,
-      orderExactFirst
-    })
-    : [];
-  const displaySuggestions = decorateSuggestionsDisplay(suggestions);
 
-  const last = displaySuggestions[displaySuggestions.length - 1];
-  const nextCursor = displaySuggestions.length === SUGGESTIONS_PAGE_SIZE && last
-    ? {
-      beforeCreatedAt: last.created_at,
-      beforeId: last.id,
-      beforeExactNameMatch: orderExactFirst ? (last.exact_name_match ? 1 : 0) : null
-    }
-    : null;
+  // U3.1/U3.4: pending queue uses grouped lister so entities with ≥2 pending
+  // suggestions become a single decision unit. Non-pending statuses use the
+  // flat list (no grouping needed for approved/rejected review).
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.4.
+  let displaySuggestions = [];
+  let decisionUnits = null;
+  let totalGroups = 0;
+  let totalSingles = 0;
+  let totalUnits = 0;
+  let nextCursor = null;
+
+  if (status === 'pending' && stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.listPendingGrouped) {
+    const grouped = await stores.authorityLinkSuggestions.listPendingGrouped({
+      matchMethodFilter,
+      limit: SUGGESTIONS_PAGE_SIZE,
+      offset: 0
+    });
+    decisionUnits = grouped.decisionUnits;
+    totalGroups = grouped.totalGroups;
+    totalSingles = grouped.totalSingles;
+    totalUnits = grouped.totalUnits;
+
+    // Flatten singles for the display decoration path used by the existing view.
+    const singleRows = grouped.decisionUnits
+      .filter(u => u.type === 'single')
+      .map(u => u.suggestion);
+    displaySuggestions = decorateSuggestionsDisplay(singleRows);
+  } else {
+    const suggestions = stores.authorityLinkSuggestions
+      ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE, {
+        matchMethodFilter,
+        orderExactFirst
+      })
+      : [];
+    displaySuggestions = decorateSuggestionsDisplay(suggestions);
+
+    const last = displaySuggestions[displaySuggestions.length - 1];
+    nextCursor = displaySuggestions.length === SUGGESTIONS_PAGE_SIZE && last
+      ? {
+        beforeCreatedAt: last.created_at,
+        beforeId: last.id,
+        beforeExactNameMatch: orderExactFirst ? (last.exact_name_match ? 1 : 0) : null
+      }
+      : null;
+  }
 
   res.render('admin/authority-suggestions', {
     pageTitle: 'Authority Suggestions',
     suggestions: displaySuggestions,
+    decisionUnits,
+    totalGroups,
+    totalSingles,
+    totalUnits,
     status,
     matchMethodFilter,
     knownMatchMethods: KNOWN_MATCH_METHODS,
@@ -933,6 +967,107 @@ router.post('/suggestion-jobs/collection/:id', express.urlencoded({ extended: fa
     requested_by_user_id: req.user ? req.user.id : null
   });
   return res.redirect(knowledgePath(`/authorities/backfill?suggestionJobQueued=${jobId}`));
+}));
+
+// POST /admin/knowledge/authorities/suggestions/disambiguation/:entityId/approve
+// Transactionally approves the chosen authority for a grouped disambiguation
+// decision: cascade-rejects sibling pending suggestions and links the entity.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.3.
+router.post('/suggestions/disambiguation/:entityId/approve', express.json(), asyncHandler(async (req, res) => {
+  const entityId = parseInt(req.params.entityId, 10);
+  const authorityId = parseInt(req.body.authorityId, 10);
+  if (!Number.isInteger(entityId) || !Number.isInteger(authorityId)) {
+    return res.status(400).json({ error: 'Invalid ids' });
+  }
+
+  const runDisambiguationApprove = async () => {
+    // Reject all sibling pending suggestions for this entity.
+    await db.runAsync(`
+      UPDATE authority_link_suggestions
+      SET status = 'rejected',
+          reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?
+      WHERE entity_id = ? AND status = 'pending' AND suggested_authority_id != ?
+    `, [req.user?.id || null, entityId, authorityId]);
+    // Approve the chosen suggestion.
+    await db.runAsync(`
+      UPDATE authority_link_suggestions
+      SET status = 'approved',
+          reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?
+      WHERE entity_id = ? AND status = 'pending' AND suggested_authority_id = ?
+    `, [req.user?.id || null, entityId, authorityId]);
+    // Link the entity to the chosen authority.
+    await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [authorityId, entityId]);
+  };
+
+  if (process.env.DATABASE_DRIVER === 'turso') {
+    await runDisambiguationApprove();
+  } else {
+    await db.runAsync('BEGIN');
+    try {
+      await runDisambiguationApprove();
+      await db.runAsync('COMMIT');
+    } catch (err) {
+      try { await db.runAsync('ROLLBACK'); } catch (e) {}
+      throw err;
+    }
+  }
+
+  if (typeof db.saveDatabase === 'function') await db.saveDatabase();
+  audit.log('admin.disambiguation_approve', { ...audit.reqContext(req), entityId, authorityId });
+  res.json({ success: true });
+}));
+
+// POST /admin/knowledge/authorities/suggestions/disambiguation/:entityId/new-authority
+// Rejects all pending suggestions for the entity and creates a fresh authority
+// record matching the entity's type + canonical_name, then links the entity.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.3.
+router.post('/suggestions/disambiguation/:entityId/new-authority', express.json(), asyncHandler(async (req, res) => {
+  const entityId = parseInt(req.params.entityId, 10);
+  if (!Number.isInteger(entityId)) return res.status(400).json({ error: 'Invalid entityId' });
+
+  const stores = graphStores();
+  const entity = stores.entities ? await stores.entities.getById(entityId) : null;
+  if (!entity) return res.status(404).json({ error: 'Entity not found' });
+
+  let newAuthorityId = null;
+
+  const runNewAuthority = async () => {
+    await db.runAsync(`
+      UPDATE authority_link_suggestions
+      SET status = 'rejected',
+          reviewed_at = CURRENT_TIMESTAMP,
+          reviewed_by_user_id = ?
+      WHERE entity_id = ? AND status = 'pending'
+    `, [req.user?.id || null, entityId]);
+    newAuthorityId = await stores.authorities.create({
+      authority_type: entity.entity_type,
+      canonical_name: entity.canonical_name,
+      description: null,
+      properties: {},
+      external_source: null,
+      external_key: null
+    });
+    await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [newAuthorityId, entityId]);
+  };
+
+  if (process.env.DATABASE_DRIVER === 'turso') {
+    await runNewAuthority();
+  } else {
+    await db.runAsync('BEGIN');
+    try {
+      await runNewAuthority();
+      await db.runAsync('COMMIT');
+    } catch (err) {
+      try { await db.runAsync('ROLLBACK'); } catch (e) {}
+      throw err;
+    }
+  }
+
+  if (typeof db.saveDatabase === 'function') await db.saveDatabase();
+  audit.log('admin.disambiguation_new_authority', { ...audit.reqContext(req), entityId, newAuthorityId });
+  res.json({ success: true, authorityId: newAuthorityId });
 }));
 
 module.exports = router;

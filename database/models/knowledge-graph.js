@@ -1105,6 +1105,64 @@ const authorityLinkSuggestions = {
       WHERE id = ?
     `, [reviewedByUserId || null, id]);
     await maybeLearnGenericTermFromSuggestion(details, 'rejected');
+  },
+
+  // U3.1/U3.4: Group pending suggestions by entity when ≥2 exist for the same
+  // entity. Single-suggestion entities stay as type:'single'. Returns
+  // decisionUnits (paginated), totalGroups, totalSingles, totalUnits.
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.4.
+  async listPendingGrouped({ matchMethodFilter, limit, offset } = {}) {
+    const where = Array.isArray(matchMethodFilter) && matchMethodFilter.length > 0
+      ? `AND s.match_method IN (${matchMethodFilter.map(() => '?').join(',')})`
+      : '';
+    const params = Array.isArray(matchMethodFilter) && matchMethodFilter.length > 0
+      ? [...matchMethodFilter]
+      : [];
+
+    const allPending = await allAsync(`
+      SELECT s.*,
+             e.canonical_name AS entity_name, e.entity_type,
+             a.canonical_name AS suggested_authority_name
+      FROM authority_link_suggestions s
+      INNER JOIN entities e ON e.id = s.entity_id
+      INNER JOIN authorities a ON a.id = s.suggested_authority_id
+      WHERE s.status = 'pending'
+        AND e.authority_id IS NULL
+        ${where}
+      ORDER BY s.entity_id ASC, s.created_at DESC
+    `, params);
+
+    const byEntity = new Map();
+    for (const row of allPending) {
+      if (!byEntity.has(row.entity_id)) byEntity.set(row.entity_id, []);
+      byEntity.get(row.entity_id).push(row);
+    }
+
+    const decisionUnits = [];
+    let totalGroups = 0;
+    let totalSingles = 0;
+    for (const [entityId, rows] of byEntity) {
+      if (rows.length >= 2) {
+        decisionUnits.push({
+          type: 'group',
+          entityId,
+          entity: { id: entityId, canonical_name: rows[0].entity_name, entity_type: rows[0].entity_type },
+          candidates: rows
+        });
+        totalGroups += 1;
+      } else {
+        decisionUnits.push({
+          type: 'single',
+          suggestion: rows[0]
+        });
+        totalSingles += 1;
+      }
+    }
+    const totalUnits = decisionUnits.length;
+    const safeOffset = offset || 0;
+    const safeLimit = limit || totalUnits;
+    const page = decisionUnits.slice(safeOffset, safeOffset + safeLimit);
+    return { decisionUnits: page, totalGroups, totalSingles, totalUnits };
   }
 };
 
