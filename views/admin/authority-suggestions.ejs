@@ -10,12 +10,29 @@
   </div>
 
   <div class="filter-tabs">
-    <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && !nameSignal ? 'active' : '' %>">Pending</a>
-    <a href="<%= suggestionsPath({ status: 'pending', nameSignal: 'exact' }) %>" class="filter-tab <%= status === 'pending' && nameSignal === 'exact' ? 'active' : '' %>">Exact names</a>
+    <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && matchMethodFilter.length === 0 ? 'active' : '' %>">Pending</a>
     <a href="<%= suggestionsPath({ status: 'approved' }) %>" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>
     <a href="<%= suggestionsPath({ status: 'rejected' }) %>" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">Rejected</a>
     <a href="<%= suggestionsPath({ status: 'all' }) %>" class="filter-tab <%= status === 'all' ? 'active' : '' %>">All</a>
   </div>
+
+  <% if (status === 'pending') { %>
+    <div class="filter-chips">
+      <% knownMatchMethods.forEach(function(method) { %>
+        <% var isActive = matchMethodFilter.indexOf(method) !== -1; %>
+        <% var next = isActive
+          ? matchMethodFilter.filter(function(m) { return m !== method; })
+          : matchMethodFilter.concat(method); %>
+        <a href="<%= suggestionsPath({ status: 'pending', matchMethod: next.length > 0 ? next.join(',') : null }) %>"
+           class="filter-tab <%= isActive ? 'active' : '' %>">
+          <%= method %>
+        </a>
+      <% }); %>
+      <% if (matchMethodFilter.length > 0) { %>
+        <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab">clear</a>
+      <% } %>
+    </div>
+  <% } %>
 
   <% if (status === 'pending') { %>
     <div class="bulk-toolbar bulk-toolbar--sticky suggestions-bulk-controls authority-suggestion-bulk-bar">
@@ -23,7 +40,7 @@
         <input type="checkbox" id="suggestions-select-all">
         <span>Select all on page</span>
       </label>
-      <% if (!nameSignal) { %>
+      <% if (matchMethodFilter.length === 0) { %>
         <button type="button" id="suggestions-select-exact" class="btn-secondary btn-sm">Select exact names on page</button>
       <% } %>
       <div id="suggestions-bulk-actions" class="bulk-toolbar-actions bulk-actions is-hidden">
@@ -144,7 +161,7 @@
 </div>
 
 <script type="application/json" id="suggestions-bootstrap">
-  <%- JSON.stringify({ status: status, nameSignal: nameSignal || null, pageSize: pageSize }) %>
+  <%- JSON.stringify({ status: status, matchMethodFilter: matchMethodFilter, pageSize: pageSize }) %>
 </script>
 <script src="/js/admin-authority-suggestions.js"></script>
 

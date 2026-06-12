@@ -263,12 +263,12 @@ describe('admin authority suggestions AJAX', () => {
     expect(contextRow.suggested_authority_stats_label).toBe('1 member, 1 document');
   });
 
-  it('GET /suggestions.json?nameSignal=exact returns only exact-name suggestions', async () => {
+  it('GET /suggestions.json?nameSignal=exact (legacy) returns only exact_canonical match_method suggestions', async () => {
     const exact = await seedSuggestion(db, {
       entityName: 'exact-filter-railway',
       authorityName: ' exact-filter-railway ',
       confidence: 0.83,
-      matchMethod: 'embedding'
+      matchMethod: 'exact_canonical'
     });
     const fuzzy = await seedSuggestion(db, {
       entityName: 'exact-filter-school district',
@@ -288,8 +288,8 @@ describe('admin authority suggestions AJAX', () => {
     const row = res.body.suggestions.find(s => s.id === exact.suggestionId);
     expect(row.confidence).toBe(0.83);
     expect(row.confidence_label).toBe('Confidence 83%');
-    expect(row.match_method).toBe('embedding');
-    expect(row.match_method_label).toBe('Method: embedding');
+    expect(row.match_method).toBe('exact_canonical');
+    expect(row.match_method_label).toBe('Method: exact canonical');
     expect(row.exact_name_match).toBe(true);
   });
 
@@ -317,7 +317,7 @@ describe('admin authority suggestions AJAX', () => {
     expect(ids.indexOf(exact.suggestionId)).toBeLessThan(ids.indexOf(fuzzy.suggestionId));
   });
 
-  it('GET /suggestions renders exact-name fast-lane controls and labels', async () => {
+  it('GET /suggestions renders match-method chip-list and fast-lane controls and labels', async () => {
     await seedSuggestion(db, {
       entityName: 'render-exact-authority',
       authorityName: 'render-exact-authority',
@@ -327,7 +327,8 @@ describe('admin authority suggestions AJAX', () => {
 
     const res = await agent.get('/admin/knowledge/authorities/suggestions?status=pending');
     expect(res.status).toBe(200);
-    expect(res.text).toContain('Exact names');
+    expect(res.text).toContain('filter-chips');
+    expect(res.text).toContain('matchMethod=embedding');
     expect(res.text).toContain('Select exact names on page');
     expect(res.text).toContain('authority-suggestion-bulk-bar');
     expect(res.text).toContain('authority-suggestion-card');

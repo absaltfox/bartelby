@@ -13,6 +13,19 @@ router.use(requireAdmin);
 const PAGE_SIZE = 25;
 const SUGGESTIONS_PAGE_SIZE = 25;
 
+const KNOWN_MATCH_METHODS = ['exact_canonical', 'embedding', 'fuzzy_canonical', 'member_exact'];
+
+function parseMatchMethod(req) {
+  // Legacy support: ?nameSignal=exact → matchMethod=exact_canonical
+  if (req.query.nameSignal === 'exact' && !req.query.matchMethod) {
+    return ['exact_canonical'];
+  }
+  const raw = String(req.query.matchMethod || '').trim();
+  if (!raw) return [];
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  return parts.filter(m => KNOWN_MATCH_METHODS.includes(m));
+}
+
 function graphStores() {
   return {
     authorities: db.authoritiesAsync || db.authorities || null,
@@ -56,6 +69,7 @@ function suggestionsPath(params = {}) {
   const query = new URLSearchParams();
   query.set('status', params.status || 'pending');
   if (params.nameSignal) query.set('nameSignal', params.nameSignal);
+  if (params.matchMethod) query.set('matchMethod', params.matchMethod);
   return knowledgePath('/authorities/suggestions', '?' + query.toString());
 }
 
@@ -336,11 +350,11 @@ router.post('/backfill', express.urlencoded({ extended: false }), asyncHandler(a
 router.get('/suggestions', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const status = String(req.query.status || 'pending').trim();
-  const nameSignal = String(req.query.nameSignal || '').trim() === 'exact' ? 'exact' : null;
-  const orderExactFirst = status === 'pending' && !nameSignal;
+  const matchMethodFilter = parseMatchMethod(req);
+  const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
   const suggestions = stores.authorityLinkSuggestions
     ? await stores.authorityLinkSuggestions.list(status, SUGGESTIONS_PAGE_SIZE, {
-      nameSignal,
+      matchMethodFilter,
       orderExactFirst
     })
     : [];
@@ -359,7 +373,8 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
     pageTitle: 'Authority Suggestions',
     suggestions: displaySuggestions,
     status,
-    nameSignal,
+    matchMethodFilter,
+    knownMatchMethods: KNOWN_MATCH_METHODS,
     nextCursor,
     pageSize: SUGGESTIONS_PAGE_SIZE,
     suggestionsPath,
@@ -372,8 +387,8 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
   if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [], nextCursor: null });
 
   const status = String(req.query.status || 'pending').trim();
-  const nameSignal = String(req.query.nameSignal || '').trim() === 'exact' ? 'exact' : null;
-  const orderExactFirst = status === 'pending' && !nameSignal;
+  const matchMethodFilter = parseMatchMethod(req);
+  const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
   const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 25, 100));
 
   const beforeCreatedAt = req.query.beforeCreatedAt ? String(req.query.beforeCreatedAt) : null;
@@ -385,7 +400,7 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
 
   const suggestions = decorateSuggestionsDisplay(await stores.authorityLinkSuggestions.list(status, limit, {
     cursor,
-    nameSignal,
+    matchMethodFilter,
     orderExactFirst
   }));
   const last = suggestions[suggestions.length - 1];

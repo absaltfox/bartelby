@@ -878,6 +878,11 @@ const authorityLinkSuggestions = {
     if (opts.nameSignal === 'exact') {
       where += where ? ` AND ${exactNameSql}` : `WHERE ${exactNameSql}`;
     }
+    if (Array.isArray(opts.matchMethodFilter) && opts.matchMethodFilter.length > 0) {
+      const placeholders = opts.matchMethodFilter.map(() => '?').join(',');
+      where += where ? ` AND als.match_method IN (${placeholders})` : `WHERE als.match_method IN (${placeholders})`;
+      params.push(...opts.matchMethodFilter);
+    }
     if (Number.isInteger(Number(opts.entityId)) && Number(opts.entityId) > 0) {
       where += where ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
       params.push(Number(opts.entityId));

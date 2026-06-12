@@ -309,7 +309,7 @@
     var beforeId = loadMoreBlock.getAttribute('data-before-id');
     var url = '/admin/knowledge/authorities/suggestions.json'
             + '?status=' + encodeURIComponent(bootstrap.status)
-            + (bootstrap.nameSignal ? '&nameSignal=' + encodeURIComponent(bootstrap.nameSignal) : '')
+            + (bootstrap.matchMethodFilter && bootstrap.matchMethodFilter.length > 0 ? '&matchMethod=' + encodeURIComponent(bootstrap.matchMethodFilter.join(',')) : '')
             + '&limit=' + encodeURIComponent(bootstrap.pageSize)
             + '&beforeCreatedAt=' + encodeURIComponent(beforeCreatedAt)
             + '&beforeId=' + encodeURIComponent(beforeId);
