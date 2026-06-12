@@ -114,6 +114,20 @@
       </div>
     </div>
 
+    <div id="review-bulk-bar" class="bulk-toolbar is-hidden" aria-live="polite">
+      <label class="bulk-toolbar-select-all">
+        <input type="checkbox" id="review-select-all" />
+        <span id="review-select-all-label">Select all on page</span>
+      </label>
+      <span id="review-selection-count" class="bulk-count">0 selected</span>
+      <div class="bulk-toolbar-actions">
+        <button type="button" class="btn-secondary btn-sm" id="review-bulk-approve">Approve selected</button>
+        <button type="button" class="btn-secondary btn-sm" id="review-bulk-reject">Reject selected</button>
+        <button type="button" class="btn-danger btn-sm" id="review-bulk-delete">Delete selected</button>
+      </div>
+      <span class="save-status" id="review-bulk-status"></span>
+    </div>
+
     <% if (reviewItems.length === 0) { %>
       <div class="empty-state">
         <% if (approvalStatus === 'pending') { %>
@@ -136,6 +150,7 @@
         <% reviewItems.forEach(function(item) { %>
           <article class="review-extraction-card" data-review-card data-citation-id="<%= item.id %>" data-citation-status="<%= item.approval_status || 'pending' %>" data-kind="<%= item.kind %>">
             <div class="review-extraction-card-header">
+              <input type="checkbox" class="review-row-cb" value="<%= item.id %>" data-status="<%= item.approvalStatus || item.approval_status || 'pending' %>" />
               <div class="review-extraction-title-group">
                 <p class="kg-panel-eyebrow"><%= item.kind_label %></p>
                 <h3><%= item.claim_title %></h3>
@@ -271,6 +286,21 @@
   </section>
 </div>
 
+<div class="modal-overlay is-hidden" id="review-bulk-delete-modal" role="dialog" aria-modal="true" aria-labelledby="review-bulk-delete-title">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="review-bulk-delete-title">Delete <span id="review-bulk-delete-count">N</span> citation(s) permanently?</h3>
+    </div>
+    <div class="modal-body">
+      <p class="muted">This cannot be undone. Approved citations are excluded automatically.</p>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-danger" id="review-bulk-delete-confirm">Delete</button>
+      <button type="button" class="btn-secondary" id="review-bulk-delete-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay is-hidden" id="review-preview-modal" role="dialog" aria-modal="true" aria-labelledby="review-preview-modal-title">
   <div class="modal-dialog review-preview-modal-dialog">
     <div class="modal-header">
@@ -310,5 +340,12 @@
   </div>
 </div>
 
+<script id="review-extractions-config" type="application/json"><%- JSON.stringify({
+  bulkApproveUrl: '/admin/knowledge/review-extractions/bulk/approve',
+  bulkRejectUrl: '/admin/knowledge/review-extractions/bulk/reject',
+  bulkDeleteUrl: '/admin/knowledge/review-extractions/bulk/delete',
+  csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : null
+}).replace(/</g, '\\u003c') %></script>
 <script src="/js/review-extractions.js"></script>
+<script src="/js/review-extractions-bulk.js"></script>
 <%- include('../partials/footer') %>
