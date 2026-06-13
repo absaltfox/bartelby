@@ -115,6 +115,28 @@ possible node at once.
   they reach review. These terms live in `authority_generic_terms` and are
   managed from Knowledge → Generic Terms.
 
+**Containment shortcut in fuzzy pre-filter (A2.1, added 2026-06-13):** Alongside
+the max-denominator `similarityScore`, the fuzzy pre-filter also promotes any
+pair where one canonical name's significant tokens are a leading prefix of the
+other's (with the smaller side having ≥1 significant token). This captures
+asymmetric "City" ↔ "City, Province" pairs that fall below the 0.6 default
+threshold (e.g., `Victoria` ↔ `Victoria, British Columbia` scores 1/3 = 0.33 by
+the token-set metric but the single token `victoria` is the leading prefix of
+`victoria british columbia`). Leading-prefix is more conservative than pure set
+membership and avoids surname-only false positives like `A. Reed ↔ Alice Reed`.
+The shortcut does not bypass the embedding stage; it only adds the pair as a
+candidate.
+
+**Exact-match gate uses normalizeForMatching (A3.1, added 2026-06-13):** The
+`auto_approve_exact` decision compares canonical names via `normalizeForMatching`,
+which expands 19th-century abbreviations (`Wm./Jno./Chas./...`) and strips
+honorifics (`Mr/Mrs/Dr/Capt/...`). So `Wm. Jessop` auto-approves to a `William
+Jessop` authority at the pending threshold; `Mr. Jessop` auto-approves to
+`Jessop`. The gate still respects `EXACT_NAME_AUTO_APPROVE_TYPES = {person,
+place}` (per E1.4, `role` does not auto-approve). Aliases are NOT cross-producted
+into this gate (per A3.2) — bad LLM-extracted aliases stay as embedding input
+only and don't short-circuit curator review.
+
 ### Authority Link Suggestions
 
 - Stored in `authority_link_suggestions`
