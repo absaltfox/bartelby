@@ -37,11 +37,16 @@ const HISTORICAL_ABBREVIATIONS = new Map([
   ['cathne.', 'catherine'],
 ]);
 
+// Generational disambiguators (Jr/Sr/II/III/IV) are NOT honorifics —
+// they distinguish distinct people in prosopography (e.g., father and son
+// with the same name). Stripping them would silently merge those entities
+// when the A3.1 exact-match gate (normalizeForMatching) fires. Per
+// final-review on A2/A3 branch (commit dc36950) and the curator-as-expert
+// principle in docs/development-principles.md.
 const HONORIFICS = new Set([
   'mr', 'mrs', 'ms', 'miss', 'dr', 'rev', 'hon', 'sir', 'lady',
   'capt', 'captain', 'col', 'colonel', 'gen', 'general', 'lt', 'lieutenant',
-  'sgt', 'sergeant', 'pvt', 'private', 'maj', 'major', 'esq', 'esquire',
-  'jr', 'sr', 'ii', 'iii', 'iv'
+  'sgt', 'sergeant', 'pvt', 'private', 'maj', 'major', 'esq', 'esquire'
 ]);
 
 function normalizeComparable(value) {

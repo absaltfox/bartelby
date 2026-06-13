@@ -48,4 +48,23 @@ describe('decideAuthorityLinkAction exact-match gate uses normalizeForMatching (
     const decision = decideAuthorityLinkAction(pair('Victoria', 'Victoria', 'place'), 0.85, thresholds);
     expect(decision.action).toBe('auto_approve_exact');
   });
+
+  // Final-review on commit dc36950 caught: Jr/Sr/II/III/IV were in HONORIFICS
+  // and got stripped by normalizeForMatching, so father-and-son same-name
+  // pairs would silently auto-approve into one authority. Fix removed them
+  // from HONORIFICS; these specs pin the corrected behavior.
+  it('does NOT auto-approve "John Smith Jr" ↔ "John Smith Sr" (generational suffixes distinguish people)', () => {
+    const decision = decideAuthorityLinkAction(pair('John Smith Jr', 'John Smith Sr'), 0.85, thresholds);
+    expect(decision.action).not.toBe('auto_approve_exact');
+  });
+
+  it('does NOT auto-approve "John Smith II" ↔ "John Smith III" (Roman-numeral suffixes distinguish people)', () => {
+    const decision = decideAuthorityLinkAction(pair('John Smith II', 'John Smith III'), 0.85, thresholds);
+    expect(decision.action).not.toBe('auto_approve_exact');
+  });
+
+  it('does NOT auto-approve "John Smith" ↔ "John Smith Jr" (the suffix marks a specific generation)', () => {
+    const decision = decideAuthorityLinkAction(pair('John Smith', 'John Smith Jr'), 0.85, thresholds);
+    expect(decision.action).not.toBe('auto_approve_exact');
+  });
 });
