@@ -38,7 +38,13 @@ function decideAuthorityLinkAction(pair, embeddingSimilarity, thresholds = {}, i
   const entityA = pair?.entityA || {};
   const entityB = pair?.entityB || {};
   const entityType = String(entityB.entity_type || entityA.entity_type || '').trim();
-  const exactNameMatch = normalizeComparable(entityA.canonical_name) === normalizeComparable(entityB.canonical_name);
+  // A3.1: exact-match gate uses normalizeForMatching, which expands
+  // 19th-century abbreviations (Wm./Jno./Chas./...) and strips honorifics
+  // (Mr/Mrs/Dr/Capt/...). Aliases are NOT cross-producted into this gate
+  // per A3.2 — bad LLM-extracted aliases must not short-circuit curator
+  // review. Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md
+  // A3.1 and docs/development-principles.md "Curator Is the Expert".
+  const exactNameMatch = normalizeForMatching(entityA.canonical_name) === normalizeForMatching(entityB.canonical_name);
   const pendingThreshold = Number(thresholds.pendingThreshold ?? thresholds.pending_threshold ?? 0.75);
   const autoApproveThreshold = Number(thresholds.autoApproveThreshold ?? thresholds.auto_approve_threshold ?? 0.92);
   const confidence = Number(embeddingSimilarity || 0);
