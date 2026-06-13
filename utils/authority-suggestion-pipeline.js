@@ -70,6 +70,32 @@ function decideAuthorityLinkAction(pair, embeddingSimilarity, thresholds = {}, i
 }
 
 /**
+ * Returns true when smallerEntity's significant tokens are a **leading**
+ * subset of largerEntity's significant tokens AND smallerEntity has ≥1
+ * significant token. "Leading subset" means the smaller entity's tokens
+ * appear at the beginning of the larger entity's token list in order —
+ * this captures "City" ↔ "City, Province" while excluding abbreviation
+ * cases such as "A. Reed" ↔ "Alice Reed" where the shared surname token
+ * ("reed") is not in leading position. Used by buildCandidatePairs as the
+ * A2.1 containment shortcut.
+ */
+function isTokenSubset(smallerEntity, largerEntity) {
+  const smallerTokens = normalizeComparable(smallerEntity.canonical_name)
+    .split(' ')
+    .filter(t => t.length >= 2 && !STOPWORDS.has(t));
+  if (smallerTokens.length === 0) return false;
+  const largerTokens = normalizeComparable(largerEntity.canonical_name)
+    .split(' ')
+    .filter(t => t.length >= 2 && !STOPWORDS.has(t));
+  // Require strict containment with at least one extra token on the larger
+  // side; identical token sets would have been caught by the similarity
+  // branch above (score = 1.0).
+  if (smallerTokens.length >= largerTokens.length) return false;
+  // All smaller tokens must appear as a leading prefix of the larger list.
+  return smallerTokens.every((t, i) => largerTokens[i] === t);
+}
+
+/**
  * Build an inverted index: significant token → Set of indices into the entities array.
  * Only includes tokens that are not stopwords and are >= 2 chars.
  */
@@ -133,6 +159,17 @@ function buildCandidatePairs(entities, fuzzyThreshold = 0.6) {
         const normalizedB = normalizeForMatching(subset[sj].canonical_name);
         const similarity = similarityScore(normalizedA, normalizedB);
         if (similarity >= fuzzyThreshold) {
+          pairs.push({ entityA: subset[lo], entityB: subset[hi], fuzzySimilarity: similarity });
+          continue;
+        }
+
+        // A2.1 containment shortcut: when one entity's significant tokens are
+        // a subset of the other's (and the smaller side has ≥1 significant
+        // token), promote the pair so it reaches the embedding stage. Captures
+        // asymmetric "City" ↔ "City, Province" pairs that fall below the
+        // max-denominator similarity score (e.g., Victoria ↔ Victoria, BC =
+        // 1/3 = 0.33). Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md A2.1.
+        if (isTokenSubset(subset[lo], subset[hi]) || isTokenSubset(subset[hi], subset[lo])) {
           pairs.push({ entityA: subset[lo], entityB: subset[hi], fuzzySimilarity: similarity });
         }
       }
