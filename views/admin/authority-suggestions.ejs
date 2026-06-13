@@ -69,6 +69,14 @@
       </div>
     <% } %>
 
+    <% if (typeof groupedTruncated !== 'undefined' && groupedTruncated && useDecisionUnits) { %>
+      <div class="callout callout--warning" data-grouped-truncated="1">
+        Showing the first <%= decisionUnits.length %> of <%= groupedTotalUnits %> entity decisions.
+        Full pagination for the grouped queue is a follow-up; for now, narrow with the matchMethod
+        filter or address these first to reveal the remaining items.
+      </div>
+    <% } %>
+
     <%
       // Task 9: full disambiguation card UI.
       // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.2.

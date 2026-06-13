@@ -1162,7 +1162,13 @@ const authorityLinkSuggestions = {
     const safeOffset = offset || 0;
     const safeLimit = limit || totalUnits;
     const page = decisionUnits.slice(safeOffset, safeOffset + safeLimit);
-    return { decisionUnits: page, totalGroups, totalSingles, totalUnits };
+    // U3.4 visibility: when total decision-units exceed the requested page
+    // size, the route doesn't yet wire load-more for the grouped path, so
+    // surface the truncation as a flag the view can render as a notice.
+    // Full grouped-path pagination is a follow-up. Per final-review on
+    // bundle commit f0ead78.
+    const truncated = safeOffset + page.length < totalUnits;
+    return { decisionUnits: page, totalGroups, totalSingles, totalUnits, truncated };
   }
 };
 

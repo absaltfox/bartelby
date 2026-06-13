@@ -362,6 +362,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   let totalGroups = 0;
   let totalSingles = 0;
   let totalUnits = 0;
+  let groupedTruncated = false;
   let nextCursor = null;
 
   if (status === 'pending' && stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.listPendingGrouped) {
@@ -374,6 +375,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
     totalGroups = grouped.totalGroups;
     totalSingles = grouped.totalSingles;
     totalUnits = grouped.totalUnits;
+    groupedTruncated = !!grouped.truncated;
 
     // Flatten singles for the display decoration path used by the existing view.
     const singleRows = grouped.decisionUnits
@@ -406,6 +408,8 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
     totalGroups,
     totalSingles,
     totalUnits,
+    groupedTruncated,
+    groupedTotalUnits: totalUnits,
     status,
     matchMethodFilter,
     knownMatchMethods: KNOWN_MATCH_METHODS,

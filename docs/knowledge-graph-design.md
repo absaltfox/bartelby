@@ -122,7 +122,7 @@ possible node at once.
   authority
 - Remain review metadata until explicitly approved
 
-**Suggestion disambiguation grouping (curator-velocity U7, added 2026-06-12):**
+**Suggestion disambiguation grouping (curator-velocity U3, added 2026-06-12):**
 When an entity has two or more pending authority-link suggestions, they are
 grouped together to enable curators to resolve cross-authority conflicts in one
 workflow. When ≥2 pending suggestions exist for the same `entity_id`, the
@@ -449,7 +449,7 @@ case/trim-insensitively. This filter is a manual-review fast lane for
 non-auto-approved types; exact `person` and `place` names may already have been
 auto-approved by the authority suggestion job.
 
-**Match method filter (curator-velocity U8, added 2026-06-12):** The
+**Match method filter (curator-velocity U7, added 2026-06-12):** The
 authority-suggestions query endpoint now accepts a `?matchMethod=` parameter
 (replacing the binary `?nameSignal=exact` filter) to filter by the underlying
 `authority_link_suggestions.match_method` column values. The `matchMethod`

@@ -687,7 +687,13 @@ router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
 const BULK_CAP = 200;
 
 function parseBulkIds(req) {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  // Filter to positive integers: Number(null) === 0 and Number.isInteger(0)
+  // is true, so the previous filter (Number.isInteger only) silently let
+  // null/0 array elements through, inflating counts on no-op calls. Per
+  // final-review finding on bundle commit f0ead78.
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+    : [];
   return ids;
 }
 
@@ -696,6 +702,9 @@ router.post('/review-extractions/bulk/approve', express.json(), asyncHandler(asy
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
   const stores = graphStores();
+  if (!stores.citations) {
+    return res.status(503).json({ error: 'Knowledge graph citation helpers are not wired yet.' });
+  }
   let count = 0;
   for (const id of ids) {
     try {
@@ -712,6 +721,9 @@ router.post('/review-extractions/bulk/reject', express.json(), asyncHandler(asyn
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
   const stores = graphStores();
+  if (!stores.citations) {
+    return res.status(503).json({ error: 'Knowledge graph citation helpers are not wired yet.' });
+  }
   let count = 0;
   for (const id of ids) {
     try {

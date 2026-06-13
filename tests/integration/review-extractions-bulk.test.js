@@ -217,4 +217,18 @@ describe('bulk approve/reject/delete endpoints (U2.1, U2.3)', () => {
     // but either way the request must not succeed with a 200.
     expect(res.status).not.toBe(200);
   });
+
+  // Regression for final-review finding on commit f0ead78: parseBulkIds was
+  // filtering only Number.isInteger, but Number(null) === 0 passed through,
+  // inflating count on no-op calls. Now requires id > 0.
+  it('spec 8: null and 0 ids are filtered before counting', async () => {
+    const realId = await insertPendingCitation('null-filter-1');
+    const res = await adminAgent
+      .post('/admin/knowledge/review-extractions/bulk/approve')
+      .set('X-CSRF-Token', csrfToken)
+      .send({ ids: [null, 0, realId] });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, count: 1 });
+  });
 });
