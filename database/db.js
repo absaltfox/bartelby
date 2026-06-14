@@ -586,6 +586,19 @@ MIGRATIONS.push(`
   ALTER TABLE extraction_jobs ADD COLUMN unresolved_date_count INTEGER NOT NULL DEFAULT 0;
 `);
 
+// v73 — S2.1: sentiment annotation temporal scope (emotion_about_*).
+// Self-contained columns per docs/reviews/2026-05-31-entity-extraction-historian-lens.md
+// S2.1 — deliberately NOT coupled to date_expressions (sentiment temporal
+// scope is annotation-level metadata, not a graph-traversable node).
+// Existing rows default to NULL per S2.3 forward-only rule.
+MIGRATIONS.push(`
+  ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_phrase_verbatim TEXT;
+  ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_earliest TEXT;
+  ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_latest TEXT;
+  ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_precision TEXT;
+  ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_qualifier TEXT;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
