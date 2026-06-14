@@ -185,6 +185,60 @@ TRANSCRIPT:
 Respond with ONLY the JSON object — no markdown fences, no commentary, no preamble.
 ````
 
+### Temporal scope (S2.2, added 2026-06-14)
+
+When the writer's emotion is about a time **distinct from the document
+date**, populate the five `emotion_about_*` fields. The most common case
+is retrospective grief or anticipation: "when I heard of his death last
+spring, I was greatly grieved."
+
+Add the following block to the prompt's per-annotation field
+description (paste into the per-annotation schema after
+`emotion_phrase_verbatim`):
+
+> ```
+> - emotion_about_phrase_verbatim (string, optional): The substring of
+>   the transcript naming the past or future referent of the emotion.
+>   Emit ONLY when distinct from the document date.
+> - emotion_about_earliest (string, optional, ISO date): earliest date
+>   the referent fell on.
+> - emotion_about_latest (string, optional, ISO date): latest date the
+>   referent fell on.
+> - emotion_about_precision (string, optional): one of "day", "month",
+>   "season", "year", "decade", "century", "unknown".
+> - emotion_about_qualifier (string, optional): the kind of temporal
+>   relationship — `died_in`, `active_during`, `valid_from`, `valid_to`,
+>   `occurred_on`, or similar (free-form lowercase snake_case is fine).
+> ```
+
+Worked example (paste into the prompt's worked-example section):
+
+> Letter dated 1873-04-15: "It is with the deepest grief that I write
+> of my brother William, who has been called from us this past
+> spring."
+>
+> →
+> ```json
+> {
+>   "polarity": "negative",
+>   "intensity": "strong",
+>   "voice_role": "author",
+>   "target_kind": "phrase",
+>   "target_phrase": "my brother William",
+>   "emotion_phrase_verbatim": "deepest grief",
+>   "emotion_about_phrase_verbatim": "this past spring",
+>   "emotion_about_earliest": "1873-03-01",
+>   "emotion_about_latest": "1873-05-31",
+>   "emotion_about_precision": "season",
+>   "emotion_about_qualifier": "died_in"
+> }
+> ```
+
+**Rule:** if the letter date is unknown or matches the emotion's
+referent, leave the `emotion_about_*` fields out entirely (NULL).
+Do not emit `emotion_about_phrase_verbatim: "now"` or similar
+filler — the absence of the field IS the "felt now" signal.
+
 ## Phase 1 vs later phases
 
 - **Phase 1 (shipped):** schema (migration v67), extraction worker (singleton + batch paths both functional), phrase upsert + embedding, review queue (HTML + JSON cursor + per-row + bulk).
