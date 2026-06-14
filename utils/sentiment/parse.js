@@ -4,6 +4,9 @@ const POLARITY = new Set(['positive', 'negative', 'neutral', 'mixed']);
 const INTENSITY = new Set(['low', 'moderate', 'strong']);
 const VOICE_ROLE = new Set(['author', 'speaker', 'described_subject']);
 const TARGET_KIND = new Set(['entity', 'phrase']); // theme stripped in Phase 1
+const EMOTION_ABOUT_PRECISION_VALUES = new Set([
+  'day', 'month', 'season', 'year', 'decade', 'century', 'unknown'
+]);
 
 function tryExtractJson(raw) {
   if (typeof raw !== 'string') return null;
@@ -106,6 +109,30 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
 
     if (conf < reviewFloor) { drops.below_review_floor++; continue; }
 
+    // S2.1: optional emotion_about_* temporal scope. Emit only when the LLM
+    // provides a non-empty emotion_about_phrase_verbatim; otherwise the whole
+    // group is NULL. Precision is validated against the allow-list.
+    // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md S2.1, S2.2.
+    const aboutVerbatim = typeof a.emotion_about_phrase_verbatim === 'string'
+      && a.emotion_about_phrase_verbatim.trim()
+      ? a.emotion_about_phrase_verbatim.trim()
+      : null;
+    const aboutEarliest = aboutVerbatim && typeof a.emotion_about_earliest === 'string'
+      ? a.emotion_about_earliest.trim() || null
+      : null;
+    const aboutLatest = aboutVerbatim && typeof a.emotion_about_latest === 'string'
+      ? a.emotion_about_latest.trim() || null
+      : null;
+    const aboutPrecisionRaw = aboutVerbatim && typeof a.emotion_about_precision === 'string'
+      ? a.emotion_about_precision.trim().toLowerCase()
+      : null;
+    const aboutPrecision = aboutPrecisionRaw && EMOTION_ABOUT_PRECISION_VALUES.has(aboutPrecisionRaw)
+      ? aboutPrecisionRaw
+      : null;
+    const aboutQualifier = aboutVerbatim && typeof a.emotion_about_qualifier === 'string'
+      ? a.emotion_about_qualifier.trim().toLowerCase() || null
+      : null;
+
     const auto = conf >= autoApproveThreshold;
     out.push({
       span_start: resolvedStart,
@@ -121,6 +148,11 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       expressed_by_entity_id: a.expressed_by_entity_id ?? null,
       described_subject_entity_id: a.described_subject_entity_id ?? null,
       emotion_phrase_verbatim: verbatim,
+      emotion_about_phrase_verbatim: aboutVerbatim,
+      emotion_about_earliest: aboutEarliest,
+      emotion_about_latest: aboutLatest,
+      emotion_about_precision: aboutPrecision,
+      emotion_about_qualifier: aboutQualifier,
       plutchik_hint: a.plutchik_hint ?? null,
       notes: typeof a.notes === 'string' && a.notes.trim() ? a.notes.trim() : null,
       approval_status: auto ? 'approved' : 'pending',
