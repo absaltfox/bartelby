@@ -593,8 +593,10 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
              emotion_phrase_id, emotion_phrase_verbatim, plutchik_hint,
              notes,
              approval_status, auto_approved, reviewed_at,
-             extracted_by, extraction_job_id, extracted_at
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             extracted_by, extraction_job_id, extracted_at,
+             emotion_about_phrase_verbatim, emotion_about_earliest,
+             emotion_about_latest, emotion_about_precision, emotion_about_qualifier
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             a.transcript_id, a.document_id, a.span_start, a.span_end, a.evidence_excerpt,
             a.polarity, a.intensity, a.confidence, a.voice_role, a.target_kind,
@@ -606,7 +608,12 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
             a.approval_status || 'pending',
             a.auto_approved ? 1 : 0,
             a.auto_approved ? a.extracted_at : null,
-            a.extracted_by || null, jobId, a.extracted_at || new Date().toISOString()
+            a.extracted_by || null, jobId, a.extracted_at || new Date().toISOString(),
+            a.emotion_about_phrase_verbatim ?? null,
+            a.emotion_about_earliest ?? null,
+            a.emotion_about_latest ?? null,
+            a.emotion_about_precision ?? null,
+            a.emotion_about_qualifier ?? null
           ]
         );
         written++;
