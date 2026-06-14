@@ -66,6 +66,31 @@
             </section>
           </div>
 
+          <% if (a.emotion_about_phrase_verbatim) { %>
+            <div class="annotation-about" data-emotion-about="true">
+              <span class="annotation-about-label">About:</span>
+              <span class="annotation-about-verbatim"><%= a.emotion_about_phrase_verbatim %></span>
+              <% if (a.emotion_about_earliest || a.emotion_about_latest) { %>
+                <small class="muted">
+                  <% if (a.emotion_about_earliest && a.emotion_about_latest && a.emotion_about_earliest === a.emotion_about_latest) { %>
+                    (<%= a.emotion_about_earliest %>)
+                  <% } else { %>
+                    (<%= a.emotion_about_earliest || '?' %>
+                    – <%= a.emotion_about_latest || '?' %>)
+                  <% } %>
+                  <% if (a.emotion_about_precision) { %>
+                    • precision <%= a.emotion_about_precision %>
+                  <% } %>
+                  <% if (a.emotion_about_qualifier) { %>
+                    • <%= a.emotion_about_qualifier %>
+                  <% } %>
+                </small>
+              <% } else if (a.emotion_about_qualifier) { %>
+                <small class="muted">(<%= a.emotion_about_qualifier %>)</small>
+              <% } %>
+            </div>
+          <% } %>
+
           <div class="authority-suggestion-card-footer">
             <button type="button" class="btn-primary   btn-sm" data-action="approve" data-annotation-id="<%= a.id %>">Approve</button>
             <button type="button" class="btn-secondary btn-sm" data-action="reject"  data-annotation-id="<%= a.id %>">Reject</button>
