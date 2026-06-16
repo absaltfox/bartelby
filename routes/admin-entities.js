@@ -5,6 +5,9 @@ const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
+const audit = require('../utils/audit-log');
+const { resolveCitationEvidence } = require('../utils/citation-evidence');
+const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
 router.use(requireAdmin);
 
@@ -326,6 +329,96 @@ router.get('/new', asyncHandler(async (req, res) => {
     error: req.query.error || null,
     activeKnowledgePage: 'entities'
   });
+}));
+
+router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => knowledgePath('/entities/new', '?error=' + encodeURIComponent(msg));
+
+  const entityType = String(req.body.entity_type || '').trim();
+  if (!ENTITY_TYPES.includes(entityType)) {
+    return res.redirect(errBack('Invalid entity type.'));
+  }
+  const canonicalName = String(req.body.canonical_name || '').trim();
+  if (!canonicalName) {
+    return res.redirect(errBack('Canonical name is required.'));
+  }
+  const transcriptId = parseInt(req.body.transcriptId, 10);
+  if (!Number.isInteger(transcriptId)) {
+    return res.redirect(errBack('Transcript ID is required.'));
+  }
+
+  const transcript = await db.transcriptsAsync.getById(transcriptId);
+  if (!transcript) {
+    return res.redirect(errBack('Transcript not found.'));
+  }
+
+  const evidence = resolveCitationEvidence({
+    transcriptContent: transcript.content,
+    verbatim: String(req.body.verbatim || ''),
+    claimedStart: req.body.passageStart ? parseInt(req.body.passageStart, 10) : null
+  });
+  if (!evidence.ok) {
+    return res.redirect(errBack(evidence.error));
+  }
+
+  const description = String(req.body.description || '').trim() || null;
+  const authorityIdRaw = req.body.authority_id ? parseInt(req.body.authority_id, 10) : null;
+  const authorityId = Number.isInteger(authorityIdRaw) ? authorityIdRaw : null;
+
+  const stores = graphStores();
+  if (!stores.entities || !stores.citations) {
+    return res.redirect(errBack('Knowledge graph helpers are not wired yet.'));
+  }
+
+  let entityId = null;
+  let citationId = null;
+
+  const runCreate = async () => {
+    entityId = await stores.entities.create({
+      entity_type: entityType,
+      canonical_name: canonicalName,
+      description,
+      properties: {},
+      authority_id: authorityId
+    });
+    citationId = await stores.citations.create({
+      entity_id: entityId,
+      relationship_id: null,
+      date_expression_id: null,
+      transcript_id: transcriptId,
+      document_id: transcript.document_id,
+      passage_start: evidence.passageStart,
+      passage_end: evidence.passageEnd,
+      passage_text: evidence.passageText,
+      extraction_method: EXTRACTION_METHODS.MANUAL,
+      extraction_model: null,
+      confidence: 1.0,
+      approval_status: CITATION_APPROVAL_STATUSES.APPROVED,
+      approval_method: 'manual',
+      approved_by_user_id: req.user?.id || null
+    });
+  };
+
+  try {
+    if (process.env.DATABASE_DRIVER === 'turso') {
+      await runCreate();
+    } else {
+      await db.runAsync('BEGIN');
+      try {
+        await runCreate();
+        await db.runAsync('COMMIT');
+      } catch (err) {
+        try { await db.runAsync('ROLLBACK'); } catch (e) {}
+        throw err;
+      }
+    }
+  } catch (err) {
+    return res.redirect(errBack(err.message));
+  }
+
+  if (typeof db.saveDatabase === 'function') await db.saveDatabase();
+  audit.log('admin.entity_created_manual', { ...audit.reqContext(req), entityId, citationId, transcriptId });
+  res.redirect(knowledgePath(`/entities/${entityId}`));
 }));
 
 router.get('/', asyncHandler(async (req, res) => {
