@@ -68,6 +68,9 @@
         <% if (typeof sort !== 'undefined' && sort) { %>
           <input type="hidden" name="sort" value="<%= sort %>">
         <% } %>
+        <% if (source) { %>
+          <input type="hidden" name="source" value="<%= source %>">
+        <% } %>
         <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
       </form>
       <form method="GET" action="/admin/knowledge/review-extractions" class="admin-search-form review-filter-form">
@@ -76,6 +79,28 @@
         <% } %>
         <% if (reviewKind && reviewKind !== 'all') { %>
           <input type="hidden" name="kind" value="<%= reviewKind %>">
+        <% } %>
+        <% if (typeof sort !== 'undefined' && sort) { %>
+          <input type="hidden" name="sort" value="<%= sort %>">
+        <% } %>
+        <label for="review-source" class="review-filter-label">Source</label>
+        <select name="source" id="review-source" class="review-filter-select" data-submit-on-change="1" aria-label="Filter review queue by extraction source">
+          <option value="" <%= !source ? 'selected' : '' %>>All sources</option>
+          <% (sources || []).forEach(function(value) { %>
+            <option value="<%= value %>" <%= value === source ? 'selected' : '' %>><%= value %></option>
+          <% }) %>
+        </select>
+        <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
+      </form>
+      <form method="GET" action="/admin/knowledge/review-extractions" class="admin-search-form review-filter-form">
+        <% if (approvalStatus && approvalStatus !== 'pending') { %>
+          <input type="hidden" name="status" value="<%= approvalStatus %>">
+        <% } %>
+        <% if (reviewKind && reviewKind !== 'all') { %>
+          <input type="hidden" name="kind" value="<%= reviewKind %>">
+        <% } %>
+        <% if (source) { %>
+          <input type="hidden" name="source" value="<%= source %>">
         <% } %>
         <label for="review-sort" class="review-filter-label">Sort</label>
         <select name="sort" id="review-sort" class="review-filter-select" data-submit-on-change="1" aria-label="Sort review queue">

@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
 const db = require('../database/db');
-const { CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
+const { CITATION_APPROVAL_STATUSES, EXTRACTION_METHODS, isValidExtractionMethod } = require('../utils/knowledge-approval');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
@@ -25,6 +25,7 @@ const ENTITY_TYPE_LABELS = Object.freeze({
   role: 'Role'
 });
 const ALLOWED_SORTS = Object.freeze(['rare-type-first', 'newest', 'low-confidence-first']);
+const ALLOWED_SOURCES = Object.freeze(Object.values(EXTRACTION_METHODS));
 const SORT_OPTIONS = Object.freeze([
   { value: 'rare-type-first', label: 'Rare types first (kinship, claims, roles)' },
   { value: 'newest', label: 'Newest first' },
@@ -576,6 +577,7 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   const offset = (page - 1) * PAGE_SIZE;
   const status = normalizeStatus(req.query.status);
   const reviewKind = normalizeReviewKind(req.query.kind);
+  const source = isValidExtractionMethod(req.query.source) ? req.query.source : null;
 
   // Sort: read ?sort=, persist to user preferences, fall back to preference then default
   const requestedSort = req.query.sort && ALLOWED_SORTS.includes(req.query.sort) ? req.query.sort : null;
@@ -589,18 +591,18 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   const [citations, statusCounts] = stores.citations && typeof stores.citations.getStatusCounts === 'function'
     ? await Promise.all([
       typeof stores.citations.list === 'function'
-        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind, sort })
+        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind, sort, source })
         : (status === 'all'
-          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { reviewKind }).then(async (pending) => {
+          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { reviewKind, source }).then(async (pending) => {
             const [approved, rejected] = await Promise.all([
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000, { reviewKind }),
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000, { reviewKind })
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000, { reviewKind, source }),
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000, { reviewKind, source })
             ]);
             return [...pending, ...approved, ...rejected].sort((a, b) => {
               return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
             }).slice(offset, offset + PAGE_SIZE);
           })
-          : stores.citations.getByStatus(status, PAGE_SIZE, { reviewKind })),
+          : stores.citations.getByStatus(status, PAGE_SIZE, { reviewKind, source })),
       stores.citations.getStatusCounts({ reviewKind })
     ])
     : [[], {
@@ -626,6 +628,8 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
     sort,
     sorts: ALLOWED_SORTS,
     sortOptions: SORT_OPTIONS,
+    source,
+    sources: ALLOWED_SOURCES,
     statusCounts: normalizedStatusCounts,
     graphReady: !!stores.citations,
     graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',
