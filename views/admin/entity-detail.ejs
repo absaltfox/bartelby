@@ -23,6 +23,9 @@
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
     <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
+    <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">
+      + Add relationship from this entity
+    </a>
   </div>
 
   <% if (entity.description) { %>
