@@ -7,6 +7,19 @@ const CITATION_APPROVAL_STATUSES = Object.freeze({
   REJECTED: 'rejected'
 });
 
+const EXTRACTION_METHODS = Object.freeze({
+  LLM_AUTO: 'llm_auto',
+  LLM_BATCH: 'llm_batch',
+  MANUAL: 'manual',
+  IMPORTED: 'imported'
+});
+
+const EXTRACTION_METHOD_VALUES = new Set(Object.values(EXTRACTION_METHODS));
+
+function isValidExtractionMethod(value) {
+  return typeof value === 'string' && EXTRACTION_METHOD_VALUES.has(value);
+}
+
 function normalizeConfidence(value, fallback = 0.8) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -51,6 +64,8 @@ function deriveCitationApproval(confidence, explicitStatus = null) {
 module.exports = {
   KNOWLEDGE_AUTO_APPROVE_THRESHOLD,
   CITATION_APPROVAL_STATUSES,
+  EXTRACTION_METHODS,
+  isValidExtractionMethod,
   deriveCitationApproval,
   normalizeConfidence
 };
