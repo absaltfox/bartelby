@@ -303,6 +303,31 @@ router.post('/merge', express.urlencoded({ extended: false }), asyncHandler(asyn
   }
 }));
 
+router.get('/new', asyncHandler(async (req, res) => {
+  // Pre-populate from query string so a future document-reading-surface link
+  // can deep-link with transcript_id, verbatim, etc. Curator-supplied integers
+  // are coerced via parseInt; bad input becomes null and the form requires it.
+  const prefill = {
+    entityType: typeof req.query.entityType === 'string' && ENTITY_TYPES.includes(req.query.entityType)
+      ? req.query.entityType
+      : 'person',
+    canonicalName: typeof req.query.canonicalName === 'string' ? req.query.canonicalName : '',
+    description: typeof req.query.description === 'string' ? req.query.description : '',
+    authorityId: req.query.authorityId ? parseInt(req.query.authorityId, 10) : null,
+    transcriptId: req.query.transcriptId ? parseInt(req.query.transcriptId, 10) : null,
+    passageStart: req.query.passageStart ? parseInt(req.query.passageStart, 10) : null,
+    passageEnd: req.query.passageEnd ? parseInt(req.query.passageEnd, 10) : null,
+    verbatim: typeof req.query.verbatim === 'string' ? req.query.verbatim : ''
+  };
+  res.render('admin/entity-new', {
+    pageTitle: 'Create Entity',
+    entityTypes: ENTITY_TYPES,
+    prefill,
+    error: req.query.error || null,
+    activeKnowledgePage: 'entities'
+  });
+}));
+
 router.get('/', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     const queryString = req.originalUrl.includes('?')
