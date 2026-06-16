@@ -1,0 +1,16 @@
+<%
+  // Document-reading-surface entry point for curator-authored entity creation.
+  // Expects: selectedTranscript (with id), isAdmin (from res.locals).
+  // Rendered only for admins; deep-links to the standalone entity-creation
+  // form pre-populated with the transcript id.
+  //
+  // Curator-side text selection that prefills verbatim + passageStart from
+  // window.getSelection() is a future enhancement — see plan Task 6 note.
+%>
+<% if (typeof isAdmin !== 'undefined' && isAdmin && typeof selectedTranscript !== 'undefined' && selectedTranscript && selectedTranscript.id) { %>
+  <a href="/admin/knowledge/entities/new?transcriptId=<%= selectedTranscript.id %>"
+     class="btn-action btn-sm document-create-entity-link"
+     title="Open the admin form for a manual entity citation against this transcript">
+    + Create entity for this transcript
+  </a>
+<% } %>
