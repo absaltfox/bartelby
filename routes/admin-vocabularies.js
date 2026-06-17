@@ -76,4 +76,33 @@ router.post('/relationship-types', express.urlencoded({ extended: false }), asyn
   res.redirect(vocabPath('?tab=types&saved=1'));
 }));
 
+router.post('/relationship-types/:name/edit', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => vocabPath('?tab=types&error=' + encodeURIComponent(msg));
+  const name = String(req.params.name || '').trim().toLowerCase();
+  if (!NAME_PATTERN.test(name)) return res.redirect(errBack('Invalid type name.'));
+
+  const existing = await db.getAsync('SELECT 1 FROM relationship_types WHERE name = ?', [name]);
+  if (!existing) return res.redirect(errBack(`Type "${name}" not found.`));
+
+  const fields = {};
+  if (req.body.label !== undefined) {
+    const label = String(req.body.label).trim();
+    if (!label) return res.redirect(errBack('Label cannot be empty.'));
+    fields.label = label;
+  }
+  if (req.body.category !== undefined) fields.category = String(req.body.category).trim() || 'general';
+  if (req.body.frequency !== undefined) {
+    const freq = String(req.body.frequency).trim();
+    if (!VALID_FREQUENCIES.includes(freq)) return res.redirect(errBack('Invalid frequency.'));
+    fields.frequency = freq;
+  }
+  if (req.body.source_type !== undefined) fields.source_type = String(req.body.source_type).trim();
+  if (req.body.target_type !== undefined) fields.target_type = String(req.body.target_type).trim();
+  if (req.body.inverse_name !== undefined) fields.inverse_name = String(req.body.inverse_name).trim();
+
+  await db.relationshipTypesAsync.update(name, fields);
+  audit.log('admin.relationship_type_updated', { ...audit.reqContext(req), name, fields });
+  res.redirect(vocabPath('?tab=types&saved=1'));
+}));
+
 module.exports = router;

@@ -139,3 +139,56 @@ describe('POST /admin/knowledge/vocabularies/relationship-types — create', () 
     expect(res.headers.location).toMatch(/error=/);
   });
 });
+
+describe('POST /admin/knowledge/vocabularies/relationship-types/:name/edit — update', () => {
+  it('updates label / category / frequency / source / target / inverse', async () => {
+    // Seed
+    await db.runAsync(
+      `INSERT OR IGNORE INTO relationship_types (name, label, category, frequency) VALUES ('c4_edit_target', 'Original Label', 'general', 'common')`
+    );
+
+    const res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_edit_target/edit')
+      .type('form')
+      .send({
+        _csrf: csrfToken,
+        label: 'New Label',
+        category: 'familial',
+        frequency: 'medium',
+        source_type: 'person',
+        target_type: 'person',
+        inverse_name: 'c4_edit_target_inv'
+      });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/saved=1/);
+
+    const row = await db.getAsync(`SELECT * FROM relationship_types WHERE name = 'c4_edit_target'`);
+    expect(row.label).toBe('New Label');
+    expect(row.category).toBe('familial');
+    expect(row.frequency).toBe('medium');
+    expect(row.source_type).toBe('person');
+    expect(row.target_type).toBe('person');
+    expect(row.inverse_name).toBe('c4_edit_target_inv');
+  });
+
+  it('returns 404-via-error-redirect when name does not exist', async () => {
+    const res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_does_not_exist/edit')
+      .type('form')
+      .send({ _csrf: csrfToken, label: 'Anything' });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/error=/);
+  });
+
+  it('rejects an invalid frequency in update', async () => {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO relationship_types (name, label, category, frequency) VALUES ('c4_freq_update', 'Freq Update', 'general', 'common')`
+    );
+    const res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_freq_update/edit')
+      .type('form')
+      .send({ _csrf: csrfToken, label: 'OK', frequency: 'bogus' });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/error=/);
+  });
+});
