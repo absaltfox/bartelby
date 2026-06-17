@@ -1,0 +1,29 @@
+<%
+  // Reusable transcript span picker partial.
+  // Expects: prefill { transcriptId, passageStart, passageEnd, verbatim }
+  // (any or all may be null/empty).
+  //
+  // Per docs/development-principles.md "Trust LLM Verbatim, Not LLM Offsets":
+  // the verbatim text is authoritative; the offset is a hint used only to
+  // disambiguate when the verbatim appears multiple times in the transcript.
+%>
+<fieldset class="edit-fieldset">
+  <legend>Evidence (transcript span)</legend>
+  <div class="edit-field">
+    <label for="transcriptId">Transcript ID</label>
+    <input type="number" id="transcriptId" name="transcriptId" required
+      value="<%= prefill.transcriptId || '' %>" placeholder="e.g., 1234" />
+  </div>
+  <div class="edit-field">
+    <label for="verbatim">Verbatim (exact text from transcript)</label>
+    <textarea id="verbatim" name="verbatim" rows="3" required
+      placeholder="Paste the exact span of text the citation supports."><%= prefill.verbatim || '' %></textarea>
+  </div>
+  <div class="edit-field">
+    <label for="passageStart">Claimed start (optional disambiguator)</label>
+    <input type="number" id="passageStart" name="passageStart"
+      value="<%= prefill.passageStart != null ? prefill.passageStart : '' %>"
+      placeholder="character offset; used only if verbatim appears multiple times" />
+  </div>
+  <p class="muted">The verbatim text is authoritative; the offset is a hint used to disambiguate when the verbatim appears multiple times in the transcript.</p>
+</fieldset>

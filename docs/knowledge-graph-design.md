@@ -226,6 +226,129 @@ provenance tracking via `properties.original_relationship_type`.
 - Carry an explicit approval lifecycle: `pending`, `approved`, or `rejected`
 - Support auto-approval, manual approval, rejection, and later evidence removal
 
+#### `extraction_method` enum (C5.1)
+
+Citations carry an `extraction_method` provenance column. The canonical
+values, defined in `utils/knowledge-approval.js` as the frozen
+`EXTRACTION_METHODS` enum and validated by `isValidExtractionMethod`, are:
+
+- `llm_auto` — single-document LLM extraction (the historical default)
+- `llm_batch` — batch / multi-document LLM extraction
+- `manual` — curator-authored citation; see "Manual citation contract" below
+- `imported` — bulk import from an external source
+
+Validation is enforced at the app layer (writes go through
+`citations.create`). We deliberately do **not** add a SQL `CHECK`
+constraint to the existing `extraction_method TEXT` column because
+adding one to an existing SQLite column requires a full table
+recreation. The enum is the single source of truth; never hand-type
+the string.
+
+#### Manual citation contract (C5.3)
+
+Citations created by a curator (via the C1 entity-authoring path or the
+C2 relationship-authoring path) carry a strict provenance shape:
+
+- `extraction_method = 'manual'`
+- `extraction_model = NULL` (no LLM produced it)
+- `confidence = 1.0` (the curator's assertion is the highest-confidence
+  signal in the system)
+- `approval_status = 'approved'` on creation — the curator's authoring
+  action **is** the approval signal. There is no separate review step.
+- `approval_method = 'manual'`, `approved_by_user_id = <curator id>`
+
+These citations bypass the auto-approve threshold logic in
+`deriveCitationApproval` because the explicit `approval_status` is
+honored by `citations.create`.
+
+#### Source filter on the review queue (C5.2)
+
+`/admin/knowledge/review-extractions?source=<method>` filters the queue
+by `extraction_method`. The Source dropdown alongside the existing
+Filter type and Sort dropdowns offers each canonical value (or "All
+sources" with no filter). Curators can narrow to LLM-extracted vs.
+manually-authored evidence; combining filters is supported (Source +
+Filter type + Sort all preserve each other).
+
+### Curator-Authored Citations (C1, C2)
+
+In addition to the LLM extraction pipeline, curators can author
+citations from scratch via two admin paths. This realizes the
+"Curator Is the Expert" principle (see
+[development-principles.md](./development-principles.md)) — curators
+are not merely reviewers of LLM output; they are first-class authors.
+
+#### Author an entity from scratch (C1)
+
+- `GET /admin/knowledge/entities/new` renders the entity-authoring form
+  (`routes/admin-entities.js`, view `views/admin/entity-new.ejs`).
+- Required fields: `entity_type` (any canonical type from
+  `ENTITY_TYPES`, including `role` per E1), `canonical_name`, plus a
+  required transcript span (transcript ID + verbatim text + optional
+  disambiguating start offset).
+- Optional fields: `description`, `authority_id` (link to an existing
+  authority).
+- Entry points: the standalone admin form, plus a "Create entity for
+  this transcript" link on the document reading surface
+  (`views/partials/document-create-entity-link.ejs`, admin-gated).
+- `POST /admin/knowledge/entities/new` transactionally inserts the
+  entity row AND a manual citation pointing at the resolved transcript
+  span. Failure of either insert rolls back both. On success, the
+  curator lands on the new entity-detail page.
+
+#### Author a relationship from scratch (C2)
+
+- `GET /admin/knowledge/relationships/new` renders the
+  relationship-authoring form (`routes/admin-relationships.js`, view
+  `views/admin/relationship-new.ejs`).
+- Required fields: source entity ID, target entity ID,
+  `relationship_type` (from the controlled vocabulary, with a free-text
+  fallback when the table is empty), plus a required transcript span.
+- Optional fields: `start_date` and `end_date` (per E6),
+  `voice_role` from the `author` / `speaker` / `described_subject`
+  enum (per E5).
+- Entry points: the standalone admin form, plus "+ Add relationship
+  from this entity" on `entity-detail` (prefills sourceEntityId) and
+  "+ Add relationship involving this authority's members" on
+  `authority-detail` (links without prefill since authority groups
+  multiple member entities).
+- `POST /admin/knowledge/relationships/new` transactionally inserts the
+  relationship row AND a manual citation pointing at the resolved
+  transcript span. Validates that both source and target entities
+  exist before insert.
+
+#### Shared verbatim resolver (`utils/citation-evidence.js`)
+
+C1 and C2 both validate curator-supplied transcript spans via the
+shared `resolveCitationEvidence` helper. The resolver mirrors the E3
+mention-resolution pattern (see "Mention resolution and ambiguity"
+below): the verbatim text is authoritative; the curator-supplied
+`claimedStart` is a hint used only to disambiguate when the verbatim
+appears multiple times in the transcript. This applies the
+"Trust LLM Verbatim, Not LLM Offsets" discipline from
+[development-principles.md](./development-principles.md) to
+curator-supplied offsets as well.
+
+#### Deferred curator workstreams
+
+The following affordances are intentionally out of scope for the
+foundational C5/C1/C2 PR:
+
+- **C3 (edit entity attributes after creation)** — requires cascade
+  design around `entity_type` changes (authority assignment may need
+  to drop; sentiment annotations targeting the entity may have
+  type-specific rendering). Owns the deferred E1.6 "retype entity"
+  need.
+- **C4 (vocabulary management surface)** — admin UI for
+  `relationship_types`, `relationship_type_aliases`, and the U1.3
+  frequency mapping. Substantial UI work; separate plan.
+- **U5 (split-entity affordance)** — C-family adjacent but its own
+  workstream.
+- **Document-side text-selection UX** — capturing
+  `window.getSelection()` to prefill verbatim + offset from the
+  document reading surface is a future enhancement; the current C1.3
+  link only prefills the transcript ID.
+
 ### Voice Attribution
 
 Relationships (and their mirrors in `sentiment_annotations`) carry three voice

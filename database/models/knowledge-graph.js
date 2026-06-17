@@ -1660,6 +1660,11 @@ const citations = {
     if (status !== 'all') {
       params.push(status);
     }
+    const sourceFilter = opts.source && typeof opts.source === 'string' ? opts.source : null;
+    const sourceClause = sourceFilter ? ' AND c.extraction_method = ?' : '';
+    if (sourceFilter) {
+      params.push(sourceFilter);
+    }
     params.push(limit, offset);
     const orderBy = buildCitationOrderBy(opts.sort);
     return await allAsync(`
@@ -1718,6 +1723,7 @@ const citations = {
         AND (${collection.clause})
         AND (${kindFilter.clause})
         ${statusClause}
+        ${sourceClause}
       ${orderBy}
       LIMIT ?
       OFFSET ?

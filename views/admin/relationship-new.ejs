@@ -1,0 +1,82 @@
+<%- include('../partials/header', { pageTitle: 'Create Relationship', query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Create Relationship</h1>
+    <p class="subtitle">Author a relationship from scratch with a transcript citation.</p>
+  </div>
+
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
+
+  <% if (error) { %>
+    <div class="callout callout--error"><%= error %></div>
+  <% } %>
+
+  <section class="settings-section">
+    <form method="POST" action="/admin/knowledge/relationships/new" class="edit-form relationship-new-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+
+      <fieldset class="edit-fieldset">
+        <legend>Relationship</legend>
+        <div class="edit-field">
+          <label for="source_entity_id">Source entity ID</label>
+          <input type="number" id="source_entity_id" name="source_entity_id" required
+            value="<%= prefill.sourceEntityId || '' %>" />
+        </div>
+        <div class="edit-field">
+          <label for="target_entity_id">Target entity ID</label>
+          <input type="number" id="target_entity_id" name="target_entity_id" required
+            value="<%= prefill.targetEntityId || '' %>" />
+        </div>
+        <div class="edit-field">
+          <label for="relationship_type">Relationship type</label>
+          <% if (relationshipTypes && relationshipTypes.length) { %>
+            <select id="relationship_type" name="relationship_type" required>
+              <option value="">— select —</option>
+              <% relationshipTypes.forEach(function(t) { %>
+                <option value="<%= t %>" <%= prefill.relationshipType === t ? 'selected' : '' %>><%= t %></option>
+              <% }) %>
+            </select>
+          <% } else { %>
+            <input type="text" id="relationship_type" name="relationship_type" required
+              value="<%= prefill.relationshipType || '' %>"
+              placeholder="e.g., spouse_of, holds_position" />
+            <p class="muted">Vocabulary table empty — type the relationship name directly.</p>
+          <% } %>
+        </div>
+        <div class="edit-field">
+          <label for="start_date">Start date (optional, YYYY-MM-DD)</label>
+          <input type="text" id="start_date" name="start_date"
+            value="<%= prefill.startDate || '' %>"
+            pattern="[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?" />
+        </div>
+        <div class="edit-field">
+          <label for="end_date">End date (optional, YYYY-MM-DD)</label>
+          <input type="text" id="end_date" name="end_date"
+            value="<%= prefill.endDate || '' %>"
+            pattern="[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?" />
+        </div>
+        <div class="edit-field">
+          <label for="voice_role">Voice (optional)</label>
+          <select id="voice_role" name="voice_role">
+            <option value="">— unattributed (default) —</option>
+            <% voiceRoles.forEach(function(v) { %>
+              <option value="<%= v %>" <%= prefill.voiceRole === v ? 'selected' : '' %>><%= v %></option>
+            <% }) %>
+          </select>
+        </div>
+      </fieldset>
+
+      <%- include('../partials/transcript-span-picker', { prefill }) %>
+
+      <div class="edit-actions">
+        <button type="submit" class="btn-primary">Create relationship</button>
+        <a href="/admin/knowledge/entities" class="btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </section>
+</div>
+
+<%- include('../partials/footer') %>
