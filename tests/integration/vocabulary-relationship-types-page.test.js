@@ -192,3 +192,42 @@ describe('POST /admin/knowledge/vocabularies/relationship-types/:name/edit — u
     expect(res.headers.location).toMatch(/error=/);
   });
 });
+
+describe('POST .../:name/deprecate and /:name/reactivate — C4', () => {
+  it('deprecate sets deprecated_at; reactivate clears it', async () => {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO relationship_types (name, label, category, frequency) VALUES ('c4_deprec_target', 'Deprec Target', 'general', 'common')`
+    );
+
+    let res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_deprec_target/deprecate')
+      .type('form')
+      .send({ _csrf: csrfToken });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/saved=1/);
+
+    let row = await db.getAsync(`SELECT deprecated_at FROM relationship_types WHERE name = 'c4_deprec_target'`);
+    expect(row.deprecated_at).toBeTruthy();
+
+    res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_deprec_target/reactivate')
+      .type('form')
+      .send({ _csrf: csrfToken });
+    expect(res.status).toBe(302);
+
+    row = await db.getAsync(`SELECT deprecated_at FROM relationship_types WHERE name = 'c4_deprec_target'`);
+    expect(row.deprecated_at).toBeNull();
+  });
+
+  it('deprecate is a no-op for an already-deprecated type (idempotent)', async () => {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO relationship_types (name, label, category, frequency, deprecated_at) VALUES ('c4_already_deprec', 'Already', 'general', 'common', CURRENT_TIMESTAMP)`
+    );
+    const res = await adminAgent
+      .post('/admin/knowledge/vocabularies/relationship-types/c4_already_deprec/deprecate')
+      .type('form')
+      .send({ _csrf: csrfToken });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/saved=1/);
+  });
+});

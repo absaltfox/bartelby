@@ -105,4 +105,28 @@ router.post('/relationship-types/:name/edit', express.urlencoded({ extended: fal
   res.redirect(vocabPath('?tab=types&saved=1'));
 }));
 
+router.post('/relationship-types/:name/deprecate', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => vocabPath('?tab=types&error=' + encodeURIComponent(msg));
+  const name = String(req.params.name || '').trim().toLowerCase();
+  if (!NAME_PATTERN.test(name)) return res.redirect(errBack('Invalid type name.'));
+  const existing = await db.getAsync('SELECT 1 FROM relationship_types WHERE name = ?', [name]);
+  if (!existing) return res.redirect(errBack(`Type "${name}" not found.`));
+
+  await db.relationshipTypesAsync.deprecate(name);
+  audit.log('admin.relationship_type_deprecated', { ...audit.reqContext(req), name });
+  res.redirect(vocabPath('?tab=types&saved=1'));
+}));
+
+router.post('/relationship-types/:name/reactivate', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => vocabPath('?tab=types&error=' + encodeURIComponent(msg));
+  const name = String(req.params.name || '').trim().toLowerCase();
+  if (!NAME_PATTERN.test(name)) return res.redirect(errBack('Invalid type name.'));
+  const existing = await db.getAsync('SELECT 1 FROM relationship_types WHERE name = ?', [name]);
+  if (!existing) return res.redirect(errBack(`Type "${name}" not found.`));
+
+  await db.relationshipTypesAsync.reactivate(name);
+  audit.log('admin.relationship_type_reactivated', { ...audit.reqContext(req), name });
+  res.redirect(vocabPath('?tab=types&saved=1'));
+}));
+
 module.exports = router;
