@@ -748,6 +748,14 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
      'participated_in', 'occurred_at', 'occurred_on',
      'caused_by', 'created', 'owns'
    ) AND frequency = 'common';
+  `,
+
+  // v49 — C4: relationship_types.deprecated_at for curator-driven deprecation.
+  // NULL (default) = active; non-NULL = deprecated. UI gate only — worker
+  // resolution path is unchanged so existing relationships keep their type.
+  // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md C4.
+  `
+  ALTER TABLE relationship_types ADD COLUMN deprecated_at DATETIME;
   `
 ];
 
