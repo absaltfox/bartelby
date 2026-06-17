@@ -218,6 +218,68 @@ existing relationships and entities) is planned as a deferred future workstream
 (E2.2); currently, curation focuses on forward consistency and fallback
 provenance tracking via `properties.original_relationship_type`.
 
+### Vocabulary Management Surface (C4)
+
+Curators manage the controlled `relationship_types` vocabulary and its
+`relationship_type_aliases` from the admin surface at
+`/admin/knowledge/vocabularies/relationship-types`
+(`routes/admin-vocabularies.js`, view
+`views/admin/vocabulary-relationship-types.ejs`).
+
+**Types tab:**
+- Lists every canonical relationship type with its per-type usage
+  count (`COUNT(*) FROM relationships WHERE relationship_type = name`)
+  so curators can see deprecation blast radius before clicking.
+- Each row exposes inline editing of `label`, `category`, `frequency`
+  (`rare` / `medium` / `common` — drives the U1.3 rare-type-first
+  sort), `source_type`, `target_type`, and `inverse_name`.
+- The `name` (PK) is intentionally **not editable in v1**: every
+  relationship row joins on this column. Renaming is the
+  deprecate-and-recreate pattern. C3-family follow-up may revisit.
+- Deprecation is a UI gate only:
+  - `relationship_types.deprecated_at` (migration v49) is the marker
+    — non-NULL = deprecated.
+  - Existing relationships keep their type unchanged.
+  - The worker resolution path
+    ([utils/worker-extraction.js:329-330](../utils/worker-extraction.js#L329))
+    still resolves deprecated names so the LLM emitting an older type
+    still lands cleanly.
+  - The C2 curator-authoring dropdown
+    ([routes/admin-relationships.js GET /new](../routes/admin-relationships.js))
+    calls `listActive()` to filter deprecated out.
+  - Reactivation clears `deprecated_at` and the type returns to the
+    dropdown.
+
+**Aliases tab:**
+- Lists every `relationship_type_aliases` row (alias_type →
+  canonical_type, plus notes and creation timestamp).
+- Add form requires both columns; the canonical_type must exist
+  (active or deprecated). UNIQUE on `alias_type` surfaces as a
+  friendly error.
+- Delete removes the mapping outright. No soft-delete because
+  aliases are pure lookup metadata.
+
+**Audit log:**
+- `admin.relationship_type_created`
+- `admin.relationship_type_updated` (with diff payload)
+- `admin.relationship_type_deprecated`
+- `admin.relationship_type_reactivated`
+- `admin.relationship_type_alias_added`
+- `admin.relationship_type_alias_removed`
+
+**Deferred from C4 v1 (flagged):**
+- **entity_types vocabulary** — hardcoded enum in
+  `routes/admin-entities.js`. Requires schema + code coordination
+  (the LLM extraction prompt references the enum, and several
+  hardcoded validation paths assume the eight values). Future work.
+- **voice_role vocabulary** — foundational; stays code-managed (CHECK
+  constraint in the schema).
+- **Rename of a canonical type** — every relationship row joins on
+  `relationship_types.name`. Cascade design is a C3-family piece.
+- **Authority generic terms** — already shipped under A4.4 at
+  `/admin/knowledge/authorities/generic-terms`. Linked from the
+  vocabulary nav for discoverability but not re-implemented here.
+
 ### Citations
 
 - Stored in `citations`
