@@ -129,4 +129,45 @@ router.post('/relationship-types/:name/reactivate', express.urlencoded({ extende
   res.redirect(vocabPath('?tab=types&saved=1'));
 }));
 
+router.post('/relationship-type-aliases', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => vocabPath('?tab=aliases&error=' + encodeURIComponent(msg));
+
+  const aliasType = String(req.body.alias_type || '').trim().toLowerCase();
+  const canonicalType = String(req.body.canonical_type || '').trim().toLowerCase();
+  const notes = String(req.body.notes || '').trim() || null;
+
+  if (!aliasType) return res.redirect(errBack('Alias is required.'));
+  if (!canonicalType) return res.redirect(errBack('Canonical type is required.'));
+
+  // Confirm the canonical type exists (active or deprecated — both OK; the
+  // worker still resolves through deprecated canonicals so existing data stays valid)
+  const existing = await db.getAsync('SELECT 1 FROM relationship_types WHERE name = ?', [canonicalType]);
+  if (!existing) return res.redirect(errBack(`Canonical type "${canonicalType}" does not exist.`));
+
+  try {
+    await db.relationshipTypeAliasesAsync.add({
+      canonicalType,
+      aliasType,
+      notes,
+      userId: req.user?.id || null
+    });
+  } catch (err) {
+    // SQLite UNIQUE on alias_type fires here
+    return res.redirect(errBack(err.message || 'Alias already exists.'));
+  }
+
+  audit.log('admin.relationship_type_alias_added', { ...audit.reqContext(req), aliasType, canonicalType });
+  res.redirect(vocabPath('?tab=aliases&saved=1'));
+}));
+
+router.post('/relationship-type-aliases/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => vocabPath('?tab=aliases&error=' + encodeURIComponent(msg));
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.redirect(errBack('Invalid alias id.'));
+
+  await db.relationshipTypeAliasesAsync.delete(id);
+  audit.log('admin.relationship_type_alias_removed', { ...audit.reqContext(req), aliasId: id });
+  res.redirect(vocabPath('?tab=aliases&saved=1'));
+}));
+
 module.exports = router;
