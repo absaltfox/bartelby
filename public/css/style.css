@@ -10422,3 +10422,63 @@ body.modal-open {
   background: rgba(204, 102, 0, 0.08);
   border-left: 3px solid var(--accent);
 }
+
+/* Typeahead picker — used by C1 entity-new, C2 relationship-new, transcript span picker,
+   and authority-detail member dropdown. One canonical block per docs/ui-template-standards.md
+   ("one canonical selector block per component"). */
+.typeahead-picker { position: relative; }
+.typeahead-picker-search {
+  width: 100%;
+  padding: 6px 10px;
+  font-family: var(--ui-font);
+  font-size: 0.92rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.typeahead-picker-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.typeahead-picker-results {
+  position: absolute;
+  left: 0; right: 0; top: 100%;
+  z-index: 20;
+  margin-top: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+.typeahead-picker-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border-light);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.typeahead-picker-result:last-child { border-bottom: 0; }
+.typeahead-picker-result:hover,
+.typeahead-picker-result:focus {
+  background: var(--parchment-alt);
+  outline: 0;
+}
+.typeahead-picker-label { font-weight: 500; }
+.typeahead-picker-sublabel {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+}
+.typeahead-picker-empty {
+  padding: 10px 12px;
+  font-size: 0.88rem;
+  color: var(--ink-muted);
+}
