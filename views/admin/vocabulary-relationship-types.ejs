@@ -13,10 +13,16 @@
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (saved) { %><div class="alert alert-success">Vocabulary updated.</div><% } %>
 
+  <datalist id="rel-categories">
+    <% (distinctCategories || []).forEach(function(cat) { %>
+      <option value="<%= cat %>"></option>
+    <% }) %>
+  </datalist>
+
   <div class="filter-tabs">
-    <a href="/admin/knowledge/vocabularies/relationship-types?tab=types"
+    <a href="/admin/knowledge/vocabularies/relationship-types?tab=types<%= showDeprecated ? '&deprecated=1' : '' %>"
        class="filter-tab <%= tab === 'types' ? 'active' : '' %>">Types (<%= types.length %>)</a>
-    <a href="/admin/knowledge/vocabularies/relationship-types?tab=aliases"
+    <a href="/admin/knowledge/vocabularies/relationship-types?tab=aliases<%= showDeprecated ? '&deprecated=1' : '' %>"
        class="filter-tab <%= tab === 'aliases' ? 'active' : '' %>">Aliases (<%= aliases.length %>)</a>
   </div>
 
@@ -36,63 +42,76 @@
         // Each editable input declares form="rt-edit-{{name}}" and the form
         // element itself sits empty in the first <td>.
       %>
-      <table class="admin-table vocabulary-types-table">
-        <thead>
-          <tr>
-            <th>Name (PK)</th>
-            <th>Label</th>
-            <th>Category</th>
-            <th>Frequency</th>
-            <th>Source type</th>
-            <th>Target type</th>
-            <th>Inverse</th>
-            <th>Usage</th>
-            <th>Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% types.forEach(function(t) {
-            var formId = 'rt-edit-' + t.name;
-          %>
-            <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>">
-              <td>
-                <code><%= t.name %></code>
-                <form id="<%= formId %>" method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/edit"></form>
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>" form="<%= formId %>">
-              </td>
-              <td><input type="text" name="label" value="<%= t.label || '' %>" form="<%= formId %>" /></td>
-              <td><input type="text" name="category" value="<%= t.category || '' %>" form="<%= formId %>" /></td>
-              <td>
-                <select name="frequency" form="<%= formId %>">
-                  <% validFrequencies.forEach(function(f) { %>
-                    <option value="<%= f %>" <%= (t.frequency || 'common') === f ? 'selected' : '' %>><%= f %></option>
-                  <% }) %>
-                </select>
-              </td>
-              <td><input type="text" name="source_type" value="<%= t.source_type || '' %>" form="<%= formId %>" /></td>
-              <td><input type="text" name="target_type" value="<%= t.target_type || '' %>" form="<%= formId %>" /></td>
-              <td><input type="text" name="inverse_name" value="<%= t.inverse_name || '' %>" form="<%= formId %>" /></td>
-              <td><%= t.usage_count %></td>
-              <td><%= t.deprecated_at ? 'deprecated' : 'active' %></td>
-              <td>
-                <button type="submit" form="<%= formId %>" class="btn-primary btn-sm">Save</button>
-                <% if (t.deprecated_at) { %>
-                  <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/reactivate" class="inline-action-form">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-secondary btn-sm">Reactivate</button>
-                  </form>
-                <% } else { %>
-                  <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/deprecate" class="inline-action-form">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-danger btn-sm" title="<%= t.usage_count + ' existing relationships will keep this type.' %>">Deprecate</button>
-                  </form>
-                <% } %>
-              </td>
+      <% if (!types.length) { %>
+        <div class="empty-state">
+          <p>No relationship types are <%= showDeprecated ? 'recorded' : 'active' %> right now.</p>
+          <p class="muted">Add a type below to start populating the vocabulary, or toggle "<%= showDeprecated ? 'Hide' : 'Show' %> deprecated" if you expected to see retired entries.</p>
+        </div>
+      <% } else { %>
+      <div class="workflows-table-wrap">
+        <table class="workflows-table">
+          <thead>
+            <tr>
+              <th scope="col">Name (PK)</th>
+              <th scope="col">Label</th>
+              <th scope="col">Category</th>
+              <th scope="col">Frequency</th>
+              <th scope="col">Source type</th>
+              <th scope="col">Target type</th>
+              <th scope="col">Inverse</th>
+              <th scope="col">Usage</th>
+              <th scope="col">Status</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
-          <% }) %>
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            <% types.forEach(function(t) {
+              var formId = 'rt-edit-' + t.name;
+              var statusClass = t.deprecated_at ? 'status-trace' : 'status-done';
+              var statusLabel = t.deprecated_at ? 'deprecated' : 'active';
+            %>
+              <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>" <%- savedName && savedName === t.name ? 'data-just-saved="1"' : '' %>>
+                <td>
+                  <code><%= t.name %></code>
+                  <form id="<%= formId %>" method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/edit"></form>
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>" form="<%= formId %>">
+                </td>
+                <td><input type="text" name="label" value="<%= t.label || '' %>" form="<%= formId %>" /></td>
+                <td><input type="text" name="category" value="<%= t.category || '' %>" form="<%= formId %>" list="rel-categories" /></td>
+                <td>
+                  <select name="frequency" form="<%= formId %>">
+                    <% validFrequencies.forEach(function(f) { %>
+                      <option value="<%= f %>" <%= (t.frequency || 'common') === f ? 'selected' : '' %>><%= f %></option>
+                    <% }) %>
+                  </select>
+                </td>
+                <td><input type="text" name="source_type" value="<%= t.source_type || '' %>" form="<%= formId %>" /></td>
+                <td><input type="text" name="target_type" value="<%= t.target_type || '' %>" form="<%= formId %>" /></td>
+                <td><input type="text" name="inverse_name" value="<%= t.inverse_name || '' %>" form="<%= formId %>" /></td>
+                <td><%= t.usage_count %></td>
+                <td><span class="status-badge <%= statusClass %>"><%= statusLabel %></span></td>
+                <td class="col-actions">
+                  <div class="table-actions">
+                    <button type="submit" form="<%= formId %>" class="btn-primary btn-sm">Save</button>
+                    <% if (t.deprecated_at) { %>
+                      <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/reactivate" class="inline-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-secondary btn-sm">Reactivate</button>
+                      </form>
+                    <% } else { %>
+                      <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/deprecate" class="inline-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-danger btn-sm" title="<%= t.usage_count + ' existing relationships will keep this type.' %>">Deprecate</button>
+                      </form>
+                    <% } %>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <% } %>
 
       <h3>Add a new relationship type</h3>
       <form method="POST" action="/admin/knowledge/vocabularies/relationship-types" class="edit-form">
@@ -107,7 +126,7 @@
         </div>
         <div class="edit-field">
           <label for="new-category">Category</label>
-          <input type="text" id="new-category" name="category" value="general" />
+          <input type="text" id="new-category" name="category" value="general" list="rel-categories" />
         </div>
         <div class="edit-field">
           <label for="new-frequency">Frequency</label>
@@ -136,33 +155,44 @@
     </section>
   <% } else { %>
     <section class="settings-section">
-      <table class="admin-table vocabulary-aliases-table">
-        <thead>
-          <tr>
-            <th>Alias</th>
-            <th>Canonical type</th>
-            <th>Notes</th>
-            <th>Created</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% aliases.forEach(function(a) { %>
+      <% if (!aliases.length) { %>
+        <div class="empty-state">
+          <p>No relationship-type aliases are recorded.</p>
+          <p class="muted">Aliases let the curator map LLM-emitted forms (e.g., <code>mentions</code>) onto a canonical type (e.g., <code>mentioned_in</code>). Add one below.</p>
+        </div>
+      <% } else { %>
+      <div class="workflows-table-wrap">
+        <table class="workflows-table">
+          <thead>
             <tr>
-              <td><code><%= a.alias_type %></code></td>
-              <td><code><%= a.canonical_type %></code></td>
-              <td><%= a.notes || '' %></td>
-              <td><%= a.created_at %></td>
-              <td>
-                <form method="POST" action="/admin/knowledge/vocabularies/relationship-type-aliases/<%= a.id %>/delete" class="inline-action-form">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <button type="submit" class="btn-danger btn-sm">Delete</button>
-                </form>
-              </td>
+              <th scope="col">Alias</th>
+              <th scope="col">Canonical type</th>
+              <th scope="col">Notes</th>
+              <th scope="col">Created</th>
+              <th scope="col" class="col-actions">Actions</th>
             </tr>
-          <% }) %>
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            <% aliases.forEach(function(a) { %>
+              <tr>
+                <td><code><%= a.alias_type %></code></td>
+                <td><code><%= a.canonical_type %></code></td>
+                <td><%= a.notes || '' %></td>
+                <td><%= a.created_at %></td>
+                <td class="col-actions">
+                  <div class="table-actions">
+                    <form method="POST" action="/admin/knowledge/vocabularies/relationship-type-aliases/<%= a.id %>/delete" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-danger btn-sm">Delete</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <% } %>
 
       <h3>Add an alias</h3>
       <form method="POST" action="/admin/knowledge/vocabularies/relationship-type-aliases" class="edit-form">

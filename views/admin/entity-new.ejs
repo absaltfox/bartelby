@@ -10,15 +10,13 @@
 
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
 
-  <% if (error) { %>
-    <div class="callout callout--error"><%= error %></div>
-  <% } %>
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
   <section class="settings-section">
     <form method="POST" action="/admin/knowledge/entities/new" class="edit-form entity-new-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
 
-      <fieldset class="edit-fieldset">
+      <fieldset>
         <legend>Entity</legend>
         <div class="edit-field">
           <label for="entity_type">Type</label>
@@ -38,10 +36,15 @@
           <textarea id="description" name="description" rows="3"><%= prefill.description || '' %></textarea>
         </div>
         <div class="edit-field">
-          <label for="authority_id">Authority ID (optional)</label>
-          <input type="number" id="authority_id" name="authority_id"
-            value="<%= prefill.authorityId != null ? prefill.authorityId : '' %>"
-            placeholder="link to existing authority" />
+          <label for="tp-authority_id-search">Authority (optional)</label>
+          <%- include('../partials/typeahead-picker', {
+            name: 'authority_id',
+            searchUrl: '/admin/knowledge/authorities/api/search',
+            placeholder: 'Search authorities by canonical name…',
+            selectedId: prefill.authorityId,
+            selectedLabel: prefill.authorityLabel || (prefill.authorityId ? ('Authority #' + prefill.authorityId) : ''),
+            id: 'tp-authority_id'
+          }) %>
         </div>
       </fieldset>
 
@@ -55,4 +58,5 @@
   </section>
 </div>
 
+<script src="/js/typeahead-picker.js"></script>
 <%- include('../partials/footer') %>

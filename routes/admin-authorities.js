@@ -854,6 +854,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
       properties: parseJsonMaybe(authority.properties)
     },
     members: detailState.members,
+    linkedEntities: detailState.members,
     aliases: detailState.aliases,
     citations: detailState.citations,
     relationships: detailState.relationships,

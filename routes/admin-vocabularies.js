@@ -18,11 +18,17 @@ function vocabPath(suffix = '') {
 router.get('/relationship-types', asyncHandler(async (req, res) => {
   const tab = req.query.tab === 'aliases' ? 'aliases' : 'types';
   const showDeprecated = req.query.deprecated === '1';
+  const savedName = typeof req.query.savedName === 'string' ? req.query.savedName : null;
 
   const types = showDeprecated
     ? await db.relationshipTypesAsync.listAll()
     : await db.relationshipTypesAsync.listActive();
   const aliases = await db.relationshipTypeAliasesAsync.list();
+
+  const categoryRows = await db.allAsync(
+    `SELECT DISTINCT category FROM relationship_types WHERE category IS NOT NULL AND category != '' ORDER BY category COLLATE NOCASE ASC`
+  );
+  const distinctCategories = categoryRows.map((r) => r.category);
 
   res.render('admin/vocabulary-relationship-types', {
     pageTitle: 'Relationship Vocabulary',
@@ -32,6 +38,8 @@ router.get('/relationship-types', asyncHandler(async (req, res) => {
     aliases,
     showDeprecated,
     validFrequencies: VALID_FREQUENCIES,
+    distinctCategories,
+    savedName,
     error: req.query.error || null,
     saved: req.query.saved || null
   });
@@ -73,7 +81,7 @@ router.post('/relationship-types', express.urlencoded({ extended: false }), asyn
   if (typeof db.saveDatabase === 'function') await db.saveDatabase();
 
   audit.log('admin.relationship_type_created', { ...audit.reqContext(req), name, category, frequency });
-  res.redirect(vocabPath('?tab=types&saved=1'));
+  res.redirect(vocabPath('?tab=types&saved=1&savedName=' + encodeURIComponent(name)));
 }));
 
 router.post('/relationship-types/:name/edit', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
@@ -102,7 +110,7 @@ router.post('/relationship-types/:name/edit', express.urlencoded({ extended: fal
 
   await db.relationshipTypesAsync.update(name, fields);
   audit.log('admin.relationship_type_updated', { ...audit.reqContext(req), name, fields });
-  res.redirect(vocabPath('?tab=types&saved=1'));
+  res.redirect(vocabPath('?tab=types&saved=1&savedName=' + encodeURIComponent(name)));
 }));
 
 router.post('/relationship-types/:name/deprecate', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
@@ -114,7 +122,7 @@ router.post('/relationship-types/:name/deprecate', express.urlencoded({ extended
 
   await db.relationshipTypesAsync.deprecate(name);
   audit.log('admin.relationship_type_deprecated', { ...audit.reqContext(req), name });
-  res.redirect(vocabPath('?tab=types&saved=1'));
+  res.redirect(vocabPath('?tab=types&saved=1&savedName=' + encodeURIComponent(name)));
 }));
 
 router.post('/relationship-types/:name/reactivate', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
@@ -126,7 +134,7 @@ router.post('/relationship-types/:name/reactivate', express.urlencoded({ extende
 
   await db.relationshipTypesAsync.reactivate(name);
   audit.log('admin.relationship_type_reactivated', { ...audit.reqContext(req), name });
-  res.redirect(vocabPath('?tab=types&saved=1'));
+  res.redirect(vocabPath('?tab=types&saved=1&savedName=' + encodeURIComponent(name)));
 }));
 
 router.post('/relationship-type-aliases', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {

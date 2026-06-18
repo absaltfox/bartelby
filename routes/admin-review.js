@@ -26,6 +26,12 @@ const ENTITY_TYPE_LABELS = Object.freeze({
 });
 const ALLOWED_SORTS = Object.freeze(['rare-type-first', 'newest', 'low-confidence-first']);
 const ALLOWED_SOURCES = Object.freeze(Object.values(EXTRACTION_METHODS));
+const SOURCE_OPTIONS = Object.freeze([
+  { value: EXTRACTION_METHODS.LLM_AUTO, label: 'LLM (single doc)' },
+  { value: EXTRACTION_METHODS.LLM_BATCH, label: 'LLM (batch)' },
+  { value: EXTRACTION_METHODS.MANUAL, label: 'Manual (curator-authored)' },
+  { value: EXTRACTION_METHODS.IMPORTED, label: 'Imported' }
+]);
 const SORT_OPTIONS = Object.freeze([
   { value: 'rare-type-first', label: 'Rare types first (kinship, claims, roles)' },
   { value: 'newest', label: 'Newest first' },
@@ -630,6 +636,7 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
     sortOptions: SORT_OPTIONS,
     source,
     sources: ALLOWED_SOURCES,
+    sourceOptions: SOURCE_OPTIONS,
     statusCounts: normalizedStatusCounts,
     graphReady: !!stores.citations,
     graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',
