@@ -10492,3 +10492,16 @@ body.modal-open {
   justify-content: flex-end;
   margin: 0 0 8px 0;
 }
+
+/* Brief highlight on the row a curator just saved. The class lingers until the
+   next page interaction; curators see a clear visual confirmation of which row
+   their inline-edit Save actually applied to. */
+.workflows-table tr[data-just-saved="1"] td {
+  background: var(--green-bg);
+  transition: background 1.2s ease-out;
+  animation: c4-saved-fade 2.4s ease-out forwards;
+}
+@keyframes c4-saved-fade {
+  0%   { background: var(--green-bg); }
+  100% { background: transparent; }
+}
