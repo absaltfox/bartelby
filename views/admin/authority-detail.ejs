@@ -29,9 +29,21 @@
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
     <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
-    <a href="/admin/knowledge/relationships/new" class="btn-secondary btn-sm">
-      + Add relationship involving this authority's members
-    </a>
+    <details class="toolbar-details" data-authority-relationship-members>
+      <summary class="btn-secondary btn-sm">+ Add relationship from a member</summary>
+      <div class="toolbar-details-menu">
+        <% if (Array.isArray(linkedEntities) && linkedEntities.length) { %>
+          <% linkedEntities.forEach(function(member) { %>
+            <a class="toolbar-details-menu-item"
+               href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>">
+              <%= member.canonical_name %><% if (member.entity_type) { %> <span class="muted">(<%= member.entity_type %>)</span><% } %>
+            </a>
+          <% }) %>
+        <% } else { %>
+          <p class="toolbar-details-menu-empty muted">No member entities linked to this authority yet.</p>
+        <% } %>
+      </div>
+    </details>
   </div>
 
   <section class="authority-workspace" data-authority-workspace>

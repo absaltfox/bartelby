@@ -10505,3 +10505,41 @@ body.modal-open {
   0%   { background: var(--green-bg); }
   100% { background: transparent; }
 }
+
+/* ── Authority-detail member picker dropdown ─────────────────────────── */
+.toolbar-details { position: relative; }
+.toolbar-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.toolbar-details > summary::-webkit-details-marker { display: none; }
+.toolbar-details[open] > summary { background: var(--border-light); }
+.toolbar-details-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 15;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  padding: 4px 0;
+}
+.toolbar-details-menu-item {
+  display: block;
+  padding: 8px 14px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.toolbar-details-menu-item:hover,
+.toolbar-details-menu-item:focus {
+  background: var(--parchment-alt);
+  text-decoration: none;
+}
+.toolbar-details-menu-empty {
+  padding: 8px 14px;
+  font-size: 0.88rem;
+}
