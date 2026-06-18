@@ -10482,3 +10482,13 @@ body.modal-open {
   font-size: 0.88rem;
   color: var(--ink-muted);
 }
+
+/* Sibling action group for admin-only transcript actions (e.g. "+ Create entity for selection").
+   Sits above the transcript body, beneath the .transcript-info metadata strip, so admin actions
+   read as actions rather than another info chip. Per docs/ui-template-standards.md
+   (Workspace Toolbars; Put Actions in Context). */
+.transcript-actions--admin {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 8px 0;
+}
