@@ -1,18 +1,28 @@
 <%
   // Reusable transcript span picker partial.
-  // Expects: prefill { transcriptId, passageStart, passageEnd, verbatim }
-  // (any or all may be null/empty).
+  // Expects: prefill { transcriptId, passageStart, passageEnd, verbatim,
+  //                    transcriptLabel } (any or all may be null/empty).
   //
   // Per docs/development-principles.md "Trust LLM Verbatim, Not LLM Offsets":
   // the verbatim text is authoritative; the offset is a hint used only to
   // disambiguate when the verbatim appears multiple times in the transcript.
+  // The transcript is resolved by typeahead against /admin/knowledge/api/documents/search;
+  // when the document has multiple transcripts the picker writes the best one's id
+  // (client-side, in public/js/typeahead-picker.js's normalizeRow path for documents).
 %>
 <fieldset>
   <legend>Evidence (transcript span)</legend>
   <div class="edit-field">
-    <label for="transcriptId">Transcript ID</label>
-    <input type="number" id="transcriptId" name="transcriptId" required
-      value="<%= prefill.transcriptId || '' %>" placeholder="e.g., 1234" />
+    <label for="tp-transcriptId-search">Transcript (search by document title)</label>
+    <%- include('./typeahead-picker', {
+      name: 'transcriptId',
+      searchUrl: '/admin/knowledge/api/documents/search',
+      placeholder: 'Search by document title…',
+      selectedId: prefill.transcriptId,
+      selectedLabel: prefill.transcriptLabel || (prefill.transcriptId ? ('Transcript #' + prefill.transcriptId) : ''),
+      required: true,
+      id: 'tp-transcriptId'
+    }) %>
   </div>
   <div class="edit-field">
     <label for="verbatim">Verbatim (exact text from transcript)</label>

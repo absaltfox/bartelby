@@ -37,6 +37,18 @@ router.get('/new', asyncHandler(async (req, res) => {
       ? await db.relationshipTypesAsync.getAll()
       : []);
 
+  // Resolve canonical labels for any pre-filled entity ids so the typeahead
+  // picker shows the entity name instead of a bare "Entity #42" placeholder.
+  // The hidden id is what gets POSTed; the label is purely cosmetic.
+  if (prefill.sourceEntityId && db.entitiesAsync && typeof db.entitiesAsync.getById === 'function') {
+    const source = await db.entitiesAsync.getById(prefill.sourceEntityId);
+    if (source) prefill.sourceEntityLabel = source.canonical_name;
+  }
+  if (prefill.targetEntityId && db.entitiesAsync && typeof db.entitiesAsync.getById === 'function') {
+    const target = await db.entitiesAsync.getById(prefill.targetEntityId);
+    if (target) prefill.targetEntityLabel = target.canonical_name;
+  }
+
   res.render('admin/relationship-new', {
     pageTitle: 'Create Relationship',
     prefill,

@@ -1,0 +1,42 @@
+<%
+  // Reusable typeahead picker partial.
+  // Required locals:
+  //   name         — form field name for the hidden id input
+  //   searchUrl    — JSON endpoint, called as `${searchUrl}?q=<query>`; returns { results: [{ id, label, sublabel }] }
+  //   placeholder  — visible placeholder text for the search input
+  // Optional locals:
+  //   id           — html id base; defaults to `tp-${name}`
+  //   selectedId   — pre-selected entity id (renders as a pill instead of empty input)
+  //   selectedLabel — pre-selected entity display label
+  //   required     — boolean; adds `required` to the hidden input
+  //
+  // The shared client module public/js/typeahead-picker.js scans for
+  // [data-typeahead-picker] containers on DOMContentLoaded and wires up
+  // the debounced search + dropdown + selection. Pages that use this
+  // partial must include the script tag at the end of body (or rely on
+  // a parent template that already does so).
+  var pickerId = (typeof id !== 'undefined' && id) ? id : ('tp-' + name);
+  var _selectedId = typeof selectedId !== 'undefined' ? selectedId : null;
+  var _selectedLabel = typeof selectedLabel !== 'undefined' ? selectedLabel : '';
+  var hasSelection = _selectedId != null && _selectedId !== '';
+  var isRequired = typeof required !== 'undefined' ? required : false;
+%>
+<div class="typeahead-picker"
+     data-typeahead-picker
+     data-search-url="<%= searchUrl %>"
+     data-field-name="<%= name %>"
+     data-picker-id="<%= pickerId %>">
+  <input type="hidden" name="<%= name %>" id="<%= pickerId %>"
+    value="<%= hasSelection ? _selectedId : '' %>"
+    <%= isRequired ? 'required' : '' %>
+    data-typeahead-hidden />
+  <input type="search"
+    id="<%= pickerId %>-search"
+    class="typeahead-picker-search"
+    placeholder="<%= placeholder %>"
+    autocomplete="off"
+    spellcheck="false"
+    value="<%= hasSelection ? _selectedLabel : '' %>"
+    data-typeahead-search />
+  <div class="typeahead-picker-results" hidden data-typeahead-results></div>
+</div>

@@ -13,6 +13,12 @@
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (saved) { %><div class="alert alert-success">Vocabulary updated.</div><% } %>
 
+  <datalist id="rel-categories">
+    <% (distinctCategories || []).forEach(function(cat) { %>
+      <option value="<%= cat %>"></option>
+    <% }) %>
+  </datalist>
+
   <div class="filter-tabs">
     <a href="/admin/knowledge/vocabularies/relationship-types?tab=types<%= showDeprecated ? '&deprecated=1' : '' %>"
        class="filter-tab <%= tab === 'types' ? 'active' : '' %>">Types (<%= types.length %>)</a>
@@ -64,14 +70,14 @@
               var statusClass = t.deprecated_at ? 'status-trace' : 'status-done';
               var statusLabel = t.deprecated_at ? 'deprecated' : 'active';
             %>
-              <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>">
+              <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>" <%- savedName && savedName === t.name ? 'data-just-saved="1"' : '' %>>
                 <td>
                   <code><%= t.name %></code>
                   <form id="<%= formId %>" method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/edit"></form>
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>" form="<%= formId %>">
                 </td>
                 <td><input type="text" name="label" value="<%= t.label || '' %>" form="<%= formId %>" /></td>
-                <td><input type="text" name="category" value="<%= t.category || '' %>" form="<%= formId %>" /></td>
+                <td><input type="text" name="category" value="<%= t.category || '' %>" form="<%= formId %>" list="rel-categories" /></td>
                 <td>
                   <select name="frequency" form="<%= formId %>">
                     <% validFrequencies.forEach(function(f) { %>
@@ -120,7 +126,7 @@
         </div>
         <div class="edit-field">
           <label for="new-category">Category</label>
-          <input type="text" id="new-category" name="category" value="general" />
+          <input type="text" id="new-category" name="category" value="general" list="rel-categories" />
         </div>
         <div class="edit-field">
           <label for="new-frequency">Frequency</label>

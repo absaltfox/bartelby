@@ -233,6 +233,15 @@ Curators manage the controlled `relationship_types` vocabulary and its
 - Each row exposes inline editing of `label`, `category`, `frequency`
   (`rare` / `medium` / `common` — drives the U1.3 rare-type-first
   sort), `source_type`, `target_type`, and `inverse_name`.
+- The category input is an `<input list="rel-categories">` against a
+  `<datalist>` of distinct seeded categories (document / general /
+  spatial / organizational / interpretive / familial / event /
+  artifact / temporal). The datalist is a soft hint, so a curator
+  who genuinely wants a new family can type it directly; existing
+  families autocomplete to prevent typo-fragmentation.
+- POST handlers redirect with `&savedName=<name>` and the next render
+  highlights the matching row with a 2.4s fade so the curator sees
+  exactly which row's edit was persisted.
 - The `name` (PK) is intentionally **not editable in v1**: every
   relationship row joins on this column. Renaming is the
   deprecate-and-recreate pattern. C3-family follow-up may revisit.
@@ -357,6 +366,16 @@ are not merely reviewers of LLM output; they are first-class authors.
   entity row AND a manual citation pointing at the resolved transcript
   span. Failure of either insert rolls back both. On success, the
   curator lands on the new entity-detail page.
+- The authority and transcript inputs use the shared
+  `views/partials/typeahead-picker.ejs` partial against the existing
+  `authorities/api/search` and `api/documents/search` endpoints.
+  Curators search by canonical name rather than ID.
+- The document reading view's "+ Create entity for selection" button
+  captures `window.getSelection()` via
+  `public/js/document-selection-prefill.js` and routes to
+  `/admin/knowledge/entities/new` with `verbatim` and `passageStart`
+  pre-populated. A `<noscript>` fallback link with just
+  `transcriptId` remains for JS-off users.
 
 #### Author a relationship from scratch (C2)
 
@@ -378,6 +397,11 @@ are not merely reviewers of LLM output; they are first-class authors.
   relationship row AND a manual citation pointing at the resolved
   transcript span. Validates that both source and target entities
   exist before insert.
+- The source / target entity inputs use the shared typeahead picker
+  against `entities/api/search`. Authority-detail's "+ Add relationship
+  from a member" dropdown (a native `<details>` disclosure) deep-links
+  each member as `sourceEntityId`, replacing the earlier single link
+  that landed cold.
 
 #### Shared verbatim resolver (`utils/citation-evidence.js`)
 
