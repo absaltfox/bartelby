@@ -24,6 +24,11 @@ router.get('/relationship-types', asyncHandler(async (req, res) => {
     : await db.relationshipTypesAsync.listActive();
   const aliases = await db.relationshipTypeAliasesAsync.list();
 
+  const categoryRows = await db.allAsync(
+    `SELECT DISTINCT category FROM relationship_types WHERE category IS NOT NULL AND category != '' ORDER BY category COLLATE NOCASE ASC`
+  );
+  const distinctCategories = categoryRows.map((r) => r.category);
+
   res.render('admin/vocabulary-relationship-types', {
     pageTitle: 'Relationship Vocabulary',
     activeKnowledgePage: 'vocabularies',
@@ -32,6 +37,7 @@ router.get('/relationship-types', asyncHandler(async (req, res) => {
     aliases,
     showDeprecated,
     validFrequencies: VALID_FREQUENCIES,
+    distinctCategories,
     error: req.query.error || null,
     saved: req.query.saved || null
   });
