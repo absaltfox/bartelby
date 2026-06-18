@@ -19,14 +19,28 @@
       <fieldset>
         <legend>Relationship</legend>
         <div class="edit-field">
-          <label for="source_entity_id">Source entity ID</label>
-          <input type="number" id="source_entity_id" name="source_entity_id" required
-            value="<%= prefill.sourceEntityId || '' %>" />
+          <label for="tp-source_entity_id-search">Source entity</label>
+          <%- include('../partials/typeahead-picker', {
+            name: 'source_entity_id',
+            searchUrl: '/admin/knowledge/entities/api/search',
+            placeholder: 'Search entities by canonical name…',
+            selectedId: prefill.sourceEntityId,
+            selectedLabel: prefill.sourceEntityLabel || (prefill.sourceEntityId ? ('Entity #' + prefill.sourceEntityId) : ''),
+            required: true,
+            id: 'tp-source_entity_id'
+          }) %>
         </div>
         <div class="edit-field">
-          <label for="target_entity_id">Target entity ID</label>
-          <input type="number" id="target_entity_id" name="target_entity_id" required
-            value="<%= prefill.targetEntityId || '' %>" />
+          <label for="tp-target_entity_id-search">Target entity</label>
+          <%- include('../partials/typeahead-picker', {
+            name: 'target_entity_id',
+            searchUrl: '/admin/knowledge/entities/api/search',
+            placeholder: 'Search entities by canonical name…',
+            selectedId: prefill.targetEntityId,
+            selectedLabel: prefill.targetEntityLabel || (prefill.targetEntityId ? ('Entity #' + prefill.targetEntityId) : ''),
+            required: true,
+            id: 'tp-target_entity_id'
+          }) %>
         </div>
         <div class="edit-field">
           <label for="relationship_type">Relationship type</label>
@@ -77,4 +91,5 @@
   </section>
 </div>
 
+<script src="/js/typeahead-picker.js"></script>
 <%- include('../partials/footer') %>

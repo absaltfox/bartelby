@@ -54,3 +54,17 @@ describe('Typeahead picker markup — C1', () => {
     expect(res.text).toMatch(/data-typeahead-picker[^>]*data-search-url="\/admin\/knowledge\/api\/documents\/search"[^>]*data-field-name="transcriptId"/);
   });
 });
+
+describe('Typeahead picker markup — C2', () => {
+  it('relationship-new renders source/target entity typeaheads pointing at entities/api/search', async () => {
+    const res = await adminAgent.get('/admin/knowledge/relationships/new').expect(200);
+    expect(res.text).toMatch(/data-typeahead-picker[^>]*data-search-url="\/admin\/knowledge\/entities\/api\/search"[^>]*data-field-name="source_entity_id"/);
+    expect(res.text).toMatch(/data-typeahead-picker[^>]*data-search-url="\/admin\/knowledge\/entities\/api\/search"[^>]*data-field-name="target_entity_id"/);
+    expect(res.text).toContain('<script src="/js/typeahead-picker.js"></script>');
+  });
+
+  it('relationship-new transcript picker points at api/documents/search', async () => {
+    const res = await adminAgent.get('/admin/knowledge/relationships/new').expect(200);
+    expect(res.text).toMatch(/data-typeahead-picker[^>]*data-search-url="\/admin\/knowledge\/api\/documents\/search"[^>]*data-field-name="transcriptId"/);
+  });
+});
