@@ -1,0 +1,190 @@
+<%- include('../partials/header', { pageTitle: 'Relationship Vocabulary', query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1>Relationship Vocabulary</h1>
+    <p class="subtitle">Curator-managed controlled vocabulary for relationship types and their aliases.</p>
+  </div>
+
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
+
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+  <% if (saved) { %><div class="alert alert-success">Vocabulary updated.</div><% } %>
+
+  <div class="filter-tabs">
+    <a href="/admin/knowledge/vocabularies/relationship-types?tab=types"
+       class="filter-tab <%= tab === 'types' ? 'active' : '' %>">Types (<%= types.length %>)</a>
+    <a href="/admin/knowledge/vocabularies/relationship-types?tab=aliases"
+       class="filter-tab <%= tab === 'aliases' ? 'active' : '' %>">Aliases (<%= aliases.length %>)</a>
+  </div>
+
+  <% if (tab === 'types') { %>
+    <section class="settings-section">
+      <div class="knowledge-toolbar knowledge-toolbar--spaced">
+        <a href="/admin/knowledge/vocabularies/relationship-types?tab=types&deprecated=<%= showDeprecated ? '0' : '1' %>"
+           class="btn-secondary btn-sm">
+          <%= showDeprecated ? 'Hide deprecated' : 'Show deprecated' %>
+        </a>
+      </div>
+
+      <%
+        // Per-row edit form uses the HTML5 form="..." attribute so a single
+        // <form> element doesn't have to span <td> boundaries (which is
+        // invalid HTML and produces browser-inconsistent submission).
+        // Each editable input declares form="rt-edit-{{name}}" and the form
+        // element itself sits empty in the first <td>.
+      %>
+      <table class="admin-table vocabulary-types-table">
+        <thead>
+          <tr>
+            <th>Name (PK)</th>
+            <th>Label</th>
+            <th>Category</th>
+            <th>Frequency</th>
+            <th>Source type</th>
+            <th>Target type</th>
+            <th>Inverse</th>
+            <th>Usage</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% types.forEach(function(t) {
+            var formId = 'rt-edit-' + t.name;
+          %>
+            <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>">
+              <td>
+                <code><%= t.name %></code>
+                <form id="<%= formId %>" method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/edit"></form>
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>" form="<%= formId %>">
+              </td>
+              <td><input type="text" name="label" value="<%= t.label || '' %>" form="<%= formId %>" /></td>
+              <td><input type="text" name="category" value="<%= t.category || '' %>" form="<%= formId %>" /></td>
+              <td>
+                <select name="frequency" form="<%= formId %>">
+                  <% validFrequencies.forEach(function(f) { %>
+                    <option value="<%= f %>" <%= (t.frequency || 'common') === f ? 'selected' : '' %>><%= f %></option>
+                  <% }) %>
+                </select>
+              </td>
+              <td><input type="text" name="source_type" value="<%= t.source_type || '' %>" form="<%= formId %>" /></td>
+              <td><input type="text" name="target_type" value="<%= t.target_type || '' %>" form="<%= formId %>" /></td>
+              <td><input type="text" name="inverse_name" value="<%= t.inverse_name || '' %>" form="<%= formId %>" /></td>
+              <td><%= t.usage_count %></td>
+              <td><%= t.deprecated_at ? 'deprecated' : 'active' %></td>
+              <td>
+                <button type="submit" form="<%= formId %>" class="btn-primary btn-sm">Save</button>
+                <% if (t.deprecated_at) { %>
+                  <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/reactivate" class="inline-action-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-secondary btn-sm">Reactivate</button>
+                  </form>
+                <% } else { %>
+                  <form method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/deprecate" class="inline-action-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-danger btn-sm" title="<%= t.usage_count + ' existing relationships will keep this type.' %>">Deprecate</button>
+                  </form>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+
+      <h3>Add a new relationship type</h3>
+      <form method="POST" action="/admin/knowledge/vocabularies/relationship-types" class="edit-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="edit-field">
+          <label for="new-name">Name (snake_case PK)</label>
+          <input type="text" id="new-name" name="name" required pattern="[a-z][a-z0-9_]*" placeholder="e.g., apprenticed_to" />
+        </div>
+        <div class="edit-field">
+          <label for="new-label">Label</label>
+          <input type="text" id="new-label" name="label" required placeholder="e.g., Apprenticed To" />
+        </div>
+        <div class="edit-field">
+          <label for="new-category">Category</label>
+          <input type="text" id="new-category" name="category" value="general" />
+        </div>
+        <div class="edit-field">
+          <label for="new-frequency">Frequency</label>
+          <select id="new-frequency" name="frequency">
+            <% validFrequencies.forEach(function(f) { %>
+              <option value="<%= f %>" <%= f === 'common' ? 'selected' : '' %>><%= f %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label for="new-source-type">Source type (optional)</label>
+          <input type="text" id="new-source-type" name="source_type" placeholder="e.g., person" />
+        </div>
+        <div class="edit-field">
+          <label for="new-target-type">Target type (optional)</label>
+          <input type="text" id="new-target-type" name="target_type" placeholder="e.g., organization" />
+        </div>
+        <div class="edit-field">
+          <label for="new-inverse">Inverse name (optional)</label>
+          <input type="text" id="new-inverse" name="inverse_name" placeholder="e.g., apprentice_of" />
+        </div>
+        <div class="edit-actions">
+          <button type="submit" class="btn-primary">Add type</button>
+        </div>
+      </form>
+    </section>
+  <% } else { %>
+    <section class="settings-section">
+      <table class="admin-table vocabulary-aliases-table">
+        <thead>
+          <tr>
+            <th>Alias</th>
+            <th>Canonical type</th>
+            <th>Notes</th>
+            <th>Created</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% aliases.forEach(function(a) { %>
+            <tr>
+              <td><code><%= a.alias_type %></code></td>
+              <td><code><%= a.canonical_type %></code></td>
+              <td><%= a.notes || '' %></td>
+              <td><%= a.created_at %></td>
+              <td>
+                <form method="POST" action="/admin/knowledge/vocabularies/relationship-type-aliases/<%= a.id %>/delete" class="inline-action-form">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="btn-danger btn-sm">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+
+      <h3>Add an alias</h3>
+      <form method="POST" action="/admin/knowledge/vocabularies/relationship-type-aliases" class="edit-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="edit-field">
+          <label for="alias-type">Alias (the form the LLM may emit)</label>
+          <input type="text" id="alias-type" name="alias_type" required placeholder="e.g., mentions" />
+        </div>
+        <div class="edit-field">
+          <label for="alias-canonical">Canonical type</label>
+          <input type="text" id="alias-canonical" name="canonical_type" required placeholder="e.g., mentioned_in" />
+        </div>
+        <div class="edit-field">
+          <label for="alias-notes">Notes (optional)</label>
+          <input type="text" id="alias-notes" name="notes" />
+        </div>
+        <div class="edit-actions">
+          <button type="submit" class="btn-primary">Add alias</button>
+        </div>
+      </form>
+    </section>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>
