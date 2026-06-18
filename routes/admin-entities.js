@@ -322,6 +322,16 @@ router.get('/new', asyncHandler(async (req, res) => {
     passageEnd: req.query.passageEnd ? parseInt(req.query.passageEnd, 10) : null,
     verbatim: typeof req.query.verbatim === 'string' ? req.query.verbatim : ''
   };
+
+  // Resolve canonical label for any pre-filled authority id so the typeahead
+  // picker shows the authority name instead of a bare "Authority #N" placeholder.
+  // The hidden id is what gets POSTed; the label is purely cosmetic.
+  const authoritiesStore = db.authoritiesAsync || db.authorities || null;
+  if (prefill.authorityId && authoritiesStore && typeof authoritiesStore.getById === 'function') {
+    const authority = await authoritiesStore.getById(prefill.authorityId);
+    if (authority) prefill.authorityLabel = authority.canonical_name;
+  }
+
   res.render('admin/entity-new', {
     pageTitle: 'Create Entity',
     entityTypes: ENTITY_TYPES,
