@@ -31,9 +31,11 @@ router.get('/new', asyncHandler(async (req, res) => {
     verbatim: typeof req.query.verbatim === 'string' ? req.query.verbatim : ''
   };
 
-  const relTypes = db.relationshipTypesAsync && typeof db.relationshipTypesAsync.getAll === 'function'
-    ? await db.relationshipTypesAsync.getAll()
-    : [];
+  const relTypes = db.relationshipTypesAsync && typeof db.relationshipTypesAsync.listActive === 'function'
+    ? await db.relationshipTypesAsync.listActive()
+    : (db.relationshipTypesAsync && typeof db.relationshipTypesAsync.getAll === 'function'
+      ? await db.relationshipTypesAsync.getAll()
+      : []);
 
   res.render('admin/relationship-new', {
     pageTitle: 'Create Relationship',

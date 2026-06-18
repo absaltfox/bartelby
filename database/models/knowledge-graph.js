@@ -2081,6 +2081,67 @@ const relationshipTypes = {
       target_type || null,
       category || 'general'
     ]);
+  },
+
+  async listAll() {
+    return await allAsync(`
+      SELECT *,
+        (SELECT COUNT(*) FROM relationships r WHERE r.relationship_type = rt.name) AS usage_count
+      FROM relationship_types rt
+      ORDER BY rt.category, rt.label
+    `);
+  },
+
+  async listActive() {
+    return await allAsync(`
+      SELECT *,
+        (SELECT COUNT(*) FROM relationships r WHERE r.relationship_type = rt.name) AS usage_count
+      FROM relationship_types rt
+      WHERE rt.deprecated_at IS NULL
+      ORDER BY rt.category, rt.label
+    `);
+  },
+
+  async getUsageCount(name) {
+    const row = await getAsync(
+      `SELECT COUNT(*) AS n FROM relationships WHERE relationship_type = ?`,
+      [String(name)]
+    );
+    return row ? Number(row.n) : 0;
+  },
+
+  async update(name, fields) {
+    // Per C4 v1: name (PK) is immutable. We deliberately strip it from the
+    // payload so deprecation is the only mechanism for retiring a type.
+    const updatable = ['label', 'inverse_name', 'source_type', 'target_type', 'category', 'frequency'];
+    const sets = [];
+    const params = [];
+    for (const key of updatable) {
+      if (fields[key] !== undefined) {
+        sets.push(`${key} = ?`);
+        params.push(fields[key] === '' ? null : fields[key]);
+      }
+    }
+    if (!sets.length) return;
+    params.push(String(name));
+    await runAsync(`UPDATE relationship_types SET ${sets.join(', ')} WHERE name = ?`, params);
+    await saveDatabase();
+  },
+
+  async deprecate(name) {
+    await runAsync(
+      `UPDATE relationship_types SET deprecated_at = CURRENT_TIMESTAMP WHERE name = ?`,
+      [String(name)]
+    );
+    await saveDatabase();
+  },
+
+  async reactivate(name) {
+    await runAsync(
+      `UPDATE relationship_types SET deprecated_at = NULL WHERE name = ?`,
+      [String(name)]
+    );
+    await saveDatabase();
   }
 };
 
