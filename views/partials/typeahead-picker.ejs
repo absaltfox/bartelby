@@ -15,8 +15,11 @@
   // the debounced search + dropdown + selection. Pages that use this
   // partial must include the script tag at the end of body (or rely on
   // a parent template that already does so).
-  var pickerId = id || ('tp-' + name);
-  var hasSelection = selectedId != null && selectedId !== '';
+  var pickerId = (typeof id !== 'undefined' && id) ? id : ('tp-' + name);
+  var _selectedId = typeof selectedId !== 'undefined' ? selectedId : null;
+  var _selectedLabel = typeof selectedLabel !== 'undefined' ? selectedLabel : '';
+  var hasSelection = _selectedId != null && _selectedId !== '';
+  var isRequired = typeof required !== 'undefined' ? required : false;
 %>
 <div class="typeahead-picker"
      data-typeahead-picker
@@ -24,8 +27,8 @@
      data-field-name="<%= name %>"
      data-picker-id="<%= pickerId %>">
   <input type="hidden" name="<%= name %>" id="<%= pickerId %>"
-    value="<%= hasSelection ? selectedId : '' %>"
-    <%= required ? 'required' : '' %>
+    value="<%= hasSelection ? _selectedId : '' %>"
+    <%= isRequired ? 'required' : '' %>
     data-typeahead-hidden />
   <input type="search"
     id="<%= pickerId %>-search"
@@ -33,7 +36,7 @@
     placeholder="<%= placeholder %>"
     autocomplete="off"
     spellcheck="false"
-    value="<%= hasSelection ? (selectedLabel || '') : '' %>"
+    value="<%= hasSelection ? _selectedLabel : '' %>"
     data-typeahead-search />
   <div class="typeahead-picker-results" hidden data-typeahead-results></div>
 </div>
