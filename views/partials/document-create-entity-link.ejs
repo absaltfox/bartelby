@@ -1,16 +1,32 @@
 <%
   // Document-reading-surface entry point for curator-authored entity creation.
   // Expects: selectedTranscript (with id), isAdmin (from res.locals).
-  // Rendered only for admins; deep-links to the standalone entity-creation
-  // form pre-populated with the transcript id.
+  // Rendered only for admins.
   //
-  // Curator-side text selection that prefills verbatim + passageStart from
-  // window.getSelection() is a future enhancement — see plan Task 6 note.
+  // Primary affordance is a button — when clicked, public/js/document-selection-prefill.js
+  // reads window.getSelection() and routes to /admin/knowledge/entities/new with
+  // verbatim + passageStart in the query string. A <noscript>/fallback link with just
+  // the transcriptId is rendered alongside for JS-off users.
 %>
 <% if (typeof isAdmin !== 'undefined' && isAdmin && typeof selectedTranscript !== 'undefined' && selectedTranscript && selectedTranscript.id) { %>
+  <button type="button"
+    class="btn-action btn-sm document-create-entity-link"
+    data-document-create-entity
+    data-transcript-id="<%= selectedTranscript.id %>"
+    title="Select text above, then click to open the entity form with verbatim pre-filled">
+    + Create entity for selection
+  </button>
+  <noscript>
+    <a href="/admin/knowledge/entities/new?transcriptId=<%= selectedTranscript.id %>"
+       class="btn-action btn-sm document-create-entity-link"
+       data-document-create-entity-fallback>
+      + Create entity for this transcript
+    </a>
+  </noscript>
   <a href="/admin/knowledge/entities/new?transcriptId=<%= selectedTranscript.id %>"
-     class="btn-action btn-sm document-create-entity-link"
-     title="Open the admin form for a manual entity citation against this transcript">
+     class="btn-action btn-sm document-create-entity-link is-hidden-when-js"
+     data-document-create-entity-fallback
+     hidden>
     + Create entity for this transcript
   </a>
 <% } %>
