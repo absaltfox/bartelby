@@ -8987,6 +8987,13 @@ main { flex: 1; padding: 32px 0; }
 
 .workflows-table .job-row:hover td { background: var(--parchment-alt); }
 
+/* Dim rows representing deprecated controlled-vocabulary entries
+   so curators can scan a vocabulary table and immediately distinguish
+   active rows from retired ones. Used by C4 vocabulary surface
+   (views/admin/vocabulary-relationship-types.ejs). */
+.workflows-table tr.is-deprecated td { color: var(--ink-muted); }
+.workflows-table tr.is-deprecated code { opacity: 0.65; }
+
 .status-badge {
   display: inline-block;
   padding: 2px 10px;

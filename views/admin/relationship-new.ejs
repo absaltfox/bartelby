@@ -10,15 +10,13 @@
 
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
 
-  <% if (error) { %>
-    <div class="callout callout--error"><%= error %></div>
-  <% } %>
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
   <section class="settings-section">
     <form method="POST" action="/admin/knowledge/relationships/new" class="edit-form relationship-new-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
 
-      <fieldset class="edit-fieldset">
+      <fieldset>
         <legend>Relationship</legend>
         <div class="edit-field">
           <label for="source_entity_id">Source entity ID</label>

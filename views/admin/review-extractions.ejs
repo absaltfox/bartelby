@@ -86,8 +86,8 @@
         <label for="review-source" class="review-filter-label">Source</label>
         <select name="source" id="review-source" class="review-filter-select" data-submit-on-change="1" aria-label="Filter review queue by extraction source">
           <option value="" <%= !source ? 'selected' : '' %>>All sources</option>
-          <% (sources || []).forEach(function(value) { %>
-            <option value="<%= value %>" <%= value === source ? 'selected' : '' %>><%= value %></option>
+          <% (sourceOptions || []).forEach(function(option) { %>
+            <option value="<%= option.value %>" <%= option.value === source ? 'selected' : '' %>><%= option.label %></option>
           <% }) %>
         </select>
         <noscript><button type="submit" class="btn-secondary btn-sm">Apply</button></noscript>
