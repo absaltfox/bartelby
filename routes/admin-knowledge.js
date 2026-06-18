@@ -9,7 +9,8 @@ const {
   extractionJobsAsync,
   authoritiesAsync,
   authorityLinkSuggestionsAsync,
-  authorityResolutionJobsAsync
+  authorityResolutionJobsAsync,
+  allAsync
 } = require('../database/db');
 const { queueDocumentRerun, queueCollectionRerun } = require('../utils/knowledge-rerun');
 const { asyncHandler } = require('../utils/async-handler');
@@ -159,18 +160,37 @@ router.get('/api/documents/search', asyncHandler(async (req, res) => {
   }
 
   const { rows } = await documentsAsync.searchAdvanced(30, 0, { isAdmin: true }, { query });
-  const results = (rows || [])
-    .filter((doc) => Number(doc.transcript_count || 0) > 0)
-    .slice(0, 12)
-    .map((doc) => ({
-      id: doc.id,
-      title: doc.title || `Document #${doc.id}`,
-      transcriptCount: Number(doc.transcript_count || 0),
-      dateCreated: doc.date_created || '',
-      snippet: String(doc.snippet || '').replace(/<mark>|<\/mark>/g, ''),
-      author: doc.metadata && doc.metadata.author ? String(doc.metadata.author) : '',
-      location: doc.metadata && doc.metadata.location ? String(doc.metadata.location) : ''
-    }));
+  const matchingDocs = (rows || []).filter((doc) => Number(doc.transcript_count || 0) > 0).slice(0, 12);
+  const docIds = matchingDocs.map((doc) => doc.id);
+  const transcriptRows = docIds.length
+    ? await allAsync(
+        `SELECT id, document_id, version, is_best, transcriber
+         FROM transcripts WHERE document_id IN (${docIds.map(() => '?').join(',')})
+         ORDER BY document_id, is_best DESC, version DESC`,
+        docIds
+      )
+    : [];
+  const transcriptsByDoc = transcriptRows.reduce((acc, t) => {
+    if (!acc[t.document_id]) acc[t.document_id] = [];
+    acc[t.document_id].push({
+      id: t.id,
+      version: t.version,
+      is_best: t.is_best === 1 || t.is_best === true ? 1 : 0,
+      transcriber: t.transcriber || ''
+    });
+    return acc;
+  }, {});
+
+  const results = matchingDocs.map((doc) => ({
+    id: doc.id,
+    title: doc.title || `Document #${doc.id}`,
+    transcriptCount: Number(doc.transcript_count || 0),
+    dateCreated: doc.date_created || '',
+    snippet: String(doc.snippet || '').replace(/<mark>|<\/mark>/g, ''),
+    author: doc.metadata && doc.metadata.author ? String(doc.metadata.author) : '',
+    location: doc.metadata && doc.metadata.location ? String(doc.metadata.location) : '',
+    transcripts: transcriptsByDoc[doc.id] || []
+  }));
 
   return res.json({ results });
 }));
