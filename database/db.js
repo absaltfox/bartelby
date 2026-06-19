@@ -1469,6 +1469,7 @@ const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/setti
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { sentimentAsync, normalizePhrase: normalizeSentimentPhrase } = require('./models/sentiment')(db, runAsync, getAsync, allAsync, saveDatabase);
 const relationshipTypeAliasesAsync = require('./models/relationship-type-aliases')(db, runAsync, getAsync, allAsync, saveDatabase);
+const authorityChronologyAsync = require('./models/authority-chronology')(db, runAsync, getAsync, allAsync, saveDatabase);
 const sentimentPhraseSuppressionsAsync = require('./models/sentiment-phrase-suppressions')(db, runAsync, getAsync, allAsync, saveDatabase);
 
 function getDb() { return db; }
@@ -1550,5 +1551,6 @@ module.exports = {
   graphAccess,
   graphAccessAsync: graphAccess,
   relationshipTypeAliasesAsync,
+  authorityChronologyAsync,
   sentimentPhraseSuppressionsAsync
 };

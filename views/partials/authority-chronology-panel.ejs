@@ -1,0 +1,58 @@
+<section class="authority-chronology"
+         data-authority-chronology-panel
+         data-authority-id="<%= authorityId %>"
+         data-next-cursor="<%= nextCursor || '' %>"
+         data-active-signal-types="<%= (activeSignalTypes || []).join(',') %>"
+         data-since="<%= filters.since || '' %>"
+         data-until="<%= filters.until || '' %>"
+         data-collection-id="<%= filters.collectionId || '' %>">
+  <form method="GET" class="authority-chronology-filters" action="/admin/knowledge/authorities/<%= authorityId %>/chronology">
+    <div class="edit-field">
+      <label for="chrono-since">Since (YYYY-MM-DD)</label>
+      <input type="text" id="chrono-since" name="since" value="<%= filters.since %>" pattern="\d{4}-\d{2}-\d{2}" placeholder="e.g., 1870-01-01" />
+    </div>
+    <div class="edit-field">
+      <label for="chrono-until">Until (YYYY-MM-DD)</label>
+      <input type="text" id="chrono-until" name="until" value="<%= filters.until %>" pattern="\d{4}-\d{2}-\d{2}" placeholder="e.g., 1880-12-31" />
+    </div>
+    <div class="edit-field">
+      <label for="chrono-collection">Collection</label>
+      <select id="chrono-collection" name="collectionId">
+        <option value="">All collections</option>
+        <% (collections || []).forEach(function(c) { %>
+          <option value="<%= c.id %>" <%= String(filters.collectionId || '') === String(c.id) ? 'selected' : '' %>><%= c.name %></option>
+        <% }) %>
+      </select>
+    </div>
+    <fieldset class="authority-chronology-signaltypes">
+      <legend>Signals</legend>
+      <% signalTypes.forEach(function(st) { %>
+        <label class="authority-chronology-signaltype">
+          <input type="checkbox" name="signalTypes" value="<%= st %>" <%= (activeSignalTypes || []).includes(st) ? 'checked' : '' %> />
+          <%= st %>
+        </label>
+      <% }) %>
+    </fieldset>
+    <div class="edit-actions">
+      <button type="submit" class="btn-primary btn-sm">Apply filters</button>
+    </div>
+  </form>
+
+  <div class="authority-chronology-stream" data-authority-chronology-stream>
+    <% if (!buckets.length) { %>
+      <div class="empty-state">
+        <p>No chronology events match the current filters.</p>
+        <p class="muted">Try widening the date range, switching to "All collections," or selecting more signal types.</p>
+      </div>
+    <% } else { %>
+      <% buckets.forEach(function(bucket) { %>
+        <h2 class="authority-chronology-year" data-chrono-year="<%= bucket.year %>"><%= bucket.year %></h2>
+        <% bucket.events.forEach(function(event) { %>
+          <%- include('./authority-chronology-event', { event }) %>
+        <% }) %>
+      <% }) %>
+    <% } %>
+  </div>
+
+  <div class="authority-chronology-sentinel" data-authority-chronology-sentinel hidden>Loading more…</div>
+</section>

@@ -714,6 +714,53 @@ the preferences column enables per-curator workflow optimization (U2).
 - Authorities can also be merged when two authority records represent the same
   subject
 
+### Authority chronology view (U6)
+
+`/admin/knowledge/authorities/:id/chronology` renders a merged
+timeline of every signal type attached to the authority's member
+entities. Four signal types contribute:
+
+| kind | source | sortDate |
+| --- | --- | --- |
+| `citation` | `citations` where `entity_id` ∈ members | `documents.date_created` (falls back to `citations.created_at`) |
+| `relationship` | `relationships` where source or target ∈ members | `relationships.start_date` (falls back to `created_at`) |
+| `sentiment` | `sentiment_annotations` where `target_entity_id` ∈ members and `target_kind='entity'` | `emotion_about_earliest` (falls back to `extracted_at`) |
+| `date` | `date_expressions` where `entity_id` ∈ members | `earliest` |
+
+Each signal is fetched with its own narrow query (bounded by
+member-id IN-clause + date-range filter); merge + sort + cursor-slice
+happens in JS. Cursor encodes `(sortDate, kind, id)` as base64 JSON
+so pagination is safe under concurrent inserts.
+
+Server-rendered first page (~50 events) groups events into year
+buckets with `position: sticky` headers. Subsequent pages append via
+`public/js/authority-chronology.js` (IntersectionObserver on a
+sentinel; falls back to scroll listener).
+
+Filters in v1: date range (`since` / `until`), collection,
+signal-type multiselect. Finer per-signal filters (relationship type,
+voice role, polarity) deferred until curators report they're missed
+per U6.3.
+
+**Per-signal-type query cap.** Each of the four per-signal queries
+applies a hard `LIMIT 2000` safety rail. Authorities with extreme
+event density (>2,000 events of any single signal type) will have
+later events silently truncated in v1. The cap is generous for the
+seeded corpus's largest authority (Victoria, ~125 members); revisit
+when an authority reports a missing event past the cutoff.
+
+**Deferred from U6 v1:**
+- Visualization (timeline chart, graph view) — Phase 4 research surfaces.
+- Cross-authority comparison.
+- DOM virtualization for >1,000-event authorities — accepted browser-side scroll lag in v1.
+- Export to CSV / JSON / TEI.
+- Server-side cursor optimization — the model still loads the
+  per-signal capped batches in memory before applying the cursor
+  slice. For authorities approaching the 2,000-per-signal cap, every
+  page request re-issues all four queries. Migrating to a SQL-side
+  cursor (e.g., `WHERE sort_date > ?` per signal) is the natural
+  v2 optimization.
+
 ### Review surface (admin)
 
 The `/admin/knowledge/authorities/suggestions` page renders 25 suggestions per

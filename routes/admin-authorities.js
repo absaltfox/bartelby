@@ -833,6 +833,99 @@ router.get('/backfill', asyncHandler(async (req, res) => {
   });
 }));
 
+// GET /admin/knowledge/authorities/:id/chronology.json — JSON endpoint for the
+// chronology infinite-scroll loader. Accepts optional query params:
+//   ?since= / ?until= (YYYY-MM-DD), ?collectionId=, ?signalTypes= (comma-sep),
+//   ?cursor= (base64 opaque token), ?limit= (clamped to 1–100, default 50).
+// Returns { events: [...], nextCursor: <string|null> }.
+// MUST be registered BEFORE router.get('/:id') so the literal '.json' suffix
+// wins over the /:id wildcard.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.3 + U6.4.
+router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
+  const authorityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(authorityId)) return res.status(400).json({ error: 'Invalid authority id.' });
+
+  const opts = {
+    since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : null,
+    until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : null,
+    collectionId: (function() {
+      const parsed = parseInt(req.query.collectionId, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    })(),
+    signalTypes: typeof req.query.signalTypes === 'string'
+      ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
+      : null,
+    cursor: typeof req.query.cursor === 'string' ? req.query.cursor : null,
+    limit: Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50))
+  };
+
+  const result = await db.authorityChronologyAsync.loadEvents(authorityId, opts);
+  res.json(result);
+}));
+
+// GET /admin/knowledge/authorities/:id/chronology — server-rendered first page of
+// the merged timeline (citations, relationships, sentiment, date events).
+// Registered BEFORE router.get('/:id') so the literal /chronology suffix wins.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.1–U6.4.
+router.get('/:id/chronology', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const authorityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(authorityId)) {
+    return res.status(404).render('error', { message: 'Authority not found', error: {} });
+  }
+  const authority = stores.authorities ? await stores.authorities.getById(authorityId) : null;
+  if (!authority) return res.status(404).render('error', { message: 'Authority not found', error: {} });
+
+  const filters = {
+    since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : '',
+    until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : '',
+    collectionId: (function() {
+      const parsed = parseInt(req.query.collectionId, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    })(),
+    signalTypes: typeof req.query.signalTypes === 'string'
+      ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
+      : []
+  };
+  const SIGNAL_TYPES = ['citation', 'relationship', 'sentiment', 'date'];
+  const activeSignalTypes = filters.signalTypes.length ? filters.signalTypes : SIGNAL_TYPES.slice();
+
+  const result = await db.authorityChronologyAsync.loadEvents(authorityId, {
+    since: filters.since || null,
+    until: filters.until || null,
+    collectionId: filters.collectionId,
+    signalTypes: activeSignalTypes,
+    cursor: null,
+    limit: 50
+  });
+
+  // Build year buckets server-side for the initial render.
+  const buckets = [];
+  let currentYear = null;
+  result.events.forEach((e) => {
+    const year = String(e.sortDate || '').slice(0, 4) || 'Undated';
+    if (year !== currentYear) {
+      buckets.push({ year, events: [] });
+      currentYear = year;
+    }
+    buckets[buckets.length - 1].events.push(e);
+  });
+
+  const collections = await db.collectionsAsync.getAll().catch(() => []);
+
+  res.render('admin/authority-detail-chronology', {
+    pageTitle: authority.canonical_name + ' — Chronology',
+    activeKnowledgePage: 'authorities',
+    authority,
+    filters,
+    activeSignalTypes,
+    signalTypes: SIGNAL_TYPES,
+    collections,
+    buckets,
+    nextCursor: result.nextCursor
+  });
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
