@@ -833,6 +833,33 @@ router.get('/backfill', asyncHandler(async (req, res) => {
   });
 }));
 
+// GET /admin/knowledge/authorities/:id/chronology.json — JSON endpoint for the
+// chronology infinite-scroll loader. Accepts optional query params:
+//   ?since= / ?until= (YYYY-MM-DD), ?collectionId=, ?signalTypes= (comma-sep),
+//   ?cursor= (base64 opaque token), ?limit= (clamped to 1–100, default 50).
+// Returns { events: [...], nextCursor: <string|null> }.
+// MUST be registered BEFORE router.get('/:id') so the literal '.json' suffix
+// wins over the /:id wildcard.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.3 + U6.4.
+router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
+  const authorityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(authorityId)) return res.status(400).json({ error: 'Invalid authority id.' });
+
+  const opts = {
+    since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : null,
+    until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : null,
+    collectionId: req.query.collectionId ? parseInt(req.query.collectionId, 10) : null,
+    signalTypes: typeof req.query.signalTypes === 'string'
+      ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
+      : null,
+    cursor: typeof req.query.cursor === 'string' ? req.query.cursor : null,
+    limit: Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50))
+  };
+
+  const result = await db.authorityChronologyAsync.loadEvents(authorityId, opts);
+  res.json(result);
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
