@@ -85,6 +85,9 @@
       if (state.loading || !state.cursor) return;
       state.loading = true;
       sentinel.hidden = false;
+      // Reset to the default loading text so a previous error from a failed
+      // attempt doesn't linger after a successful retry.
+      sentinel.textContent = 'Loading more…';
       try {
         var params = new URLSearchParams();
         params.set('cursor', state.cursor);

@@ -692,11 +692,24 @@ signal-type multiselect. Finer per-signal filters (relationship type,
 voice role, polarity) deferred until curators report they're missed
 per U6.3.
 
+**Per-signal-type query cap.** Each of the four per-signal queries
+applies a hard `LIMIT 2000` safety rail. Authorities with extreme
+event density (>2,000 events of any single signal type) will have
+later events silently truncated in v1. The cap is generous for the
+seeded corpus's largest authority (Victoria, ~125 members); revisit
+when an authority reports a missing event past the cutoff.
+
 **Deferred from U6 v1:**
 - Visualization (timeline chart, graph view) — Phase 4 research surfaces.
 - Cross-authority comparison.
 - DOM virtualization for >1,000-event authorities — accepted browser-side scroll lag in v1.
 - Export to CSV / JSON / TEI.
+- Server-side cursor optimization — the model still loads the
+  per-signal capped batches in memory before applying the cursor
+  slice. For authorities approaching the 2,000-per-signal cap, every
+  page request re-issues all four queries. Migrating to a SQL-side
+  cursor (e.g., `WHERE sort_date > ?` per signal) is the natural
+  v2 optimization.
 
 ### Review surface (admin)
 

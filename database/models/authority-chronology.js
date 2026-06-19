@@ -38,6 +38,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
         AND c.approval_status = 'approved'
         ${extra}
       ORDER BY sort_date ASC
+      LIMIT 2000
     `, params);
     return rows.map((r) => ({
       kind: 'citation',
@@ -67,6 +68,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
       WHERE (r.source_entity_id IN (${placeholders}) OR r.target_entity_id IN (${placeholders}))
         ${extra}
       ORDER BY sort_date ASC
+      LIMIT 2000
     `, params);
     return rows.map((r) => ({
       kind: 'relationship',
@@ -105,6 +107,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
         AND s.approval_status IN ('approved', 'pending')
         ${extra}
       ORDER BY sort_date ASC
+      LIMIT 2000
     `, params);
     return rows.map((r) => ({
       kind: 'sentiment',
@@ -139,6 +142,7 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
         AND de.earliest IS NOT NULL
         ${extra}
       ORDER BY de.earliest ASC
+      LIMIT 2000
     `, params);
     return rows.map((r) => ({
       kind: 'date',

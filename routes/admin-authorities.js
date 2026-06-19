@@ -848,7 +848,10 @@ router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
   const opts = {
     since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : null,
     until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : null,
-    collectionId: req.query.collectionId ? parseInt(req.query.collectionId, 10) : null,
+    collectionId: (function() {
+      const parsed = parseInt(req.query.collectionId, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    })(),
     signalTypes: typeof req.query.signalTypes === 'string'
       ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
       : null,
@@ -876,7 +879,10 @@ router.get('/:id/chronology', asyncHandler(async (req, res) => {
   const filters = {
     since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : '',
     until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : '',
-    collectionId: req.query.collectionId ? parseInt(req.query.collectionId, 10) : null,
+    collectionId: (function() {
+      const parsed = parseInt(req.query.collectionId, 10);
+      return Number.isInteger(parsed) ? parsed : null;
+    })(),
     signalTypes: typeof req.query.signalTypes === 'string'
       ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
       : []
