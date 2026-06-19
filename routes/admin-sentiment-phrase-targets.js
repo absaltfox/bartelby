@@ -9,7 +9,11 @@ const db = require('../database/db');
 const { suggestEntityType } = require('../utils/sentiment-phrase-typing');
 const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
-const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'];
+// Phrase targets can promote to any entity type except 'date'. 'date' nodes
+// represent calendar moments populated by the date_expressions pipeline;
+// they don't correspond to sentiment phrase targets. Matches the dropdown in
+// views/admin/sentiment-phrase-targets.ejs.
+const ENTITY_TYPES = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'];
 
 router.use(requireAdmin);
 
