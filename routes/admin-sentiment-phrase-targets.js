@@ -7,6 +7,9 @@ const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const db = require('../database/db');
 const { suggestEntityType } = require('../utils/sentiment-phrase-typing');
+const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
+
+const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'];
 
 router.use(requireAdmin);
 
@@ -65,6 +68,95 @@ router.post('/suppressions/:id/delete', express.urlencoded({ extended: false }),
   res.redirect(path('?tab=suppressed&saved=1'));
 }));
 
-// POST /promote ships in Task 6.
+router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => path('?tab=active&error=' + encodeURIComponent(msg));
+  const phrase = String(req.body.phrase || '').trim();
+  const entityType = String(req.body.entity_type || '').trim();
+  const canonicalName = String(req.body.canonical_name || '').trim();
+
+  if (!phrase) return res.redirect(errBack('Phrase is required.'));
+  if (!ENTITY_TYPES.includes(entityType)) return res.redirect(errBack('Invalid entity type.'));
+  if (!canonicalName) return res.redirect(errBack('Canonical name is required.'));
+
+  const phraseNormalized = phrase.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const annotations = await db.allAsync(`
+    SELECT id, transcript_id, document_id, span_start, span_end, evidence_excerpt, target_phrase
+    FROM sentiment_annotations
+    WHERE target_kind = 'phrase'
+      AND LOWER(TRIM(target_phrase)) = ?
+  `, [phraseNormalized]);
+
+  if (!annotations.length) {
+    return res.redirect(errBack('No matching phrase annotations to re-target.'));
+  }
+
+  let entityId = null;
+  const citationIds = [];
+
+  const runPromote = async () => {
+    entityId = await db.entitiesAsync.create({
+      entity_type: entityType,
+      canonical_name: canonicalName,
+      description: null,
+      properties: { promoted_from_phrase: phrase },
+      authority_id: null
+    });
+
+    for (const ann of annotations) {
+      await db.runAsync(`
+        UPDATE sentiment_annotations
+        SET target_kind = 'entity',
+            target_entity_id = ?
+        WHERE id = ?
+      `, [entityId, ann.id]);
+
+      const cid = await db.citationsAsync.create({
+        entity_id: entityId,
+        relationship_id: null,
+        date_expression_id: null,
+        transcript_id: ann.transcript_id,
+        document_id: ann.document_id,
+        passage_start: ann.span_start != null ? ann.span_start : null,
+        passage_end: ann.span_end != null ? ann.span_end : null,
+        passage_text: phrase,
+        extraction_method: EXTRACTION_METHODS.MANUAL,
+        extraction_model: null,
+        confidence: 1.0,
+        approval_status: CITATION_APPROVAL_STATUSES.APPROVED,
+        approval_method: 'manual',
+        approved_by_user_id: req.user?.id || null
+      });
+      citationIds.push(cid);
+    }
+  };
+
+  try {
+    if (process.env.DATABASE_DRIVER === 'turso') {
+      await runPromote();
+    } else {
+      await db.runAsync('BEGIN');
+      try {
+        await runPromote();
+        await db.runAsync('COMMIT');
+      } catch (err) {
+        try { await db.runAsync('ROLLBACK'); } catch (e) {}
+        throw err;
+      }
+    }
+  } catch (err) {
+    return res.redirect(errBack(err.message));
+  }
+
+  if (typeof db.saveDatabase === 'function') await db.saveDatabase();
+  audit.log('admin.sentiment_phrase_promoted', {
+    ...audit.reqContext(req),
+    phrase,
+    entityId,
+    annotationsRetargeted: annotations.length,
+    citationIds
+  });
+  res.redirect(path('?tab=active&saved=1'));
+}));
 
 module.exports = router;
