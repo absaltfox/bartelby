@@ -435,6 +435,56 @@ foundational C5/C1/C2 PR:
   document reading surface is a future enhancement; the current C1.3
   link only prefills the transcript ID.
 
+### Sentiment phrase-target reconciliation (S3)
+
+Sentiment annotations with `target_kind='phrase'` represent sentiment
+about a referent the entity pipeline hasn't yet modeled (~54% of
+annotations in the seeded corpus). The admin surface at
+`/admin/knowledge/sentiment/phrase-targets`
+(`routes/admin-sentiment-phrase-targets.js`, view
+`views/admin/sentiment-phrase-targets.ejs`) aggregates these phrases
+by normalized verbatim and offers two terminal actions per row:
+
+**Promote to entity.** Curator picks `entity_type` (seeded from the
+rule-based `utils/sentiment-phrase-typing.js` suggestion) and
+`canonical_name` (defaults to the phrase verbatim). The handler
+transactionally:
+- Creates the entity with `properties.promoted_from_phrase` set
+  (audit trail of where the entity came from).
+- UPDATEs every matching annotation: `target_kind='entity'`,
+  `target_entity_id=<new id>`. `target_phrase` is **preserved**
+  (audit trail of the original LLM output).
+- INSERTs one manual citation per annotation on the new entity,
+  using the annotation's transcript span as `passage_start` /
+  `passage_end` / `passage_text=<phrase>`. Citations follow the
+  C5.3 manual-citation contract (`extraction_method='manual'`,
+  `confidence=1.0`, `approval_status='approved'`).
+- Audit-logged as `admin.sentiment_phrase_promoted`.
+
+**Suppress.** Curator decides the phrase is not entity-worthy. Adds
+a row to `sentiment_phrase_suppressions` keyed by the normalized
+form (lowercased, whitespace-collapsed, trimmed). The listing query
+LEFT-JOINs this table and filters out matches from the Active tab.
+Audit-logged as `admin.sentiment_phrase_suppressed`.
+
+`sentiment_phrase_suppressions` is intentionally **separate** from
+`authority_generic_terms`: the latter suppresses class-name authority
+clusters (a different signal); conflating them would obscure each
+table's semantics. Per S3.3.
+
+**Auto-typing.** `utils/sentiment-phrase-typing.js` returns a
+suggested `entity_type` from surface-form heuristics (honorific
+prefix → person; trailing role/place/event/organization keywords;
+fallback → topic). v1 is rule-based; LLM-driven typing is the future
+enhancement.
+
+**Deferred from S3 v1:**
+- **Promote-to-existing-entity** — v1 only allows promote-to-new.
+  Typeahead-pickering an existing entity is the natural v2.
+- **Bulk promote / suppress** — per-phrase decision in v1.
+- **Cluster-aware suggestions** — Phase 2c clusters could group
+  similar phrases; integration deferred.
+
 ### Voice Attribution
 
 Relationships (and their mirrors in `sentiment_annotations`) carry three voice
