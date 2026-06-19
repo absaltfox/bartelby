@@ -673,6 +673,7 @@ app.use('/admin/knowledge/entities', registerDeferredRoute('./routes/admin-entit
 app.use('/admin/knowledge/relationships', registerDeferredRoute('./routes/admin-relationships', 'admin knowledge relationship routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/vocabularies', registerDeferredRoute('./routes/admin-vocabularies', 'admin knowledge vocabulary routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge/sentiment', registerDeferredRoute('./routes/admin-sentiment', 'admin knowledge sentiment routes', { tier: 'admin' })); // has its own requireAdmin
+app.use('/admin/knowledge/sentiment/phrase-targets', registerDeferredRoute('./routes/admin-sentiment-phrase-targets', 'admin sentiment phrase-targets routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/knowledge', registerDeferredRoute('./routes/admin-review', 'admin knowledge review routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/extraction-jobs', registerDeferredRoute('./routes/admin-extraction', 'admin extraction routes', { tier: 'admin' })); // has its own requireAdmin
 app.use('/admin/authorities', registerDeferredRoute('./routes/admin-authorities', 'admin authority routes', { tier: 'admin' })); // has its own requireAdmin

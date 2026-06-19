@@ -689,6 +689,73 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       const r = await runAsync(`DELETE FROM sentiment_annotations WHERE id = ?`, [id]);
       await saveDatabase();
       return r.changes > 0;
+    },
+
+    // S3: aggregate phrase-target annotations into per-phrase rollups for the
+    // curator-facing /admin/knowledge/sentiment/phrase-targets surface.
+    // includeSuppressed=false (default) filters out phrases the curator has
+    // already added to sentiment_phrase_suppressions.
+    async aggregatePhraseTargets({ limit = 50, offset = 0, includeSuppressed = false, minFrequency = 1 } = {}) {
+      const suppressedJoin = includeSuppressed
+        ? ''
+        : 'LEFT JOIN sentiment_phrase_suppressions s ON s.target_phrase_normalized = LOWER(TRIM(a.target_phrase))';
+      const suppressedFilter = includeSuppressed
+        ? ''
+        : 'AND s.id IS NULL';
+
+      const rows = await allAsync(`
+        SELECT
+          LOWER(TRIM(a.target_phrase)) AS phrase_normalized,
+          MIN(a.target_phrase) AS phrase_display,
+          COUNT(*) AS frequency,
+          SUM(CASE WHEN a.polarity = 'positive' THEN 1 ELSE 0 END) AS positive,
+          SUM(CASE WHEN a.polarity = 'negative' THEN 1 ELSE 0 END) AS negative,
+          SUM(CASE WHEN a.polarity = 'neutral'  THEN 1 ELSE 0 END) AS neutral,
+          SUM(CASE WHEN a.polarity = 'mixed'    THEN 1 ELSE 0 END) AS mixed
+        FROM sentiment_annotations a
+        ${suppressedJoin}
+        WHERE a.target_kind = 'phrase'
+          AND a.target_phrase IS NOT NULL
+          AND TRIM(a.target_phrase) != ''
+          ${suppressedFilter}
+        GROUP BY phrase_normalized
+        HAVING frequency >= ?
+        ORDER BY frequency DESC, phrase_normalized ASC
+        LIMIT ? OFFSET ?
+      `, [Number(minFrequency) || 1, Number(limit) || 50, Number(offset) || 0]);
+
+      if (!rows.length) return [];
+
+      // Attach up to 3 sample annotations per phrase via a batched lookup.
+      const placeholders = rows.map(() => '?').join(',');
+      const samplesRaw = await allAsync(`
+        SELECT id, document_id, transcript_id, evidence_excerpt, target_phrase, polarity, intensity
+        FROM sentiment_annotations
+        WHERE target_kind = 'phrase'
+          AND LOWER(TRIM(target_phrase)) IN (${placeholders})
+        ORDER BY id DESC
+        LIMIT ${rows.length * 5}
+      `, rows.map((r) => r.phrase_normalized));
+
+      const samplesByPhrase = {};
+      samplesRaw.forEach((s) => {
+        const key = String(s.target_phrase || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        if (!samplesByPhrase[key]) samplesByPhrase[key] = [];
+        if (samplesByPhrase[key].length < 3) samplesByPhrase[key].push(s);
+      });
+
+      return rows.map((r) => ({
+        phraseNormalized: r.phrase_normalized,
+        phraseDisplay: r.phrase_display,
+        frequency: Number(r.frequency),
+        polarity: {
+          positive: Number(r.positive),
+          negative: Number(r.negative),
+          neutral: Number(r.neutral),
+          mixed: Number(r.mixed)
+        },
+        samples: samplesByPhrase[r.phrase_normalized] || []
+      }));
     }
   };
 

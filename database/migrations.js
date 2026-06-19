@@ -756,6 +756,23 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md C4.
   `
   ALTER TABLE relationship_types ADD COLUMN deprecated_at DATETIME;
+  `,
+
+  // v50 — S3: sentiment_phrase_suppressions for curator decisions that a phrase
+  // target is NOT entity-worthy. Kept separate from authority_generic_terms
+  // because that table suppresses class-name authority clusters (a different
+  // signal) per docs/reviews/2026-05-31-entity-extraction-historian-lens.md S3.3.
+  `
+  CREATE TABLE IF NOT EXISTS sentiment_phrase_suppressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_phrase_normalized TEXT NOT NULL UNIQUE,
+    target_phrase_display TEXT NOT NULL,
+    notes TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_sentiment_phrase_suppressions_norm
+    ON sentiment_phrase_suppressions(target_phrase_normalized);
   `
 ];
 
