@@ -860,6 +860,66 @@ router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
+// GET /admin/knowledge/authorities/:id/chronology — server-rendered first page of
+// the merged timeline (citations, relationships, sentiment, date events).
+// Registered BEFORE router.get('/:id') so the literal /chronology suffix wins.
+// Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.1–U6.4.
+router.get('/:id/chronology', asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const authorityId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(authorityId)) {
+    return res.status(404).render('error', { message: 'Authority not found', error: {} });
+  }
+  const authority = stores.authorities ? await stores.authorities.getById(authorityId) : null;
+  if (!authority) return res.status(404).render('error', { message: 'Authority not found', error: {} });
+
+  const filters = {
+    since: typeof req.query.since === 'string' && req.query.since.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.since : '',
+    until: typeof req.query.until === 'string' && req.query.until.match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.until : '',
+    collectionId: req.query.collectionId ? parseInt(req.query.collectionId, 10) : null,
+    signalTypes: typeof req.query.signalTypes === 'string'
+      ? req.query.signalTypes.split(',').map((s) => s.trim()).filter(Boolean)
+      : []
+  };
+  const SIGNAL_TYPES = ['citation', 'relationship', 'sentiment', 'date'];
+  const activeSignalTypes = filters.signalTypes.length ? filters.signalTypes : SIGNAL_TYPES.slice();
+
+  const result = await db.authorityChronologyAsync.loadEvents(authorityId, {
+    since: filters.since || null,
+    until: filters.until || null,
+    collectionId: filters.collectionId,
+    signalTypes: activeSignalTypes,
+    cursor: null,
+    limit: 50
+  });
+
+  // Build year buckets server-side for the initial render.
+  const buckets = [];
+  let currentYear = null;
+  result.events.forEach((e) => {
+    const year = String(e.sortDate || '').slice(0, 4) || 'Undated';
+    if (year !== currentYear) {
+      buckets.push({ year, events: [] });
+      currentYear = year;
+    }
+    buckets[buckets.length - 1].events.push(e);
+  });
+
+  const collections = await db.collectionsAsync.getAll().catch(() => []);
+
+  res.render('admin/authority-detail-chronology', {
+    pageTitle: authority.canonical_name + ' — Chronology',
+    activeKnowledgePage: 'authorities',
+    authority,
+    filters,
+    activeSignalTypes,
+    signalTypes: SIGNAL_TYPES,
+    collections,
+    buckets,
+    nextCursor: result.nextCursor
+  });
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);

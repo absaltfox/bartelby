@@ -1,0 +1,29 @@
+<%- include('../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../partials/admin-nav') %>
+
+  <div class="admin-header">
+    <h1><%= authority.canonical_name %> — Chronology</h1>
+    <p class="subtitle">Merged timeline of citations, relationships, sentiment, and dated events across this authority's members.</p>
+  </div>
+
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
+
+  <div class="authority-detail-toolbar">
+    <a href="/admin/knowledge/authorities/<%= authority.id %>" class="btn-secondary btn-sm">&larr; Back to authority</a>
+  </div>
+
+  <%- include('../partials/authority-chronology-panel', {
+    authorityId: authority.id,
+    filters,
+    activeSignalTypes,
+    signalTypes,
+    collections,
+    buckets,
+    nextCursor
+  }) %>
+</div>
+
+<script src="/js/authority-chronology.js"></script>
+<%- include('../partials/footer') %>

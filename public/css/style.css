@@ -10543,3 +10543,62 @@ body.modal-open {
   padding: 8px 14px;
   font-size: 0.88rem;
 }
+
+/* Authority chronology timeline.
+   Per docs/ui-template-standards.md (Density and Hierarchy): strong headings,
+   short subtitles, lightweight metadata rows. Sticky year headers per U6.4. */
+.authority-chronology { display: flex; flex-direction: column; gap: 12px; }
+.authority-chronology-filters {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
+  padding: 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+.authority-chronology-signaltypes {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  border: 0; padding: 0; margin: 0;
+}
+.authority-chronology-signaltype {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 0.9rem;
+}
+.authority-chronology-stream { display: flex; flex-direction: column; gap: 6px; }
+.authority-chronology-year {
+  position: sticky; top: 0; z-index: 5;
+  margin: 16px 0 4px 0;
+  padding: 6px 12px;
+  background: var(--parchment-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.authority-chronology-event {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+.authority-chronology-event-date { font-family: var(--mono-font); color: var(--ink-mid); font-size: 0.88rem; }
+.authority-chronology-event-kind { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+.authority-chronology-event-passage {
+  margin: 4px 0; padding: 8px 12px;
+  background: var(--parchment-alt);
+  border-left: 3px solid var(--accent);
+  font-style: italic; font-size: 0.92rem;
+}
+.authority-chronology-event--citation     { border-left: 3px solid #93c5fd; }
+.authority-chronology-event--relationship { border-left: 3px solid #a7d9be; }
+.authority-chronology-event--sentiment    { border-left: 3px solid #f5c6c2; }
+.authority-chronology-event--date         { border-left: 3px solid #fcd34d; }
+
+.authority-chronology-sentinel {
+  padding: 12px;
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}

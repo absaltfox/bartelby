@@ -1,0 +1,37 @@
+<article class="authority-chronology-event authority-chronology-event--<%= event.kind %>" data-chrono-event-kind="<%= event.kind %>">
+  <div class="authority-chronology-event-date" title="<%= event.sortDate %>">
+    <%= String(event.sortDate || '').slice(0, 10) %>
+  </div>
+  <div class="authority-chronology-event-body">
+    <div class="authority-chronology-event-kind">
+      <span class="status-badge status-trace"><%= event.kind %></span>
+      <span class="muted">— <a href="/admin/knowledge/entities/<%= event.memberId %>"><%= event.memberName %></a></span>
+    </div>
+    <% if (event.kind === 'citation') { %>
+      <blockquote class="authority-chronology-event-passage"><%= (event.payload.passageText || '').slice(0, 240) %></blockquote>
+      <p class="muted">in <a href="/documents/<%= event.payload.documentId %>"><%= event.payload.documentTitle || ('Document #' + event.payload.documentId) %></a></p>
+    <% } else if (event.kind === 'relationship') { %>
+      <p>
+        <strong><%= event.payload.sourceName %></strong>
+        <em><%= (event.payload.relationshipType || 'related_to').replace(/_/g, ' ') %></em>
+        <strong><%= event.payload.targetName %></strong>
+      </p>
+      <% if (event.payload.startDate || event.payload.endDate) { %>
+        <p class="muted"><%= event.payload.startDate || '?' %> — <%= event.payload.endDate || '?' %></p>
+      <% } %>
+    <% } else if (event.kind === 'sentiment') { %>
+      <p>
+        <em><%= event.payload.polarity %></em> / <em><%= event.payload.intensity %></em>
+        — <q><%= event.payload.emotionVerbatim %></q>
+      </p>
+      <p class="muted">voice: <%= event.payload.voiceRole %><% if (event.payload.documentTitle) { %> · in <a href="/documents/<%= event.payload.documentId %>"><%= event.payload.documentTitle %></a><% } %></p>
+    <% } else if (event.kind === 'date') { %>
+      <p><strong><%= event.payload.label %></strong></p>
+      <p class="muted">
+        <%= event.payload.earliest %><% if (event.payload.latest && event.payload.latest !== event.payload.earliest) { %> – <%= event.payload.latest %><% } %>
+        <% if (event.payload.precision) { %> · <%= event.payload.precision %><% } %>
+        <% if (event.payload.qualifier) { %> · <%= event.payload.qualifier %><% } %>
+      </p>
+    <% } %>
+  </div>
+</article>
