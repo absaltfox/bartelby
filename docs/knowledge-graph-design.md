@@ -664,6 +664,40 @@ the preferences column enables per-curator workflow optimization (U2).
 - Authorities can also be merged when two authority records represent the same
   subject
 
+### Authority chronology view (U6)
+
+`/admin/knowledge/authorities/:id/chronology` renders a merged
+timeline of every signal type attached to the authority's member
+entities. Four signal types contribute:
+
+| kind | source | sortDate |
+| --- | --- | --- |
+| `citation` | `citations` where `entity_id` ∈ members | `documents.date_created` (falls back to `citations.created_at`) |
+| `relationship` | `relationships` where source or target ∈ members | `relationships.start_date` (falls back to `created_at`) |
+| `sentiment` | `sentiment_annotations` where `target_entity_id` ∈ members and `target_kind='entity'` | `emotion_about_earliest` (falls back to `extracted_at`) |
+| `date` | `date_expressions` where `entity_id` ∈ members | `earliest` |
+
+Each signal is fetched with its own narrow query (bounded by
+member-id IN-clause + date-range filter); merge + sort + cursor-slice
+happens in JS. Cursor encodes `(sortDate, kind, id)` as base64 JSON
+so pagination is safe under concurrent inserts.
+
+Server-rendered first page (~50 events) groups events into year
+buckets with `position: sticky` headers. Subsequent pages append via
+`public/js/authority-chronology.js` (IntersectionObserver on a
+sentinel; falls back to scroll listener).
+
+Filters in v1: date range (`since` / `until`), collection,
+signal-type multiselect. Finer per-signal filters (relationship type,
+voice role, polarity) deferred until curators report they're missed
+per U6.3.
+
+**Deferred from U6 v1:**
+- Visualization (timeline chart, graph view) — Phase 4 research surfaces.
+- Cross-authority comparison.
+- DOM virtualization for >1,000-event authorities — accepted browser-side scroll lag in v1.
+- Export to CSV / JSON / TEI.
+
 ### Review surface (admin)
 
 The `/admin/knowledge/authorities/suggestions` page renders 25 suggestions per
