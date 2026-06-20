@@ -138,4 +138,35 @@ describe('Curator UX remediation markup', () => {
     expect(source).not.toMatch(/<%=\s*activeKnowledgePage === item\.key \? 'aria-current="page"'/);
     expect(source).toMatch(/<% if \(activeKnowledgePage === item\.key\) \{ %>aria-current="page"<% \} %>/);
   });
+
+  it('mounts the knowledge workbench rail as a direct child of .admin-page--workspace', () => {
+    const adminDir = path.join(ROOT, 'views', 'admin');
+    const files = fs.readdirSync(adminDir).filter((name) => name.endsWith('.ejs'));
+    const offenders = [];
+
+    files.forEach((name) => {
+      const source = fs.readFileSync(path.join(adminDir, name), 'utf8');
+      const includeRe = /<%[-=]\s*include\(\s*'\.\.\/partials\/knowledge-nav'/;
+      const match = source.match(includeRe);
+      if (!match) return;
+
+      const includeOffset = match.index;
+      const before = source.slice(0, includeOffset);
+      const lastWorkspaceOpen = before.lastIndexOf('admin-page--workspace');
+      if (lastWorkspaceOpen === -1) {
+        offenders.push(`${name}: knowledge-nav include has no .admin-page--workspace wrapper before it`);
+        return;
+      }
+      const between = before.slice(lastWorkspaceOpen);
+      const openTagEnd = between.indexOf('>');
+      const inside = between.slice(openTagEnd + 1);
+      const opens = (inside.match(/<div\b/g) || []).length;
+      const closes = (inside.match(/<\/div>/g) || []).length;
+      if (closes > opens) {
+        offenders.push(`${name}: knowledge-nav include is outside the admin-page--workspace wrapper`);
+      }
+    });
+
+    expect(offenders).toEqual([]);
+  });
 });
