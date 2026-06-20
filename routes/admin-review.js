@@ -326,17 +326,7 @@ function buildTranscriptFallbackContext(transcript, citation) {
     return null;
   }
 
-  let range = findCitationRangeInText(content, citation);
-  if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end <= range.start) {
-    const passageText = String(citation.passage_text || '').trim();
-    if (passageText) {
-      const idx = content.indexOf(passageText);
-      if (idx >= 0) {
-        range = { start: idx, end: idx + passageText.length };
-      }
-    }
-  }
-
+  const range = findCitationRangeInText(content, citation);
   if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end <= range.start) {
     const end = Math.min(content.length, 2400);
     return {
