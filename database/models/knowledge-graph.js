@@ -1394,6 +1394,26 @@ const relationships = {
       SELECT * FROM relationships
       WHERE source_entity_id = ? AND target_entity_id = ? AND relationship_type = ?
     `, [source_entity_id, target_entity_id, relationship_type]);
+  },
+
+  async countByDocumentId(documentId) {
+    if (!Number.isInteger(documentId)) {
+      return { pending: 0, approved: 0, rejected: 0 };
+    }
+    const rows = await allAsync(`
+      SELECT c.approval_status, COUNT(DISTINCT r.id) AS count
+      FROM relationships r
+      JOIN citations c ON c.relationship_id = r.id
+      WHERE c.document_id = ?
+      GROUP BY c.approval_status
+    `, [documentId]);
+    return rows.reduce((acc, row) => {
+      const status = row.approval_status || 'pending';
+      if (Object.prototype.hasOwnProperty.call(acc, status)) {
+        acc[status] = row.count;
+      }
+      return acc;
+    }, { pending: 0, approved: 0, rejected: 0 });
   }
 };
 
