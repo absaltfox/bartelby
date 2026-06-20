@@ -4525,23 +4525,77 @@ main { flex: 1; padding: 32px 0; }
   box-shadow: var(--shadow-sm);
 }
 
-.review-extraction-card-header {
+.review-extraction-strip {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px 24px;
-  padding-bottom: 16px;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--border-light);
 }
 
-.review-extraction-title-group h3 {
+.review-extraction-strip-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.review-card-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border-light);
+}
+
+.review-card-chip--muted {
+  background: transparent;
+  border: none;
+  padding: 3px 0;
+  font-weight: 500;
+}
+
+.review-extraction-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  padding: 18px 0;
+}
+
+.review-extraction-claim,
+.review-extraction-evidence-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-extraction-claim h3 {
   margin: 0 0 6px;
 }
 
-.review-extraction-context {
-  margin: 0;
+.review-extraction-explainer {
+  margin: 0 0 6px;
   color: var(--ink-muted);
 }
+
+.review-extraction-col-label {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 8px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 
 .review-extraction-detail {
   margin: 0 0 6px;
@@ -4554,35 +4608,9 @@ main { flex: 1; padding: 32px 0; }
   color: var(--ink-muted);
 }
 
-.review-extraction-summary {
-  display: flex;
-  align-items: flex-end;
-  flex-direction: column;
-  gap: 8px;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.review-confidence,
-.review-method-note,
 .review-meta-item {
   color: var(--ink-muted);
   font-size: 0.92rem;
-}
-
-.review-extraction-section-label {
-  display: inline-flex;
-  align-items: center;
-  margin-bottom: 10px;
-  color: var(--ink-soft);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.review-extraction-evidence {
-  margin-top: 18px;
 }
 
 .review-evidence-block + .review-evidence-block {
@@ -5151,8 +5179,6 @@ main { flex: 1; padding: 32px 0; }
   .kg-entity-row,
   .knowledge-toolbar,
   .review-extractions-panel-header,
-  .review-extraction-card-header,
-  .review-extraction-summary,
   .knowledge-citation-card-header,
   .graph-citation-card-header,
   .entity-results-item,
@@ -5161,12 +5187,14 @@ main { flex: 1; padding: 32px 0; }
     align-items: flex-start;
   }
 
-  .review-extraction-summary {
-    text-align: left;
-  }
-
   .review-extraction-meta {
     width: 100%;
+  }
+
+  .review-extraction-body {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 14px 0;
   }
 
   .review-extraction-footer {
@@ -5183,6 +5211,18 @@ main { flex: 1; padding: 32px 0; }
 
   .review-preview-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .review-extraction-strip {
+    flex-wrap: wrap;
+  }
+
+  .review-extraction-strip-actions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
