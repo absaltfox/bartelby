@@ -101,4 +101,52 @@ describe('review extraction preview transcript fallback', () => {
     expect(res.body.preview.imagePath).toBe('/uploads/preview-fallback-page-1.jpg');
     expect(res.body.preview.documentHref).toContain(`/documents/${documentId}?`);
   });
+
+  it('centers the fallback window on the passage_text when no precise range exists', async () => {
+    const lead = 'A'.repeat(3000);
+    const passage = 'The remote citation curators must locate downstream.';
+    const tail = 'B'.repeat(3000);
+    const content = `${lead}\n\n${passage}\n\n${tail}`;
+
+    const documentId = await db.documentsAsync.create({
+      title: 'Far Citation Document',
+      date_created: null,
+      description: null,
+      image_path: null,
+      metadata: {}
+    });
+    const transcriptId = await db.transcriptsAsync.create({
+      document_id: documentId,
+      content,
+      transcriber: 'Manual',
+      version: 1,
+      notes: null,
+      is_best: 1
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Far Citation Entity',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    const citationId = await db.citationsAsync.create({
+      entity_id: entityId,
+      transcript_id: transcriptId,
+      document_id: documentId,
+      passage_start: null,
+      passage_end: null,
+      passage_text: passage,
+      extraction_method: 'llm_auto',
+      extraction_model: 'fixture',
+      confidence: 0.5,
+      approval_status: 'pending'
+    });
+
+    const res = await adminAgent.get(`/admin/knowledge/review-extractions/${citationId}/preview`).expect(200);
+    expect(res.body.preview.pageText).toContain(passage);
+    expect(Number.isInteger(res.body.preview.highlightStart)).toBe(true);
+    expect(Number.isInteger(res.body.preview.highlightEnd)).toBe(true);
+    expect(res.body.preview.pageText.slice(res.body.preview.highlightStart, res.body.preview.highlightEnd)).toBe(passage);
+  });
 });

@@ -326,7 +326,17 @@ function buildTranscriptFallbackContext(transcript, citation) {
     return null;
   }
 
-  const range = findCitationRangeInText(content, citation);
+  let range = findCitationRangeInText(content, citation);
+  if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end <= range.start) {
+    const passageText = String(citation.passage_text || '').trim();
+    if (passageText) {
+      const idx = content.indexOf(passageText);
+      if (idx >= 0) {
+        range = { start: idx, end: idx + passageText.length };
+      }
+    }
+  }
+
   if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end <= range.start) {
     const end = Math.min(content.length, 2400);
     return {
