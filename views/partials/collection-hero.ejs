@@ -33,9 +33,13 @@
     <div class="collection-hero-main">
       <div class="collection-hero-copy">
         <h1><%= collection.name %></h1>
-        <p class="collection-hero-description">
-          <%= (collection && collection.description) ? collection.description : 'No description yet.' %>
-        </p>
+        <%
+          var heroDescription = collection && collection.description ? String(collection.description).trim() : '';
+          var shouldShowHeroDescription = heroDescription.length >= 12;
+        %>
+        <% if (shouldShowHeroDescription) { %>
+          <p class="collection-hero-description"><%= heroDescription %></p>
+        <% } %>
 
         <% if (heroMetaItems.length > 0) { %>
           <p class="collection-hero-meta-line"><%= heroMetaItems.join(' • ') %></p>

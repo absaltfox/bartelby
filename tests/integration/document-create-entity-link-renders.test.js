@@ -64,4 +64,15 @@ describe('Document reading view — create-entity button', () => {
     expect(res.text).toMatch(/<a[^>]*href="\/admin\/knowledge\/entities\/new\?transcriptId=\d+"[^>]*data-document-create-entity-fallback/);
     expect(res.text).toMatch(/<a[^>]*href="\/admin\/knowledge\/relationships\/new\?transcriptId=\d+"[^>]*data-document-create-relationship-fallback/);
   });
+
+  it('uses the text-first document layout when no image is available', async () => {
+    const res = await adminAgent.get(`/documents/${DOC_ID}`).expect(200);
+    expect(res.text).toContain('side-by-side--text-first');
+    expect(res.text).toContain('document-text-first-metadata');
+    expect(res.text).not.toContain('<div class="no-image">No image available</div>');
+    expect(res.text).toContain('document-create-action-group');
+    expect(res.text).toContain('Entity');
+    expect(res.text).toContain('Relationship');
+    expect(res.text).toContain("No passage selected; you'll choose evidence on the next page.");
+  });
 });

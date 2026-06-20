@@ -22,14 +22,31 @@
   <% if (entityUpdated) { %><div class="alert alert-success">Entity updated.</div><% } %>
   <% if (splitCreated) { %><div class="alert alert-success">Entity split created.</div><% } %>
 
-  <div class="knowledge-toolbar knowledge-toolbar--spaced">
-    <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
-    <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
-    <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
-    <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
-    <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">
-      + Add relationship from this entity
-    </a>
+  <div class="curator-action-toolbar entity-curator-toolbar">
+    <section class="curator-action-group">
+      <p class="curator-action-group-label">Navigate</p>
+      <div class="curator-action-buttons">
+        <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
+      </div>
+    </section>
+
+    <section class="curator-action-group curator-action-group--primary">
+      <p class="curator-action-group-label">Correct</p>
+      <div class="curator-action-buttons">
+        <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
+        <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
+        <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge entities</a>
+      </div>
+      <p class="curator-action-note">Edit preserves evidence; split moves only selected evidence; merge consolidates records.</p>
+    </section>
+
+    <section class="curator-action-group">
+      <p class="curator-action-group-label">Author</p>
+      <div class="curator-action-buttons">
+        <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">Add relationship</a>
+      </div>
+      <p class="curator-action-note">Creates citation-backed relationship evidence from this entity.</p>
+    </section>
   </div>
 
   <p class="correction-workspace-note">

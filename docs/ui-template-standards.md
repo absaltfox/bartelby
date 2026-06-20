@@ -86,6 +86,47 @@ Rules:
 - page templates may load page-specific JS files
 - page templates should not load a shared script that the footer already loads
 
+### Knowledge Workbench Rail
+
+The Knowledge admin section is the approved exception to the default horizontal
+admin subnav convention. Knowledge pages should include
+`views/partials/knowledge-nav.ejs`, which renders the reusable
+`knowledge-workbench-rail` grouped by curator job:
+
+- Overview
+- Review
+- Correct
+- Reconcile
+- Maintain
+
+Desktop Knowledge pages may place the rail as a left workbench column inside
+the existing `admin-page--workspace` shell. Mobile Knowledge pages should keep
+the same groups as horizontally scrollable sections using CSS only; do not add
+page-specific navigation scripts or change route URLs to support the rail.
+
+The global admin nav remains visually stronger than the Knowledge rail.
+Workbench links should appear exactly once in the rail and remain grouped by
+the curator task they support, not by implementation module.
+
+### Curator Consequence Text
+
+AI-assisted curator actions should explain the downstream consequence at the
+point of decision. Use shared muted helper text such as `curator-action-note`
+near approve/reject/delete/correct/merge/split controls when the action changes
+graph visibility, evidence ownership, audit history, or record consolidation.
+
+Consequence text should be short and concrete:
+
+- Approve makes evidence eligible for visible graph views.
+- Reject hides evidence from graph views but keeps review history.
+- Delete removes the citation evidence record.
+- Edit preserves attached evidence.
+- Split moves only selected evidence.
+- Merge consolidates records.
+
+Bulk confirmations should mirror the same consequence language as the
+per-record controls.
+
 ## Shared Partials
 
 Shared partials should only contain:

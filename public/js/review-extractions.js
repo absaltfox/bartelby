@@ -232,9 +232,12 @@
 
       previewTranscript.innerHTML = renderTranscriptPreview(preview.pageText, preview.highlightStart, preview.highlightEnd);
       scrollPreviewHighlightIntoView();
-      previewPassageNote.textContent = preview.passageText
+      var passageNote = preview.passageText
         ? 'Primary citation: ' + preview.passageText
         : 'This citation does not include a precise span, so the preview shows the closest available transcript context.';
+      previewPassageNote.textContent = preview.contextNote
+        ? passageNote + ' ' + preview.contextNote
+        : passageNote;
       previewDocumentLink.href = preview.documentHref || fallbackHref || '#';
       if (previewContext) previewContext.innerHTML = renderPreviewContext(preview.context || {});
     }
@@ -246,6 +249,10 @@
 
     function renderPreviewContext(context) {
       return ''
+        + '<div class="review-preview-context-intro">'
+        + '<h4>Corroborating context</h4>'
+        + '<p>These sections help orient the reviewer. They are not the primary evidence for the decision above.</p>'
+        + '</div>'
         + '<details class="review-preview-context-section" open><summary>Co-extracted entities</summary>'
         + renderList(context.coEntities, function(entity) {
           return '<a href="/admin/knowledge/entities/' + encodeURIComponent(entity.id) + '">' + escapeHtml(entity.canonicalName) + '</a> <span>(' + escapeHtml(entity.entityType) + ')</span>';

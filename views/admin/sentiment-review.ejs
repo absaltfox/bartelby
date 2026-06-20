@@ -11,7 +11,7 @@
 
   <form method="get" action="" class="filter-bar">
     <label for="entity-type-filter" class="filter-bar-label">Entity type</label>
-    <select id="entity-type-filter" name="entity_type" onchange="this.form.submit()">
+    <select id="entity-type-filter" name="entity_type" data-submit-on-change="1">
       <option value="">— all —</option>
       <% entityTypes.forEach(function(type) { %>
         <option value="<%= type %>" <%= entityTypeFilter === type ? 'selected' : '' %>><%= type %></option>

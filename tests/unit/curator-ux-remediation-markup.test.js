@@ -11,9 +11,17 @@ function read(relativePath) {
 
 describe('Curator UX remediation markup', () => {
   const templates = [
+    'views/partials/knowledge-nav.ejs',
+    'views/partials/document-create-entity-link.ejs',
+    'views/partials/document-info-panel.ejs',
+    'views/partials/collection-hero.ejs',
+    'views/admin/authority-backfill.ejs',
     'views/admin/entity-detail.ejs',
     'views/admin/entity-edit.ejs',
     'views/admin/entity-split.ejs',
+    'views/admin/review-extractions.ejs',
+    'views/admin/sentiment-clusters.ejs',
+    'views/admin/sentiment-review.ejs',
     'views/admin/sentiment-phrase-targets.ejs',
     'views/admin/relationship-new.ejs',
     'views/partials/transcript-span-picker.ejs'
@@ -45,5 +53,59 @@ describe('Curator UX remediation markup', () => {
     expect(source).toContain('phrase-target-expansion-row');
     expect(source).toContain('phrase-target-action-grid');
     expect(source).not.toContain('toolbar-details-menu');
+  });
+
+  it('groups every knowledge route exactly once in the workbench rail', () => {
+    const source = read('views/partials/knowledge-nav.ejs');
+    const hrefs = [
+      '/admin/knowledge',
+      '/admin/knowledge/review-extractions',
+      '/admin/knowledge/authorities/suggestions',
+      '/admin/knowledge/sentiment/review',
+      '/admin/knowledge/entities',
+      '/admin/knowledge/entities/merge',
+      '/admin/knowledge/authorities',
+      '/admin/knowledge/sentiment/phrase-targets',
+      '/admin/knowledge/authorities/generic-terms',
+      '/admin/knowledge/sentiment/clusters',
+      '/admin/knowledge/vocabularies/relationship-types',
+      '/admin/knowledge/authorities/backfill'
+    ];
+
+    ['Overview', 'Review', 'Correct', 'Reconcile', 'Maintain'].forEach((label) => {
+      expect(source).toContain(`label: '${label}'`);
+    });
+
+    hrefs.forEach((href) => {
+      const needle = `href: '${href}'`;
+      const matches = source.match(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || [];
+      expect(matches).toHaveLength(1);
+    });
+  });
+
+  it('keeps curator consequences next to high-impact actions', () => {
+    const review = read('views/admin/review-extractions.ejs');
+    const entity = read('views/admin/entity-detail.ejs');
+
+    expect(review).toContain('Makes this evidence eligible for visible graph views.');
+    expect(review).toContain('Hides evidence from graph views but keeps review history.');
+    expect(review).toContain('Removes the citation evidence record.');
+    expect(entity).toContain('Edit preserves evidence; split moves only selected evidence; merge consolidates records.');
+    expect(entity).toContain('curator-action-toolbar');
+    expect(entity).toContain('Navigate');
+    expect(entity).toContain('Correct');
+    expect(entity).toContain('Author');
+  });
+
+  it('uses text-first document and compact transcript action patterns', () => {
+    const documentPanel = read('views/partials/document-info-panel.ejs');
+    const createLink = read('views/partials/document-create-entity-link.ejs');
+    const collectionHero = read('views/partials/collection-hero.ejs');
+
+    expect(documentPanel).toContain('side-by-side--text-first');
+    expect(documentPanel).toContain('document-text-first-metadata');
+    expect(createLink).toContain('document-create-action-group');
+    expect(createLink).toContain("No passage selected; you'll choose evidence on the next page.");
+    expect(collectionHero).not.toContain('No description yet.');
   });
 });
