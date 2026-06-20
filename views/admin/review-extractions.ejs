@@ -147,12 +147,34 @@
       <div class="review-extraction-list">
         <% reviewItems.forEach(function(item) { %>
           <article class="review-extraction-card" data-review-card data-citation-id="<%= item.id %>" data-citation-status="<%= item.approval_status || 'pending' %>" data-kind="<%= item.kind %>">
-            <div class="review-extraction-card-header">
+            <header class="review-extraction-strip">
               <input type="checkbox" class="review-row-cb" value="<%= item.id %>" data-status="<%= item.approvalStatus || item.approval_status || 'pending' %>" />
-              <div class="review-extraction-title-group">
-                <p class="kg-panel-eyebrow"><%= item.kind_label %></p>
+              <span class="review-card-chip"><%= item.kind_label %></span>
+              <% if (item.confidence_label) { %>
+                <span class="review-card-chip review-card-chip--muted"><%= item.confidence_label %></span>
+              <% } %>
+              <% if (item.method_label) { %>
+                <span class="review-card-chip review-card-chip--muted"><%= item.method_label %></span>
+              <% } %>
+              <div class="review-extraction-strip-actions">
+                <span class="status-badge <%= item.status_class %>"><%= item.status_label %></span>
+                <% if (item.open_passage_href) { %>
+                  <a
+                    href="<%= item.open_passage_href %>"
+                    class="btn-secondary btn-sm review-preview-trigger"
+                    data-review-preview-trigger="1"
+                    data-review-preview-url="<%= item.preview_passage_href %>"
+                    data-review-preview-title="<%= item.claim_title %>"
+                    data-review-preview-document="<%= item.document_title || ('Document #' + item.document_id) %>"><%= item.open_passage_label %></a>
+                <% } %>
+              </div>
+            </header>
+
+            <div class="review-extraction-body">
+              <section class="review-extraction-claim">
+                <p class="review-extraction-col-label">Claim</p>
                 <h3><%= item.claim_title %></h3>
-                <p class="review-extraction-context"><strong>Claim</strong> <%= item.claim_explainer %></p>
+                <p class="review-extraction-explainer"><%= item.claim_explainer %></p>
                 <% if (item.claim_detail) { %>
                   <p class="review-extraction-detail"><%= item.claim_detail %></p>
                 <% } %>
@@ -167,61 +189,38 @@
                 <% if (item.claim_meta) { %>
                   <p class="review-extraction-meta-line"><%= item.claim_meta %></p>
                 <% } %>
-              </div>
-              <div class="review-extraction-summary">
-                <span class="status-badge <%= item.status_class %>"><%= item.status_label %></span>
-                <% if (item.confidence_label) { %>
-                  <span class="review-confidence"><%= item.confidence_label %></span>
+              </section>
+
+              <section class="review-extraction-evidence-col">
+                <p class="review-extraction-col-label">
+                  Evidence<% if (item.evidence_blocks && item.evidence_blocks.length > 1) { %> (<%= item.evidence_blocks.length %> passages)<% } %>
+                </p>
+                <% if (item.evidence_blocks && item.evidence_blocks.length) { %>
+                  <% item.evidence_blocks.forEach(function(block) { %>
+                    <div class="review-evidence-block">
+                      <p class="review-evidence-block-label"><%= block.label %></p>
+                      <blockquote class="graph-citation-quote"><%= block.text %></blockquote>
+                    </div>
+                  <% }) %>
+                <% } else { %>
+                  <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
                 <% } %>
-                <% if (item.method_label) { %>
-                  <span class="review-method-note"><%= item.method_label %></span>
+                <% if (item.review_notes && item.review_notes.length) { %>
+                  <% item.review_notes.forEach(function(note) { %>
+                    <p class="review-evidence-note <%= note.tone ? ('review-evidence-note--' + note.tone) : '' %>"><%= note.text %></p>
+                  <% }) %>
                 <% } %>
-                <% if (item.open_passage_href) { %>
-                  <a
-                    href="<%= item.open_passage_href %>"
-                    class="btn-secondary btn-sm review-preview-trigger"
-                    data-review-preview-trigger="1"
-                    data-review-preview-url="<%= item.preview_passage_href %>"
-                    data-review-preview-title="<%= item.claim_title %>"
-                    data-review-preview-document="<%= item.document_title || ('Document #' + item.document_id) %>"><%= item.open_passage_label %></a>
-                <% } %>
-              </div>
+              </section>
             </div>
 
-            <div class="review-extraction-evidence">
-              <div class="review-extraction-section-label">Evidence to review</div>
-              <% if (item.evidence_blocks && item.evidence_blocks.length) { %>
-                <% item.evidence_blocks.forEach(function(block) { %>
-                  <div class="review-evidence-block">
-                    <p class="review-evidence-block-label"><%= block.label %></p>
-                    <blockquote class="graph-citation-quote"><%= block.text %></blockquote>
-                  </div>
-                <% }) %>
-              <% } else { %>
-                <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
-              <% } %>
-              <% if (item.review_notes && item.review_notes.length) { %>
-                <% item.review_notes.forEach(function(note) { %>
-                  <p class="review-evidence-note <%= note.tone ? ('review-evidence-note--' + note.tone) : '' %>"><%= note.text %></p>
-                <% }) %>
-              <% } %>
-            </div>
-
-            <div class="review-extraction-footer">
+            <footer class="review-extraction-footer">
               <div class="review-extraction-meta">
-                <span class="review-extraction-section-label">Provenance</span>
                 <% if (item.document_id) { %>
                   <span class="review-meta-item">Document <%= item.document_title || ('#' + item.document_id) %></span>
                 <% } %>
                 <span class="review-meta-item">Transcript #<%= item.transcript_id %></span>
                 <% if (item.created_at) { %>
                   <span class="review-meta-item">Queued <%= new Date(item.created_at).toLocaleString() %></span>
-                <% } %>
-                <% if (item.method_label) { %>
-                  <span class="review-meta-item"><%= item.method_label %></span>
-                <% } %>
-                <% if (item.confidence_label) { %>
-                  <span class="review-meta-item"><%= item.confidence_label %></span>
                 <% } %>
               </div>
 
@@ -254,7 +253,7 @@
                   <button type="submit" class="btn-danger btn-sm" data-review-action-button>Delete evidence</button>
                 </form>
               </div>
-            </div>
+            </footer>
           </article>
         <% }) %>
       </div>
