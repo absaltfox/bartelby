@@ -100,7 +100,7 @@ describe('Curator UX remediation markup', () => {
   it('renders document metadata via a single shared partial in both layout branches', () => {
     const panel = read('views/partials/document-info-panel.ejs');
     const includes = panel.match(/include\('document-metadata-section'/g) || [];
-    expect(includes.length).toBeGreaterThanOrEqual(2);
+    expect(includes.length).toBe(2);
     expect(panel).not.toMatch(/id="metadata-edit-form"/);
     expect(panel).not.toMatch(/id="doc-info-edit"/);
     expect(panel).not.toMatch(/id="doc-info-view"/);

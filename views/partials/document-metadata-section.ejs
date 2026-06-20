@@ -1,8 +1,16 @@
 <%
-  // Shared document metadata section used by both image-side and text-first
-  // branches of document-info-panel.ejs. Renders the read-only metadata list
-  // and (for admins) the inline edit form. Both branches mount this partial
-  // exactly once per page so the IDs below stay unique.
+  // Shared document metadata section partial.
+  // Required locals:
+  //   document      — document object with `title`, `date_created`, `description`,
+  //                   `metadata` (Object; `additional_pages` key is filtered out)
+  //   docCollections — Array of collection objects with `name` (used in the
+  //                   read-only collections list; safe when null/empty)
+  //   csrfToken     — CSRF token string (only used when `canEdit` is true)
+  //   canEdit       — boolean; when true the inline edit form is rendered
+  //
+  // Used by both image-side and text-first branches of document-info-panel.ejs.
+  // Both branches mount this partial exactly once per page so the IDs below
+  // stay unique. (when `canEdit` is set, the edit form is also rendered.)
 %>
 <div class="doc-info-section">
   <h2>Document Information</h2>
@@ -52,7 +60,7 @@
           <textarea id="edit-description" name="description" rows="2"><%= document.description || '' %></textarea>
         </div>
         <% if (document.metadata && Object.keys(document.metadata).filter(k => k !== 'additional_pages').length > 0) { %>
-          <% Object.entries(document.metadata).filter(([key, value]) => key !== 'additional_pages').forEach(([key, value]) => { %>
+          <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
             <div class="edit-field">
               <label><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></label>
               <input type="text" name="metadata_field_<%= key %>" value="<%= value || '' %>">
