@@ -149,4 +149,51 @@ describe('review extraction preview transcript fallback', () => {
     expect(Number.isInteger(res.body.preview.highlightEnd)).toBe(true);
     expect(res.body.preview.pageText.slice(res.body.preview.highlightStart, res.body.preview.highlightEnd)).toBe(passage);
   });
+
+  it('does not surface fallback context when the selected page segment has transcript text', async () => {
+    const passage = 'The curator verifies primary evidence inline.';
+    const documentId = await db.documentsAsync.create({
+      title: 'Inline Evidence Document',
+      date_created: null,
+      description: null,
+      image_path: '/uploads/inline-evidence-page-1.jpg',
+      metadata: {}
+    });
+    const transcriptId = await db.transcriptsAsync.create({
+      document_id: documentId,
+      content: passage,
+      transcriber: 'Manual',
+      version: 1,
+      notes: null,
+      is_best: 1,
+      page_segments: [
+        { pageNumber: 1, charLength: passage.length }
+      ]
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Inline Evidence Entity',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    const citationId = await db.citationsAsync.create({
+      entity_id: entityId,
+      transcript_id: transcriptId,
+      document_id: documentId,
+      passage_start: 0,
+      passage_end: passage.length,
+      passage_text: passage,
+      extraction_method: 'llm_auto',
+      extraction_model: 'fixture',
+      confidence: 0.8,
+      approval_status: 'pending'
+    });
+
+    const res = await adminAgent.get(`/admin/knowledge/review-extractions/${citationId}/preview`).expect(200);
+    expect(res.body.preview.contextNote).toBeNull();
+    expect(res.body.preview.pageText).toBe(passage);
+    expect(res.body.preview.highlightStart).toBe(0);
+    expect(res.body.preview.highlightEnd).toBe(passage.length);
+  });
 });
