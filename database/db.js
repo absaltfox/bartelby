@@ -599,6 +599,42 @@ MIGRATIONS.push(`
   ALTER TABLE sentiment_annotations ADD COLUMN emotion_about_qualifier TEXT;
 `);
 
+// v74 — Knowledge graph remediation: extraction evidence drop counters and
+// curator edit/split audit tables. The counters make "Trust LLM Verbatim, Not
+// LLM Offsets" observable in admin job surfaces. The audit tables support C3
+// entity edits and U5 split workflows without hiding curator changes inside
+// entity properties JSON.
+MIGRATIONS.push(`
+  ALTER TABLE extraction_jobs ADD COLUMN dropped_verbatim_mismatch_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE extraction_jobs ADD COLUMN dropped_unknown_entity_mention_count INTEGER NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS entity_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    field TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    changed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    change_note TEXT,
+    changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_entity_changes_entity
+    ON entity_changes(entity_id, changed_at DESC);
+
+  CREATE TABLE IF NOT EXISTS entity_splits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    created_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    split_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    split_note TEXT NOT NULL,
+    split_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_entity_splits_source
+    ON entity_splits(source_entity_id, split_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_entity_splits_created
+    ON entity_splits(created_entity_id, split_at DESC);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -671,9 +707,11 @@ let _saveTimer = null;
 let _saveResolve = null;
 let _saveReject = null;
 let _savePending = null;
+let _activeTransactionDriver = null;
 function saveDatabase() {
   if (!db) return Promise.resolve();
   if (db.persistent === false) return Promise.resolve();
+  if (_activeTransactionDriver) return Promise.resolve();
   // If no pending flush, create one
   if (!_savePending) {
     _savePending = new Promise((resolve, reject) => {
@@ -1258,31 +1296,71 @@ function get(sql, params = []) {
 
 // Helper to run insert/update/delete
 function run(sql, params = []) {
-  const result = db.run(sql, params);
+  const driver = _activeTransactionDriver || db;
+  const result = driver.run(sql, params);
   saveDatabase();
   return result;
 }
 
 function runWithoutSave(sql, params = []) {
-  return db.run(sql, params);
+  const driver = _activeTransactionDriver || db;
+  return driver.run(sql, params);
 }
 
 async function allAsync(sql, params = []) {
-  return await db.all(sql, params);
+  const driver = _activeTransactionDriver || db;
+  return await driver.all(sql, params);
 }
 
 async function getAsync(sql, params = []) {
-  return await db.get(sql, params);
+  const driver = _activeTransactionDriver || db;
+  return await driver.get(sql, params);
 }
 
 async function runAsync(sql, params = []) {
-  const result = await db.run(sql, params);
-  await saveDatabase();
+  const driver = _activeTransactionDriver || db;
+  const result = await driver.run(sql, params);
+  if (!_activeTransactionDriver) await saveDatabase();
   return result;
 }
 
 async function runAsyncWithoutSave(sql, params = []) {
-  return await db.run(sql, params);
+  const driver = _activeTransactionDriver || db;
+  return await driver.run(sql, params);
+}
+
+async function withTransactionAsync(fn) {
+  await initDatabase();
+  if (_activeTransactionDriver) {
+    return await fn();
+  }
+
+  if (db && typeof db.transaction === 'function') {
+    const result = await db.transaction(async (txDriver) => {
+      _activeTransactionDriver = txDriver;
+      try {
+        return await fn();
+      } finally {
+        _activeTransactionDriver = null;
+      }
+    });
+    await saveDatabase();
+    return result;
+  }
+
+  await db.run('BEGIN');
+  _activeTransactionDriver = db;
+  try {
+    const result = await fn();
+    _activeTransactionDriver = null;
+    await db.run('COMMIT');
+    await saveDatabase();
+    return result;
+  } catch (err) {
+    _activeTransactionDriver = null;
+    await db.run('ROLLBACK').catch(() => {});
+    throw err;
+  }
 }
 
 function safeJsonParse(value, fallback = null) {
@@ -1478,6 +1556,7 @@ module.exports = {
   initDatabase,
   initializeSchema,
   saveDatabase,
+  withTransactionAsync,
   allAsync,
   runAsync,
   getAsync,

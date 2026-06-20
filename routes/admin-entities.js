@@ -410,18 +410,7 @@ router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async 
   };
 
   try {
-    if (process.env.DATABASE_DRIVER === 'turso') {
-      await runCreate();
-    } else {
-      await db.runAsync('BEGIN');
-      try {
-        await runCreate();
-        await db.runAsync('COMMIT');
-      } catch (err) {
-        try { await db.runAsync('ROLLBACK'); } catch (e) {}
-        throw err;
-      }
-    }
+    await db.withTransactionAsync(runCreate);
   } catch (err) {
     return res.redirect(errBack(err.message));
   }
@@ -522,8 +511,207 @@ router.get('/:id', asyncHandler(async (req, res) => {
     approved: req.query.approved || null,
     rejected: req.query.rejected || null,
     deleted: req.query.deleted || null,
-    authorityUpdated: req.query.authorityUpdated || null
+    authorityUpdated: req.query.authorityUpdated || null,
+    entityUpdated: req.query.entityUpdated || null,
+    splitCreated: req.query.splitCreated || null
   });
+}));
+
+router.post('/:id/edit', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const entityId = parseInt(req.params.id, 10);
+  const errBack = (msg) => knowledgePath(`/entities/${entityId}`, '?error=' + encodeURIComponent(msg));
+  if (!Number.isInteger(entityId) || !stores.entities) return res.redirect(errBack('Entity not found.'));
+
+  const entity = await stores.entities.getById(entityId);
+  if (!entity) return res.redirect(errBack('Entity not found.'));
+
+  const entityType = String(req.body.entity_type || '').trim();
+  const canonicalName = String(req.body.canonical_name || '').trim();
+  const description = String(req.body.description || '').trim() || null;
+  const changeNote = String(req.body.change_note || '').trim() || null;
+  if (!ENTITY_TYPES.includes(entityType)) return res.redirect(errBack('Invalid entity type.'));
+  if (!canonicalName) return res.redirect(errBack('Canonical name is required.'));
+
+  let properties = {};
+  try {
+    properties = req.body.properties ? JSON.parse(String(req.body.properties)) : {};
+  } catch (err) {
+    return res.redirect(errBack('Properties must be valid JSON.'));
+  }
+
+  let authorityId = Number.isInteger(entity.authority_id) ? entity.authority_id : null;
+  if (authorityId && entityType !== entity.entity_type && stores.authorities?.getById) {
+    const authority = await stores.authorities.getById(authorityId);
+    if (!authority || authority.authority_type !== entityType) {
+      authorityId = null;
+    }
+  }
+
+  const currentAliases = stores.entityAliases?.getByEntityId
+    ? await stores.entityAliases.getByEntityId(entityId)
+    : [];
+  const nextAliases = String(req.body.aliases || '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const changes = [];
+  function recordChange(field, oldValue, newValue) {
+    const oldText = oldValue == null ? '' : (typeof oldValue === 'string' ? oldValue : JSON.stringify(oldValue));
+    const newText = newValue == null ? '' : (typeof newValue === 'string' ? newValue : JSON.stringify(newValue));
+    if (oldText !== newText) changes.push({ field, oldText, newText });
+  }
+  recordChange('entity_type', entity.entity_type, entityType);
+  recordChange('canonical_name', entity.canonical_name, canonicalName);
+  recordChange('description', entity.description || '', description || '');
+  recordChange('properties', entity.properties || {}, properties);
+  recordChange('authority_id', entity.authority_id || null, authorityId || null);
+  recordChange('aliases', currentAliases.map((a) => a.alias).sort(), nextAliases.slice().sort());
+
+  try {
+    await db.withTransactionAsync(async () => {
+      await stores.entities.update(entityId, {
+        entity_type: entityType,
+        canonical_name: canonicalName,
+        description,
+        properties,
+        authority_id: authorityId
+      });
+      if (stores.entityAliases) {
+        const wanted = new Set(nextAliases.map((a) => a.toLowerCase()));
+        for (const alias of currentAliases) {
+          if (!wanted.has(String(alias.alias || '').toLowerCase())) {
+            await stores.entityAliases.delete(alias.id);
+          }
+        }
+        for (const alias of nextAliases) {
+          await stores.entityAliases.createIfMissing({ entity_id: entityId, alias, source: 'manual' });
+        }
+      }
+      for (const change of changes) {
+        await db.runAsync(`
+          INSERT INTO entity_changes (entity_id, field, old_value, new_value, changed_by_user_id, change_note)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [entityId, change.field, change.oldText, change.newText, req.user?.id || null, changeNote]);
+      }
+    });
+  } catch (err) {
+    return res.redirect(errBack(err.message));
+  }
+
+  audit.log('admin.entity_updated', { ...audit.reqContext(req), entityId, fields: changes.map((c) => c.field) });
+  res.redirect(knowledgePath(`/entities/${entityId}`, '?entityUpdated=1'));
+}));
+
+function parseIdList(value) {
+  const raw = Array.isArray(value) ? value : (value == null ? [] : [value]);
+  return raw.map((item) => parseInt(item, 10)).filter(Number.isInteger);
+}
+
+router.post('/:id/split', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const sourceEntityId = parseInt(req.params.id, 10);
+  const errBack = (msg) => knowledgePath(`/entities/${sourceEntityId}`, '?error=' + encodeURIComponent(msg));
+  if (!Number.isInteger(sourceEntityId) || !stores.entities) return res.redirect(errBack('Entity not found.'));
+
+  const source = await stores.entities.getById(sourceEntityId);
+  if (!source) return res.redirect(errBack('Entity not found.'));
+
+  const entityType = String(req.body.entity_type || source.entity_type).trim();
+  const canonicalName = String(req.body.canonical_name || '').trim();
+  const description = String(req.body.description || '').trim() || null;
+  const splitNote = String(req.body.split_note || '').trim();
+  const linkSameAuthority = req.body.link_same_authority === '1';
+  if (!ENTITY_TYPES.includes(entityType)) return res.redirect(errBack('Invalid entity type.'));
+  if (!canonicalName) return res.redirect(errBack('Canonical name is required for the new entity.'));
+  if (!splitNote) return res.redirect(errBack('Split note is required.'));
+
+  const citationIds = parseIdList(req.body.citation_ids);
+  const aliasIds = parseIdList(req.body.alias_ids);
+  const dateIds = parseIdList(req.body.date_expression_ids);
+  const relationshipIds = parseIdList(req.body.relationship_ids);
+  if (!citationIds.length && !dateIds.length && !relationshipIds.length) {
+    return res.redirect(errBack('Choose at least one citation, date, or relationship to move to the split entity.'));
+  }
+  let createdEntityId = null;
+
+  try {
+    await db.withTransactionAsync(async () => {
+      createdEntityId = await stores.entities.create({
+        entity_type: entityType,
+        canonical_name: canonicalName,
+        description,
+        properties: { split_from_entity_id: sourceEntityId },
+        authority_id: linkSameAuthority && Number.isInteger(source.authority_id) ? source.authority_id : null
+      });
+
+      if (citationIds.length) {
+        const placeholders = citationIds.map(() => '?').join(',');
+        await db.runAsync(`
+          UPDATE citations
+          SET entity_id = ?
+          WHERE entity_id = ? AND id IN (${placeholders})
+        `, [createdEntityId, sourceEntityId, ...citationIds]);
+      }
+      if (aliasIds.length) {
+        const placeholders = aliasIds.map(() => '?').join(',');
+        await db.runAsync(`
+          UPDATE entity_aliases
+          SET entity_id = ?
+          WHERE entity_id = ? AND id IN (${placeholders})
+        `, [createdEntityId, sourceEntityId, ...aliasIds]);
+      }
+      if (dateIds.length) {
+        const placeholders = dateIds.map(() => '?').join(',');
+        await db.runAsync(`
+          UPDATE date_expressions
+          SET entity_id = ?
+          WHERE entity_id = ? AND id IN (${placeholders})
+        `, [createdEntityId, sourceEntityId, ...dateIds]);
+      }
+      for (const relationshipId of relationshipIds) {
+        await db.runAsync(`
+          UPDATE relationships
+          SET source_entity_id = CASE WHEN source_entity_id = ? THEN ? ELSE source_entity_id END,
+              target_entity_id = CASE WHEN target_entity_id = ? THEN ? ELSE target_entity_id END,
+              expressed_by_entity_id = CASE WHEN expressed_by_entity_id = ? THEN ? ELSE expressed_by_entity_id END,
+              described_subject_entity_id = CASE WHEN described_subject_entity_id = ? THEN ? ELSE described_subject_entity_id END
+          WHERE id = ?
+            AND (
+              source_entity_id = ?
+              OR target_entity_id = ?
+              OR expressed_by_entity_id = ?
+              OR described_subject_entity_id = ?
+            )
+        `, [
+          sourceEntityId, createdEntityId,
+          sourceEntityId, createdEntityId,
+          sourceEntityId, createdEntityId,
+          sourceEntityId, createdEntityId,
+          relationshipId,
+          sourceEntityId, sourceEntityId, sourceEntityId, sourceEntityId
+        ]);
+      }
+      await db.runAsync(`
+        INSERT INTO entity_splits (source_entity_id, created_entity_id, split_by_user_id, split_note)
+        VALUES (?, ?, ?, ?)
+      `, [sourceEntityId, createdEntityId, req.user?.id || null, splitNote]);
+    });
+  } catch (err) {
+    return res.redirect(errBack(err.message));
+  }
+
+  audit.log('admin.entity_split', {
+    ...audit.reqContext(req),
+    sourceEntityId,
+    createdEntityId,
+    citationIds,
+    aliasIds,
+    dateIds,
+    relationshipIds
+  });
+  res.redirect(knowledgePath(`/entities/${createdEntityId}`, '?splitCreated=1'));
 }));
 
 router.post('/:id/authority/create', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
@@ -538,8 +726,29 @@ router.post('/:id/authority/create', express.urlencoded({ extended: false }), as
     if (!entity) {
       return res.redirect(knowledgePath('/entities?error=' + encodeURIComponent('Entity not found.')));
     }
-    const { ensureEntityAuthority } = require('../utils/authority-resolution');
-    await ensureEntityAuthority({ ...entity, authority_id: null });
+    if (Number.isInteger(entity.authority_id)) {
+      return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Unlink the existing authority before creating a new one.')));
+    }
+    if (!stores.authorities || typeof stores.authorities.create !== 'function') {
+      throw new Error('Authority helpers are not wired yet.');
+    }
+    let authorityId = null;
+    await db.withTransactionAsync(async () => {
+      authorityId = await stores.authorities.create({
+        authority_type: entity.entity_type || 'topic',
+        canonical_name: entity.canonical_name,
+        description: entity.description || null,
+        properties: {},
+        external_source: null,
+        external_key: null
+      });
+      await stores.entities.assignAuthority(entity.id, authorityId);
+    });
+    audit.log('admin.entity_authority_created', {
+      ...audit.reqContext(req),
+      entityId,
+      authorityId
+    });
     return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));
@@ -585,7 +794,9 @@ router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencod
     if (!suggestion || suggestion.entity_id !== entityId) {
       return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent('Authority suggestion not found.')));
     }
-    await stores.authorityLinkSuggestions.approve(suggestionId, req.user.id);
+    await db.withTransactionAsync(async () => {
+      await stores.authorityLinkSuggestions.approve(suggestionId, req.user.id);
+    });
     return res.redirect(knowledgePath(`/entities/${entityId}?authorityUpdated=1`));
   } catch (err) {
     return res.redirect(knowledgePath(`/entities/${entityId}?error=` + encodeURIComponent(err.message)));

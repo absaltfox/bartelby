@@ -1,26 +1,39 @@
 <%
-  // Document-reading-surface entry point for curator-authored entity creation.
+  // Document-reading-surface entry point for curator-authored graph creation.
   // Expects: selectedTranscript (with id), isAdmin (from res.locals).
   // Rendered only for admins.
   //
   // Primary affordance is a button — when clicked, public/js/document-selection-prefill.js
-  // reads window.getSelection() and routes to /admin/knowledge/entities/new with
+  // reads window.getSelection() and routes to the matching admin creation page with
   // verbatim + passageStart in the query string. A <noscript>/fallback link with just
   // the transcriptId is rendered alongside for JS-off users.
 %>
 <% if (typeof isAdmin !== 'undefined' && isAdmin && typeof selectedTranscript !== 'undefined' && selectedTranscript && selectedTranscript.id) { %>
-  <button type="button"
-    class="btn-action btn-sm document-create-entity-link"
-    data-document-create-entity
-    data-transcript-id="<%= selectedTranscript.id %>"
-    title="Select text above, then click to open the entity form with verbatim pre-filled">
-    + Create entity for selection
-  </button>
+	  <button type="button"
+	    class="btn-action btn-sm document-create-entity-link"
+	    data-document-create-entity
+	    data-transcript-id="<%= selectedTranscript.id %>"
+	    title="Create an entity from this transcript; selected text will be used as evidence when present">
+	    + Create entity from transcript
+	  </button>
+	  <button type="button"
+	    class="btn-action btn-sm document-create-entity-link"
+	    data-document-create-relationship
+	    data-transcript-id="<%= selectedTranscript.id %>"
+	    title="Create a relationship from this transcript; selected text will be used as evidence when present">
+	    + Create relationship from transcript
+	  </button>
+	  <span class="muted document-create-entity-selection-hint" data-document-create-entity-hint hidden></span>
   <noscript>
     <a href="/admin/knowledge/entities/new?transcriptId=<%= selectedTranscript.id %>"
        class="btn-action btn-sm document-create-entity-link"
        data-document-create-entity-fallback>
       + Create entity for this transcript
+    </a>
+    <a href="/admin/knowledge/relationships/new?transcriptId=<%= selectedTranscript.id %>"
+       class="btn-action btn-sm document-create-entity-link"
+       data-document-create-relationship-fallback>
+      + Create relationship for this transcript
     </a>
   </noscript>
 <% } %>

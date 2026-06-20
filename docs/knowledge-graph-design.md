@@ -204,9 +204,12 @@ without changing extracted relationships retroactively.
 **Write-time coercion:** When a relationship is written, the worker queries
 the alias table first. If the extracted relationship type matches a curator-defined
 alias, the worker writes the canonical form to `relationships.relationship_type`.
-If no alias exists, the relationship type is written as-is, with the original
-extracted term preserved in `properties.original_relationship_type` for
-troubleshooting and curator review.
+If the LLM emits a deprecated canonical type, the worker does not create a new
+relationship with that deprecated type. It can still coerce through an active
+alias; otherwise it falls back to `related_to` and preserves the original
+extracted term in `properties.original_relationship_type` for troubleshooting
+and curator review. Unknown non-vocabulary types follow the same `related_to`
+fallback path.
 
 **Seeded canonical→alias mappings** include:
 - `mentions` → `mentioned_in` (bidirectional)
@@ -245,19 +248,21 @@ Curators manage the controlled `relationship_types` vocabulary and its
 - The `name` (PK) is intentionally **not editable in v1**: every
   relationship row joins on this column. Renaming is the
   deprecate-and-recreate pattern. C3-family follow-up may revisit.
-- Deprecation is a UI gate only:
+- Deprecation blocks new controlled writes:
   - `relationship_types.deprecated_at` (migration v49) is the marker
     — non-NULL = deprecated.
   - Existing relationships keep their type unchanged.
-  - The worker resolution path
-    ([utils/worker-extraction.js:329-330](../utils/worker-extraction.js#L329))
-    still resolves deprecated names so the LLM emitting an older type
-    still lands cleanly.
+  - The worker ignores deprecated canonical names for new LLM writes and
+    applies the alias-or-`related_to` fallback described above.
   - The C2 curator-authoring dropdown
     ([routes/admin-relationships.js GET /new](../routes/admin-relationships.js))
     calls `listActive()` to filter deprecated out.
+  - Manual POST validation rejects explicitly deprecated relationship types.
   - Reactivation clears `deprecated_at` and the type returns to the
     dropdown.
+- Inline edits are dirty-row aware. The table warns when navigation or a
+  single-row submit would abandon other changed rows, and "Save all changed
+  rows" writes the modified vocabulary rows inside one database transaction.
 
 **Aliases tab:**
 - Lists every `relationship_type_aliases` row (alias_type →
@@ -370,12 +375,13 @@ are not merely reviewers of LLM output; they are first-class authors.
   `views/partials/typeahead-picker.ejs` partial against the existing
   `authorities/api/search` and `api/documents/search` endpoints.
   Curators search by canonical name rather than ID.
-- The document reading view's "+ Create entity for selection" button
+- The document reading view's "Create entity from transcript" button
   captures `window.getSelection()` via
   `public/js/document-selection-prefill.js` and routes to
   `/admin/knowledge/entities/new` with `verbatim` and `passageStart`
-  pre-populated. A `<noscript>` fallback link with just
-  `transcriptId` remains for JS-off users.
+  pre-populated. When text is selected, the button shows a short selected-text
+  hint. A `<noscript>` fallback link with just `transcriptId` remains for
+  JS-off users.
 
 #### Author a relationship from scratch (C2)
 
@@ -396,12 +402,34 @@ are not merely reviewers of LLM output; they are first-class authors.
 - `POST /admin/knowledge/relationships/new` transactionally inserts the
   relationship row AND a manual citation pointing at the resolved
   transcript span. Validates that both source and target entities
-  exist before insert.
+  exist before insert, rejects same-entity source/target pairs, rejects
+  deprecated relationship types, and enforces `relationship_types.source_type`
+  / `target_type` constraints when the selected controlled vocabulary row
+  defines them.
 - The source / target entity inputs use the shared typeahead picker
-  against `entities/api/search`. Authority-detail's "+ Add relationship
+  against `entities/api/search`. After a controlled relationship type is
+  selected, the inputs add type filters from that vocabulary row so curators
+  search only compatible entity types. Authority-detail's "+ Add relationship
   from a member" dropdown (a native `<details>` disclosure) deep-links
   each member as `sourceEntityId`, replacing the earlier single link
   that landed cold.
+
+#### Entity correction tools (C3, U5)
+
+Entity detail includes two curator correction workflows:
+
+- **Edit entity** updates `entity_type`, `canonical_name`, `description`,
+  JSON `properties`, and aliases. Each changed field writes an `entity_changes`
+  audit row with old value, new value, user id, timestamp, and optional note.
+  If `entity_type` changes and the existing authority's type no longer matches,
+  the entity's `authority_id` is dropped; citations and sentiment annotations
+  remain attached to the entity record.
+- **Split entity** creates a new entity from the current one and records an
+  `entity_splits` audit row with the source entity, created entity, user, and
+  required split note. The UI defaults to leaving all citations, aliases, and
+  relationships on the original entity; the curator opts specific rows into the
+  new entity. "Link new entity to same authority" is available but unchecked by
+  default. Reversal uses the existing merge workflow rather than a custom undo.
 
 #### Shared verbatim resolver (`utils/citation-evidence.js`)
 
@@ -415,25 +443,16 @@ appears multiple times in the transcript. This applies the
 [development-principles.md](./development-principles.md) to
 curator-supplied offsets as well.
 
-#### Deferred curator workstreams
+### Curator mutation atomicity
 
-The following affordances are intentionally out of scope for the
-foundational C5/C1/C2 PR:
-
-- **C3 (edit entity attributes after creation)** — requires cascade
-  design around `entity_type` changes (authority assignment may need
-  to drop; sentiment annotations targeting the entity may have
-  type-specific rendering). Owns the deferred E1.6 "retype entity"
-  need.
-- **C4 (vocabulary management surface)** — admin UI for
-  `relationship_types`, `relationship_type_aliases`, and the U1.3
-  frequency mapping. Substantial UI work; separate plan.
-- **U5 (split-entity affordance)** — C-family adjacent but its own
-  workstream.
-- **Document-side text-selection UX** — capturing
-  `window.getSelection()` to prefill verbatim + offset from the
-  document reading surface is a future enhancement; the current C1.3
-  link only prefills the transcript ID.
+Multi-step curator writes use `db.withTransactionAsync(fn)`. Local SQLite uses
+`BEGIN` / `COMMIT` / `ROLLBACK`; Turso uses the libSQL write transaction API so
+dependent statements share one transaction instead of auto-committing per
+statement. This helper is required for manual entity creation, manual
+relationship creation, phrase-target promotion, authority disambiguation,
+authority creation from disambiguation, authority suggestion approval, authority
+merges, entity edits, entity splits, and other future workflows that write more
+than one row for one curator action.
 
 ### Sentiment phrase-target reconciliation (S3)
 
@@ -443,7 +462,8 @@ annotations in the seeded corpus). The admin surface at
 `/admin/knowledge/sentiment/phrase-targets`
 (`routes/admin-sentiment-phrase-targets.js`, view
 `views/admin/sentiment-phrase-targets.ejs`) aggregates these phrases
-by normalized verbatim and offers two terminal actions per row:
+by normalized verbatim. The workspace supports search, pagination, collection,
+polarity, and frequency filters, then offers terminal actions per row:
 
 **Promote to entity.** Curator picks `entity_type` (seeded from the
 rule-based `utils/sentiment-phrase-typing.js` suggestion) and
@@ -460,6 +480,12 @@ transactionally:
   C5.3 manual-citation contract (`extraction_method='manual'`,
   `confidence=1.0`, `approval_status='approved'`).
 - Audit-logged as `admin.sentiment_phrase_promoted`.
+
+**Promote to existing entity.** Curator selects an existing entity via the
+shared typeahead picker. The handler transactionally retargets matching phrase
+annotations to that entity and inserts approved manual citations. As with
+promote-to-new, `target_phrase` is preserved as an audit trail of the original
+LLM output.
 
 **Suppress.** Curator decides the phrase is not entity-worthy. Adds
 a row to `sentiment_phrase_suppressions` keyed by the normalized
@@ -478,12 +504,10 @@ prefix → person; trailing role/place/event/organization keywords;
 fallback → topic). v1 is rule-based; LLM-driven typing is the future
 enhancement.
 
-**Deferred from S3 v1:**
-- **Promote-to-existing-entity** — v1 only allows promote-to-new.
-  Typeahead-pickering an existing entity is the natural v2.
-- **Bulk promote / suppress** — per-phrase decision in v1.
-- **Cluster-aware suggestions** — Phase 2c clusters could group
-  similar phrases; integration deferred.
+**Deferred from S3:**
+- **Bulk promote / suppress** — per-phrase decision for now.
+- **Cluster-aware suggestions** — Phase 2c clusters could group similar
+  phrases; integration deferred.
 
 ### Voice Attribution
 
@@ -552,6 +576,29 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
   transcript
 - Citations are always written for the transcript and document being processed
 
+### Verbatim evidence validation
+
+Graph extraction follows the same "Trust Verbatim, Not Offsets" discipline as
+sentiment extraction. For entity mentions, date mentions, and relationship
+evidence, the worker locates the LLM-supplied verbatim text in the transcript
+before writing a citation. LLM offsets are used only as tie-breakers when the
+same verbatim appears more than once. If the verbatim cannot be found, the
+artifact is dropped and no fallback LLM text is stored as citation evidence.
+
+`extraction_jobs` records four drop/quality counters:
+
+- `dropped_verbatim_mismatch_count` — extracted entity/date/relationship
+  evidence whose verbatim could not be found in the transcript.
+- `dropped_unknown_entity_mention_count` — date or relationship artifacts
+  whose subject/source/target mention did not resolve to an extracted entity.
+- `unresolved_relationship_count` — unresolved relationship mentions.
+- `unresolved_date_count` — unresolved date subject mentions.
+
+Admin extraction job rows surface these counters. The admin review route also
+exposes an audit JSON report for historical citations whose `passage_text` is
+not found in the source transcript; the report returns counts and sample rows
+only and never rewrites or deletes contaminated historical evidence.
+
 ### Mention resolution and ambiguity (E3, added 2026-06-07)
 
 Mentions on dates and relationships resolve to entities via the
@@ -568,11 +615,9 @@ to a `collidedKeys` Set. Subsequent lookups through that key are
 refused and an "ambiguous mention" WARN is logged instead of
 arbitrarily routing to whichever entity won the seeding race.
 
-Per-job counters `unresolved_relationship_count` and
-`unresolved_date_count` on `extraction_jobs` accumulate the
-dropped-vs-resolved rate so the operator can verify the fix's
-effect on new extractions. Counters are surfaced inline on
-extraction done rows in `/admin/jobs`.
+Per-job counters on `extraction_jobs` accumulate the dropped-vs-resolved rate
+so the operator can verify the fix's effect on new extractions. Counters are
+surfaced inline on extraction done rows in `/admin/jobs`.
 
 To recover historically dropped relationships/dates (extractions
 that ran before E3 landed), an admin must re-extract the affected
@@ -624,6 +669,11 @@ and failure visibility.
 - Review cards can open an in-context preview overlay that keeps the reviewer
   on the queue while showing the source document page beside the relevant
   transcript context
+- The preview JSON can include lazily rendered context sections below the
+  image/transcript preview: co-extracted entities from the same document,
+  same-document relationships involving either party, and authority
+  memberships/aliases for involved entities. These sections are collapsed in
+  the modal surface so the primary evidence stays visually dominant.
 - Review actions (approve/reject/delete) support in-place updates via JSON so
   triage can continue without full-page reload jumps
 - Citations can later be approved, rejected, or deleted from the admin UI
@@ -737,10 +787,12 @@ buckets with `position: sticky` headers. Subsequent pages append via
 `public/js/authority-chronology.js` (IntersectionObserver on a
 sentinel; falls back to scroll listener).
 
-Filters in v1: date range (`since` / `until`), collection,
-signal-type multiselect. Finer per-signal filters (relationship type,
-voice role, polarity) deferred until curators report they're missed
-per U6.3.
+Filters in v1: date range (`since` / `until`), collection, signal-type
+multiselect. Collection filtering is evidence-scoped: relationship and date
+signals must join through approved citation evidence in documents belonging to
+the selected collection, rather than leaking same-authority facts from other
+collections. Finer per-signal filters (relationship type, voice role, polarity)
+deferred until curators report they're missed per U6.3.
 
 **Per-signal-type query cap.** Each of the four per-signal queries
 applies a hard `LIMIT 2000` safety rail. Authorities with extreme

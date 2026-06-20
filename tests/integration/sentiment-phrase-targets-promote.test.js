@@ -61,6 +61,77 @@ beforeAll(async () => {
 }, 60_000);
 
 describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
+  it('only re-targets annotations inside the visible collection and polarity scope', async () => {
+    const scopedPhrase = 'scoped schoolhouse';
+    const scopedCollectionId = await db.collectionsAsync.create({
+      name: 'Scoped Phrase Promotion',
+      description: null,
+      is_public: false,
+      is_world_public: false,
+      allow_export: false,
+      auto_group_pages: false
+    });
+    const inScopeDocId = 5102;
+    const outOfScopeDocId = 5103;
+    await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (?, ?)`, [inScopeDocId, 'Scoped Phrase In']);
+    await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (?, ?)`, [outOfScopeDocId, 'Scoped Phrase Out']);
+    await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (?, ?, ?)`, [inScopeDocId, inScopeDocId, scopedPhrase]);
+    await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (?, ?, ?)`, [outOfScopeDocId, outOfScopeDocId, scopedPhrase]);
+    await db.documentCollectionsAsync.add(inScopeDocId, scopedCollectionId);
+
+    await db.runAsync(`INSERT INTO sentiment_annotations
+      (transcript_id, document_id, span_start, span_end, evidence_excerpt,
+       polarity, intensity, voice_role, target_kind, target_phrase, emotion_phrase_verbatim)
+      VALUES (?, ?, 0, 18, ?, 'positive', 'moderate', 'author', 'phrase', ?, 'admired')`,
+      [inScopeDocId, inScopeDocId, scopedPhrase, scopedPhrase]);
+    await db.runAsync(`INSERT INTO sentiment_annotations
+      (transcript_id, document_id, span_start, span_end, evidence_excerpt,
+       polarity, intensity, voice_role, target_kind, target_phrase, emotion_phrase_verbatim)
+      VALUES (?, ?, 0, 18, ?, 'negative', 'moderate', 'author', 'phrase', ?, 'doubted')`,
+      [inScopeDocId, inScopeDocId, scopedPhrase, scopedPhrase]);
+    await db.runAsync(`INSERT INTO sentiment_annotations
+      (transcript_id, document_id, span_start, span_end, evidence_excerpt,
+       polarity, intensity, voice_role, target_kind, target_phrase, emotion_phrase_verbatim)
+      VALUES (?, ?, 0, 18, ?, 'positive', 'moderate', 'author', 'phrase', ?, 'admired')`,
+      [outOfScopeDocId, outOfScopeDocId, scopedPhrase, scopedPhrase]);
+
+    const res = await adminAgent
+      .post('/admin/knowledge/sentiment/phrase-targets/promote')
+      .type('form')
+      .send({
+        _csrf: csrfToken,
+        phrase: scopedPhrase,
+        phrase_normalized: scopedPhrase,
+        collectionId: scopedCollectionId,
+        polarity: 'positive',
+        entity_type: 'place',
+        canonical_name: 'Scoped Schoolhouse Entity'
+      });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/saved=1/);
+
+    const entity = await db.getAsync(`SELECT * FROM entities WHERE canonical_name = 'Scoped Schoolhouse Entity'`);
+    expect(entity).toBeTruthy();
+
+    const annotations = await db.allAsync(
+      `SELECT document_id, polarity, target_kind, target_entity_id
+       FROM sentiment_annotations
+       WHERE target_phrase = ?
+       ORDER BY document_id ASC, polarity ASC`,
+      [scopedPhrase]
+    );
+    expect(annotations.filter((row) => row.target_kind === 'entity')).toEqual([
+      expect.objectContaining({ document_id: inScopeDocId, polarity: 'positive', target_entity_id: entity.id })
+    ]);
+    expect(annotations.filter((row) => row.target_kind === 'phrase')).toEqual([
+      expect.objectContaining({ document_id: inScopeDocId, polarity: 'negative', target_entity_id: null }),
+      expect.objectContaining({ document_id: outOfScopeDocId, polarity: 'positive', target_entity_id: null })
+    ]);
+
+    const citations = await db.allAsync(`SELECT document_id, passage_text FROM citations WHERE entity_id = ?`, [entity.id]);
+    expect(citations).toEqual([{ document_id: inScopeDocId, passage_text: scopedPhrase }]);
+  });
+
   it('creates the entity, re-targets matching annotations, and derives citations', async () => {
     const res = await adminAgent
       .post('/admin/knowledge/sentiment/phrase-targets/promote')

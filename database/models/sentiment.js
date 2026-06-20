@@ -8,6 +8,10 @@ function normalizePhrase(text) {
     .replace(/[.,;:!?]+$/, '');
 }
 
+function normalizePhraseSql(expr) {
+  return `LOWER(RTRIM(TRIM(${expr}), '.,;:!?'))`;
+}
+
 module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, saveDatabase) {
   const sentimentAsync = {
     async createJob({ document_id, transcript_id, reset_existing = 0, provider = null }) {
@@ -695,17 +699,40 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     // curator-facing /admin/knowledge/sentiment/phrase-targets surface.
     // includeSuppressed=false (default) filters out phrases the curator has
     // already added to sentiment_phrase_suppressions.
-    async aggregatePhraseTargets({ limit = 50, offset = 0, includeSuppressed = false, minFrequency = 1 } = {}) {
+    async aggregatePhraseTargets({
+      limit = 50,
+      offset = 0,
+      includeSuppressed = false,
+      minFrequency = 1,
+      q = '',
+      collectionId = null,
+      polarity = ''
+    } = {}) {
       const suppressedJoin = includeSuppressed
         ? ''
-        : 'LEFT JOIN sentiment_phrase_suppressions s ON s.target_phrase_normalized = LOWER(TRIM(a.target_phrase))';
+        : 'LEFT JOIN sentiment_phrase_suppressions s ON s.target_phrase_normalized = ' + normalizePhraseSql('a.target_phrase');
       const suppressedFilter = includeSuppressed
         ? ''
         : 'AND s.id IS NULL';
+      const filters = [];
+      const params = [];
+      const search = String(q || '').trim().toLowerCase();
+      if (search) {
+        filters.push('AND LOWER(a.target_phrase) LIKE ?');
+        params.push(`%${search}%`);
+      }
+      if (collectionId) {
+        filters.push('AND a.document_id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)');
+        params.push(Number(collectionId));
+      }
+      if (['positive', 'negative', 'neutral', 'mixed'].includes(String(polarity))) {
+        filters.push('AND a.polarity = ?');
+        params.push(String(polarity));
+      }
 
       const rows = await allAsync(`
         SELECT
-          LOWER(TRIM(a.target_phrase)) AS phrase_normalized,
+          ${normalizePhraseSql('a.target_phrase')} AS phrase_normalized,
           MIN(a.target_phrase) AS phrase_display,
           COUNT(*) AS frequency,
           SUM(CASE WHEN a.polarity = 'positive' THEN 1 ELSE 0 END) AS positive,
@@ -718,28 +745,32 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
           AND a.target_phrase IS NOT NULL
           AND TRIM(a.target_phrase) != ''
           ${suppressedFilter}
+          ${filters.join('\n')}
         GROUP BY phrase_normalized
         HAVING frequency >= ?
         ORDER BY frequency DESC, phrase_normalized ASC
         LIMIT ? OFFSET ?
-      `, [Number(minFrequency) || 1, Number(limit) || 50, Number(offset) || 0]);
+      `, [...params, Number(minFrequency) || 1, Number(limit) || 50, Number(offset) || 0]);
 
       if (!rows.length) return [];
 
       // Attach up to 3 sample annotations per phrase via a batched lookup.
       const placeholders = rows.map(() => '?').join(',');
       const samplesRaw = await allAsync(`
-        SELECT id, document_id, transcript_id, evidence_excerpt, target_phrase, polarity, intensity
-        FROM sentiment_annotations
-        WHERE target_kind = 'phrase'
-          AND LOWER(TRIM(target_phrase)) IN (${placeholders})
-        ORDER BY id DESC
+        SELECT a.id, a.document_id, a.transcript_id, a.evidence_excerpt, a.target_phrase, a.polarity, a.intensity
+        FROM sentiment_annotations a
+        ${suppressedJoin}
+        WHERE a.target_kind = 'phrase'
+          AND ${normalizePhraseSql('a.target_phrase')} IN (${placeholders})
+          ${suppressedFilter}
+          ${filters.join('\n')}
+        ORDER BY a.id DESC
         LIMIT ${rows.length * 5}
-      `, rows.map((r) => r.phrase_normalized));
+      `, [...rows.map((r) => r.phrase_normalized), ...params]);
 
       const samplesByPhrase = {};
       samplesRaw.forEach((s) => {
-        const key = String(s.target_phrase || '').trim().toLowerCase().replace(/\s+/g, ' ');
+        const key = normalizePhrase(s.target_phrase);
         if (!samplesByPhrase[key]) samplesByPhrase[key] = [];
         if (samplesByPhrase[key].length < 3) samplesByPhrase[key].push(s);
       });
@@ -756,6 +787,46 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
         },
         samples: samplesByPhrase[r.phrase_normalized] || []
       }));
+    },
+
+    async countPhraseTargets({ includeSuppressed = false, minFrequency = 1, q = '', collectionId = null, polarity = '' } = {}) {
+      const suppressedJoin = includeSuppressed
+        ? ''
+        : 'LEFT JOIN sentiment_phrase_suppressions s ON s.target_phrase_normalized = ' + normalizePhraseSql('a.target_phrase');
+      const suppressedFilter = includeSuppressed
+        ? ''
+        : 'AND s.id IS NULL';
+      const filters = [];
+      const params = [];
+      const search = String(q || '').trim().toLowerCase();
+      if (search) {
+        filters.push('AND LOWER(a.target_phrase) LIKE ?');
+        params.push(`%${search}%`);
+      }
+      if (collectionId) {
+        filters.push('AND a.document_id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)');
+        params.push(Number(collectionId));
+      }
+      if (['positive', 'negative', 'neutral', 'mixed'].includes(String(polarity))) {
+        filters.push('AND a.polarity = ?');
+        params.push(String(polarity));
+      }
+      const row = await getAsync(`
+        SELECT COUNT(*) AS count
+        FROM (
+          SELECT ${normalizePhraseSql('a.target_phrase')} AS phrase_normalized, COUNT(*) AS frequency
+          FROM sentiment_annotations a
+          ${suppressedJoin}
+          WHERE a.target_kind = 'phrase'
+            AND a.target_phrase IS NOT NULL
+            AND TRIM(a.target_phrase) != ''
+            ${suppressedFilter}
+            ${filters.join('\n')}
+          GROUP BY phrase_normalized
+          HAVING frequency >= ?
+        ) rollup
+      `, [...params, Number(minFrequency) || 1]);
+      return Number(row?.count || 0);
     }
   };
 

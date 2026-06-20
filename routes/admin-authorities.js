@@ -490,7 +490,9 @@ router.post('/suggestions/bulk/approve', express.json(), asyncHandler(async (req
       }
       const siblings = await stores.authorityLinkSuggestions.list('pending', 100, { entityId: s.entity_id });
       const removedSiblingIds = siblings.filter(x => x.id !== id).map(x => x.id);
-      await stores.authorityLinkSuggestions.approve(id, req.user.id);
+      await db.withTransactionAsync(async () => {
+        await stores.authorityLinkSuggestions.approve(id, req.user.id);
+      });
       results.push({ id, success: true, removedSiblingIds });
       removedIds.add(id);
       removedSiblingIds.forEach(sid => removedIds.add(sid));
@@ -563,7 +565,9 @@ router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req,
   const siblings = await stores.authorityLinkSuggestions.list('pending', 100, { entityId: suggestion.entity_id });
   const removedSiblingIds = siblings.filter(s => s.id !== id).map(s => s.id);
 
-  await stores.authorityLinkSuggestions.approve(id, req.user.id);
+  await db.withTransactionAsync(async () => {
+    await stores.authorityLinkSuggestions.approve(id, req.user.id);
+  });
 
   audit.log('admin.authority_suggestion_approved', {
     ...audit.reqContext(req),
@@ -802,9 +806,11 @@ router.post('/bulk/merge', express.urlencoded({ extended: false }), asyncHandler
     }
   }
 
-  for (const id of mergeIds) {
-    await stores.authorities.mergeAuthorities(targetAuthorityId, id);
-  }
+  await db.withTransactionAsync(async () => {
+    for (const id of mergeIds) {
+      await stores.authorities.mergeAuthorities(targetAuthorityId, id);
+    }
+  });
 
   audit.log('admin.authorities_bulk_merged', {
     ...audit.reqContext(req),
@@ -1034,7 +1040,9 @@ router.post('/:id/merge', express.urlencoded({ extended: false }), asyncHandler(
   }
 
   try {
-    await stores.authorities.mergeAuthorities(targetAuthorityId, authorityId);
+    await db.withTransactionAsync(async () => {
+      await stores.authorities.mergeAuthorities(targetAuthorityId, authorityId);
+    });
     return res.redirect(knowledgePath(`/authorities/${targetAuthorityId}?merged=1`));
   } catch (err) {
     return res.redirect(knowledgePath(`/authorities/${authorityId}?error=` + encodeURIComponent(err.message)));
@@ -1099,18 +1107,7 @@ router.post('/suggestions/disambiguation/:entityId/approve', express.json(), asy
     await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [authorityId, entityId]);
   };
 
-  if (process.env.DATABASE_DRIVER === 'turso') {
-    await runDisambiguationApprove();
-  } else {
-    await db.runAsync('BEGIN');
-    try {
-      await runDisambiguationApprove();
-      await db.runAsync('COMMIT');
-    } catch (err) {
-      try { await db.runAsync('ROLLBACK'); } catch (e) {}
-      throw err;
-    }
-  }
+  await db.withTransactionAsync(runDisambiguationApprove);
 
   if (typeof db.saveDatabase === 'function') await db.saveDatabase();
   audit.log('admin.disambiguation_approve', { ...audit.reqContext(req), entityId, authorityId });
@@ -1150,18 +1147,7 @@ router.post('/suggestions/disambiguation/:entityId/new-authority', express.json(
     await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [newAuthorityId, entityId]);
   };
 
-  if (process.env.DATABASE_DRIVER === 'turso') {
-    await runNewAuthority();
-  } else {
-    await db.runAsync('BEGIN');
-    try {
-      await runNewAuthority();
-      await db.runAsync('COMMIT');
-    } catch (err) {
-      try { await db.runAsync('ROLLBACK'); } catch (e) {}
-      throw err;
-    }
-  }
+  await db.withTransactionAsync(runNewAuthority);
 
   if (typeof db.saveDatabase === 'function') await db.saveDatabase();
   audit.log('admin.disambiguation_new_authority', { ...audit.reqContext(req), entityId, newAuthorityId });

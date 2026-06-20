@@ -1,4 +1,5 @@
 const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages } = require('../utils/document-services');
+const knowledgeGraph = require('../database/models/knowledge-graph');
 const express = require('express');
 const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
@@ -498,6 +499,8 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
   const normalizedDoc = await normalizeDocumentAssetsForDelivery(doc);
   const comparisonPages = buildComparisonPages(normalizedDoc, selectedTranscript);
 
+  const relationshipCounts = await knowledgeGraph.relationships.countByDocumentId(doc.id);
+
   res.render('document', {
     document: normalizedDoc,
     transcripts: docTranscripts,
@@ -513,7 +516,9 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
     canManage,
     allowExport,
     exportEnabledCollections,
-    comparisonPages
+    comparisonPages,
+    pendingRelationshipCount: relationshipCounts.pending,
+    approvedRelationshipCount: relationshipCounts.approved
   });
 }));
 

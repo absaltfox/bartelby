@@ -50,13 +50,24 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
     }));
   }
 
-  async function loadRelationships(memberIdList, { since, until }) {
+  async function loadRelationships(memberIdList, { since, until, collectionId }) {
     if (!memberIdList.length) return [];
     const placeholders = memberIdList.map(() => '?').join(',');
     const params = [...memberIdList, ...memberIdList];
     let extra = '';
     if (since) { extra += ' AND COALESCE(r.start_date, r.created_at) >= ?'; params.push(since); }
     if (until) { extra += ' AND COALESCE(r.start_date, r.created_at) <= ?'; params.push(until); }
+    if (collectionId) {
+      extra += ` AND EXISTS (
+        SELECT 1
+        FROM citations c
+        JOIN document_collections dc ON dc.document_id = c.document_id
+        WHERE c.relationship_id = r.id
+          AND c.approval_status = 'approved'
+          AND dc.collection_id = ?
+      )`;
+      params.push(Number(collectionId));
+    }
     const rows = await allAsync(`
       SELECT r.id, r.source_entity_id, r.target_entity_id, r.relationship_type,
              r.start_date, r.end_date,
@@ -126,13 +137,24 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
     }));
   }
 
-  async function loadDates(memberIdList, { since, until }) {
+  async function loadDates(memberIdList, { since, until, collectionId }) {
     if (!memberIdList.length) return [];
     const placeholders = memberIdList.map(() => '?').join(',');
     const params = [...memberIdList];
     let extra = '';
     if (since) { extra += ' AND de.earliest >= ?'; params.push(since); }
     if (until) { extra += ' AND de.earliest <= ?'; params.push(until); }
+    if (collectionId) {
+      extra += ` AND EXISTS (
+        SELECT 1
+        FROM citations c
+        JOIN document_collections dc ON dc.document_id = c.document_id
+        WHERE c.date_expression_id = de.id
+          AND c.approval_status = 'approved'
+          AND dc.collection_id = ?
+      )`;
+      params.push(Number(collectionId));
+    }
     const rows = await allAsync(`
       SELECT de.id, de.entity_id, de.label, de.earliest, de.latest, de.precision, de.qualifier,
              e.canonical_name AS member_name
@@ -193,9 +215,9 @@ module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
 
       const batches = await Promise.all([
         activeTypes.includes('citation')     ? loadCitations(members, { since, until, collectionId })     : Promise.resolve([]),
-        activeTypes.includes('relationship') ? loadRelationships(members, { since, until })               : Promise.resolve([]),
+        activeTypes.includes('relationship') ? loadRelationships(members, { since, until, collectionId }) : Promise.resolve([]),
         activeTypes.includes('sentiment')    ? loadSentiment(members, { since, until, collectionId })     : Promise.resolve([]),
-        activeTypes.includes('date')         ? loadDates(members, { since, until })                       : Promise.resolve([])
+        activeTypes.includes('date')         ? loadDates(members, { since, until, collectionId })         : Promise.resolve([])
       ]);
 
       const merged = [].concat(...batches).sort((a, b) => {

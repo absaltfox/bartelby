@@ -2,8 +2,24 @@
 
 (function() {
   document.addEventListener('DOMContentLoaded', function() {
-    var buttons = document.querySelectorAll('[data-document-create-entity]');
+    var buttons = document.querySelectorAll('[data-document-create-entity], [data-document-create-relationship]');
     if (!buttons.length) return;
+    var hints = document.querySelectorAll('[data-document-create-entity-hint]');
+
+    function updateHints() {
+      var sel = window.getSelection ? window.getSelection() : null;
+      var verbatim = sel ? String(sel.toString() || '').trim() : '';
+      hints.forEach(function(hint) {
+        if (!verbatim) {
+          hint.hidden = true;
+          hint.textContent = '';
+          return;
+        }
+        hint.hidden = false;
+        hint.textContent = 'Selected evidence: "' + verbatim.slice(0, 60) + (verbatim.length > 60 ? '...' : '') + '"';
+      });
+    }
+    document.addEventListener('selectionchange', updateHints);
 
     buttons.forEach(function(btn) {
       btn.addEventListener('click', function(evt) {
@@ -14,7 +30,10 @@
         var sel = window.getSelection ? window.getSelection() : null;
         var verbatim = sel ? String(sel.toString() || '').trim() : '';
 
-        var url = '/admin/knowledge/entities/new?transcriptId=' + encodeURIComponent(transcriptId);
+        var basePath = btn.hasAttribute('data-document-create-relationship')
+          ? '/admin/knowledge/relationships/new'
+          : '/admin/knowledge/entities/new';
+        var url = basePath + '?transcriptId=' + encodeURIComponent(transcriptId);
         if (verbatim) {
           url += '&verbatim=' + encodeURIComponent(verbatim);
           // Best-effort character offset: anchor.offset relative to the focus node's text content

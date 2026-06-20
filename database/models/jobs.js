@@ -1464,7 +1464,9 @@ const adminJobsAsync = {
         j.batch_failed_count,
         j.batch_remote_status,
         j.unresolved_relationship_count,
-        j.unresolved_date_count
+        j.unresolved_date_count,
+        j.dropped_verbatim_mismatch_count,
+        j.dropped_unknown_entity_mention_count
       FROM extraction_jobs j
       LEFT JOIN documents d ON j.document_id = d.id
       ${statusClause}
@@ -1759,7 +1761,14 @@ const extractionJobs = {
     await appendJobLogEntry('extraction', id, text);
   },
 
-  async markDone(id, { entity_count, relationship_count, unresolved_relationship_count, unresolved_date_count } = {}) {
+  async markDone(id, {
+    entity_count,
+    relationship_count,
+    unresolved_relationship_count,
+    unresolved_date_count,
+    dropped_verbatim_mismatch_count,
+    dropped_unknown_entity_mention_count
+  } = {}) {
     await runAsyncWithoutSave(`
       UPDATE extraction_jobs
       SET status = 'done',
@@ -1767,6 +1776,8 @@ const extractionJobs = {
           relationship_count = COALESCE(?, relationship_count),
           unresolved_relationship_count = COALESCE(?, unresolved_relationship_count),
           unresolved_date_count = COALESCE(?, unresolved_date_count),
+          dropped_verbatim_mismatch_count = COALESCE(?, dropped_verbatim_mismatch_count),
+          dropped_unknown_entity_mention_count = COALESCE(?, dropped_unknown_entity_mention_count),
           completed_at = CURRENT_TIMESTAMP,
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL,
@@ -1777,6 +1788,8 @@ const extractionJobs = {
       Number.isInteger(relationship_count) ? relationship_count : null,
       Number.isInteger(unresolved_relationship_count) ? unresolved_relationship_count : null,
       Number.isInteger(unresolved_date_count) ? unresolved_date_count : null,
+      Number.isInteger(dropped_verbatim_mismatch_count) ? dropped_verbatim_mismatch_count : null,
+      Number.isInteger(dropped_unknown_entity_mention_count) ? dropped_unknown_entity_mention_count : null,
       id
     ]);
     await saveDatabase();

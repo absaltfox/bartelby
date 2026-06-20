@@ -36,7 +36,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
 
     jest.doMock('../../database/db', () => ({
       extractionJobs,
-      transcriptsAsync: { getById: async () => ({ id: 5, content: 'Test content.' }) },
+      transcriptsAsync: { getById: async () => ({ id: 5, content: 'A met B in Test content.' }) },
       documentsAsync: { getById: async () => ({ id: 7, metadata: {} }) },
       entities: { create: async () => ++entityIdCounter, search: async () => [] },
       entityAliases: { createIfMissing: async () => {} },
@@ -68,7 +68,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
         { mention: 'B', normalized: 'B', entity_type: 'person', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
       ],
       relationships: [
-        { source_mention: 'A', target_mention: 'B', type: 'mentions', confidence: 0.9 }
+        { source_mention: 'A', target_mention: 'B', type: 'mentions', evidence_text: 'A met B', confidence: 0.9 }
       ],
       aliasResolveReturns: { 'mentions': 'mentioned_in' }
     });
@@ -85,7 +85,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
         { mention: 'B', normalized: 'B', entity_type: 'person', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
       ],
       relationships: [
-        { source_mention: 'A', target_mention: 'B', type: 'arbitrary_llm_invented', confidence: 0.9 }
+        { source_mention: 'A', target_mention: 'B', type: 'arbitrary_llm_invented', evidence_text: 'A met B', confidence: 0.9 }
       ],
       aliasResolveReturns: {}
     });
@@ -108,7 +108,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
         { mention: 'B', normalized: 'B', entity_type: 'place', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
       ],
       relationships: [
-        { source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9 }
+        { source_mention: 'A', target_mention: 'B', type: 'authored', evidence_text: 'A met B', confidence: 0.9 }
       ],
       aliasResolveReturns: {},  // no alias mapping
       relationshipTypesResolveReturns: { 'authored': 'authored' }  // stage 2 fallback returns canonical

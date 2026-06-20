@@ -26,7 +26,7 @@ describe('worker-extraction voice write-through', () => {
         markFailed: async () => {}, requeueForRetry: async () => {},
         updateBatchRemote: async () => {}, updateBatchProgress: async () => {}
       },
-      transcriptsAsync: { getById: async () => ({ id: 5, content: 'Test content.' }) },
+      transcriptsAsync: { getById: async () => ({ id: 5, content: 'A B C Test content.' }) },
       documentsAsync: { getById: async () => ({ id: 7, metadata: {} }) },
       entities: { create: async () => ++entityIdCounter, search: async () => [] },
       entityAliases: { createIfMissing: async () => {} },
@@ -57,7 +57,7 @@ describe('worker-extraction voice write-through', () => {
   it('defaults voice_role to "author" when LLM omits it', async () => {
     const { createdRelationships } = buildMocks({
       entities: baseEntities,
-      relationships: [{ source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9 }]
+      relationships: [{ source_mention: 'A', target_mention: 'B', type: 'authored', evidence_text: 'A B', confidence: 0.9 }]
     });
     const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');
     await runExtractionWorkerCycle();
@@ -69,7 +69,7 @@ describe('worker-extraction voice write-through', () => {
       entities: baseEntities,
       relationships: [{
         source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9,
-        voice_role: 'speaker', voice_attribution_mention: 'C'
+        evidence_text: 'A B', voice_role: 'speaker', voice_attribution_mention: 'C'
       }]
     });
     const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');
@@ -83,7 +83,7 @@ describe('worker-extraction voice write-through', () => {
       entities: baseEntities,
       relationships: [{
         source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9,
-        voice_role: 'described_subject', voice_attribution_mention: 'C'
+        evidence_text: 'A B', voice_role: 'described_subject', voice_attribution_mention: 'C'
       }]
     });
     const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');
@@ -97,7 +97,7 @@ describe('worker-extraction voice write-through', () => {
       entities: baseEntities,
       relationships: [{
         source_mention: 'A', target_mention: 'B', type: 'authored', confidence: 0.9,
-        voice_role: 'narrator'
+        evidence_text: 'A B', voice_role: 'narrator'
       }]
     });
     const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');

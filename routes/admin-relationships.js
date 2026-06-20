@@ -52,7 +52,7 @@ router.get('/new', asyncHandler(async (req, res) => {
   res.render('admin/relationship-new', {
     pageTitle: 'Create Relationship',
     prefill,
-    relationshipTypes: relTypes.map((r) => r.name).filter(Boolean),
+    relationshipTypes: relTypes.filter((r) => r && r.name),
     voiceRoles: VOICE_ROLES,
     error: req.query.error || null,
     activeKnowledgePage: 'relationships'
@@ -70,6 +70,20 @@ router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async 
   const relType = String(req.body.relationship_type || '').trim();
   if (!relType) {
     return res.redirect(errBack('Relationship type is required.'));
+  }
+  const activeRelTypes = db.relationshipTypesAsync && typeof db.relationshipTypesAsync.listActive === 'function'
+    ? await db.relationshipTypesAsync.listActive()
+    : [];
+  const relTypeRow = activeRelTypes.find((row) => row.name === relType) || null;
+  if (activeRelTypes.length && relTypeRow == null) {
+    if (db.relationshipTypesAsync && typeof db.relationshipTypesAsync.listAll === 'function') {
+      const allRelTypes = await db.relationshipTypesAsync.listAll();
+      const existingRelType = allRelTypes.find((row) => row.name === relType) || null;
+      if (existingRelType && existingRelType.deprecated_at) {
+        return res.redirect(errBack('Relationship type is deprecated.'));
+      }
+    }
+    return res.redirect(errBack('Relationship type must be selected from the active vocabulary.'));
   }
 
   const transcriptId = parseInt(req.body.transcriptId, 10);
@@ -105,6 +119,13 @@ router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async 
   ]);
   if (!sourceEntity) return res.redirect(errBack('Source entity not found.'));
   if (!targetEntity) return res.redirect(errBack('Target entity not found.'));
+  if (sourceId === targetId) return res.redirect(errBack('Source and target must be different entities.'));
+  if (relTypeRow?.source_type && sourceEntity.entity_type !== relTypeRow.source_type) {
+    return res.redirect(errBack(`Source entity must be type "${relTypeRow.source_type}" for ${relType}.`));
+  }
+  if (relTypeRow?.target_type && targetEntity.entity_type !== relTypeRow.target_type) {
+    return res.redirect(errBack(`Target entity must be type "${relTypeRow.target_type}" for ${relType}.`));
+  }
 
   const startDate = String(req.body.start_date || '').trim() || null;
   const endDate = String(req.body.end_date || '').trim() || null;
@@ -149,18 +170,7 @@ router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async 
   };
 
   try {
-    if (process.env.DATABASE_DRIVER === 'turso') {
-      await runCreate();
-    } else {
-      await db.runAsync('BEGIN');
-      try {
-        await runCreate();
-        await db.runAsync('COMMIT');
-      } catch (err) {
-        try { await db.runAsync('ROLLBACK'); } catch (e) {}
-        throw err;
-      }
-    }
+    await db.withTransactionAsync(runCreate);
   } catch (err) {
     return res.redirect(errBack(err.message));
   }
