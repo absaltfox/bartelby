@@ -132,4 +132,10 @@ describe('Curator UX remediation markup', () => {
     expect(createLink).toContain("No passage selected; you'll choose evidence on the next page.");
     expect(collectionHero).not.toContain('No description yet.');
   });
+
+  it('renders aria-current as a real attribute, not an escaped string', () => {
+    const source = read('views/partials/knowledge-nav.ejs');
+    expect(source).not.toMatch(/<%=\s*activeKnowledgePage === item\.key \? 'aria-current="page"'/);
+    expect(source).toMatch(/<% if \(activeKnowledgePage === item\.key\) \{ %>aria-current="page"<% \} %>/);
+  });
 });

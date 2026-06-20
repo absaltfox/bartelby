@@ -45,7 +45,7 @@
       <p class="knowledge-workbench-group-title" id="knowledge-workbench-<%= group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-') %>"><%= group.label %></p>
       <div class="knowledge-workbench-links">
         <% group.items.forEach(function(item) { %>
-          <a href="<%= item.href %>" class="knowledge-workbench-link <%= activeKnowledgePage === item.key ? 'active' : '' %>" <%= activeKnowledgePage === item.key ? 'aria-current="page"' : '' %>><%= item.label %></a>
+          <a href="<%= item.href %>" class="knowledge-workbench-link <%= activeKnowledgePage === item.key ? 'active' : '' %>" <% if (activeKnowledgePage === item.key) { %>aria-current="page"<% } %>><%= item.label %></a>
         <% }) %>
       </div>
     </section>
