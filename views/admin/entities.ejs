@@ -22,10 +22,13 @@
     %>
     <a href="<%= filterHref('all', q, 1) %>" class="filter-tab <%= typeFilter === 'all' ? 'active' : '' %>">All <span class="filter-count"><%= totalCount %></span></a>
     <% entityTypes.forEach(function(type) { %>
-      <a href="<%= filterHref(type, q, 1) %>" class="filter-tab <%= typeFilter === type ? 'active' : '' %>">
-        <%= type.charAt(0).toUpperCase() + type.slice(1) %>
-        <span class="filter-count"><%= typeCounts[type] || 0 %></span>
-      </a>
+      <% var count = typeCounts[type] || 0; %>
+      <% if (count > 0 || typeFilter === type) { %>
+        <a href="<%= filterHref(type, q, 1) %>" class="filter-tab <%= typeFilter === type ? 'active' : '' %>">
+          <%= type.charAt(0).toUpperCase() + type.slice(1) %>
+          <span class="filter-count"><%= count %></span>
+        </a>
+      <% } %>
     <% }) %>
   </div>
 
