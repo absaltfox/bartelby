@@ -97,6 +97,20 @@ describe('Curator UX remediation markup', () => {
     expect(entity).toContain('Author');
   });
 
+  it('renders document metadata via a single shared partial in both layout branches', () => {
+    const panel = read('views/partials/document-info-panel.ejs');
+    const includes = panel.match(/include\('document-metadata-section'/g) || [];
+    expect(includes.length).toBeGreaterThanOrEqual(2);
+    expect(panel).not.toMatch(/id="metadata-edit-form"/);
+    expect(panel).not.toMatch(/id="doc-info-edit"/);
+    expect(panel).not.toMatch(/id="doc-info-view"/);
+
+    const partial = read('views/partials/document-metadata-section.ejs');
+    expect(partial).toMatch(/id="metadata-edit-form"/);
+    expect(partial).toMatch(/id="doc-info-edit"/);
+    expect(partial).toMatch(/id="doc-info-view"/);
+  });
+
   it('uses text-first document and compact transcript action patterns', () => {
     const documentPanel = read('views/partials/document-info-panel.ejs');
     const createLink = read('views/partials/document-create-entity-link.ejs');
