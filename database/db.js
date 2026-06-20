@@ -15,6 +15,7 @@ const {
   DEFAULT_BATCH_FINALIZATION_STALE_SECONDS,
   parseFinalizationStaleSeconds
 } = require('../utils/finalization-claims');
+const { AsyncLocalStorage } = require('async_hooks');
 
 let db = null;
 
@@ -707,11 +708,16 @@ let _saveTimer = null;
 let _saveResolve = null;
 let _saveReject = null;
 let _savePending = null;
-let _activeTransactionDriver = null;
+const transactionContext = new AsyncLocalStorage();
+
+function getTransactionDriver() {
+  return transactionContext.getStore()?.driver || null;
+}
+
 function saveDatabase() {
   if (!db) return Promise.resolve();
   if (db.persistent === false) return Promise.resolve();
-  if (_activeTransactionDriver) return Promise.resolve();
+  if (getTransactionDriver()) return Promise.resolve();
   // If no pending flush, create one
   if (!_savePending) {
     _savePending = new Promise((resolve, reject) => {
@@ -1296,69 +1302,63 @@ function get(sql, params = []) {
 
 // Helper to run insert/update/delete
 function run(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   const result = driver.run(sql, params);
   saveDatabase();
   return result;
 }
 
 function runWithoutSave(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   return driver.run(sql, params);
 }
 
 async function allAsync(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   return await driver.all(sql, params);
 }
 
 async function getAsync(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   return await driver.get(sql, params);
 }
 
 async function runAsync(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   const result = await driver.run(sql, params);
-  if (!_activeTransactionDriver) await saveDatabase();
+  if (!getTransactionDriver()) await saveDatabase();
   return result;
 }
 
 async function runAsyncWithoutSave(sql, params = []) {
-  const driver = _activeTransactionDriver || db;
+  const driver = getTransactionDriver() || db;
   return await driver.run(sql, params);
 }
 
 async function withTransactionAsync(fn) {
   await initDatabase();
-  if (_activeTransactionDriver) {
+  if (getTransactionDriver()) {
     return await fn();
   }
 
   if (db && typeof db.transaction === 'function') {
-    const result = await db.transaction(async (txDriver) => {
-      _activeTransactionDriver = txDriver;
-      try {
-        return await fn();
-      } finally {
-        _activeTransactionDriver = null;
-      }
-    });
+    const result = await db.transaction(async (txDriver) =>
+      transactionContext.run({ driver: txDriver }, fn)
+    );
     await saveDatabase();
     return result;
   }
 
   await db.run('BEGIN');
-  _activeTransactionDriver = db;
   try {
-    const result = await fn();
-    _activeTransactionDriver = null;
+    const result = await transactionContext.run({ driver: db }, fn);
     await db.run('COMMIT');
     await saveDatabase();
     return result;
   } catch (err) {
-    _activeTransactionDriver = null;
-    await db.run('ROLLBACK').catch(() => {});
+    try {
+      await db.run('ROLLBACK');
+    } catch (_) {}
     throw err;
   }
 }

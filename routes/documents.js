@@ -1,8 +1,7 @@
 const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages } = require('../utils/document-services');
-const knowledgeGraph = require('../database/models/knowledge-graph');
 const express = require('express');
 const router = express.Router();
-const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('../database/db');
+const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync, relationshipsAsync } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery, normalizeCollectionAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
@@ -499,7 +498,9 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
   const normalizedDoc = await normalizeDocumentAssetsForDelivery(doc);
   const comparisonPages = buildComparisonPages(normalizedDoc, selectedTranscript);
 
-  const relationshipCounts = await knowledgeGraph.relationships.countByDocumentId(doc.id);
+  const relationshipCounts = relationshipsAsync && typeof relationshipsAsync.countByDocumentId === 'function'
+    ? await relationshipsAsync.countByDocumentId(doc.id)
+    : { pending: 0, approved: 0, rejected: 0 };
 
   res.render('document', {
     document: normalizedDoc,

@@ -10,8 +10,10 @@
   // when the document has multiple transcripts the picker writes the best one's id
   // (client-side, in public/js/typeahead-picker.js's normalizeRow path for documents).
 %>
-<fieldset>
-  <legend>Evidence (transcript span)</legend>
+<section class="form-section transcript-span-section">
+  <div class="form-section-header">
+    <h2>Evidence (transcript span)</h2>
+  </div>
   <div class="edit-field">
     <label for="tp-transcriptId-search">Transcript (search by document title)</label>
     <%- include('./typeahead-picker', {
@@ -36,4 +38,4 @@
       placeholder="character offset; used only if verbatim appears multiple times" />
   </div>
   <p class="muted">The verbatim text is authoritative; the offset is a hint used to disambiguate when the verbatim appears multiple times in the transcript.</p>
-</fieldset>
+</section>

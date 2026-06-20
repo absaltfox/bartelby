@@ -1,0 +1,164 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
+
+  <div class="admin-header">
+    <h1>Split Entity</h1>
+    <p class="subtitle">
+      Separate conflated references from <strong><%= entity.canonical_name %></strong>.
+      Nothing moves unless selected.
+    </p>
+  </div>
+
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+  <div class="alert alert-warning">
+    The original entity keeps all citations, aliases, dates, and relationships by default.
+    Select only the evidence that belongs on the new entity.
+  </div>
+
+  <div class="knowledge-toolbar knowledge-toolbar--spaced">
+    <a href="/admin/knowledge/entities/<%= entity.id %>" class="btn-secondary btn-sm">&larr; Back to entity</a>
+    <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
+  </div>
+
+  <section class="settings-section correction-workspace">
+    <div class="review-extractions-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Correction</p>
+        <h2>New entity</h2>
+        <p class="subtitle">Create the corrected record, then opt evidence into it below.</p>
+      </div>
+    </div>
+
+    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/split" class="edit-form correction-form">
+      <div class="correction-form-main">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="edit-field">
+          <label for="entity-split-type">New entity type <span class="field-hint-inline">(required)</span></label>
+          <select id="entity-split-type" name="entity_type" required>
+            <% entityTypes.forEach(function(t) { %>
+              <option value="<%= t %>" <%= entity.entity_type === t ? 'selected' : '' %>><%= t %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label for="entity-split-name">New canonical name <span class="field-hint-inline">(required)</span></label>
+          <input type="text" id="entity-split-name" name="canonical_name" required>
+        </div>
+        <div class="edit-field">
+          <label for="entity-split-description">Description</label>
+          <textarea id="entity-split-description" name="description" rows="3"></textarea>
+        </div>
+        <div class="edit-field">
+          <label for="entity-split-note">Split note <span class="field-hint-inline">(required)</span></label>
+          <input type="text" id="entity-split-note" name="split_note" required placeholder="Why this entity needs to be split">
+        </div>
+        <% if (entity.authority_id) { %>
+          <label class="checkbox-row">
+            <input type="checkbox" name="link_same_authority" value="1">
+            Link new entity to the same authority
+          </label>
+        <% } %>
+      </div>
+
+      <div class="correction-selection-grid">
+        <section class="correction-selection-panel">
+          <div class="correction-selection-header">
+            <p class="kg-panel-eyebrow">Evidence</p>
+            <h3>Citations</h3>
+          </div>
+          <% if (!citations.length) { %>
+            <p class="graph-empty-state">No citations are attached to this entity.</p>
+          <% } else { %>
+            <div class="correction-check-list">
+              <% citations.forEach(function(citation) { %>
+                <label class="checkbox-row correction-check-row">
+                  <input type="checkbox" name="citation_ids" value="<%= citation.id %>">
+                  <span>
+                    <strong><%= citation.document_title || ('Document #' + citation.document_id) %></strong>
+                    <span><%= (citation.passage_text || '').slice(0, 160) %><%= (citation.passage_text || '').length > 160 ? '...' : '' %></span>
+                  </span>
+                </label>
+              <% }) %>
+            </div>
+          <% } %>
+        </section>
+
+        <section class="correction-selection-panel">
+          <div class="correction-selection-header">
+            <p class="kg-panel-eyebrow">Names</p>
+            <h3>Aliases</h3>
+          </div>
+          <% if (!aliases.length) { %>
+            <p class="graph-empty-state">No aliases are attached to this entity.</p>
+          <% } else { %>
+            <div class="correction-check-list">
+              <% aliases.forEach(function(alias) { %>
+                <label class="checkbox-row correction-check-row">
+                  <input type="checkbox" name="alias_ids" value="<%= alias.id %>">
+                  <span>
+                    <strong><%= alias.alias %></strong>
+                    <span><%= alias.source || 'alias' %></span>
+                  </span>
+                </label>
+              <% }) %>
+            </div>
+          <% } %>
+        </section>
+
+        <section class="correction-selection-panel">
+          <div class="correction-selection-header">
+            <p class="kg-panel-eyebrow">Time</p>
+            <h3>Date expressions</h3>
+          </div>
+          <% if (!dates.length) { %>
+            <p class="graph-empty-state">No date expressions are attached to this entity.</p>
+          <% } else { %>
+            <div class="correction-check-list">
+              <% dates.forEach(function(date) { %>
+                <label class="checkbox-row correction-check-row">
+                  <input type="checkbox" name="date_expression_ids" value="<%= date.id %>">
+                  <span>
+                    <strong><%= date.label || date.mention || 'Date expression' %></strong>
+                    <span><%= date.earliest || 'Unknown' %><% if (date.latest && date.latest !== date.earliest) { %> to <%= date.latest %><% } %></span>
+                  </span>
+                </label>
+              <% }) %>
+            </div>
+          <% } %>
+        </section>
+
+        <section class="correction-selection-panel">
+          <div class="correction-selection-header">
+            <p class="kg-panel-eyebrow">Graph</p>
+            <h3>Relationships</h3>
+          </div>
+          <% if (!relationships.length) { %>
+            <p class="graph-empty-state">No relationships are attached to this entity.</p>
+          <% } else { %>
+            <div class="correction-check-list">
+              <% relationships.forEach(function(rel) { %>
+                <label class="checkbox-row correction-check-row">
+                  <input type="checkbox" name="relationship_ids" value="<%= rel.id %>">
+                  <span>
+                    <strong><%= rel.relationship_type || rel.type || 'related_to' %></strong>
+                    <span><%= rel.source_name || 'Unknown source' %> &rarr; <%= rel.target_name || 'Unknown target' %></span>
+                  </span>
+                </label>
+              <% }) %>
+            </div>
+          <% } %>
+        </section>
+      </div>
+
+      <div class="edit-actions">
+        <button type="submit" class="btn-primary">Create split entity</button>
+        <a href="/admin/knowledge/entities/<%= entity.id %>" class="btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </section>
+</div>
+
+<%- include('../partials/footer') %>

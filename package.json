@@ -25,11 +25,23 @@
     "testMatch": [
       "**/tests/**/*.test.js"
     ],
+    "testPathIgnorePatterns": [
+      "<rootDir>/.venv/",
+      "<rootDir>/.claude/",
+      "<rootDir>/.claire/",
+      "<rootDir>/.worktrees/"
+    ],
     "modulePathIgnorePatterns": [
-      "<rootDir>/.venv/"
+      "<rootDir>/.venv/",
+      "<rootDir>/.claude/",
+      "<rootDir>/.claire/",
+      "<rootDir>/.worktrees/"
     ],
     "watchPathIgnorePatterns": [
-      "<rootDir>/.venv/"
+      "<rootDir>/.venv/",
+      "<rootDir>/.claude/",
+      "<rootDir>/.claire/",
+      "<rootDir>/.worktrees/"
     ],
     "collectCoverageFrom": [
       "utils/**/*.js",

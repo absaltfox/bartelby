@@ -53,8 +53,23 @@ describe('Suppression CRUD — S3', () => {
     const res = await adminAgent
       .post('/admin/knowledge/sentiment/phrase-targets/suppressions')
       .type('form')
-      .send({ _csrf: csrfToken, phrase: 'My Position', notes: 'too generic' });
+      .send({
+        _csrf: csrfToken,
+        phrase: 'My Position',
+        notes: 'too generic',
+        q: 'position',
+        collectionId: 42,
+        polarity: 'mixed',
+        minFrequency: 3,
+        page: 2
+      });
     expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('saved=1');
+    expect(res.headers.location).toContain('q=position');
+    expect(res.headers.location).toContain('collectionId=42');
+    expect(res.headers.location).toContain('polarity=mixed');
+    expect(res.headers.location).toContain('minFrequency=3');
+    expect(res.headers.location).toContain('page=2');
     const row = await db.getAsync(`SELECT * FROM sentiment_phrase_suppressions WHERE target_phrase_normalized = 'my position'`);
     expect(row).toBeTruthy();
     expect(row.notes).toBe('too generic');
@@ -89,8 +104,11 @@ describe('Suppression CRUD — S3', () => {
     const res = await adminAgent
       .post(`/admin/knowledge/sentiment/phrase-targets/suppressions/${inserted.lastInsertRowid}/delete`)
       .type('form')
-      .send({ _csrf: csrfToken });
+      .send({ _csrf: csrfToken, tab: 'suppressed', page: 2 });
     expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('tab=suppressed');
+    expect(res.headers.location).toContain('saved=1');
+    expect(res.headers.location).toContain('page=2');
     const row = await db.getAsync(`SELECT * FROM sentiment_phrase_suppressions WHERE id = ?`, [inserted.lastInsertRowid]);
     expect(row).toBeFalsy();
   });

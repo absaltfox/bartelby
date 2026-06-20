@@ -46,7 +46,9 @@ beforeAll(async () => {
 
 describe('GET /admin/knowledge/sentiment/phrase-targets — S3 listing', () => {
   beforeAll(async () => {
+    await db.runAsync(`INSERT OR IGNORE INTO collections (id, name) VALUES (7007, 'S3 listing collection')`);
     await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (5001, 'S3 listing doc')`);
+    await db.runAsync(`INSERT OR IGNORE INTO document_collections (document_id, collection_id) VALUES (5001, 7007)`);
     await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (5001, 5001, 'sample transcript')`);
     for (let i = 0; i < 3; i++) {
       await db.runAsync(`INSERT INTO sentiment_annotations
@@ -64,6 +66,22 @@ describe('GET /admin/knowledge/sentiment/phrase-targets — S3 listing', () => {
     expect(res.text).toContain('Phrase Targets');
     expect(res.text).toContain('the school house');
     expect(res.text).toContain('the meeting');
+    expect(res.text).toContain('phrase-target-expansion-row');
+    expect(res.text).toContain('Create new entity');
+    expect(res.text).toContain('Use existing entity');
+    expect(res.text).not.toContain('toolbar-details-menu');
+  });
+
+  it('preserves active filter context in phrase-target expansion forms', async () => {
+    const res = await adminAgent
+      .get('/admin/knowledge/sentiment/phrase-targets?tab=active&q=school&collectionId=7007&polarity=positive&minFrequency=1&page=1')
+      .expect(200);
+
+    expect(res.text).toContain('name="q" value="school"');
+    expect(res.text).toContain('name="collectionId" value="7007"');
+    expect(res.text).toContain('name="polarity" value="positive"');
+    expect(res.text).toContain('name="minFrequency" value="1"');
+    expect(res.text).toContain('name="page" value="1"');
   });
 
   it('hides suppressed phrases by default', async () => {

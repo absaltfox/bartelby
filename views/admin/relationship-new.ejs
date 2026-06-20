@@ -16,8 +16,11 @@
     <form method="POST" action="/admin/knowledge/relationships/new" class="edit-form relationship-new-form">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
 
-      <fieldset>
-        <legend>Relationship</legend>
+      <section class="form-section">
+        <div class="form-section-header">
+          <h2>Relationship</h2>
+          <p class="muted">Choose a relationship type first when possible; source and target searches narrow to compatible entity types.</p>
+        </div>
         <div class="edit-field">
           <label for="tp-source_entity_id-search">Source entity</label>
           <%- include('../partials/typeahead-picker', {
@@ -26,6 +29,7 @@
             placeholder: 'Search entities by canonical name…',
             selectedId: prefill.sourceEntityId,
             selectedLabel: prefill.sourceEntityLabel || (prefill.sourceEntityId ? ('Entity #' + prefill.sourceEntityId) : ''),
+            selectedType: prefill.sourceEntityType || '',
             required: true,
             id: 'tp-source_entity_id'
           }) %>
@@ -38,6 +42,7 @@
             placeholder: 'Search entities by canonical name…',
             selectedId: prefill.targetEntityId,
             selectedLabel: prefill.targetEntityLabel || (prefill.targetEntityId ? ('Entity #' + prefill.targetEntityId) : ''),
+            selectedType: prefill.targetEntityType || '',
             required: true,
             id: 'tp-target_entity_id'
           }) %>
@@ -59,6 +64,9 @@
               value="<%= prefill.relationshipType || '' %>"
               placeholder="e.g., spouse_of, holds_position" />
             <p class="muted">Vocabulary table empty — type the relationship name directly.</p>
+          <% } %>
+          <% if (relationshipTypes && relationshipTypes.length) { %>
+            <p class="field-hint">When the selected type defines source or target constraints, the entity pickers search only those types.</p>
           <% } %>
         </div>
         <div class="edit-field">
@@ -82,7 +90,7 @@
             <% }) %>
           </select>
         </div>
-      </fieldset>
+      </section>
 
       <%- include('../partials/transcript-span-picker', { prefill }) %>
 

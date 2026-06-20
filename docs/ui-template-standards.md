@@ -380,6 +380,24 @@ Enter selects it, Escape closes the results, and `aria-activedescendant` /
 `data-search-url` at runtime to add safe filters, such as relationship
 source/target entity-type constraints.
 
+## Correction Workspaces
+
+High-risk curator correction flows, such as entity edit and entity split, should
+use dedicated admin workspace pages rather than cramped dropdowns embedded in a
+detail toolbar. Use the shared admin workspace shell, shared form classes, and a
+short warning or risk note near the top when the action can change authority
+membership, evidence ownership, or audit history.
+
+Correction pages should:
+
+- keep mutating POST contracts on the canonical backend workflow
+- show the existing record context before the curator commits a change
+- include evidence previews for opt-in moves such as split citations, aliases,
+  dates, and relationships
+- expose audit visibility when audit rows already exist for the workflow
+- avoid inline styles, inline event handlers, and page-specific imperative
+  scripts unless the behavior is promoted into a reusable shared component
+
 ## Dirty Multi-Row Forms
 
 Editable admin tables that expose many independent row forms must protect
