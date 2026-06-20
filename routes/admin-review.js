@@ -345,7 +345,9 @@ async function buildPreviewPayload(citation, document, transcript) {
     transcriptVersion: transcript.version,
     pageCount,
     focusPageNumber: previewPage.pageNumber,
-    pageLabel: pageCount > 1 ? `Page ${previewPage.pageNumber} of ${pageCount}` : 'Document page',
+    pageLabel: pageCount > 1
+      ? `Page ${previewPage.pageNumber} of ${pageCount}`
+      : (previewPage.imagePath ? 'Document page' : 'Document text'),
     pageText: previewPage.transcriptText || '',
     highlightStart: Number.isInteger(highlightRange.start) ? clampNumber(highlightRange.start, 0, previewPage.transcriptText.length) : null,
     highlightEnd: Number.isInteger(highlightRange.end) ? clampNumber(highlightRange.end, 0, previewPage.transcriptText.length) : null,
