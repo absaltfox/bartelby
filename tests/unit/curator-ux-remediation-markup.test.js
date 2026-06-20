@@ -99,6 +99,12 @@ describe('Curator UX remediation markup', () => {
     expect(entity).toContain('Navigate');
     expect(entity).toContain('Correct');
     expect(entity).toContain('Author');
+    expect(entity).toMatch(/<section class="curator-action-group[^"]*" aria-labelledby="curator-action-navigate"/);
+    expect(entity).toMatch(/<section class="curator-action-group[^"]*" aria-labelledby="curator-action-correct"/);
+    expect(entity).toMatch(/<section class="curator-action-group[^"]*" aria-labelledby="curator-action-author"/);
+    expect(entity).toMatch(/<p class="curator-action-group-label" id="curator-action-navigate">/);
+    expect(entity).toMatch(/<p class="curator-action-group-label" id="curator-action-correct">/);
+    expect(entity).toMatch(/<p class="curator-action-group-label" id="curator-action-author">/);
   });
 
   it('renders document metadata via a single shared partial in both layout branches', () => {
