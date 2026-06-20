@@ -74,6 +74,12 @@ beforeAll(async () => {
   await db.runAsync(
     `INSERT OR IGNORE INTO relationship_types (name, label, category) VALUES ('holds_position', 'holds position', 'role')`
   );
+  await db.runAsync(
+    `INSERT OR IGNORE INTO relationship_types (name, label, category) VALUES ('voiced_in', 'voiced in', 'document')`
+  );
+  await db.runAsync(
+    `INSERT OR IGNORE INTO relationship_types (name, label, category) VALUES ('date_bounded', 'date bounded', 'temporal')`
+  );
 
   const formPage = await adminAgent.get('/admin/knowledge/relationships/new');
   csrfToken = extractCsrfToken(formPage.text);

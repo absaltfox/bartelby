@@ -48,7 +48,10 @@
             <select id="relationship_type" name="relationship_type" required>
               <option value="">— select —</option>
               <% relationshipTypes.forEach(function(t) { %>
-                <option value="<%= t %>" <%= prefill.relationshipType === t ? 'selected' : '' %>><%= t %></option>
+                <option value="<%= t.name %>"
+                  data-source-type="<%= t.source_type || '' %>"
+                  data-target-type="<%= t.target_type || '' %>"
+                  <%= prefill.relationshipType === t.name ? 'selected' : '' %>><%= t.name %></option>
               <% }) %>
             </select>
           <% } else { %>
@@ -92,4 +95,5 @@
 </div>
 
 <script src="/js/typeahead-picker.js"></script>
+<script src="/js/relationship-new.js"></script>
 <%- include('../partials/footer') %>

@@ -46,6 +46,42 @@ async function createDriver() {
     kind: 'turso',
     persistent: false,
 
+    async transaction(fn) {
+      const tx = await client.transaction('write');
+      const adapter = {
+        async run(sql, params = []) {
+          const result = await tx.execute({ sql, args: params });
+          return {
+            lastInsertRowid: Number(result.lastInsertRowid),
+            changes: result.rowsAffected
+          };
+        },
+        async all(sql, params = []) {
+          const result = await tx.execute({ sql, args: params });
+          return result.rows.map(row => {
+            const obj = {};
+            for (const col of result.columns) {
+              obj[col] = row[col];
+            }
+            return obj;
+          });
+        },
+        async get(sql, params = []) {
+          const rows = await this.all(sql, params);
+          return rows[0] || null;
+        }
+      };
+
+      try {
+        const result = await fn(adapter);
+        await tx.commit();
+        return result;
+      } catch (err) {
+        await tx.rollback().catch(() => {});
+        throw err;
+      }
+    },
+
     async exec(sql) {
       // exec() is used for multi-statement DDL during migrations.
       // libsql client's executeMultiple handles semicolon-separated SQL,

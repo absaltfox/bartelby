@@ -91,6 +91,9 @@ describe('extraction worker cycle', () => {
         resolve: jest.fn(async () => 'related_to'),
         create: jest.fn(async () => {})
       },
+      relationshipTypeAliasesAsync: {
+        resolve: jest.fn(async () => null)
+      },
       graphMaintenance: {
         resetTranscriptExtraction: jest.fn(async () => ({
           deletedCitations: 0,
@@ -98,6 +101,11 @@ describe('extraction worker cycle', () => {
           deletedEntities: 0
         }))
       },
+      authorityGenericTermsAsync: { listActive: jest.fn(async () => []) },
+      authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: jest.fn(async () => true), create: jest.fn(async () => {}) },
+      documentCollectionsAsync: { getByDocumentId: jest.fn(async () => []) },
+      getAsync: jest.fn(async () => null),
+      sentimentAsync: { hasQueuedOrRunningForTranscript: jest.fn(async () => true), createJob: jest.fn(async () => {}) },
       userApiKeysAsync: {
         markUsed: jest.fn(async () => {})
       }
@@ -108,6 +116,14 @@ describe('extraction worker cycle', () => {
     }));
     jest.doMock('../../utils/entity-resolution', () => ({
       resolveEntityInScope: jest.fn(() => null),
+      resolveMentionToEntity: jest.fn((mention, scope) => {
+        const key = String(mention || '').toLowerCase().trim();
+        return scope.get(key) || null;
+      }),
+      seedMentionLookup: jest.fn(({ mention, normalized, entityId, mentionToEntityId }) => {
+        if (mention) mentionToEntityId.set(String(mention).toLowerCase().trim(), entityId);
+        if (normalized) mentionToEntityId.set(String(normalized).toLowerCase().trim(), entityId);
+      }),
       normalizeComparable: jest.fn((v) => String(v || '').toLowerCase().trim()),
       normalizeForMatching: jest.fn((v) => String(v || '').toLowerCase().trim())
     }));
@@ -137,14 +153,90 @@ describe('extraction worker cycle', () => {
 
     await worker.runExtractionWorkerCycle();
 
-    expect(markDone).toHaveBeenCalledWith(21, {
+    expect(markDone).toHaveBeenCalledWith(21, expect.objectContaining({
       entity_count: 0,
       relationship_count: 0,
       unresolved_relationship_count: 0,
-      unresolved_date_count: 0
-    });
+      unresolved_date_count: 0,
+      dropped_verbatim_mismatch_count: 0,
+      dropped_unknown_entity_mention_count: 0
+    }));
     expect(requeueForRetry).not.toHaveBeenCalled();
     expect(markFailed).not.toHaveBeenCalled();
+  });
+
+  it('drops relationship evidence that is not anchored in the transcript', async () => {
+    const { worker, markDone } = loadModule({
+      job: {
+        id: 24,
+        attempts: 0,
+        document_id: 7,
+        transcript_id: 5,
+        job_kind: 'single',
+        provider_key_scope: null,
+        reset_existing: 0
+      },
+      extractionImpl: async () => ({
+        entities: [
+          { mention: 'Alice', normalized: 'Alice', entity_type: 'person', span_start: 0, span_end: 5, confidence: 0.9 },
+          { mention: 'Bob', normalized: 'Bob', entity_type: 'person', span_start: 10, span_end: 13, confidence: 0.9 }
+        ],
+        relationships: [{
+          source_mention: 'Alice',
+          target_mention: 'Bob',
+          type: 'related_to',
+          evidence_text: 'Alice invented this sentence about Bob',
+          confidence: 0.9
+        }],
+        dates: [],
+        paradata: { model: 'gpt-test' }
+      })
+    });
+
+    await worker.runExtractionWorkerCycle();
+
+    expect(markDone).toHaveBeenCalledWith(24, expect.objectContaining({
+      relationship_count: 0,
+      dropped_verbatim_mismatch_count: 1,
+      dropped_unknown_entity_mention_count: 0
+    }));
+  });
+
+  it('counts relationship mentions that cannot be resolved to extracted entities', async () => {
+    const { worker, markDone } = loadModule({
+      job: {
+        id: 25,
+        attempts: 0,
+        document_id: 7,
+        transcript_id: 5,
+        job_kind: 'single',
+        provider_key_scope: null,
+        reset_existing: 0
+      },
+      extractionImpl: async () => ({
+        entities: [
+          { mention: 'Alice', normalized: 'Alice', entity_type: 'person', span_start: 0, span_end: 5, confidence: 0.9 }
+        ],
+        relationships: [{
+          source_mention: 'Alice',
+          target_mention: 'Charlie',
+          type: 'related_to',
+          evidence_text: 'Alice met Bob',
+          confidence: 0.9
+        }],
+        dates: [],
+        paradata: { model: 'gpt-test' }
+      })
+    });
+
+    await worker.runExtractionWorkerCycle();
+
+    expect(markDone).toHaveBeenCalledWith(25, expect.objectContaining({
+      relationship_count: 0,
+      unresolved_relationship_count: 1,
+      dropped_unknown_entity_mention_count: 1,
+      dropped_verbatim_mismatch_count: 0
+    }));
   });
 
   it('requeues transient extraction failures', async () => {
@@ -463,12 +555,14 @@ describe('extraction batch polling', () => {
     expect(claimBatchFinalization).toHaveBeenCalledWith(71, expect.stringMatching(/^extraction-finalization:/), expect.any(Number));
     expect(heartbeatBatchFinalizationClaim).toHaveBeenCalledWith(71, expect.stringMatching(/^extraction-finalization:/));
     expect(savePartialResults).toHaveBeenCalled();
-    expect(markDone).toHaveBeenCalledWith(71, {
+    expect(markDone).toHaveBeenCalledWith(71, expect.objectContaining({
       entity_count: 0,
       relationship_count: 0,
       unresolved_relationship_count: 0,
-      unresolved_date_count: 0
-    });
+      unresolved_date_count: 0,
+      dropped_verbatim_mismatch_count: 0,
+      dropped_unknown_entity_mention_count: 0
+    }));
     expect(markFailed).not.toHaveBeenCalled();
   });
 

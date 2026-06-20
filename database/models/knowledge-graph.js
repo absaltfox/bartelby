@@ -130,9 +130,10 @@ const entities = {
     if (!existing) return null;
     await runAsync(`
       UPDATE entities
-      SET canonical_name = ?, description = ?, properties = ?, authority_id = ?
+      SET entity_type = ?, canonical_name = ?, description = ?, properties = ?, authority_id = ?
       WHERE id = ?
     `, [
+      fields.entity_type !== undefined ? fields.entity_type : existing.entity_type,
       fields.canonical_name !== undefined ? fields.canonical_name : existing.canonical_name,
       fields.description !== undefined ? fields.description : existing.description,
       fields.properties !== undefined ? JSON.stringify(fields.properties || {}) : JSON.stringify(existing.properties || {}),
@@ -560,23 +561,7 @@ const authorities = {
       await runAsync('DELETE FROM authorities WHERE id = ?', [mergeId]);
     };
 
-    // Turso (libsql/HTTP) auto-commits each statement, so manual BEGIN/COMMIT
-    // produces a stray "cannot rollback - no transaction is active" error that
-    // masks any real failure. See database/models/collections.js for the same
-    // pattern.
-    if (process.env.DATABASE_DRIVER === 'turso') {
-      await runMerge();
-    } else {
-      await runAsync('BEGIN');
-      try {
-        await runMerge();
-        await runAsync('COMMIT');
-      } catch (err) {
-        await runAsync('ROLLBACK').catch(() => {});
-        throw err;
-      }
-    }
-
+    await runMerge();
     await saveDatabase();
     return await this.getById(keepId);
   },
@@ -1064,23 +1049,7 @@ const authorityLinkSuggestions = {
       `, [reviewedByUserId || null, suggestion.entity_id, id]);
     };
 
-    // Turso (libsql/HTTP) auto-commits each statement, so manual BEGIN/COMMIT
-    // produces a stray "cannot rollback - no transaction is active" error that
-    // masks any real failure. See database/models/collections.js for the same
-    // pattern.
-    if (process.env.DATABASE_DRIVER === 'turso') {
-      await runApprove();
-    } else {
-      await runAsync('BEGIN');
-      try {
-        await runApprove();
-        await runAsync('COMMIT');
-      } catch (err) {
-        await runAsync('ROLLBACK').catch(() => {});
-        throw err;
-      }
-    }
-
+    await runApprove();
     await saveDatabase();
     await maybeLearnGenericTermFromSuggestion(details, 'approved');
   },
@@ -1338,9 +1307,11 @@ const relationships = {
     return hydrateRelationship(await getAsync(`
       SELECT
         r.*,
+        rt.deprecated_at AS relationship_type_deprecated_at,
         se.canonical_name AS source_name, se.entity_type AS source_type,
         te.canonical_name AS target_name, te.entity_type AS target_type
       FROM relationships r
+      LEFT JOIN relationship_types rt ON rt.name = r.relationship_type
       JOIN entities se ON se.id = r.source_entity_id
       JOIN entities te ON te.id = r.target_entity_id
       WHERE r.id = ?
@@ -1351,9 +1322,11 @@ const relationships = {
     return (await allAsync(`
       SELECT
         r.*,
+        rt.deprecated_at AS relationship_type_deprecated_at,
         se.canonical_name AS source_name, se.entity_type AS source_type,
         te.canonical_name AS target_name, te.entity_type AS target_type
       FROM relationships r
+      LEFT JOIN relationship_types rt ON rt.name = r.relationship_type
       JOIN entities se ON se.id = r.source_entity_id
       JOIN entities te ON te.id = r.target_entity_id
       WHERE r.source_entity_id = ? OR r.target_entity_id = ?
@@ -1368,9 +1341,11 @@ const relationships = {
     return (await allAsync(`
       SELECT DISTINCT
         r.*,
+        rt.deprecated_at AS relationship_type_deprecated_at,
         se.canonical_name AS source_name, se.entity_type AS source_type,
         te.canonical_name AS target_name, te.entity_type AS target_type
       FROM relationships r
+      LEFT JOIN relationship_types rt ON rt.name = r.relationship_type
       JOIN entities se ON se.id = r.source_entity_id
       JOIN entities te ON te.id = r.target_entity_id
       WHERE r.source_entity_id IN (${placeholders})
@@ -2060,12 +2035,13 @@ const relationshipTypes = {
     `);
   },
 
-  async resolve(name) {
+  async resolve(name, { includeDeprecated = false } = {}) {
     if (!name) return null;
-    const exact = await getAsync('SELECT name FROM relationship_types WHERE name = ?', [name]);
+    const activeClause = includeDeprecated ? '' : ' AND deprecated_at IS NULL';
+    const exact = await getAsync(`SELECT name FROM relationship_types WHERE name = ?${activeClause}`, [name]);
     if (exact) return exact.name;
     const normalized = String(name).trim().toLowerCase().replace(/\s+/g, '_');
-    const byNormalized = await getAsync('SELECT name FROM relationship_types WHERE name = ?', [normalized]);
+    const byNormalized = await getAsync(`SELECT name FROM relationship_types WHERE name = ?${activeClause}`, [normalized]);
     return byNormalized ? byNormalized.name : null;
   },
 

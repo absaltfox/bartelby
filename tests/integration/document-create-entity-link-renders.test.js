@@ -55,11 +55,13 @@ describe('Document reading view — create-entity button', () => {
   it('renders a button with data attributes the page script consumes', async () => {
     const res = await adminAgent.get(`/documents/${DOC_ID}`).expect(200);
     expect(res.text).toMatch(/data-document-create-entity[^>]*data-transcript-id="\d+"/);
+    expect(res.text).toMatch(/data-document-create-relationship[^>]*data-transcript-id="\d+"/);
     expect(res.text).toContain('<script src="/js/document-selection-prefill.js"></script>');
   });
 
   it('falls back to a plain link with transcriptId prefilled when JS is off (noscript)', async () => {
     const res = await adminAgent.get(`/documents/${DOC_ID}`).expect(200);
     expect(res.text).toMatch(/<a[^>]*href="\/admin\/knowledge\/entities\/new\?transcriptId=\d+"[^>]*data-document-create-entity-fallback/);
+    expect(res.text).toMatch(/<a[^>]*href="\/admin\/knowledge\/relationships\/new\?transcriptId=\d+"[^>]*data-document-create-relationship-fallback/);
   });
 });

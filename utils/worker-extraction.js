@@ -121,6 +121,40 @@ function buildCitationExcerpt(content, spanStart, spanEnd, fallbackText) {
   return excerpt;
 }
 
+function resolveExtractionEvidence({ transcriptContent, verbatim, claimedStart, claimedEnd }) {
+  const transcriptText = String(transcriptContent || '');
+  const evidenceText = String(verbatim || '').trim();
+  if (!transcriptText || !evidenceText) {
+    return { ok: false };
+  }
+
+  const occurrences = [];
+  let searchFrom = 0;
+  while (searchFrom <= transcriptText.length) {
+    const idx = transcriptText.indexOf(evidenceText, searchFrom);
+    if (idx === -1) break;
+    occurrences.push(idx);
+    searchFrom = idx + 1;
+  }
+  if (!occurrences.length) {
+    return { ok: false };
+  }
+
+  const hint = Number.isInteger(claimedStart) && claimedStart >= 0 ? claimedStart : null;
+  const passageStart = hint != null
+    ? occurrences.reduce((best, occ) =>
+        Math.abs(occ - hint) < Math.abs(best - hint) ? occ : best)
+    : occurrences[0];
+  const passageEnd = passageStart + evidenceText.length;
+
+  return {
+    ok: true,
+    passageStart,
+    passageEnd,
+    passageText: buildCitationExcerpt(transcriptText, passageStart, passageEnd, evidenceText)
+  };
+}
+
 async function materializeExtractionResult({
   job,
   transcript,
@@ -161,6 +195,8 @@ async function materializeExtractionResult({
   let relationshipCount = 0;
   let unresolvedRelationshipCount = 0;
   let unresolvedDateCount = 0;
+  let droppedVerbatimMismatchCount = 0;
+  let droppedUnknownEntityMentionCount = 0;
 
   for (const ext of extractionResult.entities) {
     try {
@@ -175,6 +211,21 @@ async function materializeExtractionResult({
         ...(ext.properties || {}),
         genericity
       };
+      const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
+      const spanEnd = Number.isInteger(ext.span_end)
+        ? ext.span_end
+        : Math.min(spanStart + mention.length, transcript.content.length);
+      const evidence = resolveExtractionEvidence({
+        transcriptContent: transcript.content,
+        verbatim: mention,
+        claimedStart: spanStart,
+        claimedEnd: spanEnd
+      });
+      if (!evidence.ok) {
+        droppedVerbatimMismatchCount += 1;
+        await logLine(`WARN: Dropping entity "${mention}" — evidence verbatim not found in transcript`);
+        continue;
+      }
 
       const resolved = resolveEntityInScope(mention, normalized, entityType, mentionToEntityId);
       let entityId = resolved?.entityId || null;
@@ -217,19 +268,14 @@ async function materializeExtractionResult({
         collidedKeys
       });
 
-      const spanStart = Number.isInteger(ext.span_start) ? ext.span_start : 0;
-      const spanEnd = Number.isInteger(ext.span_end)
-        ? ext.span_end
-        : Math.min(spanStart + mention.length, transcript.content.length);
-
       await citations.create({
         entity_id: entityId,
         relationship_id: null,
         transcript_id: transcript.id,
         document_id: doc.id,
-        passage_start: spanStart,
-        passage_end: spanEnd,
-        passage_text: buildCitationExcerpt(transcript.content, spanStart, spanEnd, mention),
+        passage_start: evidence.passageStart,
+        passage_end: evidence.passageEnd,
+        passage_text: evidence.passageText,
         extraction_method: 'llm_auto',
         extraction_model: extractionResult.paradata?.model || providerName,
         confidence: ext.confidence != null ? ext.confidence : 0.8
@@ -251,6 +297,7 @@ async function materializeExtractionResult({
       const entityId = resolveMentionToEntity(rawEntityMention, mentionToEntityId, { collidedKeys });
       if (!entityId) {
         unresolvedDateCount += 1;
+        droppedUnknownEntityMentionCount += 1;
         const ambiguous = collidedKeys.has(rawEntityMention.toLowerCase())
           || collidedKeys.has(normalizeComparable(rawEntityMention))
           || collidedKeys.has(normalizeForMatching(rawEntityMention));
@@ -259,6 +306,22 @@ async function materializeExtractionResult({
         } else {
           await logLine(`WARN: Skipping date "${label}" — entity_mention "${dateExt.entity_mention}" not found`);
         }
+        continue;
+      }
+
+      const spanStart = Number.isInteger(dateExt.span_start) ? dateExt.span_start : 0;
+      const spanEnd = Number.isInteger(dateExt.span_end)
+        ? dateExt.span_end
+        : Math.min(spanStart + mention.length, transcript.content.length);
+      const evidence = resolveExtractionEvidence({
+        transcriptContent: transcript.content,
+        verbatim: mention,
+        claimedStart: spanStart,
+        claimedEnd: spanEnd
+      });
+      if (!evidence.ok) {
+        droppedVerbatimMismatchCount += 1;
+        await logLine(`WARN: Dropping date "${label}" — evidence verbatim not found in transcript`);
         continue;
       }
 
@@ -272,20 +335,15 @@ async function materializeExtractionResult({
         calendar: 'gregorian'
       });
 
-      const spanStart = Number.isInteger(dateExt.span_start) ? dateExt.span_start : 0;
-      const spanEnd = Number.isInteger(dateExt.span_end)
-        ? dateExt.span_end
-        : Math.min(spanStart + mention.length, transcript.content.length);
-
       await citations.create({
         entity_id: entityId,
         date_expression_id: dateExpressionId,
         relationship_id: null,
         transcript_id: transcript.id,
         document_id: doc.id,
-        passage_start: spanStart,
-        passage_end: spanEnd,
-        passage_text: buildCitationExcerpt(transcript.content, spanStart, spanEnd, mention),
+        passage_start: evidence.passageStart,
+        passage_end: evidence.passageEnd,
+        passage_text: evidence.passageText,
         extraction_method: 'llm_auto',
         extraction_model: extractionResult.paradata?.model || providerName,
         confidence: dateExt.confidence != null ? dateExt.confidence : 0.8
@@ -303,6 +361,7 @@ async function materializeExtractionResult({
       const targetId = resolveMentionToEntity(rel.target_mention || '', mentionToEntityId, { collidedKeys });
       if (!sourceId || !targetId) {
         unresolvedRelationshipCount += 1;
+        droppedUnknownEntityMentionCount += 1;
         const sourceRaw = String(rel.source_mention || '');
         const targetRaw = String(rel.target_mention || '');
         const ambiguous =
@@ -329,9 +388,28 @@ async function materializeExtractionResult({
       if (llmRelType && relationshipTypeAliasesAsync) {
         const aliasResolved = await relationshipTypeAliasesAsync.resolve(llmRelType);
         if (aliasResolved && aliasResolved !== llmRelType) {
-          relType = aliasResolved;
-          originalRelTypeForProperties = llmRelType;
-          await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
+          const activeAliasCanonical = relationshipTypes && relationshipTypes.resolve
+            ? await relationshipTypes.resolve(aliasResolved)
+            : aliasResolved;
+          if (activeAliasCanonical) {
+            relType = activeAliasCanonical;
+            originalRelTypeForProperties = llmRelType;
+            await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
+          } else if (relationshipTypes && typeof relationshipTypes.listAll === 'function') {
+            const allTypes = await relationshipTypes.listAll();
+            const aliasTarget = allTypes.find((row) => row && row.name === aliasResolved);
+            if (aliasTarget && aliasTarget.deprecated_at) {
+              originalRelTypeForProperties = llmRelType;
+            } else {
+              relType = aliasResolved;
+              originalRelTypeForProperties = llmRelType;
+              await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
+            }
+          } else {
+            relType = aliasResolved;
+            originalRelTypeForProperties = llmRelType;
+            await logLine(`INFO: relationship type "${llmRelType}" coerced to canonical "${relType}"`);
+          }
         }
       }
 
@@ -376,6 +454,21 @@ async function materializeExtractionResult({
         }
       }
 
+      const relSpanStart = Number.isInteger(rel.evidence_span_start) ? rel.evidence_span_start : null;
+      const relSpanEnd = Number.isInteger(rel.evidence_span_end) ? rel.evidence_span_end : null;
+      const relationshipEvidenceText = String(rel.evidence_text || '').trim();
+      const evidence = resolveExtractionEvidence({
+        transcriptContent: transcript.content,
+        verbatim: relationshipEvidenceText,
+        claimedStart: relSpanStart,
+        claimedEnd: relSpanEnd
+      });
+      if (!evidence.ok) {
+        droppedVerbatimMismatchCount += 1;
+        await logLine(`WARN: Dropping relationship "${rel.source_mention}" -> "${rel.target_mention}" — evidence verbatim not found in transcript`);
+        continue;
+      }
+
       const existing = await relationships.findExisting(sourceId, targetId, relType);
       const relationshipId = existing
         ? existing.id
@@ -394,22 +487,14 @@ async function materializeExtractionResult({
           expressed_by_entity_id: expressedByEntityId,
           described_subject_entity_id: describedSubjectEntityId
         });
-
-      const relSpanStart = Number.isInteger(rel.evidence_span_start) ? rel.evidence_span_start : null;
-      const relSpanEnd = Number.isInteger(rel.evidence_span_end) ? rel.evidence_span_end : null;
       await citations.create({
         entity_id: null,
         relationship_id: relationshipId,
         transcript_id: transcript.id,
         document_id: doc.id,
-        passage_start: relSpanStart != null ? relSpanStart : 0,
-        passage_end: relSpanEnd != null ? relSpanEnd : 0,
-        passage_text: buildCitationExcerpt(
-          transcript.content,
-          relSpanStart,
-          relSpanEnd,
-          rel.evidence_text || `${rel.source_mention} ${relType} ${rel.target_mention}`
-        ),
+        passage_start: evidence.passageStart,
+        passage_end: evidence.passageEnd,
+        passage_text: evidence.passageText,
         extraction_method: 'llm_auto',
         extraction_model: extractionResult.paradata?.model || providerName,
         confidence: rel.confidence != null ? rel.confidence : 0.8
@@ -440,7 +525,9 @@ async function materializeExtractionResult({
       entity_count: entityCount,
       relationship_count: relationshipCount,
       unresolved_relationship_count: unresolvedRelationshipCount,
-      unresolved_date_count: unresolvedDateCount
+      unresolved_date_count: unresolvedDateCount,
+      dropped_verbatim_mismatch_count: droppedVerbatimMismatchCount,
+      dropped_unknown_entity_mention_count: droppedUnknownEntityMentionCount
     });
 
     // Post-extraction: queue a scoped authority suggestion job if the document
@@ -476,7 +563,14 @@ async function materializeExtractionResult({
     }
   }
 
-  return { entityCount, relationshipCount, unresolvedRelationshipCount, unresolvedDateCount };
+  return {
+    entityCount,
+    relationshipCount,
+    unresolvedRelationshipCount,
+    unresolvedDateCount,
+    droppedVerbatimMismatchCount,
+    droppedUnknownEntityMentionCount
+  };
 }
 
 async function processExtractionBatchSubmission(job, logLine) {
@@ -533,6 +627,8 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
   let totalRelationshipCount = job.relationship_count || 0;
   let totalUnresolvedRelationshipCount = 0;
   let totalUnresolvedDateCount = 0;
+  let totalDroppedVerbatimMismatchCount = 0;
+  let totalDroppedUnknownEntityMentionCount = 0;
 
   let checkpointCounter = 0;
   const silentLogger = async () => {};
@@ -593,6 +689,8 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
     totalRelationshipCount += counts.relationshipCount;
     totalUnresolvedRelationshipCount += counts.unresolvedRelationshipCount || 0;
     totalUnresolvedDateCount += counts.unresolvedDateCount || 0;
+    totalDroppedVerbatimMismatchCount += counts.droppedVerbatimMismatchCount || 0;
+    totalDroppedUnknownEntityMentionCount += counts.droppedUnknownEntityMentionCount || 0;
     
     processedIds.add(itemResult.customId);
     checkpointCounter += 1;
@@ -628,7 +726,9 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
     entity_count: totalEntityCount,
     relationship_count: totalRelationshipCount,
     unresolved_relationship_count: totalUnresolvedRelationshipCount,
-    unresolved_date_count: totalUnresolvedDateCount
+    unresolved_date_count: totalUnresolvedDateCount,
+    dropped_verbatim_mismatch_count: totalDroppedVerbatimMismatchCount,
+    dropped_unknown_entity_mention_count: totalDroppedUnknownEntityMentionCount
   });
   await logLine(`Extraction batch complete. ${completedDocs} document${completedDocs !== 1 ? 's' : ''} processed.`);
 }

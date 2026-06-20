@@ -58,13 +58,12 @@ describe('worker-extraction mention resolution', () => {
   }
 
   it('resolves a relationship whose source_mention uses an abbreviation variant of the entity mention', async () => {
-    // entity mention is "William Jessop" (full form); relationship uses "Wm. Jessop" (abbreviated).
-    // Old code: .toLowerCase() → "wm. jessop" not in map → dropped.
-    // New code: normalizeForMatching("Wm. Jessop") → "william jessop" → hits the map.
+    // entity mention is the transcript verbatim "Wm. Jessop"; normalized form
+    // is "William Jessop"; relationship also uses the verbatim abbreviation.
     const { markDoneCalls, logLine } = buildMocks({
       entities: [{
-        mention: 'William Jessop', normalized: 'William Jessop', entity_type: 'person',
-        span_start: 0, span_end: 14, confidence: 0.9, genericity: 'specific'
+        mention: 'Wm. Jessop', normalized: 'William Jessop', entity_type: 'person',
+        span_start: 0, span_end: 10, confidence: 0.9, genericity: 'specific'
       }, {
         mention: 'Mary', normalized: 'Mary', entity_type: 'person',
         span_start: 20, span_end: 24, confidence: 0.9, genericity: 'specific'
@@ -72,7 +71,7 @@ describe('worker-extraction mention resolution', () => {
       dates: [],
       relationships: [{
         source_mention: 'Wm. Jessop', target_mention: 'Mary', type: 'authored',
-        confidence: 0.9
+        evidence_text: 'Wm. Jessop wrote to Mary', confidence: 0.9
       }]
     });
 
@@ -95,7 +94,7 @@ describe('worker-extraction mention resolution', () => {
       dates: [],
       relationships: [{
         source_mention: 'Jessop', target_mention: 'Unknown Person', type: 'related_to',
-        confidence: 0.9
+        evidence_text: 'Wm. Jessop wrote to Mary', confidence: 0.9
       }]
     });
 

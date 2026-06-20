@@ -61,7 +61,10 @@ function knowledgePath(pathname, queryString) {
 function graphStores() {
   return {
     entities: db.entitiesAsync || db.entities || null,
-    citations: db.citationsAsync || db.citations || null
+    citations: db.citationsAsync || db.citations || null,
+    relationships: db.relationshipsAsync || db.relationships || null,
+    entityAliases: db.entityAliasesAsync || db.entityAliases || null,
+    authorities: db.authoritiesAsync || db.authorities || null
   };
 }
 
@@ -349,6 +352,123 @@ async function buildPreviewPayload(citation, document, transcript) {
     imagePath: previewPage.imagePath || null,
     passageText: String(citation.passage_text || '').trim() || null
   };
+}
+
+function findParagraphRange(content, start, end) {
+  const text = String(content || '');
+  if (!text) return { start: null, end: null };
+  const safeStart = Number.isInteger(start) && start >= 0 ? Math.min(start, text.length) : 0;
+  const safeEnd = Number.isInteger(end) && end > safeStart ? Math.min(end, text.length) : safeStart;
+  const before = text.lastIndexOf('\n\n', safeStart);
+  const after = text.indexOf('\n\n', safeEnd);
+  return {
+    start: before >= 0 ? before + 2 : 0,
+    end: after >= 0 ? after : text.length
+  };
+}
+
+async function buildPreviewContext(citation, transcript) {
+  const stores = graphStores();
+  const context = {
+    coEntities: [],
+    relatedRelationships: [],
+    authorityMemberships: []
+  };
+  const involvedEntityIds = new Set();
+  if (Number.isInteger(citation.entity_id)) involvedEntityIds.add(citation.entity_id);
+
+  if (Number.isInteger(citation.relationship_id) && stores.relationships?.getById) {
+    const rel = await stores.relationships.getById(citation.relationship_id);
+    if (rel) {
+      involvedEntityIds.add(rel.source_entity_id);
+      involvedEntityIds.add(rel.target_entity_id);
+      if (stores.relationships.getByEntityIds) {
+        const relatedRows = await db.allAsync(`
+          SELECT DISTINCT
+            r.id,
+            r.relationship_type,
+            se.canonical_name AS source_name,
+            te.canonical_name AS target_name
+          FROM relationships r
+          JOIN citations c ON c.relationship_id = r.id
+          JOIN entities se ON se.id = r.source_entity_id
+          JOIN entities te ON te.id = r.target_entity_id
+          WHERE r.id != ?
+            AND c.document_id = ?
+            AND c.transcript_id = ?
+            AND c.approval_status IN ('approved', 'pending')
+            AND (
+              r.source_entity_id IN (?, ?)
+              OR r.target_entity_id IN (?, ?)
+              OR r.expressed_by_entity_id IN (?, ?)
+              OR r.described_subject_entity_id IN (?, ?)
+            )
+          ORDER BY c.created_at DESC
+          LIMIT 8
+        `, [
+          rel.id,
+          citation.document_id,
+          citation.transcript_id,
+          rel.source_entity_id, rel.target_entity_id,
+          rel.source_entity_id, rel.target_entity_id,
+          rel.source_entity_id, rel.target_entity_id,
+          rel.source_entity_id, rel.target_entity_id
+        ]);
+        context.relatedRelationships = relatedRows.map((row) => ({
+          id: row.id,
+          relationshipType: row.relationship_type,
+          sourceName: row.source_name,
+          targetName: row.target_name
+        }));
+      }
+    }
+  }
+
+  if (citation.document_id && citation.transcript_id) {
+    const paragraph = findParagraphRange(transcript?.content, citation.passage_start, citation.passage_end);
+    const paragraphFilter = Number.isInteger(paragraph.start) && Number.isInteger(paragraph.end)
+      ? 'AND c.passage_start IS NOT NULL AND c.passage_end IS NOT NULL AND c.passage_end > ? AND c.passage_start < ?'
+      : '';
+    const paragraphParams = paragraphFilter ? [paragraph.start, paragraph.end] : [];
+    const coEntityRows = await db.allAsync(`
+      SELECT DISTINCT e.id, e.canonical_name, e.entity_type
+      FROM entities e
+      JOIN citations c ON c.entity_id = e.id
+      WHERE c.document_id = ?
+        AND c.transcript_id = ?
+        AND c.approval_status IN ('approved', 'pending')
+        ${paragraphFilter}
+      ORDER BY e.entity_type, e.canonical_name
+      LIMIT 16
+    `, [citation.document_id, citation.transcript_id, ...paragraphParams]);
+    context.coEntities = coEntityRows
+      .filter((entity) => !involvedEntityIds.has(entity.id))
+      .slice(0, 12)
+      .map((entity) => ({
+        id: entity.id,
+        canonicalName: entity.canonical_name,
+        entityType: entity.entity_type
+      }));
+  }
+
+  for (const entityId of involvedEntityIds) {
+    const entity = stores.entities?.getById ? await stores.entities.getById(entityId) : null;
+    if (!entity) continue;
+    const [authority, aliases] = await Promise.all([
+      entity.authority_id && stores.authorities?.getById ? stores.authorities.getById(entity.authority_id) : null,
+      stores.entityAliases?.getByEntityId ? stores.entityAliases.getByEntityId(entityId) : []
+    ]);
+    context.authorityMemberships.push({
+      entityId,
+      entityName: entity.canonical_name,
+      entityType: entity.entity_type,
+      authorityId: authority?.id || null,
+      authorityName: authority?.canonical_name || null,
+      aliases: (aliases || []).slice(0, 6).map((alias) => alias.alias)
+    });
+  }
+
+  return context;
 }
 
 function buildReviewItem(citation, status, page, reviewKind) {
@@ -682,11 +802,56 @@ router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
     return res.status(404).json({ ok: false, error: 'The source document or transcript is no longer available.' });
   }
 
-  const preview = await buildPreviewPayload(citation, document, transcript);
+  const [preview, context] = await Promise.all([
+    buildPreviewPayload(citation, document, transcript),
+    buildPreviewContext(citation, transcript)
+  ]);
   return res.json({
     ok: true,
     citationId: id,
-    preview
+    preview: {
+      ...preview,
+      context
+    }
+  });
+}));
+
+router.get('/review-extractions/audit-verbatim', asyncHandler(async (req, res) => {
+  const rows = await db.allAsync(`
+    SELECT c.id, c.document_id, c.transcript_id, c.passage_text, d.title AS document_title, t.content AS transcript_content
+    FROM citations c
+    JOIN transcripts t ON t.id = c.transcript_id
+    LEFT JOIN documents d ON d.id = c.document_id
+    WHERE c.passage_text IS NOT NULL
+      AND TRIM(c.passage_text) != ''
+    ORDER BY c.created_at DESC
+    LIMIT 5000
+  `);
+  const samples = [];
+  let mismatchCount = 0;
+  for (const row of rows) {
+    const transcriptText = String(row.transcript_content || '');
+    const passageText = String(row.passage_text || '')
+      .replace(/^\.\.\./, '')
+      .replace(/\.\.\.$/, '')
+      .trim();
+    if (!passageText || transcriptText.includes(passageText)) continue;
+    mismatchCount += 1;
+    if (samples.length < 50) {
+      samples.push({
+        citationId: row.id,
+        documentId: row.document_id,
+        transcriptId: row.transcript_id,
+        documentTitle: row.document_title,
+        passageText: row.passage_text
+      });
+    }
+  }
+  res.json({
+    ok: true,
+    checked: rows.length,
+    mismatchCount,
+    samples
   });
 }));
 

@@ -33,6 +33,7 @@
            class="btn-secondary btn-sm">
           <%= showDeprecated ? 'Hide deprecated' : 'Show deprecated' %>
         </a>
+        <button type="button" class="btn-primary btn-sm" data-vocab-save-all disabled>Save all changed rows</button>
       </div>
 
       <%
@@ -70,7 +71,7 @@
               var statusClass = t.deprecated_at ? 'status-trace' : 'status-done';
               var statusLabel = t.deprecated_at ? 'deprecated' : 'active';
             %>
-              <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>" <%- savedName && savedName === t.name ? 'data-just-saved="1"' : '' %>>
+              <tr class="<%= t.deprecated_at ? 'is-deprecated' : '' %>" data-vocab-row data-vocab-name="<%= t.name %>" <%- savedName && savedName === t.name ? 'data-just-saved="1"' : '' %>>
                 <td>
                   <code><%= t.name %></code>
                   <form id="<%= formId %>" method="POST" action="/admin/knowledge/vocabularies/relationship-types/<%= encodeURIComponent(t.name) %>/edit"></form>
@@ -217,4 +218,5 @@
   <% } %>
 </div>
 
+<script src="/js/vocabulary-relationship-types.js"></script>
 <%- include('../partials/footer') %>

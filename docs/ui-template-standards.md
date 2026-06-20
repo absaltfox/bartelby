@@ -370,6 +370,24 @@ Every mutating HTML form must include a CSRF token. GET forms should not.
 
 AJAX-based actions must use the shared CSRF meta token pattern consistently.
 
+## Shared Typeahead
+
+Entity, authority, transcript, and similar lookup fields should use the shared
+typeahead picker rather than custom page-specific autocomplete code. The picker
+must support mouse and keyboard interaction: Down/Up move the active option,
+Enter selects it, Escape closes the results, and `aria-activedescendant` /
+`aria-expanded` reflect the current state. Pages may change the picker
+`data-search-url` at runtime to add safe filters, such as relationship
+source/target entity-type constraints.
+
+## Dirty Multi-Row Forms
+
+Editable admin tables that expose many independent row forms must protect
+against silent loss. Track changed controls per row, warn before navigation or
+single-row submit when other rows are dirty, and prefer a "Save all changed
+rows" action when multiple edits are likely. Bulk save handlers should write
+all changed rows in one transaction.
+
 ## Tables Standards
 
 Operational tables are a major UI pattern in this app and must be standardized.

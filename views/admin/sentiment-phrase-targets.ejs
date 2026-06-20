@@ -22,6 +22,39 @@
 
   <% if (tab === 'active') { %>
     <section class="settings-section">
+      <form method="GET" action="/admin/knowledge/sentiment/phrase-targets" class="knowledge-toolbar knowledge-toolbar--spaced">
+        <input type="hidden" name="tab" value="active">
+        <div class="edit-field">
+          <label for="phrase-q">Search</label>
+          <input type="search" id="phrase-q" name="q" value="<%= q || '' %>" placeholder="Phrase text">
+        </div>
+        <div class="edit-field">
+          <label for="phrase-collection">Collection</label>
+          <select id="phrase-collection" name="collectionId">
+            <option value="">All collections</option>
+            <% (collections || []).forEach(function(c) { %>
+              <option value="<%= c.id %>" <%= String(collectionId || '') === String(c.id) ? 'selected' : '' %>><%= c.name %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label for="phrase-polarity">Polarity</label>
+          <select id="phrase-polarity" name="polarity">
+            <option value="">All</option>
+            <% ['positive', 'negative', 'neutral', 'mixed'].forEach(function(p) { %>
+              <option value="<%= p %>" <%= polarity === p ? 'selected' : '' %>><%= p %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label for="phrase-min-frequency">Min frequency</label>
+          <input type="number" id="phrase-min-frequency" name="minFrequency" min="1" value="<%= minFrequency %>">
+        </div>
+        <div class="edit-actions">
+          <button type="submit" class="btn-secondary btn-sm">Filter</button>
+        </div>
+      </form>
+
       <% if (!aggregated.length) { %>
         <div class="empty-state">
           <p>No active phrase targets right now.</p>
@@ -70,8 +103,11 @@
                       <summary class="btn-primary btn-sm">Promote to entity</summary>
                       <div class="toolbar-details-menu">
                         <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote" class="edit-form" style="padding: 12px;">
-                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                          <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+	                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+	                          <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+	                          <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
+	                          <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+	                          <input type="hidden" name="polarity" value="<%= polarity || '' %>">
                           <div class="edit-field">
                             <label>Entity type</label>
                             <select name="entity_type">
@@ -88,6 +124,28 @@
                             <button type="submit" class="btn-primary btn-sm">Create entity + re-target <%= p.frequency %> annotation<%= p.frequency === 1 ? '' : 's' %></button>
                           </div>
                         </form>
+                        <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote-existing" class="edit-form" style="padding: 12px;">
+	                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+	                          <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+	                          <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
+	                          <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+	                          <input type="hidden" name="polarity" value="<%= polarity || '' %>">
+                          <div class="edit-field">
+                            <label for="tp-existing-<%= p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-') %>-search">Existing entity</label>
+                            <%- include('../partials/typeahead-picker', {
+                              name: 'entity_id',
+                              searchUrl: '/admin/knowledge/entities/api/search',
+                              placeholder: 'Search entities by canonical name...',
+                              selectedId: null,
+                              selectedLabel: '',
+                              required: true,
+                              id: 'tp-existing-' + p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-')
+                            }) %>
+                          </div>
+                          <div class="edit-actions">
+                            <button type="submit" class="btn-secondary btn-sm">Re-target to existing entity</button>
+                          </div>
+                        </form>
                       </div>
                     </details>
                     <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/suppressions" class="inline-form">
@@ -102,6 +160,25 @@
           </tbody>
         </table>
       </div>
+      <%
+        function phrasePageHref(targetPage) {
+          var params = new URLSearchParams();
+          params.set('tab', 'active');
+          if (q) params.set('q', q);
+          if (collectionId) params.set('collectionId', collectionId);
+          if (polarity) params.set('polarity', polarity);
+          if (minFrequency && minFrequency !== 1) params.set('minFrequency', minFrequency);
+          params.set('page', targetPage);
+          return '/admin/knowledge/sentiment/phrase-targets?' + params.toString();
+        }
+      %>
+      <% if (totalPages > 1) { %>
+        <nav class="pagination">
+          <% if (page > 1) { %><a class="btn-secondary btn-sm" href="<%= phrasePageHref(page - 1) %>">Previous</a><% } %>
+          <span class="muted">Page <%= page %> of <%= totalPages %> · <%= totalCount %> phrases</span>
+          <% if (page < totalPages) { %><a class="btn-secondary btn-sm" href="<%= phrasePageHref(page + 1) %>">Next</a><% } %>
+        </nav>
+      <% } %>
       <% } %>
     </section>
   <% } else { %>
@@ -146,4 +223,5 @@
   <% } %>
 </div>
 
+<script src="/js/typeahead-picker.js"></script>
 <%- include('../partials/footer') %>

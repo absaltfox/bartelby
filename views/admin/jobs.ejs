@@ -184,12 +184,14 @@
                     <% } %>
                     <% if (job.batch_remote_status) { %> • <%= job.batch_remote_status %><% } %>
                   </small>
-                  <% if (job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                  <% if (job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0 || (job.dropped_verbatim_mismatch_count || 0) > 0 || (job.dropped_unknown_entity_mention_count || 0) > 0)) { %>
                     <small class="muted">
-                      unresolved:
+                      drops/unresolved:
+                      <%= job.dropped_verbatim_mismatch_count || 0 %> verbatim,
+                      <%= job.dropped_unknown_entity_mention_count || 0 %> mention,
                       <%= job.unresolved_relationship_count || 0 %> relationship(s),
                       <%= job.unresolved_date_count || 0 %> date(s)
-                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                      <span class="status-badge status-failed">check WARN log</span>
                     </small>
                   <% } %>
                 <% } else if (isBatch) { %>
@@ -223,22 +225,26 @@
                   <% } %>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
-                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0 || (job.dropped_verbatim_mismatch_count || 0) > 0 || (job.dropped_unknown_entity_mention_count || 0) > 0)) { %>
                     <small class="muted">
-                      unresolved:
+                      drops/unresolved:
+                      <%= job.dropped_verbatim_mismatch_count || 0 %> verbatim,
+                      <%= job.dropped_unknown_entity_mention_count || 0 %> mention,
                       <%= job.unresolved_relationship_count || 0 %> relationship(s),
                       <%= job.unresolved_date_count || 0 %> date(s)
-                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                      <span class="status-badge status-failed">check WARN log</span>
                     </small>
                   <% } %>
                 <% } else { %>
                   <span class="muted">Document #<%= job.document_id %></span>
-                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0)) { %>
+                  <% if (job.job_type === 'extraction' && job.status === 'done' && ((job.unresolved_relationship_count || 0) > 0 || (job.unresolved_date_count || 0) > 0 || (job.dropped_verbatim_mismatch_count || 0) > 0 || (job.dropped_unknown_entity_mention_count || 0) > 0)) { %>
                     <small class="muted">
-                      unresolved:
+                      drops/unresolved:
+                      <%= job.dropped_verbatim_mismatch_count || 0 %> verbatim,
+                      <%= job.dropped_unknown_entity_mention_count || 0 %> mention,
                       <%= job.unresolved_relationship_count || 0 %> relationship(s),
                       <%= job.unresolved_date_count || 0 %> date(s)
-                      <span class="status-badge status-failed">⚠ check WARN log for "ambiguous mention" entries</span>
+                      <span class="status-badge status-failed">check WARN log</span>
                     </small>
                   <% } %>
                 <% } %>

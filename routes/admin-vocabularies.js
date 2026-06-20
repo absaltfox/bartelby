@@ -113,6 +113,37 @@ router.post('/relationship-types/:name/edit', express.urlencoded({ extended: fal
   res.redirect(vocabPath('?tab=types&saved=1&savedName=' + encodeURIComponent(name)));
 }));
 
+router.post('/relationship-types/bulk-edit', express.json(), asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) return res.status(400).json({ error: 'No changed rows submitted.' });
+  if (rows.length > 200) return res.status(400).json({ error: 'Too many rows submitted.' });
+
+  const savedNames = [];
+  await db.withTransactionAsync(async () => {
+    for (const row of rows) {
+      const name = String(row.name || '').trim().toLowerCase();
+      if (!NAME_PATTERN.test(name)) throw new Error(`Invalid type name: ${name}`);
+      const existing = await db.getAsync('SELECT 1 FROM relationship_types WHERE name = ?', [name]);
+      if (!existing) throw new Error(`Type "${name}" not found.`);
+      const fields = {
+        label: String(row.label || '').trim(),
+        category: String(row.category || '').trim() || 'general',
+        frequency: String(row.frequency || '').trim(),
+        source_type: String(row.source_type || '').trim(),
+        target_type: String(row.target_type || '').trim(),
+        inverse_name: String(row.inverse_name || '').trim()
+      };
+      if (!fields.label) throw new Error(`Label cannot be empty for ${name}.`);
+      if (!VALID_FREQUENCIES.includes(fields.frequency)) throw new Error(`Invalid frequency for ${name}.`);
+      await db.relationshipTypesAsync.update(name, fields);
+      savedNames.push(name);
+    }
+  });
+
+  audit.log('admin.relationship_type_bulk_updated', { ...audit.reqContext(req), names: savedNames });
+  res.json({ success: true, count: savedNames.length, names: savedNames });
+}));
+
 router.post('/relationship-types/:name/deprecate', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const errBack = (msg) => vocabPath('?tab=types&error=' + encodeURIComponent(msg));
   const name = String(req.params.name || '').trim().toLowerCase();

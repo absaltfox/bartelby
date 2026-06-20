@@ -21,22 +21,76 @@ function path(suffix = '') {
   return '/admin/knowledge/sentiment/phrase-targets' + suffix;
 }
 
+function parsePromotionScope(body) {
+  const collectionId = body.collectionId ? parseInt(body.collectionId, 10) : null;
+  const polarity = ['positive', 'negative', 'neutral', 'mixed'].includes(String(body.polarity || ''))
+    ? String(body.polarity)
+    : '';
+  return {
+    collectionId: Number.isInteger(collectionId) ? collectionId : null,
+    polarity
+  };
+}
+
+async function getScopedPhraseAnnotations(phrase, scope = {}) {
+  const normalized = scope.phraseNormalized || (db.normalizeSentimentPhrase
+    ? db.normalizeSentimentPhrase(phrase)
+    : String(phrase || '').trim().toLowerCase().replace(/\s+/g, ' '));
+  const filters = [];
+  const params = [normalized];
+  if (scope.collectionId) {
+    filters.push('AND document_id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)');
+    params.push(Number(scope.collectionId));
+  }
+  if (scope.polarity) {
+    filters.push('AND polarity = ?');
+    params.push(scope.polarity);
+  }
+  return await db.allAsync(`
+    SELECT id, transcript_id, document_id, span_start, span_end, evidence_excerpt, target_phrase
+    FROM sentiment_annotations
+    WHERE target_kind = 'phrase'
+      AND LOWER(RTRIM(TRIM(target_phrase), '.,;:!?')) = ?
+      ${filters.join('\n')}
+  `, params);
+}
+
 router.get('/', asyncHandler(async (req, res) => {
   const tab = req.query.tab === 'suppressed' ? 'suppressed' : 'active';
   const minFrequency = Math.max(1, parseInt(req.query.minFrequency, 10) || 1);
+  const q = String(req.query.q || '').trim();
+  const collectionId = req.query.collectionId ? parseInt(req.query.collectionId, 10) : null;
+  const polarity = ['positive', 'negative', 'neutral', 'mixed'].includes(String(req.query.polarity || ''))
+    ? String(req.query.polarity)
+    : '';
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = 50;
 
   let aggregated = [];
   let suppressed = [];
+  let totalCount = 0;
   if (tab === 'active') {
-    aggregated = await db.sentimentAsync.aggregatePhraseTargets({
-      limit: 100,
+    const filterOpts = {
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
       includeSuppressed: false,
-      minFrequency
+      minFrequency,
+      q,
+      collectionId: Number.isInteger(collectionId) ? collectionId : null,
+      polarity
+    };
+    aggregated = await db.sentimentAsync.aggregatePhraseTargets({
+      ...filterOpts
     });
+    totalCount = await db.sentimentAsync.countPhraseTargets(filterOpts);
     aggregated = aggregated.map((row) => ({ ...row, suggestedType: suggestEntityType(row.phraseDisplay) }));
   } else {
     suppressed = await db.sentimentPhraseSuppressionsAsync.list();
+    totalCount = suppressed.length;
   }
+  const collections = db.collectionsAsync && db.collectionsAsync.getAll
+    ? await db.collectionsAsync.getAll()
+    : [];
 
   res.render('admin/sentiment-phrase-targets', {
     pageTitle: 'Phrase Targets',
@@ -45,6 +99,13 @@ router.get('/', asyncHandler(async (req, res) => {
     aggregated,
     suppressed,
     minFrequency,
+    q,
+    collectionId: Number.isInteger(collectionId) ? collectionId : null,
+    polarity,
+    collections,
+    page,
+    totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+    totalCount,
     error: req.query.error || null,
     saved: req.query.saved || null
   });
@@ -82,14 +143,9 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
   if (!ENTITY_TYPES.includes(entityType)) return res.redirect(errBack('Invalid entity type.'));
   if (!canonicalName) return res.redirect(errBack('Canonical name is required.'));
 
-  const phraseNormalized = phrase.trim().toLowerCase().replace(/\s+/g, ' ');
-
-  const annotations = await db.allAsync(`
-    SELECT id, transcript_id, document_id, span_start, span_end, evidence_excerpt, target_phrase
-    FROM sentiment_annotations
-    WHERE target_kind = 'phrase'
-      AND LOWER(TRIM(target_phrase)) = ?
-  `, [phraseNormalized]);
+  const scope = parsePromotionScope(req.body);
+  scope.phraseNormalized = String(req.body.phrase_normalized || '').trim();
+  const annotations = await getScopedPhraseAnnotations(phrase, scope);
 
   if (!annotations.length) {
     return res.redirect(errBack('No matching phrase annotations to re-target.'));
@@ -136,18 +192,7 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
   };
 
   try {
-    if (process.env.DATABASE_DRIVER === 'turso') {
-      await runPromote();
-    } else {
-      await db.runAsync('BEGIN');
-      try {
-        await runPromote();
-        await db.runAsync('COMMIT');
-      } catch (err) {
-        try { await db.runAsync('ROLLBACK'); } catch (e) {}
-        throw err;
-      }
-    }
+    await db.withTransactionAsync(runPromote);
   } catch (err) {
     return res.redirect(errBack(err.message));
   }
@@ -157,6 +202,61 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
     ...audit.reqContext(req),
     phrase,
     entityId,
+    scope,
+    annotationsRetargeted: annotations.length,
+    citationIds
+  });
+  res.redirect(path('?tab=active&saved=1'));
+}));
+
+router.post('/promote-existing', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const errBack = (msg) => path('?tab=active&error=' + encodeURIComponent(msg));
+  const phrase = String(req.body.phrase || '').trim();
+  const entityId = parseInt(req.body.entity_id, 10);
+  if (!phrase) return res.redirect(errBack('Phrase is required.'));
+  if (!Number.isInteger(entityId)) return res.redirect(errBack('Existing entity is required.'));
+  const entity = await db.entitiesAsync.getById(entityId);
+  if (!entity) return res.redirect(errBack('Entity not found.'));
+
+  const scope = parsePromotionScope(req.body);
+  scope.phraseNormalized = String(req.body.phrase_normalized || '').trim();
+  const annotations = await getScopedPhraseAnnotations(phrase, scope);
+  if (!annotations.length) return res.redirect(errBack('No matching phrase annotations to re-target.'));
+
+  const citationIds = [];
+  await db.withTransactionAsync(async () => {
+    for (const ann of annotations) {
+      await db.runAsync(`
+        UPDATE sentiment_annotations
+        SET target_kind = 'entity',
+            target_entity_id = ?
+        WHERE id = ?
+      `, [entityId, ann.id]);
+      const cid = await db.citationsAsync.create({
+        entity_id: entityId,
+        relationship_id: null,
+        date_expression_id: null,
+        transcript_id: ann.transcript_id,
+        document_id: ann.document_id,
+        passage_start: ann.span_start != null ? ann.span_start : null,
+        passage_end: ann.span_end != null ? ann.span_end : null,
+        passage_text: phrase,
+        extraction_method: EXTRACTION_METHODS.MANUAL,
+        extraction_model: null,
+        confidence: 1.0,
+        approval_status: CITATION_APPROVAL_STATUSES.APPROVED,
+        approval_method: 'manual',
+        approved_by_user_id: req.user?.id || null
+      });
+      citationIds.push(cid);
+    }
+  });
+
+  audit.log('admin.sentiment_phrase_promoted_existing', {
+    ...audit.reqContext(req),
+    phrase,
+    entityId,
+    scope,
     annotationsRetargeted: annotations.length,
     citationIds
   });

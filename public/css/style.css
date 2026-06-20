@@ -10470,6 +10470,10 @@ body.modal-open {
   background: var(--parchment-alt);
   outline: 0;
 }
+.typeahead-picker-result.is-active {
+  background: var(--parchment-alt);
+  outline: 0;
+}
 .typeahead-picker-label { font-weight: 500; }
 .typeahead-picker-sublabel {
   display: inline-block;
@@ -10492,6 +10496,11 @@ body.modal-open {
   justify-content: flex-end;
   margin: 0 0 8px 0;
 }
+.document-create-entity-selection-hint {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.85rem;
+}
 
 /* Brief highlight on the row a curator just saved. The class lingers until the
    next page interaction; curators see a clear visual confirmation of which row
@@ -10500,6 +10509,9 @@ body.modal-open {
   background: var(--green-bg);
   transition: background 1.2s ease-out;
   animation: c4-saved-fade 2.4s ease-out forwards;
+}
+.workflows-table tr.is-dirty td {
+  background: rgba(255, 243, 205, 0.45);
 }
 @keyframes c4-saved-fade {
   0%   { background: var(--green-bg); }

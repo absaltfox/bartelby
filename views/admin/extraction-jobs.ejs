@@ -25,6 +25,7 @@
             <th scope="col">Source</th>
             <th scope="col">Entities</th>
             <th scope="col">Relationships</th>
+            <th scope="col">Drops</th>
             <th scope="col">Recorded</th>
             <th scope="col" class="col-actions">Actions</th>
           </tr>
@@ -58,6 +59,18 @@
               </td>
               <td><%= job.entity_count || 0 %></td>
               <td><%= job.relationship_count || 0 %></td>
+              <td>
+                <% if ((job.unresolved_relationship_count || 0) || (job.unresolved_date_count || 0) || (job.dropped_verbatim_mismatch_count || 0) || (job.dropped_unknown_entity_mention_count || 0)) { %>
+                  <span class="status-badge status-failed">
+                    <%= job.dropped_verbatim_mismatch_count || 0 %> verbatim,
+                    <%= job.dropped_unknown_entity_mention_count || 0 %> mention,
+                    <%= job.unresolved_relationship_count || 0 %> relationship,
+                    <%= job.unresolved_date_count || 0 %> date
+                  </span>
+                <% } else { %>
+                  <span class="muted">0</span>
+                <% } %>
+              </td>
               <td><span class="muted"><%= new Date(job.created_at).toLocaleString() %></span></td>
               <td>
                 <div class="job-actions">

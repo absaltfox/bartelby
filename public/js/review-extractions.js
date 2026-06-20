@@ -20,6 +20,7 @@
     var previewTranscript = document.getElementById('review-preview-transcript');
     var previewPassageNote = document.getElementById('review-preview-passage-note');
     var previewDocumentLink = document.getElementById('review-preview-document-link');
+    var previewContext = document.getElementById('review-preview-context');
     var activePreviewTrigger = null;
 
     function getCsrfToken() {
@@ -189,6 +190,7 @@
       previewImageWrap.innerHTML = '<p class="muted">Loading image preview…</p>';
       previewTranscript.innerHTML = '<p class="muted">Loading transcript preview…</p>';
       previewPassageNote.textContent = '';
+      if (previewContext) previewContext.innerHTML = '';
       previewDocumentLink.href = trigger && trigger.href ? trigger.href : '#';
     }
 
@@ -234,6 +236,35 @@
         ? 'Primary citation: ' + preview.passageText
         : 'This citation does not include a precise span, so the preview shows the closest available transcript context.';
       previewDocumentLink.href = preview.documentHref || fallbackHref || '#';
+      if (previewContext) previewContext.innerHTML = renderPreviewContext(preview.context || {});
+    }
+
+    function renderList(items, renderItem, emptyText) {
+      if (!items || !items.length) return '<p class="muted">' + escapeHtml(emptyText) + '</p>';
+      return '<ul class="muted">' + items.map(function(item) { return '<li>' + renderItem(item) + '</li>'; }).join('') + '</ul>';
+    }
+
+    function renderPreviewContext(context) {
+      return ''
+        + '<details class="review-preview-context-section" open><summary>Co-extracted entities</summary>'
+        + renderList(context.coEntities, function(entity) {
+          return '<a href="/admin/knowledge/entities/' + encodeURIComponent(entity.id) + '">' + escapeHtml(entity.canonicalName) + '</a> <span>(' + escapeHtml(entity.entityType) + ')</span>';
+        }, 'No other entities found in this document.')
+        + '</details>'
+        + '<details class="review-preview-context-section"><summary>Related relationships</summary>'
+        + renderList(context.relatedRelationships, function(rel) {
+          return escapeHtml(rel.sourceName) + ' <em>' + escapeHtml(String(rel.relationshipType || 'related_to').replace(/_/g, ' ')) + '</em> ' + escapeHtml(rel.targetName);
+        }, 'No other relationships found for the involved entities.')
+        + '</details>'
+        + '<details class="review-preview-context-section"><summary>Authority memberships</summary>'
+        + renderList(context.authorityMemberships, function(row) {
+          var authority = row.authorityId
+            ? '<a href="/admin/knowledge/authorities/' + encodeURIComponent(row.authorityId) + '">' + escapeHtml(row.authorityName) + '</a>'
+            : 'No authority yet';
+          var aliases = row.aliases && row.aliases.length ? ' · aliases: ' + row.aliases.map(escapeHtml).join(', ') : '';
+          return '<a href="/admin/knowledge/entities/' + encodeURIComponent(row.entityId) + '">' + escapeHtml(row.entityName) + '</a>: ' + authority + aliases;
+        }, 'No authority context found.')
+        + '</details>';
     }
 
     if (previewModal) {
