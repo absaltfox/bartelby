@@ -227,11 +227,18 @@ function buildComparisonPages(document, transcript) {
     .concat(Array.isArray(metadata.additional_pages) ? metadata.additional_pages : [])
     .filter(Boolean);
 
+  const cleanContent = stripPageMarkers((transcript && transcript.content) || '');
+
   if (imagePaths.length === 0) {
-    return [];
+    return [{
+      pageNumber: 1,
+      imagePath: null,
+      transcriptText: cleanContent,
+      startOffset: 0,
+      endOffset: cleanContent.length
+    }];
   }
 
-  const cleanContent = stripPageMarkers((transcript && transcript.content) || '');
   const segments = splitTranscriptBySegments(
     cleanContent,
     getTranscriptPageSegments(transcript, imagePaths.length),
