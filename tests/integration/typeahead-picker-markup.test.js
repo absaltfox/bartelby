@@ -16,12 +16,14 @@ function extractCsrfToken(html) {
 
 let app;
 let adminAgent;
+let db;
 
 beforeAll(async () => {
   jest.resetModules();
   const { app: a, initApp } = require('../../server');
   await initApp();
   app = a;
+  db = require('../../database/db');
 
   const setupAgent = request.agent(app);
   const setupPage = await setupAgent.get('/setup');
@@ -63,8 +65,29 @@ describe('Typeahead picker markup — C2', () => {
     expect(res.text).toContain('<script src="/js/typeahead-picker.js"></script>');
   });
 
+  it('relationship-new uses shared form-section markup instead of raw fieldsets', async () => {
+    const res = await adminAgent.get('/admin/knowledge/relationships/new').expect(200);
+    expect(res.text).toContain('class="form-section"');
+    expect(res.text).toContain('source and target searches narrow to compatible entity types');
+    expect(res.text).not.toContain('<fieldset>');
+    expect(res.text).not.toContain('<legend>');
+  });
+
   it('relationship-new transcript picker points at api/documents/search', async () => {
     const res = await adminAgent.get('/admin/knowledge/relationships/new').expect(200);
     expect(res.text).toMatch(/data-typeahead-picker[^>]*data-search-url="\/admin\/knowledge\/api\/documents\/search"[^>]*data-field-name="transcriptId"/);
+  });
+
+  it('relationship-new includes selected entity type metadata for prefilled source entities', async () => {
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Prefilled Person',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    const res = await adminAgent.get(`/admin/knowledge/relationships/new?sourceEntityId=${entityId}`).expect(200);
+    expect(res.text).toMatch(/data-selected-type="person"[\s\S]*data-field-name="source_entity_id"/);
+    expect(res.text).toContain('value="Prefilled Person"');
   });
 });

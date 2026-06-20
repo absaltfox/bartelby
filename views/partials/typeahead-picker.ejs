@@ -8,6 +8,7 @@
   //   id           — html id base; defaults to `tp-${name}`
   //   selectedId   — pre-selected entity id (renders as a pill instead of empty input)
   //   selectedLabel — pre-selected entity display label
+  //   selectedType  — optional type metadata for constrained pickers
   //   required     — boolean; adds `required` to the hidden input
   //
   // The shared client module public/js/typeahead-picker.js scans for
@@ -18,12 +19,14 @@
   var pickerId = (typeof id !== 'undefined' && id) ? id : ('tp-' + name);
   var _selectedId = typeof selectedId !== 'undefined' ? selectedId : null;
   var _selectedLabel = typeof selectedLabel !== 'undefined' ? selectedLabel : '';
+  var _selectedType = typeof selectedType !== 'undefined' ? selectedType : '';
   var hasSelection = _selectedId != null && _selectedId !== '';
   var isRequired = typeof required !== 'undefined' ? required : false;
 %>
 <div class="typeahead-picker"
      data-typeahead-picker
      data-search-url="<%= searchUrl %>"
+     data-selected-type="<%= hasSelection ? _selectedType : '' %>"
      data-field-name="<%= name %>"
      data-picker-id="<%= pickerId %>">
   <input type="hidden" name="<%= name %>" id="<%= pickerId %>"

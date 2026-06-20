@@ -54,11 +54,13 @@
       state.activeIndex = -1;
       var html = rows.map(function(row, index) {
         var sub = row.sublabel ? '<span class="typeahead-picker-sublabel">' + escapeHtml(row.sublabel) + '</span>' : '';
+        var resultType = row.entity_type || row.entityType || row.authority_type || row.authorityType || row.sublabel || '';
         return (
           '<button type="button" class="typeahead-picker-result"' +
           ' id="' + escapeHtml(results.id + '-option-' + index) + '"' +
           ' role="option" aria-selected="false"' +
           ' data-result-id="' + escapeHtml(String(row.id)) + '"' +
+          ' data-result-type="' + escapeHtml(String(resultType)) + '"' +
           ' data-result-label="' + escapeHtml(row.label) + '">' +
           '<span class="typeahead-picker-label">' + escapeHtml(row.label) + '</span>' +
           sub +
@@ -96,6 +98,7 @@
       hidden.value = id;
       search.value = label;
       search.dataset.lastLabel = label;
+      container.setAttribute('data-selected-type', btn.getAttribute('data-result-type') || '');
       closeResults();
     }
 
@@ -146,6 +149,7 @@
       if (hidden.value && query !== search.dataset.lastLabel) {
         hidden.value = '';
         delete search.dataset.lastLabel;
+        container.setAttribute('data-selected-type', '');
       }
       window.clearTimeout(state.timer);
       state.timer = window.setTimeout(function() { runSearch(query); }, 200);

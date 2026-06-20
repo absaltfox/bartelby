@@ -14,14 +14,19 @@
       var url = baseUrl;
       if (type) url += '?type=' + encodeURIComponent(type);
       if (picker.getAttribute('data-search-url') === url) return;
-      picker.setAttribute('data-search-url', url);
       var hidden = picker.querySelector('[data-typeahead-hidden]');
       var search = picker.querySelector('[data-typeahead-search]');
       var results = picker.querySelector('[data-typeahead-results]');
-      if (hidden) hidden.value = '';
+      var selectedType = picker.getAttribute('data-selected-type') || '';
+      var preserveSelection = hidden && hidden.value && (!type || selectedType === type);
+      picker.setAttribute('data-search-url', url);
+      if (hidden && !preserveSelection) hidden.value = '';
       if (search) {
-        search.value = '';
-        delete search.dataset.lastLabel;
+        if (!preserveSelection) {
+          search.value = '';
+          delete search.dataset.lastLabel;
+          picker.setAttribute('data-selected-type', '');
+        }
         search.placeholder = type
           ? 'Search ' + type.replace(/_/g, ' ') + ' entities...'
           : 'Search entities by canonical name...';

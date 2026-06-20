@@ -32,6 +32,39 @@ function parsePromotionScope(body) {
   };
 }
 
+function parseListContext(source = {}, defaults = {}) {
+  const tab = source.tab === 'suppressed' ? 'suppressed' : (defaults.tab || 'active');
+  const page = Math.max(1, parseInt(source.page, 10) || defaults.page || 1);
+  const minFrequency = Math.max(1, parseInt(source.minFrequency, 10) || defaults.minFrequency || 1);
+  const collectionId = source.collectionId ? parseInt(source.collectionId, 10) : null;
+  const polarity = ['positive', 'negative', 'neutral', 'mixed'].includes(String(source.polarity || ''))
+    ? String(source.polarity)
+    : '';
+  return {
+    tab,
+    q: String(source.q || defaults.q || '').trim(),
+    collectionId: Number.isInteger(collectionId) ? collectionId : null,
+    polarity,
+    minFrequency,
+    page
+  };
+}
+
+function listPath(context = {}, extra = {}) {
+  const params = new URLSearchParams();
+  const ctx = parseListContext({ ...context, ...extra }, context);
+  params.set('tab', ctx.tab);
+  if (ctx.q) params.set('q', ctx.q);
+  if (ctx.collectionId) params.set('collectionId', String(ctx.collectionId));
+  if (ctx.polarity) params.set('polarity', ctx.polarity);
+  if (ctx.minFrequency && ctx.minFrequency !== 1) params.set('minFrequency', String(ctx.minFrequency));
+  if (ctx.page && ctx.page > 1) params.set('page', String(ctx.page));
+  Object.entries(extra).forEach(([key, value]) => {
+    if (value != null && value !== '' && key !== 'tab') params.set(key, String(value));
+  });
+  return path('?' + params.toString());
+}
+
 async function getScopedPhraseAnnotations(phrase, scope = {}) {
   const normalized = scope.phraseNormalized || (db.normalizeSentimentPhrase
     ? db.normalizeSentimentPhrase(phrase)
@@ -69,6 +102,8 @@ router.get('/', asyncHandler(async (req, res) => {
   let aggregated = [];
   let suppressed = [];
   let totalCount = 0;
+  let activeCount = 0;
+  let suppressedCount = 0;
   if (tab === 'active') {
     const filterOpts = {
       limit: pageSize,
@@ -83,10 +118,24 @@ router.get('/', asyncHandler(async (req, res) => {
       ...filterOpts
     });
     totalCount = await db.sentimentAsync.countPhraseTargets(filterOpts);
+    activeCount = totalCount;
     aggregated = aggregated.map((row) => ({ ...row, suggestedType: suggestEntityType(row.phraseDisplay) }));
   } else {
     suppressed = await db.sentimentPhraseSuppressionsAsync.list();
     totalCount = suppressed.length;
+    suppressedCount = suppressed.length;
+    activeCount = await db.sentimentAsync.countPhraseTargets({
+      limit: 1,
+      offset: 0,
+      includeSuppressed: false,
+      minFrequency: 1,
+      q: '',
+      collectionId: null,
+      polarity: ''
+    });
+  }
+  if (tab === 'active') {
+    suppressedCount = (await db.sentimentPhraseSuppressionsAsync.list()).length;
   }
   const collections = db.collectionsAsync && db.collectionsAsync.getAll
     ? await db.collectionsAsync.getAll()
@@ -106,35 +155,40 @@ router.get('/', asyncHandler(async (req, res) => {
     page,
     totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
     totalCount,
+    activeCount,
+    suppressedCount,
     error: req.query.error || null,
     saved: req.query.saved || null
   });
 }));
 
 router.post('/suppressions', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
-  const errBack = (msg) => path('?tab=active&error=' + encodeURIComponent(msg));
+  const context = parseListContext(req.body);
+  const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
   if (!phrase) return res.redirect(errBack('Phrase is required.'));
   const notes = String(req.body.notes || '').trim() || null;
   try {
     const id = await db.sentimentPhraseSuppressionsAsync.add({ phrase, notes, userId: req.user?.id || null });
     audit.log('admin.sentiment_phrase_suppressed', { ...audit.reqContext(req), suppressionId: id, phrase });
-    res.redirect(path('?tab=active&saved=1'));
+    res.redirect(listPath(context, { tab: 'active', saved: 1 }));
   } catch (err) {
     res.redirect(errBack(err.message || 'Already suppressed.'));
   }
 }));
 
 router.post('/suppressions/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const context = parseListContext(req.body, { tab: 'suppressed' });
   const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) return res.redirect(path('?tab=suppressed&error=' + encodeURIComponent('Invalid id.')));
+  if (!Number.isInteger(id)) return res.redirect(listPath(context, { tab: 'suppressed', error: 'Invalid id.' }));
   await db.sentimentPhraseSuppressionsAsync.delete(id);
   audit.log('admin.sentiment_phrase_suppression_removed', { ...audit.reqContext(req), suppressionId: id });
-  res.redirect(path('?tab=suppressed&saved=1'));
+  res.redirect(listPath(context, { tab: 'suppressed', saved: 1 }));
 }));
 
 router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
-  const errBack = (msg) => path('?tab=active&error=' + encodeURIComponent(msg));
+  const context = parseListContext(req.body);
+  const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
   const entityType = String(req.body.entity_type || '').trim();
   const canonicalName = String(req.body.canonical_name || '').trim();
@@ -206,11 +260,12 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
     annotationsRetargeted: annotations.length,
     citationIds
   });
-  res.redirect(path('?tab=active&saved=1'));
+  res.redirect(listPath(context, { tab: 'active', saved: 1 }));
 }));
 
 router.post('/promote-existing', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
-  const errBack = (msg) => path('?tab=active&error=' + encodeURIComponent(msg));
+  const context = parseListContext(req.body);
+  const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
   const entityId = parseInt(req.body.entity_id, 10);
   if (!phrase) return res.redirect(errBack('Phrase is required.'));
@@ -260,7 +315,7 @@ router.post('/promote-existing', express.urlencoded({ extended: false }), asyncH
     annotationsRetargeted: annotations.length,
     citationIds
   });
-  res.redirect(path('?tab=active&saved=1'));
+  res.redirect(listPath(context, { tab: 'active', saved: 1 }));
 }));
 
 module.exports = router;

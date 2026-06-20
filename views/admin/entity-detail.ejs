@@ -25,91 +25,16 @@
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
     <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge Entities</a>
+    <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
+    <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
     <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">
       + Add relationship from this entity
     </a>
-    <details class="toolbar-details">
-      <summary class="btn-secondary btn-sm">Split entity</summary>
-      <div class="toolbar-details-menu">
-        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/split" class="edit-form">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <div class="edit-field">
-            <label for="entity-split-type">New entity type</label>
-            <select id="entity-split-type" name="entity_type" required>
-              <% ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(t) { %>
-                <option value="<%= t %>" <%= entity.entity_type === t ? 'selected' : '' %>><%= t %></option>
-              <% }) %>
-            </select>
-          </div>
-          <div class="edit-field">
-            <label for="entity-split-name">New canonical name</label>
-            <input type="text" id="entity-split-name" name="canonical_name" required>
-          </div>
-          <div class="edit-field">
-            <label for="entity-split-description">Description</label>
-            <textarea id="entity-split-description" name="description" rows="3"></textarea>
-          </div>
-          <div class="edit-field">
-            <label for="entity-split-note">Split note</label>
-            <input type="text" id="entity-split-note" name="split_note" required>
-          </div>
-          <% if (entity.authority_id) { %>
-            <label class="checkbox-row">
-              <input type="checkbox" name="link_same_authority" value="1">
-              Link new entity to the same authority
-            </label>
-          <% } %>
-          <% if (citations.length) { %>
-            <fieldset>
-              <legend>Move citations to new entity</legend>
-              <% citations.forEach(function(citation) { %>
-                <label class="checkbox-row">
-                  <input type="checkbox" name="citation_ids" value="<%= citation.id %>">
-                  <%= (citation.passage_text || '').slice(0, 90) %>
-                </label>
-              <% }) %>
-            </fieldset>
-          <% } %>
-          <% if (aliases.length) { %>
-            <fieldset>
-              <legend>Move aliases to new entity</legend>
-              <% aliases.forEach(function(alias) { %>
-                <label class="checkbox-row">
-                  <input type="checkbox" name="alias_ids" value="<%= alias.id %>">
-                  <%= alias.alias %>
-                </label>
-              <% }) %>
-            </fieldset>
-          <% } %>
-          <% if (dates.length) { %>
-            <fieldset>
-              <legend>Move dates to new entity</legend>
-              <% dates.forEach(function(date) { %>
-                <label class="checkbox-row">
-                  <input type="checkbox" name="date_expression_ids" value="<%= date.id %>">
-                  <%= date.label || date.mention || 'Date expression' %><% if (date.earliest) { %> (<%= date.earliest %><% if (date.latest && date.latest !== date.earliest) { %> to <%= date.latest %><% } %>)<% } %>
-                </label>
-              <% }) %>
-            </fieldset>
-          <% } %>
-          <% if (relationships.length) { %>
-            <fieldset>
-              <legend>Move relationships to new entity</legend>
-              <% relationships.forEach(function(rel) { %>
-                <label class="checkbox-row">
-                  <input type="checkbox" name="relationship_ids" value="<%= rel.id %>">
-                  <%= rel.relationship_type || rel.type || 'related_to' %>: <%= rel.source_name || 'Unknown source' %> -> <%= rel.target_name || 'Unknown target' %>
-                </label>
-              <% }) %>
-            </fieldset>
-          <% } %>
-          <div class="edit-actions">
-            <button type="submit" class="btn-primary btn-sm">Create split entity</button>
-          </div>
-        </form>
-      </div>
-    </details>
   </div>
+
+  <p class="correction-workspace-note">
+    Entity corrections are audited. Edit changes preserve attached evidence; split moves only the evidence selected for the new entity.
+  </p>
 
   <% if (entity.description) { %>
     <section class="graph-shell-card knowledge-card">
@@ -225,43 +150,6 @@
             <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
           <% }) %>
         </dl>
-        <details class="toolbar-details">
-          <summary class="btn-secondary btn-sm">Edit entity</summary>
-          <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/edit" class="edit-form">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <div class="edit-field">
-              <label for="entity-edit-type">Type</label>
-              <select id="entity-edit-type" name="entity_type" required>
-                <% ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(t) { %>
-                  <option value="<%= t %>" <%= entity.entity_type === t ? 'selected' : '' %>><%= t %></option>
-                <% }) %>
-              </select>
-            </div>
-            <div class="edit-field">
-              <label for="entity-edit-name">Canonical name</label>
-              <input type="text" id="entity-edit-name" name="canonical_name" value="<%= entity.canonical_name %>" required>
-            </div>
-            <div class="edit-field">
-              <label for="entity-edit-description">Description</label>
-              <textarea id="entity-edit-description" name="description" rows="3"><%= entity.description || '' %></textarea>
-            </div>
-            <div class="edit-field">
-              <label for="entity-edit-properties">Properties JSON</label>
-              <textarea id="entity-edit-properties" name="properties" rows="6"><%= JSON.stringify(entity.properties || {}, null, 2) %></textarea>
-            </div>
-            <div class="edit-field">
-              <label for="entity-edit-aliases">Aliases, one per line</label>
-              <textarea id="entity-edit-aliases" name="aliases" rows="5"><%= aliases.map(function(a) { return a.alias; }).join('\n') %></textarea>
-            </div>
-            <div class="edit-field">
-              <label for="entity-edit-note">Change note</label>
-              <input type="text" id="entity-edit-note" name="change_note">
-            </div>
-            <div class="edit-actions">
-              <button type="submit" class="btn-primary btn-sm">Save entity</button>
-            </div>
-          </form>
-        </details>
       </div>
     </section>
 

@@ -104,11 +104,19 @@ describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
         phrase_normalized: scopedPhrase,
         collectionId: scopedCollectionId,
         polarity: 'positive',
+        q: 'scoped',
+        minFrequency: 2,
+        page: 3,
         entity_type: 'place',
         canonical_name: 'Scoped Schoolhouse Entity'
       });
     expect(res.status).toBe(302);
     expect(res.headers.location).toMatch(/saved=1/);
+    expect(res.headers.location).toContain('q=scoped');
+    expect(res.headers.location).toContain(`collectionId=${scopedCollectionId}`);
+    expect(res.headers.location).toContain('polarity=positive');
+    expect(res.headers.location).toContain('minFrequency=2');
+    expect(res.headers.location).toContain('page=3');
 
     const entity = await db.getAsync(`SELECT * FROM entities WHERE canonical_name = 'Scoped Schoolhouse Entity'`);
     expect(entity).toBeTruthy();
@@ -170,6 +178,59 @@ describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
       expect(c.approval_status).toBe('approved');
       expect(c.passage_text).toBe('the school house');
     });
+  });
+
+  it('promotes matching phrase annotations to an existing entity and preserves list context', async () => {
+    const phrase = 'existing school yard';
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'place',
+      canonical_name: 'Existing School Yard',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    const docId = 5104;
+    await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (?, ?)`, [docId, 'Promote Existing Doc']);
+    await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (?, ?, ?)`, [docId, docId, phrase]);
+    await db.runAsync(`INSERT INTO sentiment_annotations
+      (transcript_id, document_id, span_start, span_end, evidence_excerpt,
+       polarity, intensity, voice_role, target_kind, target_phrase, emotion_phrase_verbatim)
+      VALUES (?, ?, 0, 20, ?, 'neutral', 'moderate', 'author', 'phrase', ?, 'observed')`,
+      [docId, docId, phrase, phrase]);
+
+    const res = await adminAgent
+      .post('/admin/knowledge/sentiment/phrase-targets/promote-existing')
+      .type('form')
+      .send({
+        _csrf: csrfToken,
+        phrase,
+        phrase_normalized: phrase,
+        entity_id: entityId,
+        q: 'yard',
+        polarity: 'neutral',
+        minFrequency: 4,
+        page: 2
+      });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('saved=1');
+    expect(res.headers.location).toContain('q=yard');
+    expect(res.headers.location).toContain('polarity=neutral');
+    expect(res.headers.location).toContain('minFrequency=4');
+    expect(res.headers.location).toContain('page=2');
+
+    const annotation = await db.getAsync(`SELECT target_kind, target_entity_id, target_phrase FROM sentiment_annotations WHERE target_phrase = ?`, [phrase]);
+    expect(annotation).toEqual(expect.objectContaining({
+      target_kind: 'entity',
+      target_entity_id: entityId,
+      target_phrase: phrase
+    }));
+    const citation = await db.getAsync(`SELECT entity_id, passage_text, approval_status FROM citations WHERE entity_id = ?`, [entityId]);
+    expect(citation).toEqual(expect.objectContaining({
+      entity_id: entityId,
+      passage_text: phrase,
+      approval_status: 'approved'
+    }));
   });
 
   it('rejects an invalid entity_type', async () => {

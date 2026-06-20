@@ -44,6 +44,114 @@ beforeAll(async () => {
   });
 }, 60_000);
 
+describe('GET /admin/knowledge/entities/:id correction pages', () => {
+  it('links entity detail to dedicated edit and split pages', async () => {
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Correction Link Subject',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+
+    const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}`).expect(200);
+    expect(res.text).toContain(`/admin/knowledge/entities/${entityId}/edit`);
+    expect(res.text).toContain(`/admin/knowledge/entities/${entityId}/split`);
+    expect(res.text).toContain('Entity corrections are audited');
+    expect(res.text).not.toContain(`<form method="POST" action="/admin/knowledge/entities/${entityId}/edit"`);
+    expect(res.text).not.toContain(`<form method="POST" action="/admin/knowledge/entities/${entityId}/split"`);
+  });
+
+  it('renders entity edit with existing values, aliases, and authority warning', async () => {
+    const authorityId = await db.authoritiesAsync.create({
+      authority_type: 'person',
+      canonical_name: 'Correction Authority',
+      description: null,
+      properties: {}
+    });
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Correction Edit Subject',
+      description: 'Original description',
+      properties: { source: 'fixture' },
+      authority_id: authorityId
+    });
+    await db.runAsync(
+      `INSERT INTO entity_aliases (entity_id, alias, source) VALUES (?, 'C. Edit', 'manual')`,
+      [entityId]
+    );
+
+    const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}/edit`).expect(200);
+    expect(res.text).toContain('Edit Entity');
+    expect(res.text).toContain('Changing entity type may unlink this entity');
+    expect(res.text).toContain('Correction Edit Subject');
+    expect(res.text).toContain('Original description');
+    expect(res.text).toContain('C. Edit');
+    expect(res.text).toContain(`action="/admin/knowledge/entities/${entityId}/edit"`);
+  });
+
+  it('renders entity split with opt-in evidence, alias, date, and relationship controls', async () => {
+    const documentId = 7701;
+    const transcriptId = 7701;
+    await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (?, 'Correction split document')`, [documentId]);
+    await db.runAsync(
+      `INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (?, ?, 'Mary founded the school in 1888.')`,
+      [transcriptId, documentId]
+    );
+    const entityId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Correction Split Subject',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    const targetId = await db.entitiesAsync.create({
+      entity_type: 'organization',
+      canonical_name: 'Correction School',
+      description: null,
+      properties: {},
+      authority_id: null
+    });
+    await db.runAsync(
+      `INSERT INTO entity_aliases (entity_id, alias, source) VALUES (?, 'M. Split', 'manual')`,
+      [entityId]
+    );
+    await db.runAsync(
+      `INSERT INTO date_expressions (entity_id, label, earliest, latest, precision)
+       VALUES (?, 'founded', '1888-01-01', '1888-12-31', 'year')`,
+      [entityId]
+    );
+    await db.relationshipsAsync.create({
+      source_entity_id: entityId,
+      target_entity_id: targetId,
+      relationship_type: 'founded',
+      label: null,
+      properties: {},
+      confidence: 1
+    });
+    await db.citationsAsync.create({
+      entity_id: entityId,
+      transcript_id: transcriptId,
+      document_id: documentId,
+      passage_start: 0,
+      passage_end: 31,
+      passage_text: 'Mary founded the school in 1888.',
+      extraction_method: 'manual',
+      confidence: 1,
+      approval_status: 'approved'
+    });
+
+    const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}/split`).expect(200);
+    expect(res.text).toContain('Split Entity');
+    expect(res.text).toContain('Nothing moves unless selected');
+    expect(res.text).toContain('name="citation_ids"');
+    expect(res.text).toContain('name="alias_ids"');
+    expect(res.text).toContain('name="date_expression_ids"');
+    expect(res.text).toContain('name="relationship_ids"');
+    expect(res.text).toContain('required placeholder="Why this entity needs to be split"');
+  });
+});
+
 describe('POST /admin/knowledge/entities/:id/split', () => {
   it('moves selected dates and relationship role references to the split entity', async () => {
     const sourceId = await db.entitiesAsync.create({

@@ -15,9 +15,9 @@
 
   <div class="filter-tabs">
     <a href="/admin/knowledge/sentiment/phrase-targets?tab=active"
-       class="filter-tab <%= tab === 'active' ? 'active' : '' %>">Active (<%= tab === 'active' ? aggregated.length : '…' %>)</a>
+       class="filter-tab <%= tab === 'active' ? 'active' : '' %>">Active (<%= activeCount || 0 %>)</a>
     <a href="/admin/knowledge/sentiment/phrase-targets?tab=suppressed"
-       class="filter-tab <%= tab === 'suppressed' ? 'active' : '' %>">Suppressed (<%= tab === 'suppressed' ? suppressed.length : '…' %>)</a>
+       class="filter-tab <%= tab === 'suppressed' ? 'active' : '' %>">Suppressed (<%= suppressedCount || 0 %>)</a>
   </div>
 
   <% if (tab === 'active') { %>
@@ -75,6 +75,7 @@
           </thead>
           <tbody>
             <% aggregated.forEach(function(p) { %>
+              <% var phraseDomId = p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-'); %>
               <tr>
                 <td><code><%= p.phraseDisplay %></code></td>
                 <td><%= p.frequency %></td>
@@ -99,61 +100,87 @@
                 <td><span class="status-badge status-trace"><%= p.suggestedType %></span></td>
                 <td class="col-actions">
                   <div class="table-actions">
-                    <details class="toolbar-details">
-                      <summary class="btn-primary btn-sm">Promote to entity</summary>
-                      <div class="toolbar-details-menu">
-                        <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote" class="edit-form" style="padding: 12px;">
-	                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-	                          <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-	                          <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
-	                          <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-	                          <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                          <div class="edit-field">
-                            <label>Entity type</label>
-                            <select name="entity_type">
-                              <% ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(t) { %>
-                                <option value="<%= t %>" <%= t === p.suggestedType ? 'selected' : '' %>><%= t %></option>
-                              <% }) %>
-                            </select>
-                          </div>
-                          <div class="edit-field">
-                            <label>Canonical name</label>
-                            <input type="text" name="canonical_name" required value="<%= p.phraseDisplay %>">
-                          </div>
-                          <div class="edit-actions">
-                            <button type="submit" class="btn-primary btn-sm">Create entity + re-target <%= p.frequency %> annotation<%= p.frequency === 1 ? '' : 's' %></button>
-                          </div>
-                        </form>
-                        <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote-existing" class="edit-form" style="padding: 12px;">
-	                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-	                          <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-	                          <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
-	                          <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-	                          <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                          <div class="edit-field">
-                            <label for="tp-existing-<%= p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-') %>-search">Existing entity</label>
-                            <%- include('../partials/typeahead-picker', {
-                              name: 'entity_id',
-                              searchUrl: '/admin/knowledge/entities/api/search',
-                              placeholder: 'Search entities by canonical name...',
-                              selectedId: null,
-                              selectedLabel: '',
-                              required: true,
-                              id: 'tp-existing-' + p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-')
-                            }) %>
-                          </div>
-                          <div class="edit-actions">
-                            <button type="submit" class="btn-secondary btn-sm">Re-target to existing entity</button>
-                          </div>
-                        </form>
-                      </div>
-                    </details>
                     <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/suppressions" class="inline-form">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+                      <input type="hidden" name="tab" value="active">
+                      <input type="hidden" name="q" value="<%= q || '' %>">
+                      <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+                      <input type="hidden" name="polarity" value="<%= polarity || '' %>">
+                      <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
+                      <input type="hidden" name="page" value="<%= page || 1 %>">
                       <button type="submit" class="btn-secondary btn-sm">Suppress</button>
                     </form>
                   </div>
+                </td>
+              </tr>
+              <tr class="phrase-target-expansion-row">
+                <td colspan="6">
+                  <details class="phrase-target-expansion">
+                    <summary class="btn-primary btn-sm">Promote <%= p.phraseDisplay %></summary>
+                    <div class="phrase-target-action-grid">
+                      <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote" class="edit-form phrase-target-action-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+                        <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
+                        <input type="hidden" name="tab" value="active">
+                        <input type="hidden" name="q" value="<%= q || '' %>">
+                        <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+                        <input type="hidden" name="polarity" value="<%= polarity || '' %>">
+                        <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
+                        <input type="hidden" name="page" value="<%= page || 1 %>">
+                        <div class="form-section-header">
+                          <h3>Create new entity</h3>
+                          <p class="muted">Create a modeled entity and re-target matching phrase annotations.</p>
+                        </div>
+                        <div class="edit-field">
+                          <label for="phrase-entity-type-<%= phraseDomId %>">Entity type</label>
+                          <select id="phrase-entity-type-<%= phraseDomId %>" name="entity_type">
+                            <% ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(t) { %>
+                              <option value="<%= t %>" <%= t === p.suggestedType ? 'selected' : '' %>><%= t %></option>
+                            <% }) %>
+                          </select>
+                        </div>
+                        <div class="edit-field">
+                          <label for="phrase-canonical-name-<%= phraseDomId %>">Canonical name</label>
+                          <input type="text" id="phrase-canonical-name-<%= phraseDomId %>" name="canonical_name" required value="<%= p.phraseDisplay %>">
+                        </div>
+                        <div class="edit-actions">
+                          <button type="submit" class="btn-primary btn-sm">Create entity + re-target <%= p.frequency %> annotation<%= p.frequency === 1 ? '' : 's' %></button>
+                        </div>
+                      </form>
+                      <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote-existing" class="edit-form phrase-target-action-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+                        <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
+                        <input type="hidden" name="tab" value="active">
+                        <input type="hidden" name="q" value="<%= q || '' %>">
+                        <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+                        <input type="hidden" name="polarity" value="<%= polarity || '' %>">
+                        <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
+                        <input type="hidden" name="page" value="<%= page || 1 %>">
+                        <div class="form-section-header">
+                          <h3>Use existing entity</h3>
+                          <p class="muted">Retarget annotations to an entity that already exists.</p>
+                        </div>
+                        <div class="edit-field">
+                          <label for="tp-existing-<%= phraseDomId %>-search">Existing entity</label>
+                          <%- include('../partials/typeahead-picker', {
+                            name: 'entity_id',
+                            searchUrl: '/admin/knowledge/entities/api/search',
+                            placeholder: 'Search entities by canonical name...',
+                            selectedId: null,
+                            selectedLabel: '',
+                            required: true,
+                            id: 'tp-existing-' + phraseDomId
+                          }) %>
+                        </div>
+                        <div class="edit-actions">
+                          <button type="submit" class="btn-secondary btn-sm">Re-target to existing entity</button>
+                        </div>
+                      </form>
+                    </div>
+                  </details>
                 </td>
               </tr>
             <% }) %>
@@ -209,6 +236,8 @@
                   <div class="table-actions">
                     <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/suppressions/<%= s.id %>/delete" class="inline-form">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="tab" value="suppressed">
+                      <input type="hidden" name="page" value="<%= page || 1 %>">
                       <button type="submit" class="btn-danger btn-sm">Remove suppression</button>
                     </form>
                   </div>

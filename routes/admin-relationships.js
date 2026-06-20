@@ -42,11 +42,17 @@ router.get('/new', asyncHandler(async (req, res) => {
   // The hidden id is what gets POSTed; the label is purely cosmetic.
   if (prefill.sourceEntityId && db.entitiesAsync && typeof db.entitiesAsync.getById === 'function') {
     const source = await db.entitiesAsync.getById(prefill.sourceEntityId);
-    if (source) prefill.sourceEntityLabel = source.canonical_name;
+    if (source) {
+      prefill.sourceEntityLabel = source.canonical_name;
+      prefill.sourceEntityType = source.entity_type;
+    }
   }
   if (prefill.targetEntityId && db.entitiesAsync && typeof db.entitiesAsync.getById === 'function') {
     const target = await db.entitiesAsync.getById(prefill.targetEntityId);
-    if (target) prefill.targetEntityLabel = target.canonical_name;
+    if (target) {
+      prefill.targetEntityLabel = target.canonical_name;
+      prefill.targetEntityType = target.entity_type;
+    }
   }
 
   res.render('admin/relationship-new', {

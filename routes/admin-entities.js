@@ -190,6 +190,74 @@ async function buildEntityPreview(entityId) {
   };
 }
 
+async function loadEntityDetailContext(id) {
+  const stores = graphStores();
+  if (!stores.entities || typeof stores.entities.getById !== 'function') {
+    return {
+      status: 501,
+      error: 'Knowledge graph helpers are not wired yet.'
+    };
+  }
+
+  if (!Number.isInteger(id)) {
+    return {
+      status: 404,
+      error: 'Entity not found'
+    };
+  }
+
+  const entity = await stores.entities.getById(id);
+  if (!entity) {
+    return {
+      status: 404,
+      error: 'Entity not found'
+    };
+  }
+
+  const [aliases, dates, citations, relationships, authoritySuggestions, recentChanges] = await Promise.all([
+    stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
+    stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
+    stores.citations && stores.citations.getByEntityId ? stores.citations.getByEntityId(id) : [],
+    stores.relationships && stores.relationships.getByEntityId ? stores.relationships.getByEntityId(id) : [],
+    stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.getByEntityId
+      ? stores.authorityLinkSuggestions.getByEntityId(id)
+      : [],
+    db.allAsync
+      ? db.allAsync(`
+        SELECT ec.*, u.username AS changed_by_username
+        FROM entity_changes ec
+        LEFT JOIN users u ON u.id = ec.changed_by_user_id
+        WHERE ec.entity_id = ?
+        ORDER BY ec.changed_at DESC, ec.id DESC
+        LIMIT 12
+      `, [id])
+      : []
+  ]);
+  const authority = Number.isInteger(entity.authority_id) && stores.authorities && stores.authorities.getById
+    ? await stores.authorities.getById(entity.authority_id)
+    : null;
+  const linkedEntities = authority && stores.authorities && stores.authorities.getMembers
+    ? await stores.authorities.getMembers(authority.id, 100)
+    : [];
+
+  return {
+    status: 200,
+    stores,
+    entity: {
+      ...entity,
+      properties: parseJsonMaybe(entity.properties)
+    },
+    authority,
+    linkedEntities: Array.isArray(linkedEntities) ? linkedEntities.filter((row) => row.id !== entity.id) : [],
+    authoritySuggestions: Array.isArray(authoritySuggestions) ? authoritySuggestions : [],
+    aliases: Array.isArray(aliases) ? aliases : [],
+    dates: Array.isArray(dates) ? dates : [],
+    citations: Array.isArray(citations) ? citations : [],
+    relationships: Array.isArray(relationships) ? relationships : [],
+    recentChanges: Array.isArray(recentChanges) ? recentChanges : []
+  };
+}
+
 router.get('/api/search', asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || typeof stores.entities.search !== 'function') {
@@ -451,58 +519,61 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
+router.get('/:id/edit', asyncHandler(async (req, res) => {
+  if (req.baseUrl === '/admin/entities') {
+    return res.redirect(knowledgePath(`/entities/${req.params.id}/edit`));
+  }
+
+  const id = parseInt(req.params.id, 10);
+  const context = await loadEntityDetailContext(id);
+  if (context.status !== 200) {
+    return res.status(context.status).render('error', { message: context.error, error: {} });
+  }
+
+  res.render('admin/entity-edit', {
+    pageTitle: `Edit ${context.entity.canonical_name}`,
+    ...context,
+    entityTypes: ENTITY_TYPES,
+    activeKnowledgePage: 'entities',
+    error: req.query.error || null
+  });
+}));
+
+router.get('/:id/split', asyncHandler(async (req, res) => {
+  if (req.baseUrl === '/admin/entities') {
+    return res.redirect(knowledgePath(`/entities/${req.params.id}/split`));
+  }
+
+  const id = parseInt(req.params.id, 10);
+  const context = await loadEntityDetailContext(id);
+  if (context.status !== 200) {
+    return res.status(context.status).render('error', { message: context.error, error: {} });
+  }
+
+  res.render('admin/entity-split', {
+    pageTitle: `Split ${context.entity.canonical_name}`,
+    ...context,
+    entityTypes: ENTITY_TYPES,
+    activeKnowledgePage: 'entities',
+    error: req.query.error || null
+  });
+}));
+
 router.get('/:id', asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     return res.redirect(knowledgePath(`/entities/${req.params.id}`));
   }
 
-  const stores = graphStores();
-  if (!stores.entities || typeof stores.entities.getById !== 'function') {
-    return res.status(501).render('error', {
-      message: 'Knowledge graph helpers are not wired yet.',
-      error: {}
-    });
-  }
-
   const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) {
-    return res.status(404).render('error', { message: 'Entity not found', error: {} });
+  const context = await loadEntityDetailContext(id);
+  if (context.status !== 200) {
+    return res.status(context.status).render('error', { message: context.error, error: {} });
   }
-
-  const entity = await stores.entities.getById(id);
-  if (!entity) {
-    return res.status(404).render('error', { message: 'Entity not found', error: {} });
-  }
-
-  const [aliases, dates, citations, relationships, authoritySuggestions] = await Promise.all([
-    stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
-    stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
-    stores.citations && stores.citations.getByEntityId ? stores.citations.getByEntityId(id) : [],
-    stores.relationships && stores.relationships.getByEntityId ? stores.relationships.getByEntityId(id) : [],
-    stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.getByEntityId
-      ? stores.authorityLinkSuggestions.getByEntityId(id)
-      : []
-  ]);
-  const authority = Number.isInteger(entity.authority_id) && stores.authorities && stores.authorities.getById
-    ? await stores.authorities.getById(entity.authority_id)
-    : null;
-  const linkedEntities = authority && stores.authorities && stores.authorities.getMembers
-    ? await stores.authorities.getMembers(authority.id, 100)
-    : [];
 
   res.render('admin/entity-detail', {
-    pageTitle: entity.canonical_name,
-    entity: {
-      ...entity,
-      properties: parseJsonMaybe(entity.properties)
-    },
-    authority,
-    linkedEntities: Array.isArray(linkedEntities) ? linkedEntities.filter((row) => row.id !== entity.id) : [],
-    authoritySuggestions: Array.isArray(authoritySuggestions) ? authoritySuggestions : [],
-    aliases: Array.isArray(aliases) ? aliases : [],
-    dates: Array.isArray(dates) ? dates : [],
-    citations: Array.isArray(citations) ? citations : [],
-    relationships: Array.isArray(relationships) ? relationships : [],
+    pageTitle: context.entity.canonical_name,
+    ...context,
+    entityTypes: ENTITY_TYPES,
     graphReady: true,
     graphNotice: null,
     activeKnowledgePage: 'entities',

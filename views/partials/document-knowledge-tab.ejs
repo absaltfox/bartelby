@@ -8,7 +8,7 @@
   <div class="kg-panel-header">
     <h2>Graph</h2>
     <p class="kg-panel-meta">From approved transcript evidence</p>
-    <% if (typeof pendingRelationshipCount !== 'undefined' && pendingRelationshipCount > 0) { %>
+    <% if (typeof isAdmin !== 'undefined' && isAdmin && typeof pendingRelationshipCount !== 'undefined' && pendingRelationshipCount > 0) { %>
       <p class="kg-panel-meta kg-panel-meta--pending">
         <%= pendingRelationshipCount %> pending relationship<%= pendingRelationshipCount === 1 ? '' : 's' %> hidden from this view.
         <a href="/admin/knowledge/review-extractions?kind=relationship">Review pending evidence</a>

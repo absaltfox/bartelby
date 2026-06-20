@@ -1,0 +1,102 @@
+<%- include('../partials/header', { pageTitle: pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace workflows-page">
+  <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
+
+  <div class="admin-header">
+    <h1>Edit Entity</h1>
+    <p class="subtitle">
+      Update the document-scoped entity record for
+      <strong><%= entity.canonical_name %></strong> while preserving attached evidence.
+    </p>
+  </div>
+
+  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+  <% if (authority) { %>
+    <div class="alert alert-warning">
+      Changing entity type may unlink this entity from <strong><%= authority.canonical_name %></strong>
+      if the authority type no longer matches. Citations and sentiment annotations remain attached.
+    </div>
+  <% } %>
+
+  <div class="knowledge-toolbar knowledge-toolbar--spaced">
+    <a href="/admin/knowledge/entities/<%= entity.id %>" class="btn-secondary btn-sm">&larr; Back to entity</a>
+    <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
+  </div>
+
+  <section class="settings-section correction-workspace">
+    <div class="review-extractions-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Correction</p>
+        <h2>Entity profile</h2>
+        <p class="subtitle">Every changed field writes an audit row with the optional note below.</p>
+      </div>
+    </div>
+
+    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/edit" class="edit-form correction-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+      <div class="edit-field">
+        <label for="entity-edit-type">Type <span class="field-hint-inline">(required)</span></label>
+        <select id="entity-edit-type" name="entity_type" required>
+          <% entityTypes.forEach(function(t) { %>
+            <option value="<%= t %>" <%= entity.entity_type === t ? 'selected' : '' %>><%= t %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label for="entity-edit-name">Canonical name <span class="field-hint-inline">(required)</span></label>
+        <input type="text" id="entity-edit-name" name="canonical_name" value="<%= entity.canonical_name %>" required>
+      </div>
+      <div class="edit-field">
+        <label for="entity-edit-description">Description</label>
+        <textarea id="entity-edit-description" name="description" rows="3"><%= entity.description || '' %></textarea>
+      </div>
+      <div class="edit-field">
+        <label for="entity-edit-properties">Properties JSON</label>
+        <textarea id="entity-edit-properties" name="properties" rows="8"><%= JSON.stringify(entity.properties || {}, null, 2) %></textarea>
+        <p class="field-hint">Must remain valid JSON. Evidence links are not edited here.</p>
+      </div>
+      <div class="edit-field">
+        <label for="entity-edit-aliases">Aliases, one per line</label>
+        <textarea id="entity-edit-aliases" name="aliases" rows="5"><%= aliases.map(function(a) { return a.alias; }).join('\n') %></textarea>
+      </div>
+      <div class="edit-field">
+        <label for="entity-edit-note">Change note</label>
+        <input type="text" id="entity-edit-note" name="change_note" placeholder="Optional curator note for the audit log">
+      </div>
+      <div class="edit-actions">
+        <button type="submit" class="btn-primary">Save entity</button>
+        <a href="/admin/knowledge/entities/<%= entity.id %>" class="btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="graph-shell-card knowledge-card correction-audit-card">
+    <div class="graph-sidebar-header">
+      <p class="kg-panel-eyebrow">Audit</p>
+      <h2>Recent changes</h2>
+    </div>
+    <div class="graph-sidebar-body">
+      <% if (!recentChanges.length) { %>
+        <p class="graph-empty-state">No entity changes have been recorded yet.</p>
+      <% } else { %>
+        <div class="graph-detail-list">
+          <% recentChanges.forEach(function(change) { %>
+            <div class="graph-detail-card">
+              <strong><%= change.field %></strong>
+              <div class="graph-muted">
+                <%= change.changed_at %>
+                <% if (change.changed_by_username) { %> · <%= change.changed_by_username %><% } %>
+              </div>
+              <% if (change.change_note) { %><p><%= change.change_note %></p><% } %>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </section>
+</div>
+
+<%- include('../partials/footer') %>

@@ -416,7 +416,10 @@ are not merely reviewers of LLM output; they are first-class authors.
 
 #### Entity correction tools (C3, U5)
 
-Entity detail includes two curator correction workflows:
+Entity detail links to two dedicated curator correction pages. The pages use the
+admin workspace shell so the high-risk controls have room for warnings,
+evidence previews, and audit context, while the canonical POST endpoints remain
+unchanged:
 
 - **Edit entity** updates `entity_type`, `canonical_name`, `description`,
   JSON `properties`, and aliases. Each changed field writes an `entity_changes`
@@ -430,6 +433,16 @@ Entity detail includes two curator correction workflows:
   relationships on the original entity; the curator opts specific rows into the
   new entity. "Link new entity to same authority" is available but unchecked by
   default. Reversal uses the existing merge workflow rather than a custom undo.
+
+Read routes:
+
+- `GET /admin/knowledge/entities/:id/edit`
+- `GET /admin/knowledge/entities/:id/split`
+
+Write routes:
+
+- `POST /admin/knowledge/entities/:id/edit`
+- `POST /admin/knowledge/entities/:id/split`
 
 #### Shared verbatim resolver (`utils/citation-evidence.js`)
 
@@ -448,11 +461,14 @@ curator-supplied offsets as well.
 Multi-step curator writes use `db.withTransactionAsync(fn)`. Local SQLite uses
 `BEGIN` / `COMMIT` / `ROLLBACK`; Turso uses the libSQL write transaction API so
 dependent statements share one transaction instead of auto-committing per
-statement. This helper is required for manual entity creation, manual
-relationship creation, phrase-target promotion, authority disambiguation,
-authority creation from disambiguation, authority suggestion approval, authority
-merges, entity edits, entity splits, and other future workflows that write more
-than one row for one curator action.
+statement. Transaction state is request-local via Node `AsyncLocalStorage`,
+so overlapping curator requests do not share a transaction driver. Nested
+`withTransactionAsync(fn)` calls reuse the active transaction context rather
+than opening a second transaction. This helper is required for manual entity
+creation, manual relationship creation, phrase-target promotion, authority
+disambiguation, authority creation from disambiguation, authority suggestion
+approval, authority merges, entity edits, entity splits, and other future
+workflows that write more than one row for one curator action.
 
 ### Sentiment phrase-target reconciliation (S3)
 
@@ -485,7 +501,9 @@ transactionally:
 shared typeahead picker. The handler transactionally retargets matching phrase
 annotations to that entity and inserts approved manual citations. As with
 promote-to-new, `target_phrase` is preserved as an audit trail of the original
-LLM output.
+LLM output. Promote, promote-to-existing, and suppress actions preserve the
+current phrase-target workspace context (`q`, collection, polarity,
+`minFrequency`, and page) when redirecting back to the list.
 
 **Suppress.** Curator decides the phrase is not entity-worthy. Adds
 a row to `sentiment_phrase_suppressions` keyed by the normalized

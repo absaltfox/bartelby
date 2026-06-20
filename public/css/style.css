@@ -5303,6 +5303,44 @@ main { flex: 1; padding: 32px 0; }
   padding-bottom: 10px;
 }
 
+@media (max-width: 760px) {
+  .admin-page {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .admin-subnav {
+    padding-bottom: 6px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: inset -18px 0 16px -22px var(--ink-muted);
+  }
+
+  .admin-page > .admin-subnav:first-of-type {
+    margin-top: 8px;
+    margin-bottom: 22px;
+  }
+
+  .knowledge-subnav {
+    margin-bottom: 1rem;
+    padding-top: 0.65rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .admin-header {
+    margin-bottom: 18px;
+  }
+
+  .admin-header h1 {
+    font-size: 1.45rem;
+  }
+
+  .admin-header .subtitle {
+    font-size: 1rem;
+  }
+}
+
 .knowledge-admin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -6114,6 +6152,108 @@ main { flex: 1; padding: 32px 0; }
 }
 
 .settings-section .form-actions { margin-top: 6px; }
+
+.form-section {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.form-section + .form-section,
+.form-section + .edit-field,
+.edit-field + .form-section {
+  margin-top: 20px;
+}
+
+.form-section-header {
+  margin-bottom: 16px;
+}
+
+.form-section-header h2,
+.form-section-header h3 {
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+}
+
+.form-section-header .muted {
+  margin: 0;
+}
+
+.correction-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.correction-workspace-note {
+  max-width: 760px;
+  margin: -2px 0 20px;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+}
+
+.correction-form {
+  max-width: 860px;
+}
+
+.correction-form-main {
+  display: grid;
+  gap: 16px;
+  max-width: 860px;
+}
+
+.correction-audit-card {
+  margin-top: 20px;
+}
+
+.correction-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.correction-selection-panel {
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+
+.correction-selection-header {
+  margin-bottom: 12px;
+}
+
+.correction-selection-header h3 {
+  margin: 0;
+}
+
+.correction-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.correction-check-row {
+  align-items: flex-start;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+
+.correction-check-row > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.correction-check-row span span {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
 
 .analytics-settings-section {
   overflow: hidden;
@@ -9001,6 +9141,68 @@ main { flex: 1; padding: 32px 0; }
 }
 
 .workflows-table-wrap { overflow-x: auto; }
+
+.workflows-table .phrase-target-expansion-row td {
+  padding-top: 0;
+  background: var(--parchment-alt);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.phrase-target-expansion {
+  width: 100%;
+}
+
+.phrase-target-expansion > summary {
+  display: inline-flex;
+  width: auto;
+  cursor: pointer;
+  list-style: none;
+}
+
+.phrase-target-expansion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.phrase-target-expansion[open] > summary {
+  margin-bottom: 14px;
+}
+
+.phrase-target-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.phrase-target-action-form {
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 760px) {
+  .phrase-target-action-grid,
+  .correction-selection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .phrase-target-expansion > summary,
+  .phrase-target-action-form .edit-actions .btn-primary,
+  .phrase-target-action-form .edit-actions .btn-secondary {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .correction-workspace {
+    gap: 14px;
+  }
+
+  .correction-selection-panel,
+  .phrase-target-action-form {
+    padding: 14px;
+  }
+}
 
 .workflows-table {
   width: 100%;
