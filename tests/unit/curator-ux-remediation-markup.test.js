@@ -81,6 +81,10 @@ describe('Curator UX remediation markup', () => {
       const matches = source.match(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || [];
       expect(matches).toHaveLength(1);
     });
+
+    expect(source).not.toMatch(/<h2 class="knowledge-workbench-group-title"/);
+    expect(source).toMatch(/<p class="knowledge-workbench-group-title"/);
+    expect(source).toMatch(/aria-labelledby="knowledge-workbench-/);
   });
 
   it('keeps curator consequences next to high-impact actions', () => {
