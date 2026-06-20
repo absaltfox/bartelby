@@ -1,4 +1,15 @@
 <%
+  // Knowledge workbench rail.
+  //
+  // This partial MUST be rendered as a direct child of an element
+  // with class "admin-page--workspace". The desktop layout uses
+  // .admin-page--workspace:has(> .knowledge-workbench-rail) to
+  // convert the page into a 230px sticky-rail / content grid;
+  // wrapping this partial in any other container will silently
+  // fall back to the mobile horizontal-scroll variant on desktop.
+%>
+
+<%
   const knowledgeGroups = [
     {
       label: 'Overview',
