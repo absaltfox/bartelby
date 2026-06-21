@@ -233,4 +233,23 @@ describe('Entity / authority sentiment panels (Phase 4 slice 4)', () => {
       expect(res.body.sentiment.recent).toEqual([]);
     });
   });
+
+  // ------------------------------------------------------------------
+  // Graph explorer page (slice 4b) — script tag wiring
+  // ------------------------------------------------------------------
+
+  describe('GET /graph page (slice 4b drawer wiring)', () => {
+    it('loads the shared SentimentCard renderer alongside graph-explorer.js', async () => {
+      const res = await adminAgent.get('/graph');
+      expect(res.status).toBe(200);
+      expect(res.text).toContain('/js/sentiment-card-renderer.js');
+      expect(res.text).toContain('/js/graph-explorer.js');
+      // Order matters — renderer must be available before graph-explorer.js
+      // runs window.SentimentCard.render in the drawer code path.
+      const rendererIdx = res.text.indexOf('/js/sentiment-card-renderer.js');
+      const explorerIdx = res.text.indexOf('/js/graph-explorer.js');
+      expect(rendererIdx).toBeGreaterThan(-1);
+      expect(rendererIdx).toBeLessThan(explorerIdx);
+    });
+  });
 });

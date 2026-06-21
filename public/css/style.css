@@ -11611,6 +11611,53 @@ body.modal-open {
   border: 1px solid var(--border-light);
 }
 
+/* ---------- Graph-explorer drawer sentiment section --------- */
+
+.graph-sentiment-section { margin-top: 6px; }
+.graph-sentiment-rollup {
+  list-style: none;
+  margin: 4px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.graph-sentiment-rollup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.graph-sentiment-rollup-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.graph-sentiment-recent {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.graph-sentiment-recent[aria-busy="true"]::before {
+  content: 'Loading evidence…';
+  display: block;
+  color: var(--ink-faint);
+  font-style: italic;
+  padding: 6px 0;
+}
+.graph-sentiment-recent .s-card {
+  /* The drawer is narrow; tighten padding and drop the bold left border. */
+  padding: 10px 12px;
+  border-left-width: 2px;
+  font-size: 0.95rem;
+}
+.graph-sentiment-recent .s-card-evidence { font-size: 0.98rem; }
+.graph-sentiment-workbench-link {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
 /* ---------- Admin sentiment sub-section inside knowledge cards --- */
 
 .kg-sentiment-section .s-panel {
