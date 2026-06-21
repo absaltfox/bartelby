@@ -1,0 +1,35 @@
+<%
+  // Shared sentiment chip set. Renders the four typed chips for an annotation:
+  // label (curator vocabulary), polarity, intensity, voice role.
+  // Per docs/sentiment-design.md non-negotiables: voice role is first-class,
+  // Plutchik is never surfaced.
+  //
+  // Locals:
+  //   annotation { label_name, polarity, intensity, voice_role }
+  //   showLabel  (optional, default true)  — set false in contexts that already show the label
+  //   compact    (optional, default false) — reduced size for inline use
+  var ann = typeof annotation !== 'undefined' && annotation ? annotation : {};
+  var includeLabel = typeof showLabel === 'undefined' ? true : showLabel;
+  var isCompact = typeof compact !== 'undefined' && compact;
+  var labelText = ann.label_name || 'Unlabeled';
+  var labelTone = ann.label_name ? 'set' : 'unset';
+  var polarity = ann.polarity || 'neutral';
+  var intensity = ann.intensity || 'low';
+  var voiceRole = ann.voice_role || 'author';
+  var voiceLabel = voiceRole === 'described_subject' ? 'described subject'
+                  : voiceRole === 'speaker' ? 'speaker'
+                  : 'author';
+  var voiceTitle = voiceRole === 'author'
+    ? "Writer's own feeling"
+    : voiceRole === 'speaker'
+      ? 'Feeling reported by someone the writer quotes'
+      : "Feeling the writer ascribes to a third party";
+%>
+<span class="s-chipset <%= isCompact ? 's-chipset--compact' : '' %>">
+  <% if (includeLabel) { %>
+    <span class="s-chip s-chip--label s-chip--label-<%= labelTone %>"><%= labelText %></span>
+  <% } %>
+  <span class="s-chip s-chip--polarity s-chip--polarity-<%= polarity %>"><%= polarity %></span>
+  <span class="s-chip s-chip--intensity s-chip--intensity-<%= intensity %>"><%= intensity %></span>
+  <span class="s-chip s-chip--voice s-chip--voice-<%= voiceRole %>" title="<%= voiceTitle %>"><%= voiceLabel %></span>
+</span>

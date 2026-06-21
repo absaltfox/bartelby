@@ -1,0 +1,109 @@
+<%
+  // Shared sentiment annotation card. Used by /sentiment, document tab,
+  // entity panels, collection-analytics subtab, and the graph-explorer drawer.
+  // One canonical visual definition per "Component Ownership" in
+  // docs/ui-template-standards.md.
+  //
+  // Locals:
+  //   annotation  — the row from sentimentAsync.listResearchAnnotations
+  //   showDocument (optional, default true) — hide the document footer when
+  //                                            already inside a document context
+  var a = annotation;
+  var showDoc = typeof showDocument === 'undefined' ? true : showDocument;
+
+  var target = a.target_kind === 'entity'
+    ? (a.target_entity_name || 'Unnamed entity')
+    : (a.target_phrase || '—');
+
+  var docHref = '/documents/' + a.document_id;
+  var transcriptHref = a.transcript_id
+    ? docHref + '?transcript=' + a.transcript_id +
+      (a.span_start != null ? '#span-' + a.span_start : '')
+    : docHref;
+
+  var dateLabel = '';
+  var dateClass = '';
+  if (a.research_date) {
+    dateLabel = a.research_date;
+    dateClass = a.emotion_about_earliest ? 's-card-date--retrospective' : '';
+  } else {
+    dateLabel = 'Undated';
+    dateClass = 's-card-date--undated';
+  }
+
+  var hasParadata = (a.notes && a.notes.trim()) ||
+                    (a.emotion_about_phrase_verbatim && a.emotion_about_phrase_verbatim.trim());
+  var paradataId = 's-card-para-' + a.id;
+
+  var voiceQualifier = '';
+  if (a.voice_role === 'speaker' && a.expressed_by_entity_name) {
+    voiceQualifier = 'as quoted by ' + a.expressed_by_entity_name;
+  } else if (a.voice_role === 'described_subject' && a.described_subject_entity_name) {
+    voiceQualifier = 'about ' + a.described_subject_entity_name;
+  }
+%>
+<article class="s-card s-card--<%= a.voice_role %>" data-annotation-id="<%= a.id %>">
+  <header class="s-card-head">
+    <%- include('sentiment-chips', { annotation: a, showLabel: true }) %>
+    <span class="s-card-date <%= dateClass %>"><%= dateLabel %></span>
+  </header>
+
+  <blockquote class="s-card-evidence">
+    <span class="s-card-evidence-mark" aria-hidden="true">&ldquo;</span><span class="s-card-evidence-text"><%= a.evidence_excerpt %></span><span class="s-card-evidence-mark" aria-hidden="true">&rdquo;</span>
+  </blockquote>
+
+  <p class="s-card-attribution">
+    <span class="s-card-verbatim"><%= a.emotion_phrase_verbatim %></span>
+    <% if (target) { %>
+      <span class="s-card-arrow" aria-hidden="true">&rarr;</span>
+      <span class="s-card-target s-card-target--<%= a.target_kind %>"><%= target %></span>
+    <% } %>
+    <% if (voiceQualifier) { %>
+      <span class="s-card-voice-qual"><%= voiceQualifier %></span>
+    <% } %>
+  </p>
+
+  <% if (showDoc) { %>
+    <footer class="s-card-foot">
+      <a href="<%= transcriptHref %>" class="s-card-source">
+        <span class="s-card-source-label">in</span>
+        <cite class="s-card-source-title"><%= a.document_title %></cite>
+        <% if (a.document_author) { %>
+          <span class="s-card-source-author">by <%= a.document_author %></span>
+        <% } %>
+      </a>
+      <% if (hasParadata) { %>
+        <button type="button"
+                class="s-card-paradata-toggle"
+                data-sentiment-paradata-toggle="1"
+                aria-controls="<%= paradataId %>"
+                aria-expanded="false">
+          <span class="s-card-paradata-label">paradata</span>
+          <span class="s-card-paradata-icon" aria-hidden="true">+</span>
+        </button>
+      <% } %>
+    </footer>
+  <% } %>
+
+  <% if (hasParadata) { %>
+    <section id="<%= paradataId %>" class="s-card-paradata" hidden>
+      <% if (a.notes && a.notes.trim()) { %>
+        <div class="s-card-paradata-block">
+          <h4 class="s-card-paradata-h">Extractor notes</h4>
+          <p class="s-card-paradata-body"><%= a.notes %></p>
+        </div>
+      <% } %>
+      <% if (a.emotion_about_phrase_verbatim && a.emotion_about_phrase_verbatim.trim()) { %>
+        <div class="s-card-paradata-block">
+          <h4 class="s-card-paradata-h">Temporal scope</h4>
+          <p class="s-card-paradata-body">
+            Refers to <q><%= a.emotion_about_phrase_verbatim %></q>
+            <% if (a.emotion_about_earliest) { %>
+              (<%= a.emotion_about_earliest %><% if (a.emotion_about_latest && a.emotion_about_latest !== a.emotion_about_earliest) { %> &ndash; <%= a.emotion_about_latest %><% } %><% if (a.emotion_about_precision) { %>, <%= a.emotion_about_precision %> precision<% } %>)
+            <% } %>
+          </p>
+        </div>
+      <% } %>
+    </section>
+  <% } %>
+</article>

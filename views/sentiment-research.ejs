@@ -1,0 +1,273 @@
+<%- include('partials/header', { pageTitle: 'Sentiment Research', currentUser: user }) %>
+
+<%
+  // Per docs/sentiment-design.md Phase 4 + docs/ui-template-standards.md
+  // "Width Archetypes" — this is an operational research workspace, so it
+  // adopts the workspace shell. Reader-facing surfaces inherit the same
+  // dense layout idiom used by admin operational pages.
+  var hasFilters = (filters.collection_id || filters.label_id || filters.label_unset ||
+                    filters.voice_role || filters.polarity || filters.intensity ||
+                    filters.target_kind || filters.author_text ||
+                    filters.date_from || filters.date_to || filters.q ||
+                    filters.entity_id || filters.authority_id ||
+                    filters.status === 'pending');
+  var totalAnnotations = summary.reduce(function(n, r) { return n + (r.annotation_count || 0); }, 0);
+  var collectionOptions = (availableCollections || []).map(function(c) {
+    return { value: c.id, label: c.name };
+  });
+  var labelOptions = (availableLabels || []).map(function(l) {
+    return { value: l.id, label: l.name };
+  });
+  // "Unlabeled" is a sentinel value rather than a label id.
+  labelOptions.unshift({ value: 'unlabeled', label: '— Unlabeled —' });
+%>
+
+<div class="admin-page admin-page--workspace s-research-page">
+
+  <header class="page-header s-research-header">
+    <div>
+      <h1>Sentiment Research</h1>
+      <p class="subtitle">
+        Explore approved emotion annotations across the corpus by label, voice, time, and entity.
+      </p>
+    </div>
+    <% if (totalAnnotations > 0) { %>
+      <p class="s-research-count">
+        <span class="s-research-count-num"><%= totalAnnotations.toLocaleString() %></span>
+        annotation<%= totalAnnotations === 1 ? '' : 's' %>
+        <% if (hasFilters) { %> matching filters<% } else { %> approved overall<% } %>
+      </p>
+    <% } %>
+  </header>
+
+  <% if (errorMessage) { %>
+    <div class="s-research-banner s-research-banner--error" role="alert">
+      <%= errorMessage %>
+    </div>
+  <% } %>
+
+  <div class="advanced-search-layout s-research-layout">
+
+    <aside class="filter-sidebar advanced-search-sidebar">
+      <form method="GET" action="/sentiment" class="advanced-search-form" data-filter-sidebar="1">
+        <div class="filter-sidebar-header">
+          <h3>Filter</h3>
+          <% if (hasFilters) { %>
+            <a href="/sentiment" class="filter-clear-all">Clear all</a>
+          <% } %>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label" for="s-filter-q">Evidence search</label>
+          <input id="s-filter-q" type="search" name="q"
+                 class="filter-select"
+                 value="<%= filters.q || '' %>"
+                 placeholder="Search within evidence quotes">
+        </div>
+
+        <% if (labelOptions.length > 1) { %>
+          <%- include('partials/filter-select', {
+            id: 's-filter-label',
+            name: 'label',
+            label: 'Label',
+            blankLabel: 'All labels',
+            selectedValue: filters.label_unset ? 'unlabeled' : (filters.label_id || ''),
+            autoSubmit: true,
+            options: labelOptions
+          }) %>
+        <% } %>
+
+        <%- include('partials/filter-select', {
+          id: 's-filter-voice',
+          name: 'voice_role',
+          label: 'Voice',
+          blankLabel: 'Any voice',
+          selectedValue: filters.voice_role || '',
+          autoSubmit: true,
+          options: [
+            { value: 'author',            label: 'Author' },
+            { value: 'speaker',           label: 'Speaker (quoted)' },
+            { value: 'described_subject', label: 'Described subject' }
+          ]
+        }) %>
+
+        <%- include('partials/filter-select', {
+          id: 's-filter-polarity',
+          name: 'polarity',
+          label: 'Polarity',
+          blankLabel: 'Any polarity',
+          selectedValue: filters.polarity || '',
+          autoSubmit: true,
+          options: [
+            { value: 'positive', label: 'Positive' },
+            { value: 'negative', label: 'Negative' },
+            { value: 'neutral',  label: 'Neutral' },
+            { value: 'mixed',    label: 'Mixed' }
+          ]
+        }) %>
+
+        <%- include('partials/filter-select', {
+          id: 's-filter-intensity',
+          name: 'intensity',
+          label: 'Intensity',
+          blankLabel: 'Any intensity',
+          selectedValue: filters.intensity || '',
+          autoSubmit: true,
+          options: [
+            { value: 'low',      label: 'Low' },
+            { value: 'moderate', label: 'Moderate' },
+            { value: 'strong',   label: 'Strong' }
+          ]
+        }) %>
+
+        <%- include('partials/filter-select', {
+          id: 's-filter-target',
+          name: 'target_kind',
+          label: 'Target',
+          blankLabel: 'Any target',
+          selectedValue: filters.target_kind || '',
+          autoSubmit: true,
+          options: [
+            { value: 'entity', label: 'Named entity' },
+            { value: 'phrase', label: 'Phrase / topic' }
+          ]
+        }) %>
+
+        <% if (collectionOptions.length > 0) { %>
+          <%- include('partials/filter-select', {
+            id: 's-filter-collection',
+            name: 'collection',
+            label: 'Collection',
+            blankLabel: 'All accessible',
+            selectedValue: filters.collection_id || '',
+            autoSubmit: true,
+            options: collectionOptions
+          }) %>
+        <% } %>
+
+        <%- include('partials/filter-date-range', {
+          label: 'Research date',
+          nameFrom: 'date_from',
+          nameTo: 'date_to',
+          fromValue: filters.date_from || '',
+          toValue: filters.date_to || '',
+          minDate: '',
+          maxDate: ''
+        }) %>
+
+        <% if (bootstrap.isAdmin) { %>
+          <div class="filter-group s-filter-admin-block">
+            <label class="filter-label" for="s-filter-status">
+              <span class="s-filter-admin-tag">admin</span> Approval status
+            </label>
+            <select id="s-filter-status" name="status" class="filter-select" data-filter-autosubmit="1">
+              <option value="">Approved (default)</option>
+              <option value="pending" <%= filters.status === 'pending' ? 'selected' : '' %>>
+                Pending review
+              </option>
+            </select>
+            <p class="field-hint">Rejected annotations are never shown.</p>
+          </div>
+        <% } %>
+
+        <button type="submit" class="btn-primary btn-sm filter-apply-btn">Apply filters</button>
+      </form>
+    </aside>
+
+    <section class="advanced-search-main s-research-main">
+
+      <%- include('partials/sentiment-panel', {
+        summary: summary,
+        heading: hasFilters ? 'Label distribution (filtered)' : 'Label distribution',
+        maxRows: panelTopLabels
+      }) %>
+
+      <div class="s-research-mode-bar" role="tablist" aria-label="Result view">
+        <button type="button"
+                class="s-research-mode s-research-mode--active"
+                role="tab" aria-selected="true"
+                data-sentiment-mode="list"
+                id="s-research-mode-list"
+                aria-controls="s-research-list-panel">
+          List
+        </button>
+        <button type="button"
+                class="s-research-mode"
+                role="tab" aria-selected="false"
+                data-sentiment-mode="timeline"
+                id="s-research-mode-timeline"
+                aria-controls="s-research-timeline-panel">
+          Timeline
+        </button>
+        <span class="s-research-mode-spacer" aria-hidden="true"></span>
+        <span class="s-research-mode-hint" id="s-research-mode-hint">
+          Newest extractions first
+        </span>
+      </div>
+
+      <div class="s-research-results"
+           role="tabpanel"
+           id="s-research-list-panel"
+           aria-labelledby="s-research-mode-list">
+        <% if (initialList.length === 0) { %>
+          <div class="empty-state s-research-empty">
+            <h2>No matching annotations</h2>
+            <% if (hasFilters) { %>
+              <p>Try clearing one or more filters. Reader-facing results are limited to approved annotations.</p>
+            <% } else { %>
+              <p>No approved sentiment annotations are visible to your account yet.</p>
+            <% } %>
+          </div>
+        <% } else { %>
+          <ol class="s-card-list" id="s-research-card-list">
+            <% initialList.forEach(function(ann) { %>
+              <li class="s-card-list-item">
+                <%- include('partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+              </li>
+            <% }) %>
+          </ol>
+          <div class="s-research-pagination">
+            <button type="button"
+                    class="btn-secondary btn-sm s-research-load-more"
+                    data-sentiment-load-more="1"
+                    <%= initialHasMore ? '' : 'hidden' %>>
+              Load more
+            </button>
+            <p class="s-research-pagination-status" data-sentiment-pagination-status>
+              Showing <%= initialList.length %><%= initialHasMore ? '' : ' of ' + initialList.length %>
+            </p>
+          </div>
+        <% } %>
+      </div>
+
+      <div class="s-research-results s-research-results--timeline"
+           role="tabpanel"
+           id="s-research-timeline-panel"
+           aria-labelledby="s-research-mode-timeline"
+           hidden>
+        <div class="s-timeline" data-sentiment-timeline>
+          <div class="s-timeline-controls">
+            <label class="s-timeline-bucket-label" for="s-timeline-bucket">Bucket</label>
+            <select id="s-timeline-bucket" class="filter-select s-timeline-bucket-select" data-sentiment-bucket>
+              <option value="decade" selected>Decade</option>
+              <option value="year">Year</option>
+              <option value="month">Month</option>
+            </select>
+          </div>
+          <div class="s-timeline-canvas" data-sentiment-timeline-canvas aria-live="polite">
+            <p class="s-timeline-placeholder">Switch to the timeline view to load the chart.</p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<script>
+  window.__sentimentResearchData = <%- JSON.stringify(bootstrap).replace(/</g, '\\u003c') %>;
+</script>
+<script src="/js/filter-sidebar.js"></script>
+<script src="/js/sentiment-research.js"></script>
+
+<%- include('partials/footer') %>
