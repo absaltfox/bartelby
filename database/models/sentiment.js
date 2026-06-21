@@ -827,8 +827,445 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
         ) rollup
       `, [...params, Number(minFrequency) || 1]);
       return Number(row?.count || 0);
+    },
+
+    // ----------------------------------------------------------------------
+    // Phase 4 research surfaces. Per docs/sentiment-design.md Phase 4 +
+    // docs/development-principles.md "Respect Permissions by Default" +
+    // "One Canonical Backend Path per Workflow".
+    //
+    // All helpers receive:
+    //   filters       — normalized filter object from parseResearchFilters
+    //   accessSql     — { conditions: string[], params: any[] } from
+    //                   documentsAsync.buildAccessConditions(opts). Conditions
+    //                   assume the documents table is aliased as `d`.
+    // ----------------------------------------------------------------------
+
+    async listResearchAnnotations(filters, accessSql, { limit = 25, cursor = null } = {}) {
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const cap = Math.min(Math.max(1, Number(limit) || 25), 100);
+      const cursorClause = cursor && cursor.extracted_at != null && cursor.id != null
+        ? `AND (a.extracted_at < ? OR (a.extracted_at = ? AND a.id < ?))`
+        : '';
+      const cursorParams = cursorClause
+        ? [cursor.extracted_at, cursor.extracted_at, cursor.id]
+        : [];
+      const rows = await allAsync(
+        `${RESEARCH_BASE_SELECT}
+          ${RESEARCH_BASE_FROM}
+          WHERE ${where} ${cursorClause}
+          ORDER BY a.extracted_at DESC, a.id DESC
+          LIMIT ?`,
+        [...params, ...cursorParams, cap + 1]
+      );
+      const hasMore = rows.length > cap;
+      const slice = hasMore ? rows.slice(0, cap) : rows;
+      const last = slice[slice.length - 1];
+      const nextCursor = hasMore && last
+        ? { extracted_at: last.extracted_at, id: last.id }
+        : null;
+      return { rows: slice.map(decorateResearchRow), nextCursor };
+    },
+
+    async summarizeByLabel(filters, accessSql) {
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const rows = await allAsync(
+        `SELECT
+            l.id AS label_id,
+            l.name AS label_name,
+            COUNT(*) AS annotation_count,
+            COUNT(DISTINCT a.document_id) AS document_count,
+            SUM(CASE WHEN a.polarity = 'positive' THEN 1 ELSE 0 END) AS positive_count,
+            SUM(CASE WHEN a.polarity = 'negative' THEN 1 ELSE 0 END) AS negative_count,
+            SUM(CASE WHEN a.polarity = 'neutral'  THEN 1 ELSE 0 END) AS neutral_count,
+            SUM(CASE WHEN a.polarity = 'mixed'    THEN 1 ELSE 0 END) AS mixed_count
+          FROM sentiment_annotations a
+          JOIN documents d ON d.id = a.document_id
+          LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+          WHERE ${where}
+          GROUP BY l.id, l.name
+          ORDER BY annotation_count DESC, l.name ASC`,
+        params
+      );
+      return rows.map((r) => ({
+        label_id: r.label_id,
+        label_name: r.label_name || null,
+        annotation_count: Number(r.annotation_count) || 0,
+        document_count: Number(r.document_count) || 0,
+        polarity_counts: {
+          positive: Number(r.positive_count) || 0,
+          negative: Number(r.negative_count) || 0,
+          neutral:  Number(r.neutral_count)  || 0,
+          mixed:    Number(r.mixed_count)    || 0
+        }
+      }));
+    },
+
+    async timelineByBucket(filters, accessSql, { bucket = 'decade' } = {}) {
+      // Research date = COALESCE(emotion_about_earliest, documents.date_created).
+      // extracted_at is never used — it would misrepresent a 19c letter as a 2026 event.
+      // NULL research_date → explicit Undated bucket (returned as bucket_key = null).
+      const substrLen = bucket === 'month' ? 7 : bucket === 'year' ? 4 : 3;
+      const bucketExpr = bucket === 'decade'
+        ? `SUBSTR(COALESCE(a.emotion_about_earliest, d.date_created), 1, 3) || '0'`
+        : `SUBSTR(COALESCE(a.emotion_about_earliest, d.date_created), 1, ${substrLen})`;
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const rows = await allAsync(
+        `SELECT
+            CASE
+              WHEN COALESCE(a.emotion_about_earliest, d.date_created) IS NULL OR
+                   TRIM(COALESCE(a.emotion_about_earliest, d.date_created)) = ''
+                THEN NULL
+              ELSE ${bucketExpr}
+            END AS bucket_key,
+            l.id AS label_id,
+            l.name AS label_name,
+            COUNT(*) AS annotation_count
+          FROM sentiment_annotations a
+          JOIN documents d ON d.id = a.document_id
+          LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+          WHERE ${where}
+          GROUP BY bucket_key, l.id, l.name
+          ORDER BY bucket_key IS NULL, bucket_key ASC, annotation_count DESC`,
+        params
+      );
+      return rows.map((r) => ({
+        bucket_key: r.bucket_key,
+        is_undated: r.bucket_key == null,
+        label_id: r.label_id,
+        label_name: r.label_name || null,
+        annotation_count: Number(r.annotation_count) || 0
+      }));
+    },
+
+    async fingerprintByAuthor(filters, accessSql) {
+      // documents.metadata.author is plain text — no authority FK exists today.
+      // The result envelope marks this with caveat: 'text-grouped' so the UI
+      // can surface "not authority-resolved" to the researcher.
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const rows = await allAsync(
+        `SELECT
+            TRIM(json_extract(d.metadata, '$.author')) AS author_text,
+            l.id AS label_id,
+            l.name AS label_name,
+            COUNT(*) AS annotation_count,
+            COUNT(DISTINCT a.document_id) AS document_count
+          FROM sentiment_annotations a
+          JOIN documents d ON d.id = a.document_id
+          LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+          WHERE ${where}
+            AND json_extract(d.metadata, '$.author') IS NOT NULL
+            AND TRIM(json_extract(d.metadata, '$.author')) != ''
+          GROUP BY author_text, l.id, l.name
+          ORDER BY author_text ASC, annotation_count DESC`,
+        params
+      );
+      return {
+        caveat: 'text-grouped',
+        rows: rows.map((r) => ({
+          author_text: r.author_text,
+          label_id: r.label_id,
+          label_name: r.label_name || null,
+          annotation_count: Number(r.annotation_count) || 0,
+          document_count: Number(r.document_count) || 0
+        }))
+      };
+    },
+
+    async cooccurrenceWithEntity(entityId, filters, accessSql) {
+      const eid = Number(entityId);
+      if (!Number.isInteger(eid) || eid <= 0) {
+        throw new ResearchFilterError('entity_id is required for cooccurrence');
+      }
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      // Co-occurrence: labels appearing in documents that ALSO contain an
+      // annotation touching the selected entity (target/expressed/subject).
+      const rows = await allAsync(
+        `SELECT
+            l.id AS label_id,
+            l.name AS label_name,
+            COUNT(*) AS annotation_count,
+            COUNT(DISTINCT a.document_id) AS document_count
+          FROM sentiment_annotations a
+          JOIN documents d ON d.id = a.document_id
+          LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+          WHERE ${where}
+            AND a.document_id IN (
+              SELECT DISTINCT a2.document_id
+              FROM sentiment_annotations a2
+              WHERE a2.approval_status = 'approved'
+                AND (a2.target_entity_id = ?
+                  OR a2.expressed_by_entity_id = ?
+                  OR a2.described_subject_entity_id = ?)
+            )
+          GROUP BY l.id, l.name
+          ORDER BY annotation_count DESC, l.name ASC`,
+        [...params, eid, eid, eid]
+      );
+      return rows.map((r) => ({
+        label_id: r.label_id,
+        label_name: r.label_name || null,
+        annotation_count: Number(r.annotation_count) || 0,
+        document_count: Number(r.document_count) || 0
+      }));
+    },
+
+    async networkSentimentEdges(filters, accessSql) {
+      // Per voice-tag invariant in docs/sentiment-design.md §2: an edge only
+      // makes sense when the annotation targets an entity AND there is a
+      // second entity to point from (expressed_by for speaker voice,
+      // described_subject for described_subject voice). Author-voice
+      // annotations have no second entity by construction — they remain
+      // entity-attached sentiment, never edges.
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const rows = await allAsync(
+        `SELECT
+            a.id,
+            a.document_id,
+            a.target_entity_id  AS target_id,
+            COALESCE(a.expressed_by_entity_id, a.described_subject_entity_id) AS source_id,
+            a.voice_role,
+            a.polarity,
+            a.intensity,
+            l.id   AS label_id,
+            l.name AS label_name
+          FROM sentiment_annotations a
+          JOIN documents d ON d.id = a.document_id
+          LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+          LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+          WHERE ${where}
+            AND a.target_kind = 'entity'
+            AND a.target_entity_id IS NOT NULL
+            AND (a.expressed_by_entity_id IS NOT NULL OR a.described_subject_entity_id IS NOT NULL)
+          ORDER BY a.id ASC`,
+        params
+      );
+      return rows.map((r) => ({
+        annotation_id: r.id,
+        document_id: r.document_id,
+        source_entity_id: r.source_id,
+        target_entity_id: r.target_id,
+        voice_role: r.voice_role,
+        polarity: r.polarity,
+        intensity: r.intensity,
+        label_id: r.label_id,
+        label_name: r.label_name || null
+      }));
     }
   };
 
-  return { sentimentAsync, normalizePhrase };
+  return { sentimentAsync, normalizePhrase, parseResearchFilters, parseTimelineBucket, ResearchFilterError };
 };
+
+// ============================================================================
+// Phase 4 research filter parsing — exported via module.exports.
+// Kept outside the buildSentimentModel closure because it's pure validation,
+// has no DB dependency, and is independently unit-testable.
+// ============================================================================
+
+class ResearchFilterError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ResearchFilterError';
+  }
+}
+
+const VOICE_ROLES   = new Set(['author', 'speaker', 'described_subject']);
+const POLARITIES    = new Set(['positive', 'negative', 'neutral', 'mixed']);
+const INTENSITIES   = new Set(['low', 'moderate', 'strong']);
+const TARGET_KINDS  = new Set(['entity', 'phrase', 'theme']);
+const STATUSES      = new Set(['approved', 'pending']);
+const TIMELINE_BUCKETS = new Set(['decade', 'year', 'month']);
+
+function asPositiveInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function asEnum(value, allowed) {
+  if (value === undefined || value === null || value === '') return null;
+  const v = String(value).trim().toLowerCase();
+  return allowed.has(v) ? v : null;
+}
+
+function asIsoDate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  // Accept YYYY, YYYY-MM, or YYYY-MM-DD; reject anything else.
+  if (!/^\d{4}(-\d{2}(-\d{2})?)?$/.test(s)) return null;
+  return s;
+}
+
+function parseResearchFilters(rawQuery, { isAdmin = false } = {}) {
+  if (rawQuery == null) rawQuery = {};
+  if (typeof rawQuery !== 'object') {
+    throw new ResearchFilterError('filters must be an object');
+  }
+  // Plutchik is internal-only (docs/sentiment-design.md §1, non-negotiable).
+  // Reject any attempt to filter on it from the research surface.
+  if ('plutchik' in rawQuery || 'plutchik_hint' in rawQuery) {
+    throw new ResearchFilterError('plutchik is internal-only and may not be filtered');
+  }
+
+  const requestedStatus = asEnum(rawQuery.status, STATUSES);
+  let status = 'approved';
+  if (requestedStatus === 'pending') {
+    if (!isAdmin) throw new ResearchFilterError('status=pending requires admin');
+    status = 'pending';
+  }
+
+  const filters = {
+    status,
+    collection_id: asPositiveInt(rawQuery.collection ?? rawQuery.collection_id),
+    label_id: asPositiveInt(rawQuery.label ?? rawQuery.label_id),
+    label_unset: rawQuery.label === 'unlabeled' || rawQuery.label_id === 'unlabeled',
+    voice_role: asEnum(rawQuery.voice_role, VOICE_ROLES),
+    polarity: asEnum(rawQuery.polarity, POLARITIES),
+    intensity: asEnum(rawQuery.intensity, INTENSITIES),
+    target_kind: asEnum(rawQuery.target_kind, TARGET_KINDS),
+    entity_id: asPositiveInt(rawQuery.entity_id),
+    authority_id: asPositiveInt(rawQuery.authority_id),
+    document_id: asPositiveInt(rawQuery.document_id),
+    author_text: rawQuery.author_text ? String(rawQuery.author_text).trim() || null : null,
+    date_from: asIsoDate(rawQuery.date_from),
+    date_to: asIsoDate(rawQuery.date_to),
+    q: rawQuery.q ? String(rawQuery.q).trim() || null : null
+  };
+
+  return filters;
+}
+
+function parseTimelineBucket(value) {
+  const b = asEnum(value, TIMELINE_BUCKETS);
+  return b || 'decade';
+}
+
+const RESEARCH_BASE_SELECT = `
+  SELECT
+    a.id, a.transcript_id, a.document_id,
+    a.span_start, a.span_end, a.evidence_excerpt,
+    a.polarity, a.intensity, a.confidence,
+    a.voice_role, a.target_kind,
+    a.target_entity_id, a.target_phrase,
+    a.expressed_by_entity_id, a.described_subject_entity_id,
+    a.emotion_phrase_id, a.emotion_phrase_verbatim,
+    a.notes, a.approval_status, a.extracted_at,
+    a.emotion_about_phrase_verbatim, a.emotion_about_earliest,
+    a.emotion_about_latest, a.emotion_about_precision, a.emotion_about_qualifier,
+    COALESCE(a.emotion_about_earliest, d.date_created) AS research_date,
+    d.title AS document_title,
+    d.date_created AS document_date,
+    json_extract(d.metadata, '$.author') AS document_author,
+    p.canonical_label_id AS label_id,
+    l.name AS label_name,
+    te.canonical_name AS target_entity_name,
+    ee.canonical_name AS expressed_by_entity_name,
+    se.canonical_name AS described_subject_entity_name
+`;
+
+const RESEARCH_BASE_FROM = `
+  FROM sentiment_annotations a
+  JOIN documents d ON d.id = a.document_id
+  LEFT JOIN sentiment_emotion_phrases p ON p.id = a.emotion_phrase_id
+  LEFT JOIN sentiment_phrase_labels l ON l.id = p.canonical_label_id
+  LEFT JOIN entities te ON te.id = a.target_entity_id
+  LEFT JOIN entities ee ON ee.id = a.expressed_by_entity_id
+  LEFT JOIN entities se ON se.id = a.described_subject_entity_id
+`;
+
+function buildResearchWhere(filters, accessSql) {
+  const conditions = [];
+  const params = [];
+
+  conditions.push('a.approval_status = ?');
+  params.push(filters.status || 'approved');
+
+  if (accessSql && Array.isArray(accessSql.conditions) && accessSql.conditions.length) {
+    conditions.push(...accessSql.conditions);
+    params.push(...(accessSql.params || []));
+  }
+
+  if (filters.collection_id) {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM document_collections dc
+       WHERE dc.document_id = a.document_id AND dc.collection_id = ?
+    )`);
+    params.push(filters.collection_id);
+  }
+  if (filters.label_id) {
+    conditions.push('p.canonical_label_id = ?');
+    params.push(filters.label_id);
+  } else if (filters.label_unset) {
+    conditions.push('p.canonical_label_id IS NULL');
+  }
+  if (filters.voice_role) {
+    conditions.push('a.voice_role = ?');
+    params.push(filters.voice_role);
+  }
+  if (filters.polarity) {
+    conditions.push('a.polarity = ?');
+    params.push(filters.polarity);
+  }
+  if (filters.intensity) {
+    conditions.push('a.intensity = ?');
+    params.push(filters.intensity);
+  }
+  if (filters.target_kind) {
+    conditions.push('a.target_kind = ?');
+    params.push(filters.target_kind);
+  }
+  if (filters.entity_id) {
+    conditions.push(`(a.target_entity_id = ?
+                  OR a.expressed_by_entity_id = ?
+                  OR a.described_subject_entity_id = ?)`);
+    params.push(filters.entity_id, filters.entity_id, filters.entity_id);
+  }
+  if (filters.authority_id) {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM entities e
+       WHERE e.authority_id = ?
+         AND (e.id = a.target_entity_id
+           OR e.id = a.expressed_by_entity_id
+           OR e.id = a.described_subject_entity_id)
+    )`);
+    params.push(filters.authority_id);
+  }
+  if (filters.document_id) {
+    conditions.push('a.document_id = ?');
+    params.push(filters.document_id);
+  }
+  if (filters.author_text) {
+    conditions.push(`LOWER(TRIM(json_extract(d.metadata, '$.author'))) = LOWER(TRIM(?))`);
+    params.push(filters.author_text);
+  }
+  if (filters.date_from) {
+    conditions.push(`COALESCE(a.emotion_about_earliest, d.date_created) >= ?`);
+    params.push(filters.date_from);
+  }
+  if (filters.date_to) {
+    conditions.push(`COALESCE(a.emotion_about_earliest, d.date_created) <= ?`);
+    params.push(filters.date_to);
+  }
+  if (filters.q) {
+    conditions.push('LOWER(a.evidence_excerpt) LIKE ?');
+    params.push(`%${filters.q.toLowerCase()}%`);
+  }
+
+  return { where: conditions.join(' AND '), params };
+}
+
+function decorateResearchRow(row) {
+  return {
+    ...row,
+    is_undated: row.research_date == null || String(row.research_date).trim() === ''
+  };
+}
+
+module.exports.parseResearchFilters = parseResearchFilters;
+module.exports.parseTimelineBucket = parseTimelineBucket;
+module.exports.ResearchFilterError = ResearchFilterError;
