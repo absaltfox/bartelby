@@ -659,6 +659,7 @@ app.use('/api/annotations', authenticatedApiLimiter, requireAuthApi, loadRoute('
 app.use('/export', loadRoute('./routes/export', 'export routes', { tier: 'core' }));
 app.use('/search', loadRoute('./routes/search', 'search routes', { tier: 'core' }));
 app.use('/graph', authenticatedApiLimiter, loadRoute('./routes/graph', 'graph routes', { tier: 'core' }));
+app.use('/sentiment', loadRoute('./routes/sentiment-research', 'sentiment research routes', { tier: 'core' }));
 app.use('/manage', registerDeferredRoute('./routes/manage', 'manage routes', { tier: 'management' })); // has its own requireAdminOrManager
 app.use('/admin', requireAdmin, registerDeferredRoute('./routes/admin', 'admin routes', { tier: 'admin' }));
 app.use('/admin/documents', registerDeferredRoute('./routes/admin-documents', 'admin document routes', { tier: 'admin' })); // has its own requireAdmin

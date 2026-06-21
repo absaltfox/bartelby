@@ -636,6 +636,23 @@ MIGRATIONS.push(`
     ON entity_splits(created_entity_id, split_at DESC);
 `);
 
+// v75 — Phase 4 sentiment research surfaces: equality indexes on the two
+// entity-role columns that have no existing index. target_entity_id already
+// has idx_sentiment_ann_target_entity from v67; expressed_by_entity_id and
+// described_subject_entity_id are filtered by listResearchAnnotations
+// (entity_id OR-condition) and networkSentimentEdges. Other research
+// workloads are already covered by existing indexes:
+//   - (document_id, approval_status)        v67  → document tab + per-doc rollups
+//   - (approval_status, extracted_at)       v67  → default list ordering
+//   - sentiment_emotion_phrases.canonical_label_id  v71  → label filter
+// Add additional research-tuned indexes only after profiling real corpora.
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_expressed_by
+    ON sentiment_annotations(expressed_by_entity_id);
+  CREATE INDEX IF NOT EXISTS idx_sentiment_ann_described_subject
+    ON sentiment_annotations(described_subject_entity_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1545,7 +1562,13 @@ const { entities, entityAliases, dateExpressions, relationships, citations, grap
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { sentimentAsync, normalizePhrase: normalizeSentimentPhrase } = require('./models/sentiment')(db, runAsync, getAsync, allAsync, saveDatabase);
+const {
+  sentimentAsync,
+  normalizePhrase: normalizeSentimentPhrase,
+  parseResearchFilters: parseSentimentResearchFilters,
+  parseTimelineBucket: parseSentimentTimelineBucket,
+  ResearchFilterError: SentimentResearchFilterError
+} = require('./models/sentiment')(db, runAsync, getAsync, allAsync, saveDatabase);
 const relationshipTypeAliasesAsync = require('./models/relationship-type-aliases')(db, runAsync, getAsync, allAsync, saveDatabase);
 const authorityChronologyAsync = require('./models/authority-chronology')(db, runAsync, getAsync, allAsync, saveDatabase);
 const sentimentPhraseSuppressionsAsync = require('./models/sentiment-phrase-suppressions')(db, runAsync, getAsync, allAsync, saveDatabase);
@@ -1619,6 +1642,9 @@ module.exports = {
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
   sentimentAsync,
   normalizeSentimentPhrase,
+  parseSentimentResearchFilters,
+  parseSentimentTimelineBucket,
+  SentimentResearchFilterError,
   relationshipTypes,
   relationshipTypesAsync: relationshipTypes,
   authorities,
