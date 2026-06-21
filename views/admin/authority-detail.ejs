@@ -139,6 +139,36 @@
       </div>
     </section>
 
+<% if (typeof sentimentSummary !== 'undefined' && Array.isArray(sentimentSummary) && sentimentSummary.length > 0) { %>
+      <section class="graph-shell-card knowledge-card">
+        <div class="graph-sidebar-header">
+          <p class="kg-panel-eyebrow">Sentiment</p>
+          <h2>Emotional register</h2>
+        </div>
+        <div class="graph-sidebar-body kg-sentiment-section">
+          <%- include('../partials/sentiment-panel', {
+            summary: sentimentSummary,
+            heading: 'Across all member entities',
+            maxRows: 6,
+            compact: true
+          }) %>
+          <% if (sentimentList && sentimentList.length > 0) { %>
+            <h3 class="kg-sentiment-evidence-h">Recent evidence</h3>
+            <ol class="s-card-list">
+              <% sentimentList.forEach(function(ann) { %>
+                <li class="s-card-list-item">
+                  <%- include('../partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+                </li>
+              <% }) %>
+            </ol>
+            <p class="kg-sentiment-more">
+              <a href="/sentiment?authority_id=<%= authority.id %>">View all in research workbench &rarr;</a>
+            </p>
+          <% } %>
+        </div>
+      </section>
+    <% } %>
+
     <section class="graph-shell-card knowledge-card">
       <div class="graph-sidebar-header">
         <p class="kg-panel-eyebrow">Merge</p>

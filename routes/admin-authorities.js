@@ -194,12 +194,39 @@ async function buildAuthorityDetailViewModel(authorityId) {
     };
   });
 
+  // Phase 4 slice 4: authority-level sentiment rollup. Filters
+  // sentiment_annotations by authority_id (the parser's authority_id
+  // filter joins through entities.authority_id so we capture every
+  // annotation where any voice involves a member entity).
+  let sentimentSummary = [];
+  let sentimentList = [];
+  try {
+    if (db.sentimentAsync && db.documentsAsync && db.parseSentimentResearchFilters) {
+      const accessSql = db.documentsAsync.buildAccessConditions({ isAdmin: true });
+      const filters = db.parseSentimentResearchFilters(
+        { authority_id: authorityId },
+        { isAdmin: true }
+      );
+      const [summary, list] = await Promise.all([
+        db.sentimentAsync.summarizeByLabel(filters, accessSql),
+        db.sentimentAsync.listResearchAnnotations(filters, accessSql, { limit: 5 })
+      ]);
+      sentimentSummary = summary;
+      sentimentList = list.rows;
+    }
+  } catch (_) {
+    sentimentSummary = [];
+    sentimentList = [];
+  }
+
   return {
     members: membersWithStats,
     aliases,
     citations,
     relationships,
     relationshipCitations,
+    sentimentSummary,
+    sentimentList,
     workspace: {
       members: membersWithStats,
       citationsByEntityId,
@@ -957,6 +984,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
     aliases: detailState.aliases,
     citations: detailState.citations,
     relationships: detailState.relationships,
+    sentimentSummary: detailState.sentimentSummary || [],
+    sentimentList: detailState.sentimentList || [],
     authorityWorkspace: detailState.workspace,
     activeKnowledgePage: 'authorities',
     merged: req.query.merged || null,

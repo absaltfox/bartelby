@@ -240,6 +240,30 @@ async function loadEntityDetailContext(id) {
     ? await stores.authorities.getMembers(authority.id, 100)
     : [];
 
+  // Phase 4 slice 4: sentiment summary scoped to this entity. Admin
+  // view → unrestricted access (no document gating). Failure is soft —
+  // the section just omits if helpers aren't wired.
+  let sentimentSummary = [];
+  let sentimentList = [];
+  try {
+    if (db.sentimentAsync && db.documentsAsync && db.parseSentimentResearchFilters) {
+      const accessSql = db.documentsAsync.buildAccessConditions({ isAdmin: true });
+      const filters = db.parseSentimentResearchFilters(
+        { entity_id: id },
+        { isAdmin: true }
+      );
+      const [summary, list] = await Promise.all([
+        db.sentimentAsync.summarizeByLabel(filters, accessSql),
+        db.sentimentAsync.listResearchAnnotations(filters, accessSql, { limit: 5 })
+      ]);
+      sentimentSummary = summary;
+      sentimentList = list.rows;
+    }
+  } catch (_) {
+    sentimentSummary = [];
+    sentimentList = [];
+  }
+
   return {
     status: 200,
     stores,
@@ -254,7 +278,9 @@ async function loadEntityDetailContext(id) {
     dates: Array.isArray(dates) ? dates : [],
     citations: Array.isArray(citations) ? citations : [],
     relationships: Array.isArray(relationships) ? relationships : [],
-    recentChanges: Array.isArray(recentChanges) ? recentChanges : []
+    recentChanges: Array.isArray(recentChanges) ? recentChanges : [],
+    sentimentSummary,
+    sentimentList
   };
 }
 

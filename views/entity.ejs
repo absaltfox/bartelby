@@ -1,0 +1,73 @@
+<%- include('partials/header', { pageTitle: entity.canonical_name, currentUser: currentUser }) %>
+
+<%
+  // Reader-facing entity detail page (Phase 4 slice 4). Reuses the
+  // shared sentiment-panel and sentiment-card partials; voice-tinted
+  // card borders match docs/sentiment-design.md voice-role rules.
+  var typeLabel = String(entity.entity_type || '').replace(/_/g, ' ');
+%>
+
+<div class="entity-reader">
+
+  <header class="page-header entity-reader-header">
+    <div class="entity-reader-headline">
+      <h1><%= entity.canonical_name %></h1>
+      <p class="subtitle entity-reader-meta">
+        <span class="entity-reader-type-chip"><%= typeLabel %></span>
+        <span class="entity-reader-citation-count">
+          <%= citationCount.toLocaleString() %>
+          citation<%= citationCount === 1 ? '' : 's' %>
+          in accessible documents
+        </span>
+      </p>
+    </div>
+    <div class="entity-reader-actions">
+      <a href="/graph?entity=<%= entity.id %>" class="btn-secondary btn-sm">Open in graph explorer</a>
+    </div>
+  </header>
+
+  <% if (aliases.length > 0) { %>
+    <section class="entity-reader-section entity-reader-aliases">
+      <h2 class="entity-reader-h2">Also known as</h2>
+      <ul class="entity-reader-alias-list">
+        <% aliases.forEach(function(a) { %>
+          <li class="entity-reader-alias"><%= a.alias %></li>
+        <% }) %>
+      </ul>
+    </section>
+  <% } %>
+
+  <%- include('partials/sentiment-panel', {
+    summary: sentimentSummary,
+    heading: 'Sentiment about this ' + (typeLabel || 'entity'),
+    maxRows: 8
+  }) %>
+
+  <% if (sentimentList.length > 0) { %>
+    <section class="entity-reader-section entity-reader-evidence">
+      <h2 class="entity-reader-h2">Recent evidence</h2>
+      <ol class="s-card-list">
+        <% sentimentList.forEach(function(ann) { %>
+          <li class="s-card-list-item">
+            <%- include('partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+          </li>
+        <% }) %>
+      </ol>
+      <p class="entity-reader-more">
+        <a href="/sentiment?entity_id=<%= entity.id %>">
+          <% if (sentimentHasMore) { %>View all annotations involving this <%= typeLabel || 'entity' %><% } else { %>Open in research workbench<% } %>
+          &rarr;
+        </a>
+      </p>
+    </section>
+  <% } else { %>
+    <section class="entity-reader-section">
+      <p class="entity-reader-no-sentiment">
+        No approved sentiment annotations are linked to this <%= typeLabel || 'entity' %> in the documents you can read.
+      </p>
+    </section>
+  <% } %>
+
+</div>
+
+<%- include('partials/footer') %>

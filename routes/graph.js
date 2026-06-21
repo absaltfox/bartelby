@@ -193,6 +193,28 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
       : []
   ]);
 
+  // Phase 4 slice 4: sentiment block. Voice-tag invariant means the
+  // entity_id filter is OR across target / expressed_by / described_subject,
+  // so the drawer surfaces every approved annotation the entity participates
+  // in. Same access-scoping helper as the citations call above.
+  let sentiment = { summary: [], recent: [] };
+  if (db.sentimentAsync && db.documentsAsync && db.parseSentimentResearchFilters) {
+    try {
+      const accessSql = db.documentsAsync.buildAccessConditions(opts);
+      const sentimentFilters = db.parseSentimentResearchFilters(
+        { entity_id: id },
+        { isAdmin: opts.isAdmin }
+      );
+      const [summary, list] = await Promise.all([
+        db.sentimentAsync.summarizeByLabel(sentimentFilters, accessSql),
+        db.sentimentAsync.listResearchAnnotations(sentimentFilters, accessSql, { limit: 5 })
+      ]);
+      sentiment = { summary, recent: list.rows };
+    } catch (_) {
+      sentiment = { summary: [], recent: [] };
+    }
+  }
+
   return res.json({
     entity,
     authority: authorityContext.authority || null,
@@ -200,7 +222,8 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
     linkedEntities: visibleLinkedEntities,
     aliases: aliases || [],
     dates: dates || [],
-    citations: citations || []
+    citations: citations || [],
+    sentiment
   });
 }));
 
