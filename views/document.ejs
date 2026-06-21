@@ -32,6 +32,15 @@
     <%- include('partials/document-knowledge-tab') %>
   </div>
 
+  <% if (typeof hasSentiment !== 'undefined' && hasSentiment) { %>
+    <div class="doc-tab-content is-hidden" id="tab-sentiment">
+      <%- include('partials/document-sentiment-tab', {
+        document: document,
+        summary: sentimentSummary
+      }) %>
+    </div>
+  <% } %>
+
   <%- include('partials/document-history-tab') %>
 </div>
 
@@ -40,5 +49,15 @@
 <script src="/js/document-page.js"></script>
 <script src="/js/graph-explorer.js"></script>
 <script src="/js/document-selection-prefill.js"></script>
+<% if (typeof hasSentiment !== 'undefined' && hasSentiment) { %>
+  <script>
+    window.__sentimentDocumentTab = {
+      documentId: <%= document.id %>,
+      isAdmin: <%= (typeof canManage !== 'undefined' && canManage) ? 'true' : 'false' %>
+    };
+  </script>
+  <script src="/js/sentiment-card-renderer.js"></script>
+  <script src="/js/sentiment-document-tab.js"></script>
+<% } %>
 
 <%- include('partials/footer') %>

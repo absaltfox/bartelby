@@ -11613,6 +11613,68 @@ body.modal-open {
 
 /* ---------- Responsive ------------------------------------ */
 
+/* ---------- Document Sentiment tab ------------------------ */
+
+.s-doc-tab { padding: 8px 0; }
+.s-doc-tab-head { margin-bottom: 16px; }
+.s-doc-tab-h { font-size: 1.2rem; margin: 0 0 4px; color: var(--ink); }
+.s-doc-tab-sub { margin: 0; font-size: 0.9rem; color: var(--ink-muted); max-width: 60ch; }
+
+.s-doc-tab-list-section { margin-top: 18px; }
+.s-doc-tab-list-h {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  margin: 0 0 12px;
+}
+.s-doc-tab-list { display: block; }
+.s-doc-tab-list .s-card-list { margin: 0; }
+.s-doc-tab-loading {
+  color: var(--ink-faint);
+  font-style: italic;
+  padding: 18px 0;
+  margin: 0;
+}
+.s-doc-tab-loading--error { color: var(--red); font-style: normal; }
+
+.s-doc-tab-pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+/* Make the evidence quote feel clickable inside the document tab. */
+[data-sentiment-doc-tab] .s-card-evidence {
+  cursor: pointer;
+  border-radius: var(--radius);
+  padding: 2px 4px;
+  margin-left: -4px;
+  margin-right: -4px;
+  transition: background 0.15s ease;
+}
+[data-sentiment-doc-tab] .s-card-evidence:hover {
+  background: var(--accent-light);
+}
+
+/* ---------- Transcript span highlight --------------------- */
+
+.s-doc-highlight {
+  background: var(--highlight);
+  border-radius: 3px;
+  padding: 0 2px;
+  margin: 0 -2px;
+  box-shadow: 0 0 0 2px rgba(251, 233, 184, 0.6);
+  transition: background 1.5s ease, box-shadow 1.5s ease;
+}
+.s-doc-highlight--fading {
+  background: rgba(251, 233, 184, 0.45);
+  box-shadow: 0 0 0 2px rgba(251, 233, 184, 0);
+}
+
+/* ---------- Responsive ------------------------------------ */
+
 @media (max-width: 900px) {
   .s-research-layout { grid-template-columns: 1fr; }
   .s-research-header { flex-direction: column; align-items: flex-start; }
