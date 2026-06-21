@@ -24,6 +24,8 @@ It supports historians engaged in research by making the data and connections co
   [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Deployment notes for Docker and Fly:
   [DEPLOY.md](./DEPLOY.md)
+- Curator UI/UX testing:
+  [docs/curator-ux-testing.md](./docs/curator-ux-testing.md)
 
 ## UI Changes
 

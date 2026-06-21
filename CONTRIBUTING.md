@@ -10,6 +10,7 @@ Before making changes, read:
 - [docs/architecture.md](./docs/architecture.md)
 - [docs/development-principles.md](./docs/development-principles.md)
 - [docs/local-development.md](./docs/local-development.md)
+- [docs/curator-ux-testing.md](./docs/curator-ux-testing.md)
 
 If your work touches the presentation layer, also read:
 
@@ -67,6 +68,18 @@ them intentionally.
 
 For template-heavy changes, also sanity-check template compilation and the
 relevant pages locally.
+
+For curator-facing UI/UX changes, prefer the fast rendered-page contract suite:
+
+```bash
+npm run test:curator-ui
+```
+
+Use simulated browser tests only for behavior that needs a real browser:
+
+```bash
+npm run test:ux
+```
 
 For Python analytics changes, ensure the local runtime is set up:
 

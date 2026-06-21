@@ -387,10 +387,6 @@ router.get('/collections/:id/graph', asyncHandler(async (req, res) => {
   if (!collection) return res.status(404).render('error', { message: 'Collection not found', error: {} });
 
   const user = req.user;
-  if (!user) {
-    req.session.returnTo = req.originalUrl;
-    return res.redirect('/login');
-  }
   const userId = user ? user.id : null;
   const isAdmin = user ? user.role === 'admin' : false;
   const accessAll = user ? !!user.access_all : false;

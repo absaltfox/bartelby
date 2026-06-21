@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth, requireAuthApi } = require('../middleware/auth');
+const { requireAuth, requireAuthApi, optionalAuth } = require('../middleware/auth');
 const db = require('../database/db');
 const { documentsAsync, userCollectionAccessAsync, citationsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
@@ -24,10 +24,11 @@ function graphStores() {
 }
 
 function accessOpts(req) {
+  const user = req.user || null;
   return {
-    userId: req.user.id,
-    isAdmin: req.user.role === 'admin',
-    accessAll: !!req.user.access_all
+    userId: user ? user.id : null,
+    isAdmin: user ? user.role === 'admin' : false,
+    accessAll: user ? !!user.access_all : false
   };
 }
 
@@ -82,7 +83,7 @@ router.get('/', requireAuth, (req, res) => {
   });
 });
 
-router.use(requireAuthApi);
+router.use(optionalAuth);
 
 router.get('/entities', asyncHandler(async (req, res) => {
   const stores = graphStores();
@@ -175,8 +176,9 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
   }
 
   const collectionId = collectionFilterId(req);
+  const opts = accessOpts(req);
   const authorityContext = stores.graphAccess && typeof stores.graphAccess.getAuthorityContext === 'function'
-    ? await stores.graphAccess.getAuthorityContext(id, req.user.id, req.user.role === 'admin', !!req.user.access_all, collectionId)
+    ? await stores.graphAccess.getAuthorityContext(id, opts.userId, opts.isAdmin, opts.accessAll, collectionId)
     : { authority: null, linkedEntities: [entity], centerEntityIds: [entity.id] };
   const visibleLinkedEntities = Array.isArray(authorityContext.linkedEntities) && authorityContext.linkedEntities.length
     ? authorityContext.linkedEntities
@@ -187,7 +189,7 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
     stores.entityAliases && stores.entityAliases.getByEntityId ? stores.entityAliases.getByEntityId(id) : [],
     stores.dateExpressions && stores.dateExpressions.getByEntityId ? stores.dateExpressions.getByEntityId(id) : [],
     stores.citations && stores.citations.getByEntityIds
-      ? stores.citations.getByEntityIds(centerEntityIds, { ...accessOpts(req), approvalStatus: 'approved', collectionId })
+      ? stores.citations.getByEntityIds(centerEntityIds, { ...opts, approvalStatus: 'approved', collectionId })
       : []
   ]);
 
@@ -355,6 +357,13 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
     ? await stores.citations.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];
   const sourceEntityIds = new Set(docCitations.filter(c => c.entity_id).map(c => c.entity_id));
+  const docRelationships = stores.relationships && typeof stores.relationships.getByDocumentId === 'function'
+    ? await stores.relationships.getByDocumentId(docId, { approvalStatus: 'approved' })
+    : [];
+  for (const relationship of docRelationships) {
+    if (relationship && relationship.source_entity_id) sourceEntityIds.add(relationship.source_entity_id);
+    if (relationship && relationship.target_entity_id) sourceEntityIds.add(relationship.target_entity_id);
+  }
 
   if (!sourceEntityIds.size) {
     return res.json({ documentId: docId, related: [], sharedEntityCount: 0 });
@@ -363,13 +372,10 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
   // For each entity, find other documents that cite it
   const documentOverlap = new Map();
   for (const entityId of sourceEntityIds) {
-    const entityCitations = stores.citations && typeof stores.citations.getByEntityId === 'function'
-      ? await stores.citations.getByEntityId(entityId, { ...opts, approvalStatus: 'approved', collectionId })
-      : [];
-    for (const citation of entityCitations) {
-      if (!citation.document_id || citation.document_id === docId) continue;
+    const addCitationOverlap = async (citation) => {
+      if (!citation.document_id || citation.document_id === docId) return;
       const canAccessDoc = await documentsAsync.canAccess(citation.document_id, opts.userId, opts.isAdmin, opts.accessAll);
-      if (!canAccessDoc) continue;
+      if (!canAccessDoc) return;
 
       if (!documentOverlap.has(citation.document_id)) {
         documentOverlap.set(citation.document_id, {
@@ -379,6 +385,24 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
         });
       }
       documentOverlap.get(citation.document_id).sharedEntityIds.add(entityId);
+    };
+
+    const entityCitations = stores.citations && typeof stores.citations.getByEntityId === 'function'
+      ? await stores.citations.getByEntityId(entityId, { ...opts, approvalStatus: 'approved', collectionId })
+      : [];
+    for (const citation of entityCitations) {
+      await addCitationOverlap(citation);
+    }
+
+    const entityRelationships = stores.relationships && typeof stores.relationships.getByEntityId === 'function'
+      ? await stores.relationships.getByEntityId(entityId)
+      : [];
+    const relationshipIds = entityRelationships.map((relationship) => relationship.id).filter(Boolean);
+    const relationshipCitations = stores.citations && typeof stores.citations.getByRelationshipIds === 'function'
+      ? await stores.citations.getByRelationshipIds(relationshipIds, { ...opts, approvalStatus: 'approved', collectionId })
+      : [];
+    for (const citation of relationshipCitations) {
+      await addCitationOverlap(citation);
     }
   }
 
@@ -486,7 +510,8 @@ router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
   const docRelationships = stores.relationships && typeof stores.relationships.getByDocumentId === 'function'
     ? await stores.relationships.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];
-  const pendingCount = stores.citations && typeof stores.citations.getByDocumentId === 'function'
+  const canManageKnowledge = await canManageDocumentKnowledge(req, docId);
+  const pendingCount = canManageKnowledge && stores.citations && typeof stores.citations.getByDocumentId === 'function'
     ? (await stores.citations.getByDocumentId(docId, { approvalStatus: 'pending' })).length
     : 0;
   const accessibleIds = new Set(accessible.map((entity) => entity.id));
@@ -545,15 +570,16 @@ router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
     };
   });
 
-  return res.json({
+  const payload = {
     documentId: docId,
     entities: enrichedEntities,
-    relationships: enrichedRelationships,
-    pendingCount
-  });
+    relationships: enrichedRelationships
+  };
+  if (canManageKnowledge) payload.pendingCount = pendingCount;
+  return res.json(payload);
 }));
 
-router.post('/documents/:id/entities/:entityId/reject', asyncHandler(async (req, res) => {
+router.post('/documents/:id/entities/:entityId/reject', requireAuthApi, asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id, 10);
   const entityId = parseInt(req.params.entityId, 10);
   if (!Number.isInteger(docId) || !Number.isInteger(entityId)) {
@@ -568,7 +594,7 @@ router.post('/documents/:id/entities/:entityId/reject', asyncHandler(async (req,
   return res.json({ ok: true, updated: count });
 }));
 
-router.post('/documents/:id/relationships/:relationshipId/reject', asyncHandler(async (req, res) => {
+router.post('/documents/:id/relationships/:relationshipId/reject', requireAuthApi, asyncHandler(async (req, res) => {
   const docId = parseInt(req.params.id, 10);
   const relationshipId = parseInt(req.params.relationshipId, 10);
   if (!Number.isInteger(docId) || !Number.isInteger(relationshipId)) {

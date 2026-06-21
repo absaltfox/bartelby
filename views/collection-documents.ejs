@@ -30,7 +30,7 @@
     totalCount: totalCount,
     latestAnalytics: latestAnalytics,
     activeTab: 'documents',
-    showGraphTab: !!currentUser,
+    showGraphTab: !!currentUser || !!collection.is_world_public,
     currentUser: currentUser
   }) %>
 <% } else { %>

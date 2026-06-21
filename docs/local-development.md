@@ -12,6 +12,11 @@ For UI- and template-layer changes, follow
 the project baseline for EJS, shared partials, CSS organization, and
 presentation-layer accessibility/usability conventions.
 
+For curator-facing UI/UX testing, see
+[`docs/curator-ux-testing.md`](./curator-ux-testing.md). The fast default is
+`npm run test:curator-ui`; simulated browser coverage uses Playwright via
+`npm run test:ux`.
+
 ## Node.js runtime
 
 Bartelby is pinned to Node.js `25.9.0` for local development and Docker builds.

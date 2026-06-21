@@ -624,7 +624,14 @@
       });
       renderDocumentGraphSelection(DOCUMENT_OVERVIEW_ID);
     } catch (err) {
-      panel.hidden = true;
+      panel.hidden = false;
+      const empty = qs('[data-kg-empty]', panel);
+      const body = qs('[data-kg-body]', panel);
+      if (empty) {
+        empty.hidden = false;
+        empty.textContent = 'Unable to load approved knowledge graph evidence right now.';
+      }
+      if (body) body.hidden = true;
     }
   }
 
