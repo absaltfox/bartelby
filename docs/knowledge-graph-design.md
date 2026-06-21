@@ -687,13 +687,22 @@ and failure visibility.
 - Review cards can open an in-context preview overlay that keeps the reviewer
   on the queue while showing the source document page beside the relevant
   transcript context
+- If the selected document page segment has no transcript text but the linked
+  transcript does, the preview falls back to transcript-wide context around the
+  citation span or passage text. The document/page link and image context stay
+  available so the curator can still verify the evidence source.
 - The preview JSON can include lazily rendered context sections below the
   image/transcript preview: co-extracted entities from the same document,
   same-document relationships involving either party, and authority
-  memberships/aliases for involved entities. These sections are collapsed in
-  the modal surface so the primary evidence stays visually dominant.
+  memberships/aliases for involved entities. These sections are labeled as
+  corroborating context, not primary evidence, so the citation remains visually
+  dominant.
 - Review actions (approve/reject/delete) support in-place updates via JSON so
   triage can continue without full-page reload jumps
+- Review action controls and bulk confirmations must explain downstream
+  consequences: approval makes evidence eligible for graph views, rejection
+  keeps review history while hiding evidence from graph views, and deletion
+  removes the citation evidence record.
 - Citations can later be approved, rejected, or deleted from the admin UI
 - Review operates on citation evidence, not on the entity nodes alone
 - Date citations may link directly to `date_expressions` through
@@ -953,11 +962,21 @@ visible by default.
 The admin graph tools now live under a single `Knowledge` section:
 
 - `/admin/knowledge` overview
-- `/admin/knowledge/authorities`
-- `/admin/knowledge/authorities/suggestions`
-- `/admin/knowledge/entities`
-- `/admin/knowledge/review-extractions`
-- `/admin/knowledge/entities/merge`
+- Review: `/admin/knowledge/review-extractions`,
+  `/admin/knowledge/authorities/suggestions`, and
+  `/admin/knowledge/sentiment/review`
+- Correct: `/admin/knowledge/entities`, `/admin/knowledge/entities/merge`,
+  and `/admin/knowledge/authorities`
+- Reconcile: `/admin/knowledge/sentiment/phrase-targets`,
+  `/admin/knowledge/authorities/generic-terms`, and
+  `/admin/knowledge/sentiment/clusters`
+- Maintain: `/admin/knowledge/vocabularies/relationship-types` and
+  `/admin/knowledge/authorities/backfill`
+
+The Knowledge section uses the shared workbench rail defined in
+`docs/ui-template-standards.md`. Route URLs remain stable; the rail groups tools
+by curator job so review, correction, reconciliation, and maintenance workflows
+are self-explanatory.
 
 The same functionality is also reachable from contextual shortcuts in:
 

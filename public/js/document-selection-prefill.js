@@ -11,12 +11,12 @@
       var verbatim = sel ? String(sel.toString() || '').trim() : '';
       hints.forEach(function(hint) {
         if (!verbatim) {
-          hint.hidden = true;
-          hint.textContent = '';
+          hint.hidden = false;
+          hint.textContent = "No passage selected; you'll choose evidence on the next page.";
           return;
         }
         hint.hidden = false;
-        hint.textContent = 'Selected evidence: "' + verbatim.slice(0, 60) + (verbatim.length > 60 ? '...' : '') + '"';
+        hint.textContent = 'Using selected passage: "' + verbatim.slice(0, 60) + (verbatim.length > 60 ? '...' : '') + '"';
       });
     }
     document.addEventListener('selectionchange', updateHints);

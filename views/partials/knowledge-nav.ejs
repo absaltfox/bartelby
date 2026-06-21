@@ -1,14 +1,64 @@
-<nav class="admin-subnav knowledge-subnav">
-  <a href="/admin/knowledge" class="admin-subnav-link <%= activeKnowledgePage === 'overview' ? 'active' : '' %>">Overview</a>
-  <a href="/admin/knowledge/authorities" class="admin-subnav-link <%= activeKnowledgePage === 'authorities' ? 'active' : '' %>">Authorities</a>
-  <a href="/admin/knowledge/authorities/suggestions" class="admin-subnav-link <%= activeKnowledgePage === 'authority-suggestions' ? 'active' : '' %>">Authority-Entity Review</a>
-  <a href="/admin/knowledge/entities" class="admin-subnav-link knowledge-subnav-link--partition <%= activeKnowledgePage === 'entities' ? 'active' : '' %>">Entities</a>
-  <a href="/admin/knowledge/review-extractions" class="admin-subnav-link <%= activeKnowledgePage === 'review-extractions' ? 'active' : '' %>">Entity Evidence Review</a>
-  <a href="/admin/knowledge/entities/merge" class="admin-subnav-link <%= activeKnowledgePage === 'merge-entities' ? 'active' : '' %>">Entity Merge</a>
-  <a href="/admin/knowledge/authorities/generic-terms" class="admin-subnav-link <%= activeKnowledgePage === 'authority-generic-terms' ? 'active' : '' %>">Generic Terms</a>
-  <a href="/admin/knowledge/vocabularies/relationship-types" class="admin-subnav-link <%= activeKnowledgePage === 'vocabularies' ? 'active' : '' %>">Vocabularies</a>
-  <a href="/admin/knowledge/sentiment/review" class="admin-subnav-link <%= activeKnowledgePage === 'sentiment-review' ? 'active' : '' %>">Sentiment Review</a>
-  <a href="/admin/knowledge/sentiment/phrase-targets" class="admin-subnav-link <%= activeKnowledgePage === 'sentiment-phrase-targets' ? 'active' : '' %>">Phrase Targets</a>
-  <a href="/admin/knowledge/sentiment/clusters" class="admin-subnav-link <%= activeKnowledgePage === 'sentiment-clusters' ? 'active' : '' %>">Sentiment Clusters</a>
-  <a href="/admin/knowledge/authorities/backfill" class="admin-subnav-link <%= activeKnowledgePage === 'authority-backfill' ? 'active' : '' %>">Authority Backfill</a>
+<%
+  // Knowledge workbench rail.
+  //
+  // This partial MUST be rendered as a direct child of an element
+  // with class "admin-page--workspace". The desktop layout uses
+  // .admin-page--workspace:has(> .knowledge-workbench-rail) to
+  // convert the page into a 230px sticky-rail / content grid;
+  // wrapping this partial in any other container will silently
+  // fall back to the mobile horizontal-scroll variant on desktop.
+%>
+
+<%
+  const knowledgeGroups = [
+    {
+      label: 'Overview',
+      items: [
+        { key: 'overview', href: '/admin/knowledge', label: 'Overview' }
+      ]
+    },
+    {
+      label: 'Review',
+      items: [
+        { key: 'review-extractions', href: '/admin/knowledge/review-extractions', label: 'Entity Evidence Review' },
+        { key: 'authority-suggestions', href: '/admin/knowledge/authorities/suggestions', label: 'Authority-Entity Review' },
+        { key: 'sentiment-review', href: '/admin/knowledge/sentiment/review', label: 'Sentiment Review' }
+      ]
+    },
+    {
+      label: 'Correct',
+      items: [
+        { key: 'entities', href: '/admin/knowledge/entities', label: 'Entities' },
+        { key: 'merge-entities', href: '/admin/knowledge/entities/merge', label: 'Entity Merge' },
+        { key: 'authorities', href: '/admin/knowledge/authorities', label: 'Authorities' }
+      ]
+    },
+    {
+      label: 'Reconcile',
+      items: [
+        { key: 'sentiment-phrase-targets', href: '/admin/knowledge/sentiment/phrase-targets', label: 'Phrase Targets' },
+        { key: 'authority-generic-terms', href: '/admin/knowledge/authorities/generic-terms', label: 'Generic Terms' },
+        { key: 'sentiment-clusters', href: '/admin/knowledge/sentiment/clusters', label: 'Sentiment Clusters' }
+      ]
+    },
+    {
+      label: 'Maintain',
+      items: [
+        { key: 'vocabularies', href: '/admin/knowledge/vocabularies/relationship-types', label: 'Vocabularies' },
+        { key: 'authority-backfill', href: '/admin/knowledge/authorities/backfill', label: 'Authority Backfill' }
+      ]
+    }
+  ];
+%>
+<nav class="knowledge-workbench-rail" aria-label="Knowledge workbench">
+  <% knowledgeGroups.forEach(function(group) { %>
+    <section class="knowledge-workbench-group" aria-labelledby="knowledge-workbench-<%= group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-') %>">
+      <p class="knowledge-workbench-group-title" id="knowledge-workbench-<%= group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-') %>"><%= group.label %></p>
+      <div class="knowledge-workbench-links">
+        <% group.items.forEach(function(item) { %>
+          <a href="<%= item.href %>" class="knowledge-workbench-link <%= activeKnowledgePage === item.key ? 'active' : '' %>" <% if (activeKnowledgePage === item.key) { %>aria-current="page"<% } %>><%= item.label %></a>
+        <% }) %>
+      </div>
+    </section>
+  <% }) %>
 </nav>

@@ -47,11 +47,11 @@
           <a href="?tab=clusters&state=mixed" class="<%= stateFilter === 'mixed' ? 'active' : '' %>">mixed</a> ·
           <a href="?tab=clusters&state=full" class="<%= stateFilter === 'full' ? 'active' : '' %>">full</a>
         </label>
-        <form method="get" class="filter-label-form" style="display:inline-block; margin-left:1rem;">
+        <form method="get" class="filter-label-form">
           <% if (tab !== 'clusters') { %><input type="hidden" name="tab" value="<%= tab %>"><% } %>
           <% if (stateFilter !== 'all') { %><input type="hidden" name="state" value="<%= stateFilter %>"><% } %>
           Label:
-          <select name="label_id" onchange="this.form.submit()">
+          <select name="label_id" data-submit-on-change="1">
             <option value="">All labels</option>
             <% for (const l of labelsForFilter) { %>
               <option value="<%= l.id %>" <%= selectedLabelId === l.id ? 'selected' : '' %>><%= l.name %></option>

@@ -86,6 +86,89 @@ Rules:
 - page templates may load page-specific JS files
 - page templates should not load a shared script that the footer already loads
 
+### Knowledge Workbench Rail
+
+The Knowledge admin section is the approved exception to the default horizontal
+admin subnav convention. Knowledge pages should include
+`views/partials/knowledge-nav.ejs`, which renders the reusable
+`knowledge-workbench-rail` grouped by curator job:
+
+- Overview
+- Review
+- Correct
+- Reconcile
+- Maintain
+
+Desktop Knowledge pages may place the rail as a left workbench column inside
+the existing `admin-page--workspace` shell. Mobile Knowledge pages should keep
+the same groups as horizontally scrollable sections using CSS only; do not add
+page-specific navigation scripts or change route URLs to support the rail.
+
+The global admin nav remains visually stronger than the Knowledge rail.
+Workbench links should appear exactly once in the rail and remain grouped by
+the curator task they support, not by implementation module.
+
+The rail partial must be rendered as a **direct child** of the
+`admin-page--workspace` wrapper. The desktop layout uses
+`.admin-page--workspace:has(> .knowledge-workbench-rail)` to convert the page
+into a sticky-rail / content grid; wrapping the include in any other container
+silently falls back to the mobile horizontal-scroll variant on desktop. Open
+the workspace `<div>` before both the `admin-nav` and `knowledge-nav` includes,
+matching the pattern used in `views/admin/entity-detail.ejs`,
+`views/admin/sentiment-clusters.ejs`, and `views/admin/review-extractions.ejs`.
+
+### Curator Consequence Text
+
+AI-assisted curator actions should explain the downstream consequence at the
+point of decision. Use shared muted helper text such as `curator-action-note`
+near approve/reject/delete/correct/merge/split controls when the action changes
+graph visibility, evidence ownership, audit history, or record consolidation.
+
+Consequence text should be short and concrete:
+
+- Approve makes evidence eligible for visible graph views.
+- Reject hides evidence from graph views but keeps review history.
+- Delete removes the citation evidence record.
+- Edit preserves attached evidence.
+- Split moves only selected evidence.
+- Merge consolidates records.
+
+Bulk confirmations should mirror the same consequence language as the
+per-record controls.
+
+### Grouped Action Toolbars
+
+When a section presents two or more closely related action buttons as a
+labelled group (for example, Navigate / Correct / Author rows on
+`views/admin/entity-detail.ejs`), give each group an accessible name. A bare
+`<section>` without an accessible name collapses to a generic `<div>` for
+assistive tech, so the visual grouping is not conveyed. Either:
+
+- give the label paragraph an `id` and reference it from the wrapping
+  `<section aria-labelledby="...">`, or
+- use `<div role="group" aria-label="...">` when no visible label exists.
+
+The first form is preferred when the page already renders a visible group
+label, since the visible text and the accessible name stay in sync.
+
+### Conditional HTML Attributes
+
+When an HTML attribute must appear only under a condition (for example
+`aria-current`, `aria-selected`, `disabled`, `checked`, or a `data-*` flag),
+emit the whole attribute through an EJS `<% if %>` block, not through a
+`<%= %>` interpolation. `<%= %>` HTML-escapes its output, which converts the
+quote characters inside the attribute value to `&quot;`, producing markup like
+`aria-current=&quot;page&quot;` that browsers parse as the literal string
+`"page"` rather than the intended attribute value. The safe pattern is:
+
+```ejs
+<a href="..." <% if (isActive) { %>aria-current="page"<% } %>>Label</a>
+```
+
+Avoid `<a aria-current="<%= isActive ? 'page' : '' %>">` for attributes whose
+entire presence is conditional — prefer omitting the attribute entirely when
+the condition is false.
+
 ## Shared Partials
 
 Shared partials should only contain:

@@ -8,7 +8,7 @@ const { CITATION_APPROVAL_STATUSES, EXTRACTION_METHODS, isValidExtractionMethod 
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
-const { buildComparisonPages } = require('../utils/document-services');
+const { buildComparisonPages, stripPageMarkers } = require('../utils/document-services');
 
 router.use(requireAdmin);
 
@@ -305,6 +305,48 @@ function findHighlightRange(pageText, citation, page) {
   return { start: null, end: null };
 }
 
+function findCitationRangeInText(text, citation) {
+  const content = String(text || '');
+  if (!content) return { start: null, end: null };
+
+  if (Number.isInteger(citation.passage_start) && Number.isInteger(citation.passage_end)) {
+    const start = clampNumber(citation.passage_start, 0, content.length);
+    const end = clampNumber(citation.passage_end, 0, content.length);
+    if (end > start) {
+      return { start, end };
+    }
+  }
+
+  return findHighlightRange(content, citation, { startOffset: 0 });
+}
+
+function buildTranscriptFallbackContext(transcript, citation) {
+  const content = stripPageMarkers(transcript?.content || '');
+  if (!String(content || '').trim()) {
+    return null;
+  }
+
+  const range = findCitationRangeInText(content, citation);
+  if (!Number.isInteger(range.start) || !Number.isInteger(range.end) || range.end <= range.start) {
+    const end = Math.min(content.length, 2400);
+    return {
+      text: content.slice(0, end),
+      highlightStart: null,
+      highlightEnd: null
+    };
+  }
+
+  const before = 900;
+  const after = 1400;
+  const contextStart = Math.max(0, range.start - before);
+  const contextEnd = Math.min(content.length, range.end + after);
+  return {
+    text: content.slice(contextStart, contextEnd),
+    highlightStart: range.start - contextStart,
+    highlightEnd: range.end - contextStart
+  };
+}
+
 async function buildPreviewPayload(citation, document, transcript) {
   const normalizedDocument = await normalizeDocumentAssetsForDelivery(document);
   const comparisonPages = buildComparisonPages(normalizedDocument, transcript);
@@ -320,6 +362,7 @@ async function buildPreviewPayload(citation, document, transcript) {
   const documentHref = `/documents/${normalizedDocument.id}?${documentParams.toString()}`;
 
   if (!previewPage) {
+    const fallbackContext = buildTranscriptFallbackContext(transcript, citation);
     return {
       documentTitle: normalizedDocument.title || `Document #${normalizedDocument.id}`,
       documentHref,
@@ -327,15 +370,32 @@ async function buildPreviewPayload(citation, document, transcript) {
       transcriptVersion: transcript.version,
       pageCount: 0,
       focusPageNumber: null,
-      pageText: '',
-      highlightStart: null,
-      highlightEnd: null,
+      pageLabel: fallbackContext ? 'Transcript context' : null,
+      pageText: fallbackContext ? fallbackContext.text : '',
+      highlightStart: fallbackContext ? fallbackContext.highlightStart : null,
+      highlightEnd: fallbackContext ? fallbackContext.highlightEnd : null,
       imagePath: null,
-      passageText: String(citation.passage_text || '').trim() || null
+      passageText: String(citation.passage_text || '').trim() || null,
+      contextNote: fallbackContext
+        ? 'The page segment was unavailable, so Bartelby is showing transcript-wide context around the citation.'
+        : null
     };
   }
 
-  const highlightRange = findHighlightRange(previewPage.transcriptText, citation, previewPage);
+  let pageText = previewPage.transcriptText || '';
+  let highlightRange = findHighlightRange(pageText, citation, previewPage);
+  let contextNote = null;
+  if (!String(pageText || '').trim()) {
+    const fallbackContext = buildTranscriptFallbackContext(transcript, citation);
+    if (fallbackContext) {
+      pageText = fallbackContext.text;
+      highlightRange = {
+        start: fallbackContext.highlightStart,
+        end: fallbackContext.highlightEnd
+      };
+      contextNote = 'The selected page segment had no transcript text, so Bartelby is showing transcript-wide context around the citation.';
+    }
+  }
   const pageCount = comparisonPages.length || 1;
 
   return {
@@ -348,11 +408,12 @@ async function buildPreviewPayload(citation, document, transcript) {
     pageLabel: pageCount > 1
       ? `Page ${previewPage.pageNumber} of ${pageCount}`
       : (previewPage.imagePath ? 'Document page' : 'Document text'),
-    pageText: previewPage.transcriptText || '',
-    highlightStart: Number.isInteger(highlightRange.start) ? clampNumber(highlightRange.start, 0, previewPage.transcriptText.length) : null,
-    highlightEnd: Number.isInteger(highlightRange.end) ? clampNumber(highlightRange.end, 0, previewPage.transcriptText.length) : null,
+    pageText,
+    highlightStart: Number.isInteger(highlightRange.start) ? clampNumber(highlightRange.start, 0, pageText.length) : null,
+    highlightEnd: Number.isInteger(highlightRange.end) ? clampNumber(highlightRange.end, 0, pageText.length) : null,
     imagePath: previewPage.imagePath || null,
-    passageText: String(citation.passage_text || '').trim() || null
+    passageText: String(citation.passage_text || '').trim() || null,
+    contextNote
   };
 }
 

@@ -9,21 +9,24 @@
   // the transcriptId is rendered alongside for JS-off users.
 %>
 <% if (typeof isAdmin !== 'undefined' && isAdmin && typeof selectedTranscript !== 'undefined' && selectedTranscript && selectedTranscript.id) { %>
-	  <button type="button"
-	    class="btn-action btn-sm document-create-entity-link"
-	    data-document-create-entity
-	    data-transcript-id="<%= selectedTranscript.id %>"
-	    title="Create an entity from this transcript; selected text will be used as evidence when present">
-	    + Create entity from transcript
-	  </button>
-	  <button type="button"
-	    class="btn-action btn-sm document-create-entity-link"
-	    data-document-create-relationship
-	    data-transcript-id="<%= selectedTranscript.id %>"
-	    title="Create a relationship from this transcript; selected text will be used as evidence when present">
-	    + Create relationship from transcript
-	  </button>
-	  <span class="muted document-create-entity-selection-hint" data-document-create-entity-hint hidden></span>
+  <div class="document-create-action-group" aria-label="Create knowledge graph evidence from this transcript">
+    <span class="document-create-action-label">Create</span>
+    <button type="button"
+      class="btn-action btn-sm document-create-entity-link"
+      data-document-create-entity
+      data-transcript-id="<%= selectedTranscript.id %>"
+      title="Create an entity from this transcript; selected text will be used as evidence when present">
+      Entity
+    </button>
+    <button type="button"
+      class="btn-action btn-sm document-create-entity-link"
+      data-document-create-relationship
+      data-transcript-id="<%= selectedTranscript.id %>"
+      title="Create a relationship from this transcript; selected text will be used as evidence when present">
+      Relationship
+    </button>
+  </div>
+  <span class="document-create-entity-selection-hint" data-document-create-entity-hint>No passage selected; you'll choose evidence on the next page.</span>
   <noscript>
     <a href="/admin/knowledge/entities/new?transcriptId=<%= selectedTranscript.id %>"
        class="btn-action btn-sm document-create-entity-link"

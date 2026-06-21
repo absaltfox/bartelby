@@ -1,4 +1,8 @@
-<div class="side-by-side">
+<%
+  var hasDocumentImages = Array.isArray(comparisonPages) && comparisonPages.some(function(page) { return page && page.imagePath; });
+%>
+<div class="side-by-side <%= hasDocumentImages ? '' : 'side-by-side--text-first' %>">
+  <% if (hasDocumentImages) { %>
   <div class="image-panel">
     <h2>Original Document</h2>
     <div class="comparison-page-stack image-page-stack" id="image-page-stack">
@@ -30,71 +34,13 @@
       <% } %>
     </div>
 
-    <div class="doc-info-section">
-      <h2>Document Information</h2>
-      <div class="doc-info-view" id="doc-info-view">
-        <dl class="metadata-list">
-          <% if (document.title) { %>
-            <dt>Title</dt>
-            <dd><%= document.title %></dd>
-          <% } %>
-          <% if (document.date_created) { %>
-            <dt>Date</dt>
-            <dd><%= document.date_created %></dd>
-          <% } %>
-          <% if (document.description) { %>
-            <dt>Description</dt>
-            <dd><%= document.description %></dd>
-          <% } %>
-          <% if (docCollections && docCollections.length > 0) { %>
-            <dt>Collections</dt>
-            <dd class="doc-collections-inline">
-              <% docCollections.forEach(c => { %><span class="collection-tag"><%= c.name %></span><% }) %>
-            </dd>
-          <% } %>
-          <% if (document.metadata && Object.keys(document.metadata).length > 0) { %>
-            <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
-              <dt><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></dt>
-              <dd><%= value %></dd>
-            <% }) %>
-          <% } %>
-        </dl>
-      </div>
-
-      <% if (typeof canEdit !== 'undefined' && canEdit) { %>
-        <div class="doc-info-edit is-hidden" id="doc-info-edit">
-          <form id="metadata-edit-form" class="edit-form">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <div class="edit-field">
-              <label for="edit-title">Title</label>
-              <input type="text" id="edit-title" name="title" value="<%= document.title %>" required>
-            </div>
-            <div class="edit-field">
-              <label for="edit-date">Date</label>
-              <input type="text" id="edit-date" name="date_created" value="<%= document.date_created || '' %>" placeholder="YYYY-MM-DD">
-            </div>
-            <div class="edit-field">
-              <label for="edit-description">Description</label>
-              <textarea id="edit-description" name="description" rows="2"><%= document.description || '' %></textarea>
-            </div>
-            <% if (document.metadata && Object.keys(document.metadata).filter(k => k !== 'additional_pages').length > 0) { %>
-              <% Object.entries(document.metadata).filter(([key]) => key !== 'additional_pages').forEach(([key, value]) => { %>
-                <div class="edit-field">
-                  <label><%= key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') %></label>
-                  <input type="text" name="metadata_field_<%= key %>" value="<%= value || '' %>">
-                </div>
-              <% }) %>
-            <% } %>
-            <div class="edit-actions">
-              <button type="submit" class="btn-primary btn-sm">Save Metadata</button>
-              <button type="button" class="btn-secondary btn-sm" id="cancel-metadata-edit">Cancel</button>
-              <span class="save-status" id="metadata-save-status"></span>
-            </div>
-          </form>
-        </div>
-      <% } %>
-    </div>
+    <%- include('document-metadata-section') %>
   </div>
+  <% } else { %>
+    <section class="document-text-first-metadata">
+      <%- include('document-metadata-section') %>
+    </section>
+  <% } %>
 
   <div class="transcript-panel">
     <%- include('document-transcript-panel') %>

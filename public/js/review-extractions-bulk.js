@@ -88,13 +88,13 @@
 
   function onApproveClick() {
     if (selection.size === 0) return;
-    if (!confirm('Approve ' + selection.size + ' citation(s)?')) return;
+    if (!confirm('Approve ' + selection.size + ' citation(s)? Approved evidence becomes eligible for visible graph views.')) return;
     postBulk(config.bulkApproveUrl, Array.from(selection));
   }
 
   function onRejectClick() {
     if (selection.size === 0) return;
-    if (!confirm('Reject ' + selection.size + ' citation(s)?')) return;
+    if (!confirm('Reject ' + selection.size + ' citation(s)? Rejected evidence stays hidden from graph views but keeps review history.')) return;
     postBulk(config.bulkRejectUrl, Array.from(selection));
   }
 

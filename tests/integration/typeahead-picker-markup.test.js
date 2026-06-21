@@ -90,4 +90,10 @@ describe('Typeahead picker markup — C2', () => {
     expect(res.text).toMatch(/data-selected-type="person"[\s\S]*data-field-name="source_entity_id"/);
     expect(res.text).toContain('value="Prefilled Person"');
   });
+
+  it('renders aria-current on the active Knowledge workbench link', async () => {
+    const res = await adminAgent.get('/admin/knowledge/entities').expect(200);
+    expect(res.text).toMatch(/aria-current="page"/);
+    expect(res.text).not.toMatch(/aria-current=&quot;page&quot;/);
+  });
 });
