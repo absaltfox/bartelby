@@ -139,6 +139,15 @@
       </div>
     </section>
 
+<% if (sentimentSummary && sentimentSummary.length > 0) { %>
+      <%- include('partials/sentiment-kg-card', {
+        summary: sentimentSummary,
+        list: sentimentList,
+        heading: 'Across all member entities',
+        workbenchHref: '/sentiment?authority_id=' + authority.id
+      }) %>
+    <% } %>
+
     <section class="graph-shell-card knowledge-card">
       <div class="graph-sidebar-header">
         <p class="kg-panel-eyebrow">Merge</p>

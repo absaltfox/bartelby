@@ -194,12 +194,25 @@ async function buildAuthorityDetailViewModel(authorityId) {
     };
   });
 
+  // Phase 4 slice 4: authority-level sentiment rollup. authority_id
+  // joins through entities.authority_id so every annotation involving
+  // any member entity is captured. Helper logs + soft-fails on error.
+  const panel = await db.loadSentimentEntityPanel(
+    { isAdmin: true },
+    { authority_id: authorityId },
+    { limit: 5 }
+  );
+  const sentimentSummary = panel.summary;
+  const sentimentList = panel.recent;
+
   return {
     members: membersWithStats,
     aliases,
     citations,
     relationships,
     relationshipCitations,
+    sentimentSummary,
+    sentimentList,
     workspace: {
       members: membersWithStats,
       citationsByEntityId,
@@ -957,6 +970,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
     aliases: detailState.aliases,
     citations: detailState.citations,
     relationships: detailState.relationships,
+    sentimentSummary: detailState.sentimentSummary || [],
+    sentimentList: detailState.sentimentList || [],
     authorityWorkspace: detailState.workspace,
     activeKnowledgePage: 'authorities',
     merged: req.query.merged || null,

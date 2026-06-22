@@ -14,23 +14,18 @@ const router = express.Router();
 const {
   sentimentAsync,
   documentsAsync,
+  collectionsAsync,
   parseSentimentResearchFilters,
   parseSentimentTimelineBucket,
   SentimentResearchFilterError
 } = require('../database/db');
-const { optionalAuth } = require('../middleware/auth');
+const { optionalAuth, buildAccessOpts } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/async-handler');
 
 router.use(optionalAuth);
 
-function getAccessOpts(req) {
-  const u = req.user;
-  return {
-    userId: u?.id || null,
-    isAdmin: u?.role === 'admin',
-    accessAll: !!u?.access_all
-  };
-}
+const PAGE_SIZE = 25;
+const PANEL_TOP_LABELS = 8;
 
 function decodeCursor(raw) {
   if (!raw) return null;
@@ -50,11 +45,71 @@ function encodeCursor(cursor) {
 }
 
 function parseFiltersFromReq(req) {
-  const opts = getAccessOpts(req);
+  const opts = buildAccessOpts(req);
   const filters = parseSentimentResearchFilters(req.query, { isAdmin: opts.isAdmin });
   const accessSql = documentsAsync.buildAccessConditions(opts);
   return { filters, accessSql, opts };
 }
+
+router.get('/', asyncHandler(async (req, res) => {
+  let parsed;
+  try {
+    parsed = parseFiltersFromReq(req);
+  } catch (err) {
+    if (err instanceof SentimentResearchFilterError) {
+      // For HTML errors, just render with empty results and a banner.
+      return res.status(400).render('sentiment-research', {
+        pageTitle: 'Sentiment Research',
+        user: req.user,
+        rawQuery: req.query,
+        errorMessage: err.message,
+        availableCollections: [],
+        availableLabels: [],
+        filters: {},
+        summary: [],
+        initialList: [],
+        initialNextCursor: null,
+        initialHasMore: false,
+        panelTopLabels: PANEL_TOP_LABELS,
+        bootstrap: { filters: {}, isAdmin: Boolean(req.user && req.user.role === 'admin'), pageSize: PAGE_SIZE, nextCursor: null, hasMore: false }
+      });
+    }
+    throw err;
+  }
+
+  const [labels, collections, summary, list] = await Promise.all([
+    sentimentAsync.listLabels(),
+    collectionsAsync.getLandingView({
+      userId: parsed.opts.userId,
+      isAdmin: parsed.opts.isAdmin,
+      accessAll: parsed.opts.accessAll
+    }),
+    sentimentAsync.summarizeByLabel(parsed.filters, parsed.accessSql),
+    sentimentAsync.listResearchAnnotations(parsed.filters, parsed.accessSql, { limit: PAGE_SIZE })
+  ]);
+
+  res.render('sentiment-research', {
+    pageTitle: 'Sentiment Research',
+    user: req.user,
+    rawQuery: req.query,
+    errorMessage: null,
+    availableCollections: collections,
+    availableLabels: labels,
+    filters: parsed.filters,
+    summary: summary,
+    initialList: list.rows,
+    initialNextCursor: list.nextCursor ? encodeCursor(list.nextCursor) : null,
+    initialHasMore: Boolean(list.nextCursor),
+    panelTopLabels: PANEL_TOP_LABELS,
+    bootstrap: {
+      filters: parsed.filters,
+      isAdmin: parsed.opts.isAdmin,
+      pageSize: PAGE_SIZE,
+      nextCursor: list.nextCursor ? encodeCursor(list.nextCursor) : null,
+      hasMore: Boolean(list.nextCursor)
+    }
+  });
+}));
 
 router.get('/annotations.json', asyncHandler(async (req, res) => {
   let parsed;

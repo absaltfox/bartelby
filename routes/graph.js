@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth, requireAuthApi, optionalAuth } = require('../middleware/auth');
+const { requireAuth, requireAuthApi, optionalAuth, buildAccessOpts } = require('../middleware/auth');
 const db = require('../database/db');
 const { documentsAsync, userCollectionAccessAsync, citationsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
@@ -23,14 +23,10 @@ function graphStores() {
   };
 }
 
-function accessOpts(req) {
-  const user = req.user || null;
-  return {
-    userId: user ? user.id : null,
-    isAdmin: user ? user.role === 'admin' : false,
-    accessAll: user ? !!user.access_all : false
-  };
-}
+// Thin wrapper around the shared middleware helper. Kept as a local
+// alias so the many existing call sites (canAccessEntity, neighbors,
+// timeline, etc.) don't all need to be touched.
+const accessOpts = buildAccessOpts;
 
 function graphNotReady(res) {
   return res.status(501).json({ error: 'Knowledge graph helpers are not wired yet.' });
@@ -193,6 +189,17 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
       : []
   ]);
 
+  // Phase 4 slice 4: sentiment block. Voice-tag invariant means the
+  // entity_id filter is OR across target / expressed_by / described_subject,
+  // so the drawer surfaces every approved annotation the entity participates
+  // in. Helper logs + soft-fails so a sentiment bug never 500s the drawer.
+  const sentimentPanel = await db.loadSentimentEntityPanel(
+    opts,
+    { entity_id: id },
+    { limit: 5 }
+  );
+  const sentiment = { summary: sentimentPanel.summary, recent: sentimentPanel.recent };
+
   return res.json({
     entity,
     authority: authorityContext.authority || null,
@@ -200,7 +207,8 @@ router.get('/entities/:id', asyncHandler(async (req, res) => {
     linkedEntities: visibleLinkedEntities,
     aliases: aliases || [],
     dates: dates || [],
-    citations: citations || []
+    citations: citations || [],
+    sentiment
   });
 }));
 

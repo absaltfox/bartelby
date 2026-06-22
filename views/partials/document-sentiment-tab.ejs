@@ -1,0 +1,41 @@
+<%
+  // Sentiment tab for the document detail page. The summary panel
+  // renders server-side; the annotation list is lazy-loaded by
+  // public/js/sentiment-document-tab.js on first activation.
+  //
+  // Locals:
+  //   document  — the document row (id + title)
+  //   summary   — sentimentAsync.summarizeByLabel scoped to this document
+%>
+<div class="s-doc-tab" data-sentiment-doc-tab>
+  <header class="s-doc-tab-head">
+    <h2 class="s-doc-tab-h">Sentiment in this document</h2>
+    <p class="s-doc-tab-sub">
+      Approved emotion annotations linked to this transcript. Click any
+      evidence quote to jump back to its position in the document.
+    </p>
+  </header>
+
+  <%- include('sentiment-panel', {
+    summary: summary,
+    heading: 'Label distribution',
+    maxRows: 6,
+    compact: true
+  }) %>
+
+  <section class="s-doc-tab-list-section"
+           aria-labelledby="s-doc-tab-list-h">
+    <h3 class="s-doc-tab-list-h" id="s-doc-tab-list-h">Annotations</h3>
+    <div class="s-doc-tab-list" data-sentiment-doc-list aria-busy="true" aria-live="polite">
+      <p class="s-doc-tab-loading">Loading annotations…</p>
+    </div>
+    <div class="s-doc-tab-pagination" hidden>
+      <button type="button"
+              class="btn-secondary btn-sm s-doc-tab-load-more"
+              data-sentiment-doc-load-more
+              hidden>
+        Load more
+      </button>
+    </div>
+  </section>
+</div>

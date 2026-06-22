@@ -240,6 +240,17 @@ async function loadEntityDetailContext(id) {
     ? await stores.authorities.getMembers(authority.id, 100)
     : [];
 
+  // Phase 4 slice 4: sentiment summary scoped to this entity. Admin
+  // view → unrestricted access. The helper logs + soft-fails so a
+  // sentiment-side bug never 500s the entity page.
+  const panel = await db.loadSentimentEntityPanel(
+    { isAdmin: true },
+    { entity_id: id },
+    { limit: 5 }
+  );
+  const sentimentSummary = panel.summary;
+  const sentimentList = panel.recent;
+
   return {
     status: 200,
     stores,
@@ -254,7 +265,9 @@ async function loadEntityDetailContext(id) {
     dates: Array.isArray(dates) ? dates : [],
     citations: Array.isArray(citations) ? citations : [],
     relationships: Array.isArray(relationships) ? relationships : [],
-    recentChanges: Array.isArray(recentChanges) ? recentChanges : []
+    recentChanges: Array.isArray(recentChanges) ? recentChanges : [],
+    sentimentSummary,
+    sentimentList
   };
 }
 

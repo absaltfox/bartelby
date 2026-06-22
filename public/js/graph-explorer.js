@@ -1674,13 +1674,17 @@
     var citations = safeArray(detail.citations);
     var authority = detail && detail.authority ? detail.authority : null;
     var linkedEntities = safeArray(detail && detail.linkedEntities);
+    var sentiment = (detail && detail.sentiment && typeof detail.sentiment === 'object')
+      ? { summary: safeArray(detail.sentiment.summary), recent: safeArray(detail.sentiment.recent) }
+      : { summary: [], recent: [] };
 
     var hasSources = citations.length > 0;
     var hasConnections = neighbors.length > 0;
     var hasDates = dates.length > 0;
     var hasDescription = !!(entity.description && String(entity.description).trim());
     var hasAuthority = !!authority;
-    var hasAnyContent = hasSources || hasConnections || hasDates || hasDescription || aliases.length > 0 || hasAuthority;
+    var hasSentiment = sentiment.summary.length > 0;
+    var hasAnyContent = hasSources || hasConnections || hasDates || hasDescription || aliases.length > 0 || hasAuthority || hasSentiment;
     var stats = [];
     if (displayNode.node_kind === 'authority') {
       stats.push(formatCount(Number(displayNode.member_count || linkedEntities.length || 0), 'member', 'members'));
@@ -1827,7 +1831,54 @@
         + '</section>';
     }
 
-    container.innerHTML = headerHtml + authorityHtml + sourcesHtml + connectionsHtml + datesHtml;
+    var sentimentHtml = '';
+    if (hasSentiment) {
+      var totalSentiment = 0;
+      sentiment.summary.forEach(function (row) {
+        totalSentiment += Number(row.annotation_count || 0);
+      });
+      var rollupRows = sentiment.summary.slice(0, 5).map(function (row) {
+        var labelName = row.label_name || 'Unlabeled';
+        var tone = row.label_name ? 'set' : 'unset';
+        return ''
+          + '<li class="graph-sentiment-rollup-row">'
+          +   '<span class="s-chip s-chip--label s-chip--label-' + tone + '">' + escHtml(labelName) + '</span>'
+          +   '<span class="graph-sentiment-rollup-count">' + Number(row.annotation_count || 0) + '</span>'
+          + '</li>';
+      }).join('');
+      var workbenchHref = '/sentiment?entity_id=' + encodeURIComponent(entity.id);
+      sentimentHtml = ''
+        + '<hr class="graph-detail-divider">'
+        + '<section class="graph-detail-section graph-sentiment-section">'
+        +   '<div class="graph-detail-section-label">'
+        +     'Sentiment '
+        +     '<span class="graph-detail-section-count">'
+        +       totalSentiment + (totalSentiment === 1 ? ' approved annotation' : ' approved annotations')
+        +     '</span>'
+        +   '</div>'
+        +   '<ol class="graph-sentiment-rollup">' + rollupRows + '</ol>'
+        +   (sentiment.recent.length
+              ? '<div class="graph-sentiment-recent" data-sentiment-recent-mount aria-busy="true"></div>'
+              : '')
+        +   '<p class="graph-sentiment-workbench-link">'
+        +     '<a href="' + workbenchHref + '">View all in research workbench &rarr;</a>'
+        +   '</p>'
+        + '</section>';
+    }
+
+    container.innerHTML = headerHtml + authorityHtml + sourcesHtml + connectionsHtml + datesHtml + sentimentHtml;
+
+    if (hasSentiment && sentiment.recent.length && window.SentimentCard) {
+      var mountPoint = container.querySelector('[data-sentiment-recent-mount]');
+      if (mountPoint) {
+        mountPoint.innerHTML = '';
+        sentiment.recent.forEach(function (row) {
+          var card = window.SentimentCard.render(row, { showDocument: true });
+          mountPoint.appendChild(card);
+        });
+        mountPoint.removeAttribute('aria-busy');
+      }
+    }
 
     var aliasToggle = container.querySelector('.graph-alias-toggle');
     if (aliasToggle) {

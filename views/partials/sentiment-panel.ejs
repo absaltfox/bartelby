@@ -1,0 +1,76 @@
+<%
+  // Shared sentiment rollup panel. Used by /sentiment workbench summary,
+  // document tab, entity / authority / collection-analytics surfaces, and
+  // graph-explorer entity drawer.
+  //
+  // Locals:
+  //   summary    — array from sentimentAsync.summarizeByLabel
+  //   heading    (optional) — section heading text
+  //   compact    (optional, default false) — denser variant for drawers
+  //   maxRows    (optional) — clip to top N rows; rest go behind a "show all"
+  var rows = Array.isArray(summary) ? summary : [];
+  var headingText = typeof heading !== 'undefined' && heading ? heading : 'Label distribution';
+  var isCompact = typeof compact !== 'undefined' && compact;
+  var clip = typeof maxRows !== 'undefined' && maxRows ? maxRows : 0;
+  var visibleRows = clip > 0 ? rows.slice(0, clip) : rows;
+  var hiddenRows = clip > 0 && rows.length > clip ? rows.slice(clip) : [];
+  var totalAnnotations = rows.reduce(function(n, r) { return n + (r.annotation_count || 0); }, 0);
+  var maxCount = rows.reduce(function(m, r) {
+    return Math.max(m, r.annotation_count || 0);
+  }, 0);
+
+  function rowFracPct(row) {
+    if (!maxCount) return 0;
+    return Math.max(2, Math.round((row.annotation_count / maxCount) * 100));
+  }
+  function polarityPct(row, key) {
+    if (!row.annotation_count) return 0;
+    return Math.round(((row.polarity_counts && row.polarity_counts[key]) || 0) / row.annotation_count * 100);
+  }
+%>
+<section class="s-panel <%= isCompact ? 's-panel--compact' : '' %>" aria-labelledby="s-panel-h-<%= (Math.random().toString(36).slice(2, 8)) %>">
+  <header class="s-panel-head">
+    <h2 class="s-panel-h"><%= headingText %></h2>
+    <p class="s-panel-sub">
+      <%= totalAnnotations.toLocaleString() %> approved annotation<%= totalAnnotations === 1 ? '' : 's' %>
+      across <%= rows.length %> label<%= rows.length === 1 ? '' : 's' %>
+    </p>
+  </header>
+
+  <% if (rows.length === 0) { %>
+    <div class="s-panel-empty">
+      <p>No approved annotations match the current filters.</p>
+    </div>
+  <% } else { %>
+    <ol class="s-panel-list">
+      <% visibleRows.forEach(function(row) { %>
+        <li class="s-panel-row">
+          <div class="s-panel-row-head">
+            <span class="s-panel-row-label <%= row.label_name ? '' : 's-panel-row-label--unset' %>"><%= row.label_name || 'Unlabeled' %></span>
+            <span class="s-panel-row-count" title="<%= row.document_count %> document<%= row.document_count === 1 ? '' : 's' %>">
+              <%= row.annotation_count.toLocaleString() %>
+            </span>
+          </div>
+          <div class="s-panel-row-bar" role="presentation">
+            <span class="s-panel-row-bar-fill" style="width: <%= rowFracPct(row) %>%"></span>
+          </div>
+          <div class="s-panel-row-polarity" aria-label="Polarity distribution">
+            <% ['positive', 'negative', 'neutral', 'mixed'].forEach(function(key) { %>
+              <% var pct = polarityPct(row, key); %>
+              <% if (pct > 0) { %>
+                <span class="s-panel-row-polarity-seg s-panel-row-polarity-seg--<%= key %>"
+                      style="width: <%= pct %>%"
+                      title="<%= pct %>% <%= key %>"></span>
+              <% } %>
+            <% }) %>
+          </div>
+        </li>
+      <% }) %>
+    </ol>
+    <% if (hiddenRows.length > 0) { %>
+      <button type="button" class="s-panel-show-all" data-sentiment-panel-expand="1">
+        Show <%= hiddenRows.length %> more
+      </button>
+    <% } %>
+  <% } %>
+</section>

@@ -841,6 +841,21 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     //                   assume the documents table is aliased as `d`.
     // ----------------------------------------------------------------------
 
+    async hasResearchAnnotations(filters, accessSql) {
+      // EXISTS-probe used to short-circuit the panel load on entity / document
+      // pages where the long tail has no sentiment. Cheaper than running the
+      // GROUP BY just to return [] — SQLite stops at the first matching row.
+      const { where, params } = buildResearchWhere(filters, accessSql);
+      const row = await getAsync(
+        `SELECT 1 AS hit
+         ${RESEARCH_BASE_FROM}
+         WHERE ${where}
+         LIMIT 1`,
+        params
+      );
+      return Boolean(row);
+    },
+
     async listResearchAnnotations(filters, accessSql, { limit = 25, cursor = null } = {}) {
       const { where, params } = buildResearchWhere(filters, accessSql);
       const cap = Math.min(Math.max(1, Number(limit) || 25), 100);

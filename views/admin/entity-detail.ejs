@@ -243,6 +243,15 @@
     </section>
   </div>
 
+  <% if (sentimentSummary && sentimentSummary.length > 0) { %>
+    <%- include('partials/sentiment-kg-card', {
+      summary: sentimentSummary,
+      list: sentimentList,
+      heading: 'Label distribution for ' + entity.canonical_name,
+      workbenchHref: '/sentiment?entity_id=' + entity.id
+    }) %>
+  <% } %>
+
   <section class="graph-shell-card knowledge-card">
     <div class="graph-sidebar-header">
       <p class="kg-panel-eyebrow">Evidence</p>
