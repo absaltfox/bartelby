@@ -112,6 +112,13 @@ multi-instance deployment.
 
 **Sentiment extraction (`sentiment_extraction_jobs`)** runs `utils/worker-sentiment.js` after a graph-extraction job finalizes for a transcript whose document belongs to ≥1 collection with `sentiment_enabled = 1`. The singleton path makes one synchronous LLM call; the batch path (≥2 jobs claimed) submits a provider Messages-Batch via `utils/sentiment-batches.js` (OpenAI, Anthropic, Gemini, Vertex) using a two-phase commit with a `pending-<uuid>` correlation placeholder, then finalizes via durable `batch_finalization_claimed_at`. Annotations are citation-backed (`span_start`/`span_end` + `evidence_excerpt`), voice-tagged (`author` / `speaker` / `described_subject`), aspect-targeted (`entity` / `phrase`), and carry the model's per-annotation reasoning in `notes` plus per-document observations in `extraction_notes`. Reviewable at `/admin/knowledge/sentiment/review`.
 
+**Sentiment research surfaces (Phase 4, reader-facing)** live under two routes both mounted with `optionalAuth`:
+
+- `/sentiment` (`routes/sentiment-research.js`) — the research workbench (HTML at `GET /sentiment`) plus two JSON endpoints: `GET /sentiment/annotations.json` (cursor-paginated list of approved annotations) and `GET /sentiment/rollups.json?shape=summary|timeline|fingerprint|cooccurrence|network` (rollup dispatcher).
+- `/entities/:id` (`routes/entities.js`) — reader-facing entity detail page, visible to a user when at least one of the entity's citations lives in a document they can read.
+
+Both surfaces — and the document-detail Sentiment tab, the admin entity / authority knowledge-cards, and the graph-explorer drawer's sentiment subsection — share one filter parser (`parseResearchFilters` in `database/models/sentiment.js`), one access predicate (`documentsAsync.buildAccessConditions(opts)`), and one panel-loader (`loadSentimentEntityPanel` in `database/db.js` — runs an EXISTS-probe short-circuit, fans out summary + recent in parallel, logs and soft-fails so a sentiment-side bug never 500s the parent page). Reader-facing surfaces show only `approval_status='approved'`; admins can opt in to `pending` via the workbench filter. Rejected is never visible. Anonymous viewers see only annotations in `is_world_public` collections.
+
 For lighter deployments, Bartelby can run the web server and worker loop in one
 Node process. For production deployments under load, the preferred topology is
 to run separate web and worker roles from the same image so background polling
