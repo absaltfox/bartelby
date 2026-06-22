@@ -19,22 +19,13 @@ const {
   parseSentimentTimelineBucket,
   SentimentResearchFilterError
 } = require('../database/db');
-const { optionalAuth } = require('../middleware/auth');
+const { optionalAuth, buildAccessOpts } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/async-handler');
 
 router.use(optionalAuth);
 
 const PAGE_SIZE = 25;
 const PANEL_TOP_LABELS = 8;
-
-function getAccessOpts(req) {
-  const u = req.user;
-  return {
-    userId: u?.id || null,
-    isAdmin: u?.role === 'admin',
-    accessAll: !!u?.access_all
-  };
-}
 
 function decodeCursor(raw) {
   if (!raw) return null;
@@ -54,7 +45,7 @@ function encodeCursor(cursor) {
 }
 
 function parseFiltersFromReq(req) {
-  const opts = getAccessOpts(req);
+  const opts = buildAccessOpts(req);
   const filters = parseSentimentResearchFilters(req.query, { isAdmin: opts.isAdmin });
   const accessSql = documentsAsync.buildAccessConditions(opts);
   return { filters, accessSql, opts };

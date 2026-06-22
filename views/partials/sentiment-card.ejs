@@ -48,7 +48,13 @@
     <span class="s-card-date <%= dateClass %>"><%= dateLabel %></span>
   </header>
 
-  <blockquote class="s-card-evidence">
+  <blockquote class="s-card-evidence"
+              data-sentiment-evidence="1"
+              data-document-id="<%= a.document_id %>"
+              data-transcript-id="<%= a.transcript_id || '' %>"
+              data-span-start="<%= a.span_start != null ? a.span_start : '' %>"
+              data-span-end="<%= a.span_end != null ? a.span_end : '' %>"
+              data-verbatim="<%= a.emotion_phrase_verbatim || '' %>">
     <span class="s-card-evidence-mark" aria-hidden="true">&ldquo;</span><span class="s-card-evidence-text"><%= a.evidence_excerpt %></span><span class="s-card-evidence-mark" aria-hidden="true">&rdquo;</span>
   </blockquote>
 
@@ -63,15 +69,19 @@
     <% } %>
   </p>
 
-  <% if (showDoc) { %>
+  <% if (showDoc || hasParadata) { %>
     <footer class="s-card-foot">
-      <a href="<%= transcriptHref %>" class="s-card-source">
-        <span class="s-card-source-label">in</span>
-        <cite class="s-card-source-title"><%= a.document_title %></cite>
-        <% if (a.document_author) { %>
-          <span class="s-card-source-author">by <%= a.document_author %></span>
-        <% } %>
-      </a>
+      <% if (showDoc) { %>
+        <a href="<%= transcriptHref %>" class="s-card-source">
+          <span class="s-card-source-label">in</span>
+          <cite class="s-card-source-title"><%= a.document_title %></cite>
+          <% if (a.document_author) { %>
+            <span class="s-card-source-author">by <%= a.document_author %></span>
+          <% } %>
+        </a>
+      <% } else { %>
+        <span class="s-card-source"></span>
+      <% } %>
       <% if (hasParadata) { %>
         <button type="button"
                 class="s-card-paradata-toggle"

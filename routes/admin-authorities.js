@@ -194,30 +194,16 @@ async function buildAuthorityDetailViewModel(authorityId) {
     };
   });
 
-  // Phase 4 slice 4: authority-level sentiment rollup. Filters
-  // sentiment_annotations by authority_id (the parser's authority_id
-  // filter joins through entities.authority_id so we capture every
-  // annotation where any voice involves a member entity).
-  let sentimentSummary = [];
-  let sentimentList = [];
-  try {
-    if (db.sentimentAsync && db.documentsAsync && db.parseSentimentResearchFilters) {
-      const accessSql = db.documentsAsync.buildAccessConditions({ isAdmin: true });
-      const filters = db.parseSentimentResearchFilters(
-        { authority_id: authorityId },
-        { isAdmin: true }
-      );
-      const [summary, list] = await Promise.all([
-        db.sentimentAsync.summarizeByLabel(filters, accessSql),
-        db.sentimentAsync.listResearchAnnotations(filters, accessSql, { limit: 5 })
-      ]);
-      sentimentSummary = summary;
-      sentimentList = list.rows;
-    }
-  } catch (_) {
-    sentimentSummary = [];
-    sentimentList = [];
-  }
+  // Phase 4 slice 4: authority-level sentiment rollup. authority_id
+  // joins through entities.authority_id so every annotation involving
+  // any member entity is captured. Helper logs + soft-fails on error.
+  const panel = await db.loadSentimentEntityPanel(
+    { isAdmin: true },
+    { authority_id: authorityId },
+    { limit: 5 }
+  );
+  const sentimentSummary = panel.summary;
+  const sentimentList = panel.recent;
 
   return {
     members: membersWithStats,

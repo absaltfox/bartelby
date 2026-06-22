@@ -1575,6 +1575,50 @@ const sentimentPhraseSuppressionsAsync = require('./models/sentiment-phrase-supp
 
 function getDb() { return db; }
 
+// ---------------------------------------------------------------------------
+// Phase 4 helper: load a sentiment panel scoped by one of entity_id /
+// authority_id / document_id. Replaces the 4-line "buildAccessConditions +
+// parseSentimentResearchFilters + Promise.all([summarize, list])" dance that
+// was previously copy-pasted across 5 route files. Centralizing also lets
+// the soft-fail policy live in one place — failures here are logged but
+// degrade to empty summary instead of bubbling, since sentiment is a
+// secondary panel on most surfaces and a hard error would 500 the whole
+// page.
+// ---------------------------------------------------------------------------
+async function loadSentimentEntityPanel(opts, queryParams, panelOpts = {}) {
+  const limit = Number.isInteger(panelOpts.limit) ? panelOpts.limit : 5;
+  try {
+    const accessSql = documentsAsync.buildAccessConditions(opts || {});
+    const filters = parseSentimentResearchFilters(queryParams || {}, {
+      isAdmin: Boolean(opts && opts.isAdmin)
+    });
+    // Cheap existence check first — short-circuits the long tail of
+    // entities / documents / authorities with no sentiment at all.
+    // SQLite stops at the first matching row, vs the GROUP BY summary
+    // and ORDER BY list both scanning the filtered set.
+    const exists = await sentimentAsync.hasResearchAnnotations(filters, accessSql);
+    if (!exists) {
+      return { summary: [], recent: [], hasMore: false, error: null };
+    }
+    const queries = [sentimentAsync.summarizeByLabel(filters, accessSql)];
+    if (limit > 0) {
+      queries.push(sentimentAsync.listResearchAnnotations(filters, accessSql, { limit }));
+    }
+    const [summary, listResult] = await Promise.all(queries);
+    return {
+      summary,
+      recent: listResult ? listResult.rows : [],
+      hasMore: listResult ? Boolean(listResult.nextCursor) : false,
+      error: null
+    };
+  } catch (err) {
+    // Log loudly so operators can find the failure in logs; degrade to
+    // empty so the parent page still renders.
+    console.error('[sentiment] loadSentimentEntityPanel failed:', err && err.message ? err.message : err);
+    return { summary: [], recent: [], hasMore: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
 module.exports = {
   initDatabase,
   initializeSchema,
@@ -1585,6 +1629,7 @@ module.exports = {
   getAsync,
   flushDatabase,
   getDb,
+  loadSentimentEntityPanel,
   documents,
   transcripts,
   annotations,

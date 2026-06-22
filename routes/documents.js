@@ -1,7 +1,7 @@
 const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages } = require('../utils/document-services');
 const express = require('express');
 const router = express.Router();
-const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync, relationshipsAsync, sentimentAsync, parseSentimentResearchFilters } = require('../database/db');
+const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync, relationshipsAsync, loadSentimentEntityPanel } = require('../database/db');
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery, normalizeCollectionAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
@@ -501,30 +501,14 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
   // Phase 4 slice 3: load this document's sentiment summary so the
   // Sentiment tab renders without an extra round-trip. Per
   // docs/sentiment-design.md the same approval gate applies — reader-
-  // facing views see only approved annotations; admins may opt in to
-  // pending via the workbench, not here.
-  let sentimentSummary = [];
-  let hasSentiment = false;
-  try {
-    const sentimentAccess = documentsAsync.buildAccessConditions({
-      userId: user ? user.id : null,
-      isAdmin: isAdmin,
-      accessAll: accessAll
-    });
-    const sentimentFilters = parseSentimentResearchFilters(
-      { document_id: doc.id },
-      { isAdmin: isAdmin }
-    );
-    sentimentSummary = await sentimentAsync.summarizeByLabel(sentimentFilters, sentimentAccess);
-    hasSentiment = sentimentSummary.some(function (row) {
-      return row.annotation_count > 0;
-    });
-  } catch (err) {
-    // Failing softly here — sentiment tab will simply not appear if the
-    // model lookup errors. Don't break the whole document page.
-    sentimentSummary = [];
-    hasSentiment = false;
-  }
+  // facing views see only approved annotations. The helper logs and
+  // degrades on failure (won't 500 the doc page over a sentiment bug).
+  const sentimentPanel = await loadSentimentEntityPanel(
+    { userId: user ? user.id : null, isAdmin, accessAll },
+    { document_id: doc.id },
+    { limit: 0 }  // we only need the summary for the tab gate
+  );
+  const sentimentSummary = sentimentPanel.summary;
 
   res.render('document', {
     document: normalizedDoc,
@@ -545,7 +529,7 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
     pendingRelationshipCount: relationshipCounts.pending,
     approvedRelationshipCount: relationshipCounts.approved,
     sentimentSummary,
-    hasSentiment
+    hasSentiment: sentimentSummary.length > 0
   });
 }));
 

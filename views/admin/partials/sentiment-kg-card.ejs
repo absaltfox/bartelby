@@ -1,0 +1,39 @@
+<%
+  // Shared admin Sentiment knowledge-card. Used by entity-detail.ejs and
+  // authority-detail.ejs to render the "Emotional register" section.
+  // Per docs/ui-template-standards.md Component Ownership — one canonical
+  // visual definition for the kg-context sentiment surface.
+  //
+  // Locals:
+  //   summary       — sentimentAsync.summarizeByLabel rows
+  //   list          — recent sentiment annotations (sentimentAsync.listResearchAnnotations rows)
+  //   heading       — text for the inner sentiment-panel heading
+  //   workbenchHref — URL into /sentiment filtered for this entity / authority
+%>
+<section class="graph-shell-card knowledge-card">
+  <div class="graph-sidebar-header">
+    <p class="kg-panel-eyebrow">Sentiment</p>
+    <h2>Emotional register</h2>
+  </div>
+  <div class="graph-sidebar-body kg-sentiment-section">
+    <%- include('../../partials/sentiment-panel', {
+      summary: summary,
+      heading: heading,
+      maxRows: 6,
+      compact: true
+    }) %>
+    <% if (list && list.length > 0) { %>
+      <h3 class="kg-sentiment-evidence-h">Recent evidence</h3>
+      <ol class="s-card-list">
+        <% list.forEach(function(ann) { %>
+          <li class="s-card-list-item">
+            <%- include('../../partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+          </li>
+        <% }) %>
+      </ol>
+      <p class="kg-sentiment-more">
+        <a href="<%= workbenchHref %>">View all in research workbench &rarr;</a>
+      </p>
+    <% } %>
+  </div>
+</section>

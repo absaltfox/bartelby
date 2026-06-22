@@ -32,7 +32,7 @@
     <%- include('partials/document-knowledge-tab') %>
   </div>
 
-  <% if (typeof hasSentiment !== 'undefined' && hasSentiment) { %>
+  <% if (hasSentiment) { %>
     <div class="doc-tab-content is-hidden" id="tab-sentiment">
       <%- include('partials/document-sentiment-tab', {
         document: document,
@@ -49,7 +49,7 @@
 <script src="/js/document-page.js"></script>
 <script src="/js/graph-explorer.js"></script>
 <script src="/js/document-selection-prefill.js"></script>
-<% if (typeof hasSentiment !== 'undefined' && hasSentiment) { %>
+<% if (hasSentiment) { %>
   <script>
     window.__sentimentDocumentTab = {
       documentId: <%= document.id %>,

@@ -209,6 +209,19 @@ const requireAdminOrManager = asyncHandler(async (req, res, next) => {
   res.status(403).render('error', { message: 'Admin or collection manager access required.', error: {} });
 });
 
+// Shared shape consumed by the access-conditions builders and by the
+// sentiment research model. Any route needing { userId, isAdmin, accessAll }
+// should call this rather than re-deriving from req.user — keeps the
+// access-all model singly owned.
+function buildAccessOpts(req) {
+  const u = (req && req.user) || null;
+  return {
+    userId: u ? u.id : null,
+    isAdmin: u ? u.role === 'admin' : false,
+    accessAll: u ? !!u.access_all : false
+  };
+}
+
 module.exports = {
   passport,
   locals,
@@ -219,5 +232,6 @@ module.exports = {
   requireAdmin,
   requireCollectionRole,
   requireDocumentRole,
-  requireAdminOrManager
+  requireAdminOrManager,
+  buildAccessOpts
 };

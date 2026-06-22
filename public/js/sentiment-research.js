@@ -16,6 +16,7 @@
   // public/js/sentiment-card-renderer.js (loaded before this file).
   var el = window.SentimentCard.el;
   var renderCardElement = window.SentimentCard.render;
+  var fetchJson = window.SentimentCard.fetchJson;
 
   function filtersToQuery(extras) {
     var qs = new URLSearchParams();
@@ -31,24 +32,6 @@
       if (extras[k] != null && extras[k] !== '') qs.set(k, String(extras[k]));
     });
     return qs.toString();
-  }
-
-  function fetchJson(url) {
-    return fetch(url, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }).then(function (r) {
-      if (!r.ok) {
-        return r.json().then(function (body) {
-          var err = new Error(body && body.error ? body.error : 'Request failed');
-          err.status = r.status;
-          throw err;
-        }, function () {
-          throw new Error('Request failed (' + r.status + ')');
-        });
-      }
-      return r.json();
-    });
   }
 
   // ---- mode toggle ------------------------------------------------------

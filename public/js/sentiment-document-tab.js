@@ -43,20 +43,7 @@
     qs.set('document_id', String(bootstrap.documentId));
     qs.set('limit', String(pageSize));
     if (cursor) qs.set('cursor', cursor);
-    return fetch('/sentiment/annotations.json?' + qs.toString(), {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    }).then(function (r) {
-      if (!r.ok) {
-        return r.json().then(function (b) {
-          var msg = (b && b.error) ? b.error : 'Request failed (' + r.status + ')';
-          throw new Error(msg);
-        }, function () {
-          throw new Error('Request failed (' + r.status + ')');
-        });
-      }
-      return r.json();
-    });
+    return SentimentCard.fetchJson('/sentiment/annotations.json?' + qs.toString());
   }
 
   function appendRows(rows) {

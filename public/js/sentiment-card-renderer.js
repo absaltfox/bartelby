@@ -61,9 +61,16 @@
       class: 's-chip s-chip--intensity s-chip--intensity-' + (row.intensity || 'low'),
       textContent: row.intensity || 'low'
     }));
+    var voiceRole = row.voice_role || 'author';
+    var voiceTitle = voiceRole === 'author'
+      ? "Writer's own feeling"
+      : voiceRole === 'speaker'
+        ? 'Feeling reported by someone the writer quotes'
+        : "Feeling the writer ascribes to a third party";
     span.appendChild(el('span', {
-      class: 's-chip s-chip--voice s-chip--voice-' + (row.voice_role || 'author'),
-      textContent: (row.voice_role || 'author').replace('_', ' ')
+      class: 's-chip s-chip--voice s-chip--voice-' + voiceRole,
+      textContent: voiceRole.replace('_', ' '),
+      title: voiceTitle
     }));
     return span;
   }
@@ -175,18 +182,22 @@
         paradata.appendChild(b1);
       }
       if (row.emotion_about_phrase_verbatim && String(row.emotion_about_phrase_verbatim).trim()) {
-        var temporal = 'Refers to “' + escapeText(row.emotion_about_phrase_verbatim) + '”';
-        if (row.emotion_about_earliest) {
-          temporal += ' (' + row.emotion_about_earliest;
-          if (row.emotion_about_latest && row.emotion_about_latest !== row.emotion_about_earliest) {
-            temporal += ' – ' + row.emotion_about_latest;
-          }
-          if (row.emotion_about_precision) temporal += ', ' + row.emotion_about_precision + ' precision';
-          temporal += ')';
-        }
+        // Mirror SSR partial: 'Refers to <q>verbatim</q> (earliest – latest, precision)'.
         var b2 = el('div', { class: 's-card-paradata-block' });
         b2.appendChild(el('h4', { class: 's-card-paradata-h', textContent: 'Temporal scope' }));
-        b2.appendChild(el('p', { class: 's-card-paradata-body', textContent: temporal }));
+        var p = el('p', { class: 's-card-paradata-body' });
+        p.appendChild(document.createTextNode('Refers to '));
+        p.appendChild(el('q', { textContent: escapeText(row.emotion_about_phrase_verbatim) }));
+        if (row.emotion_about_earliest) {
+          var suffix = ' (' + row.emotion_about_earliest;
+          if (row.emotion_about_latest && row.emotion_about_latest !== row.emotion_about_earliest) {
+            suffix += ' – ' + row.emotion_about_latest;
+          }
+          if (row.emotion_about_precision) suffix += ', ' + row.emotion_about_precision + ' precision';
+          suffix += ')';
+          p.appendChild(document.createTextNode(suffix));
+        }
+        b2.appendChild(p);
         paradata.appendChild(b2);
       }
       article.appendChild(paradata);
@@ -196,10 +207,34 @@
     return article;
   }
 
+  // Shared JSON-fetch helper. Used by all three sentiment client modules
+  // (workbench, document tab, graph drawer) so retry / 401-redirect / error
+  // shape stay consistent across surfaces.
+  function fetchJson(url) {
+    return fetch(url, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' }
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (body) {
+          var err = new Error(body && body.error ? body.error : 'Request failed');
+          err.status = r.status;
+          throw err;
+        }, function () {
+          var err = new Error('Request failed (' + r.status + ')');
+          err.status = r.status;
+          throw err;
+        });
+      }
+      return r.json();
+    });
+  }
+
   window.SentimentCard = {
     render: renderCard,
     renderChipset: renderChipset,
     escape: escapeText,
-    el: el
+    el: el,
+    fetchJson: fetchJson
   };
 })();

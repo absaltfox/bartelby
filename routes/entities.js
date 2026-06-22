@@ -11,19 +11,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
-const { optionalAuth } = require('../middleware/auth');
+const { optionalAuth, buildAccessOpts } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/async-handler');
 
 router.use(optionalAuth);
-
-function accessOpts(req) {
-  const u = req.user || null;
-  return {
-    userId: u ? u.id : null,
-    isAdmin: u ? u.role === 'admin' : false,
-    accessAll: u ? !!u.access_all : false
-  };
-}
 
 function entitiesStore() {
   return db.entitiesAsync || db.entities || null;
@@ -50,15 +41,25 @@ router.get('/:id', asyncHandler(async (req, res) => {
     return res.status(404).render('error', { message: 'Entity not found.', error: {} });
   }
 
-  const opts = accessOpts(req);
+  const opts = buildAccessOpts(req);
+
+  // Fire all four reads in parallel: the citation visibility gate, the
+  // sentiment panel, and the aliases list. The gate is the only one whose
+  // result blocks rendering, but its query is independent of the others —
+  // overlapping them removes one serial round-trip from the hot path.
+  // On the 403 path the panel + aliases work is wasted but bounded.
+  const aliasesStore = db.entityAliasesAsync || db.entityAliases || null;
+  const [visibleCitations, sentimentPanel, aliases] = await Promise.all([
+    citations.getByEntityId(id, { ...opts, approvalStatus: 'approved' }),
+    db.loadSentimentEntityPanel(opts, { entity_id: id }, { limit: 10 }),
+    aliasesStore && typeof aliasesStore.getByEntityId === 'function'
+      ? aliasesStore.getByEntityId(id)
+      : []
+  ]);
 
   // Visibility gate: at least one approved citation in a document the
   // viewer can access. citations.getByEntityId already permission-scopes
   // through buildCitationQueryConditions.
-  const visibleCitations = await citations.getByEntityId(id, {
-    ...opts,
-    approvalStatus: 'approved'
-  });
   if (!visibleCitations || visibleCitations.length === 0) {
     if (!req.user) {
       req.session.returnTo = req.originalUrl;
@@ -70,33 +71,15 @@ router.get('/:id', asyncHandler(async (req, res) => {
     });
   }
 
-  // Sentiment scoped to this entity. The entity_id filter ORs across
-  // target / expressed_by / described_subject — researchers see anything
-  // the entity participates in, regardless of voice role.
-  const accessSql = db.documentsAsync.buildAccessConditions(opts);
-  const sentimentFilters = db.parseSentimentResearchFilters(
-    { entity_id: id },
-    { isAdmin: opts.isAdmin }
-  );
-
-  const aliasesStore = db.entityAliasesAsync || db.entityAliases || null;
-  const [sentimentSummary, sentimentListResult, aliases] = await Promise.all([
-    db.sentimentAsync.summarizeByLabel(sentimentFilters, accessSql),
-    db.sentimentAsync.listResearchAnnotations(sentimentFilters, accessSql, { limit: 10 }),
-    aliasesStore && typeof aliasesStore.getByEntityId === 'function'
-      ? aliasesStore.getByEntityId(id)
-      : []
-  ]);
-
   res.render('entity', {
     pageTitle: entity.canonical_name,
     currentUser: req.user || null,
     entity,
     aliases: Array.isArray(aliases) ? aliases : [],
     citationCount: visibleCitations.length,
-    sentimentSummary,
-    sentimentList: sentimentListResult.rows,
-    sentimentHasMore: Boolean(sentimentListResult.nextCursor)
+    sentimentSummary: sentimentPanel.summary,
+    sentimentList: sentimentPanel.recent,
+    sentimentHasMore: sentimentPanel.hasMore
   });
 }));
 
