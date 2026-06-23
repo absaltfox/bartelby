@@ -89,7 +89,7 @@
       fetchJson('/sentiment/annotations.json?' + qs).then(function (data) {
         (data.rows || []).forEach(function (row) {
           var li = el('li', { class: 's-card-list-item' });
-          li.appendChild(renderCardElement(row));
+          li.appendChild(renderCardElement(row, { canFlag: bootstrap.isAdmin }));
           cardList.appendChild(li);
         });
         nextCursor = data.next_cursor || null;

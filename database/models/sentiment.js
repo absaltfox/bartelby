@@ -689,6 +689,27 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return r.changes > 0;
     },
 
+    // Phase 4: flip an approved annotation back to pending. Used by the
+    // research → review bridge so a researcher who spots a wrong annotation
+    // on /sentiment, the document tab, an entity panel, or the graph drawer
+    // can return it to the curator queue. Symmetric counterpart of
+    // setApprovalStatus (pending → approved/rejected); the WHERE clause
+    // guarantees we only flip rows that are currently approved, so racing
+    // flag requests against the curator's approve action are a no-op.
+    async flagApprovedToPending(id, { reviewed_by, review_note = null }) {
+      const r = await runAsync(
+        `UPDATE sentiment_annotations
+            SET approval_status = 'pending',
+                reviewed_by = ?,
+                reviewed_at = CURRENT_TIMESTAMP,
+                review_note = ?
+          WHERE id = ? AND approval_status = 'approved'`,
+        [reviewed_by, review_note, id]
+      );
+      await saveDatabase();
+      return r.changes > 0;
+    },
+
     async deleteAnnotationById(id) {
       const r = await runAsync(`DELETE FROM sentiment_annotations WHERE id = ?`, [id]);
       await saveDatabase();

@@ -8,8 +8,12 @@
   //   annotation  — the row from sentimentAsync.listResearchAnnotations
   //   showDocument (optional, default true) — hide the document footer when
   //                                            already inside a document context
+  //   canFlag      (optional, default false) — render the "Flag for review"
+  //                                            action; admin-only callers
+  //                                            opt in by passing true
   var a = annotation;
   var showDoc = typeof showDocument === 'undefined' ? true : showDocument;
+  var allowFlag = typeof canFlag !== 'undefined' && canFlag && a.approval_status === 'approved';
 
   var target = a.target_kind === 'entity'
     ? (a.target_entity_name || 'Unnamed entity')
@@ -69,7 +73,7 @@
     <% } %>
   </p>
 
-  <% if (showDoc || hasParadata) { %>
+  <% if (showDoc || hasParadata || allowFlag) { %>
     <footer class="s-card-foot">
       <% if (showDoc) { %>
         <a href="<%= transcriptHref %>" class="s-card-source">
@@ -90,6 +94,16 @@
                 aria-expanded="false">
           <span class="s-card-paradata-label">paradata</span>
           <span class="s-card-paradata-icon" aria-hidden="true">+</span>
+        </button>
+      <% } %>
+      <% if (allowFlag) { %>
+        <button type="button"
+                class="s-card-flag"
+                data-sentiment-flag="1"
+                data-annotation-id="<%= a.id %>"
+                title="Send this annotation back to the curator review queue">
+          <span aria-hidden="true">⚑</span>
+          <span class="s-card-flag-label">Flag for review</span>
         </button>
       <% } %>
     </footer>
