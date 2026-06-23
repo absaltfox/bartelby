@@ -11423,6 +11423,52 @@ body.modal-open {
 .s-card-paradata-icon { font-family: var(--ui-font); font-size: 1rem; line-height: 1; color: inherit; }
 .s-card-paradata-label { color: inherit; }
 
+/* Flag-for-review affordance (admin-only research → review bridge). */
+.s-card-flag {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--border-light);
+  color: var(--ink-faint);
+  font-family: var(--ui-font);
+  font-size: 0.78rem;
+  padding: 2px 8px 3px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+  margin-left: 6px;
+}
+.s-card-flag:hover {
+  color: var(--red);
+  border-color: rgba(146, 43, 33, 0.4);
+  background: var(--red-bg);
+}
+.s-card-flag[disabled],
+.s-card-flag[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: default;
+  background: var(--parchment-alt);
+  color: var(--ink-faint);
+  border-color: var(--border-light);
+}
+.s-card-flag-error {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 0.78rem;
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid rgba(146, 43, 33, 0.25);
+  border-radius: 3px;
+}
+.s-card--flagged {
+  opacity: 0.6;
+  border-left-color: var(--ink-faint);
+}
+
 .s-card-paradata {
   margin-top: 10px;
   padding: 10px 14px;

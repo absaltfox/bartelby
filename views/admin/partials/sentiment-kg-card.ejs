@@ -27,7 +27,7 @@
       <ol class="s-card-list">
         <% list.forEach(function(ann) { %>
           <li class="s-card-list-item">
-            <%- include('../../partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+            <%- include('../../partials/sentiment-card', { annotation: ann, showDocument: true, canFlag: true }) %>
           </li>
         <% }) %>
       </ol>

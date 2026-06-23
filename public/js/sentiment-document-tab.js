@@ -51,7 +51,7 @@
       var li = SentimentCard.el('li', { class: 's-card-list-item' });
       // showDocument: false — the entire panel is already scoped to this
       // document, so the "in <title>" footer would be redundant.
-      li.appendChild(SentimentCard.render(row, { showDocument: false }));
+      li.appendChild(SentimentCard.render(row, { showDocument: false, canFlag: bootstrap.isAdmin }));
       listContainer.appendChild(li);
     });
   }
@@ -80,7 +80,7 @@
       // Append into the <ol>, not the wrapper.
       rows.forEach(function (row) {
         var li = SentimentCard.el('li', { class: 's-card-list-item' });
-        li.appendChild(SentimentCard.render(row, { showDocument: false }));
+        li.appendChild(SentimentCard.render(row, { showDocument: false, canFlag: bootstrap.isAdmin }));
         ol.appendChild(li);
       });
       nextCursor = data.next_cursor || null;
@@ -104,7 +104,7 @@
       if (ol) {
         (data.rows || []).forEach(function (row) {
           var li = SentimentCard.el('li', { class: 's-card-list-item' });
-          li.appendChild(SentimentCard.render(row, { showDocument: false }));
+          li.appendChild(SentimentCard.render(row, { showDocument: false, canFlag: bootstrap.isAdmin }));
           ol.appendChild(li);
         });
       }

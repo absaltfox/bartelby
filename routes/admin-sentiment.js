@@ -157,6 +157,46 @@ router.post('/review/:id/delete', express.json(), asyncHandler(async (req, res) 
   return res.json({ success: true, annotationId: id });
 }));
 
+// Phase 4 research → review bridge. Researchers viewing approved
+// annotations on /sentiment, the document tab, entity panels, or the
+// graph drawer can flag a wrong annotation back to the curator queue.
+// Per docs/sentiment-design.md Phase 4 the flag affordance is admin-
+// only for now — matches the rest of /admin/knowledge/sentiment (the
+// review queue this feeds). Opening to managers requires opening the
+// review queue too; tracked as a separate slice if needed.
+router.post('/annotations/:id/flag', express.json(), asyncHandler(async (req, res) => {
+  const id = asInt(req.params.id);
+  if (id === null) return res.status(400).json({ error: 'Invalid id.' });
+  const ann = await db.getAsync(
+    `SELECT id, approval_status FROM sentiment_annotations WHERE id = ?`,
+    [id]
+  );
+  if (!ann) return res.status(404).json({ error: 'Annotation not found.' });
+  if (ann.approval_status !== 'approved') {
+    return res.status(409).json({ error: 'Only approved annotations can be flagged for review.' });
+  }
+  const surface = typeof req.body.surface === 'string' ? req.body.surface.trim().slice(0, 64) : '';
+  const reason = typeof req.body.reason === 'string' ? req.body.reason.trim().slice(0, 280) : '';
+  const reviewNote = `Flagged for review${surface ? ' from ' + surface : ''}${reason ? ': ' + reason : ''}`;
+  const ok = await db.sentimentAsync.flagApprovedToPending(id, {
+    reviewed_by: req.user ? req.user.id : null,
+    review_note: reviewNote
+  });
+  if (!ok) {
+    // Raced with the curator's approve action — annotation is no longer
+    // approved by the time our UPDATE ran. Tell the client; let it decide
+    // whether to refetch.
+    return res.status(409).json({ error: 'Annotation status changed during flag.' });
+  }
+  audit.log('admin.sentiment_annotation_flagged_for_review', {
+    ...audit.reqContext(req),
+    annotationId: id,
+    surface: surface || null,
+    reason: reason || null
+  });
+  return res.json({ success: true, annotationId: id });
+}));
+
 // ── Phase 2a clustering API ────────────────────────────────────────────────
 // Per docs/superpowers/specs/2026-05-23-sentiment-phase-2a-clustering-design.md § 6.
 

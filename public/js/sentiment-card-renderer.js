@@ -78,6 +78,10 @@
   function renderCard(row, opts) {
     var options = opts || {};
     var showDoc = options.showDocument !== false;
+    // Mirror SSR partial: only render the flag affordance for approved rows
+    // (the only state that can be flagged back) and only when the caller has
+    // opted in (admin viewers).
+    var allowFlag = Boolean(options.canFlag) && row.approval_status === 'approved';
 
     var article = el('article', {
       class: 's-card s-card--' + (row.voice_role || 'author'),
@@ -160,8 +164,8 @@
 
     var hasParadata = (row.notes && String(row.notes).trim()) ||
                       (row.emotion_about_phrase_verbatim && String(row.emotion_about_phrase_verbatim).trim());
+    var paradataId = 's-card-para-' + row.id;
     if (hasParadata) {
-      var paradataId = 's-card-para-' + row.id;
       var toggle = el('button', {
         type: 'button',
         class: 's-card-paradata-toggle',
@@ -172,8 +176,28 @@
       toggle.appendChild(el('span', { class: 's-card-paradata-label', textContent: 'paradata' }));
       toggle.appendChild(el('span', { class: 's-card-paradata-icon', 'aria-hidden': 'true', textContent: '+' }));
       foot.appendChild(toggle);
+    }
+    if (allowFlag) {
+      var flagBtn = el('button', {
+        type: 'button',
+        class: 's-card-flag',
+        dataset: { sentimentFlag: '1', annotationId: String(row.id) },
+        title: 'Send this annotation back to the curator review queue'
+      });
+      flagBtn.appendChild(el('span', { 'aria-hidden': 'true', textContent: '⚑' }));
+      flagBtn.appendChild(el('span', { class: 's-card-flag-label', textContent: 'Flag for review' }));
+      foot.appendChild(flagBtn);
+    }
+    // Footer is rendered iff there's a source-link, paradata toggle, or
+    // flag button to put inside. The source-link branch above always
+    // adds at least a placeholder span, so this is effectively
+    // "render footer unless showDoc=false AND no paradata AND no flag".
+    var footerHasContent = showDoc || hasParadata || allowFlag;
+    if (footerHasContent) {
       article.appendChild(foot);
+    }
 
+    if (hasParadata) {
       var paradata = el('section', { id: paradataId, class: 's-card-paradata', hidden: true });
       if (row.notes && String(row.notes).trim()) {
         var b1 = el('div', { class: 's-card-paradata-block' });
@@ -201,8 +225,6 @@
         paradata.appendChild(b2);
       }
       article.appendChild(paradata);
-    } else {
-      article.appendChild(foot);
     }
     return article;
   }
@@ -228,6 +250,75 @@
       }
       return r.json();
     });
+  }
+
+  // Delegated click handler for the "Flag for review" affordance on every
+  // sentiment surface (workbench, document tab, entity panels, admin
+  // entity / authority kg-cards). Wired once on DOMContentLoaded so SSR
+  // cards AND any subsequently-rendered JS cards share the same handler.
+  function wireFlagHandler() {
+    if (wireFlagHandler._wired) return;
+    wireFlagHandler._wired = true;
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-sentiment-flag]');
+      if (!btn) return;
+      var id = parseInt(btn.dataset.annotationId, 10);
+      if (!Number.isInteger(id) || id <= 0) return;
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      var originalText = btn.querySelector('.s-card-flag-label');
+      var originalLabel = originalText ? originalText.textContent : '';
+      if (originalText) originalText.textContent = 'Flagging…';
+
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      var csrfToken = meta ? meta.getAttribute('content') : '';
+
+      fetch('/admin/knowledge/sentiment/annotations/' + id + '/flag', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-Token': csrfToken
+        },
+        body: JSON.stringify({ surface: window.location.pathname })
+      }).then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (b) {
+            throw new Error((b && b.error) ? b.error : ('Request failed (' + r.status + ')'));
+          }, function () {
+            throw new Error('Request failed (' + r.status + ')');
+          });
+        }
+        return r.json();
+      }).then(function () {
+        // Visual ack: mark the card as flagged and disable further action.
+        var card = btn.closest('.s-card');
+        if (card) card.classList.add('s-card--flagged');
+        if (originalText) originalText.textContent = 'Flagged — back in queue';
+        btn.setAttribute('aria-disabled', 'true');
+      }).catch(function (err) {
+        btn.disabled = false;
+        if (originalText) originalText.textContent = originalLabel;
+        // Inline error rather than alert() so the page isn't interrupted —
+        // append a brief explanation near the button, auto-clear after 4s.
+        var existing = btn.parentElement ? btn.parentElement.querySelector('.s-card-flag-error') : null;
+        if (existing) existing.remove();
+        var msg = el('span', {
+          class: 's-card-flag-error',
+          textContent: 'Flag failed: ' + (err.message || 'unknown error')
+        });
+        if (btn.parentElement) btn.parentElement.appendChild(msg);
+        setTimeout(function () { msg.remove(); }, 4000);
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireFlagHandler);
+  } else {
+    wireFlagHandler();
   }
 
   window.SentimentCard = {

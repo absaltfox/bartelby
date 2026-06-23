@@ -222,7 +222,7 @@
           <ol class="s-card-list" id="s-research-card-list">
             <% initialList.forEach(function(ann) { %>
               <li class="s-card-list-item">
-                <%- include('partials/sentiment-card', { annotation: ann, showDocument: true }) %>
+                <%- include('partials/sentiment-card', { annotation: ann, showDocument: true, canFlag: bootstrap.isAdmin }) %>
               </li>
             <% }) %>
           </ol>
