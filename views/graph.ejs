@@ -1,6 +1,10 @@
 <%- include('partials/header', { pageTitle: 'Knowledge Graph', query: '' }) %>
 
-<div class="graph-page" data-graph-explorer data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>" data-collection-id="<%= typeof collectionId !== 'undefined' ? collectionId : '' %>">
+<div class="graph-page"
+     data-graph-explorer
+     data-initial-entity-id="<%= typeof entityId !== 'undefined' ? entityId : '' %>"
+     data-collection-id="<%= typeof collectionId !== 'undefined' ? collectionId : '' %>"
+     data-viewer-is-admin="<%= (typeof viewerIsAdmin !== 'undefined' && viewerIsAdmin) ? '1' : '' %>">
   <% if (!graphReady) { %>
     <div class="empty-state graph-empty-state--intro">
       <p>Knowledge graph helpers are not wired yet. The explorer will activate once the backend support is mounted.</p>

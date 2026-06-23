@@ -17,7 +17,14 @@ function formatBytes(bytes) {
   currentUser: currentUser
 }) %>
 
-<% if (!analytics) { %>
+<%
+  var hasAnalytics = !!analytics;
+  var hasSentiment = sentimentSummary && sentimentSummary.length > 0;
+  // Per the Phase 4 plan, the Sentiment subtab does not require a
+  // BERTopic analytics run — sentiment can be the only analytics-view
+  // tab if that's what the collection has.
+%>
+<% if (!hasAnalytics && !hasSentiment) { %>
   <div class="analytics-empty">
     <p>No analytics have been computed for this collection yet.</p>
     <p class="muted">Analytics run on a schedule. An admin can trigger a manual run from
@@ -29,15 +36,23 @@ function formatBytes(bytes) {
     <div class="analytics-toolbar-nav">
       <div class="analytics-toolbar-label">Analytics View</div>
       <div class="analytics-subtabs" role="tablist" aria-label="Analytics views">
-        <button type="button" class="analytics-subtab analytics-subtab-active" data-tab="dashboard" aria-selected="true">Dashboard</button>
-        <button type="button" class="analytics-subtab" data-tab="topics" aria-selected="false">Topics</button>
+        <% if (hasAnalytics) { %>
+          <button type="button" class="analytics-subtab analytics-subtab-active" data-tab="dashboard" aria-selected="true">Dashboard</button>
+          <button type="button" class="analytics-subtab" data-tab="topics" aria-selected="false">Topics</button>
+        <% } %>
+        <% if (hasSentiment) { %>
+          <button type="button" class="analytics-subtab <%= hasAnalytics ? '' : 'analytics-subtab-active' %>" data-tab="sentiment" aria-selected="<%= hasAnalytics ? 'false' : 'true' %>">Sentiment</button>
+        <% } %>
       </div>
     </div>
-    <div class="analytics-updated">
-      Last computed: <%= new Date(analytics.computed_at).toLocaleString() %>
-    </div>
+    <% if (hasAnalytics) { %>
+      <div class="analytics-updated">
+        Last computed: <%= new Date(analytics.computed_at).toLocaleString() %>
+      </div>
+    <% } %>
   </div>
 
+  <% if (hasAnalytics) { %>
   <!-- Dashboard tab -->
   <div class="analytics-tab-panel" id="tab-dashboard">
     <div class="analytics-stat-grid">
@@ -118,19 +133,60 @@ function formatBytes(bytes) {
 
     <% } %>
   </div>
+  <% } %>
+
+  <!-- Sentiment tab -->
+  <% if (hasSentiment) { %>
+    <div class="analytics-tab-panel" id="tab-sentiment" <%= hasAnalytics ? 'hidden' : '' %>>
+      <section class="analytics-section">
+        <h2 class="analytics-section-title">Sentiment in this collection</h2>
+        <p class="analytics-section-subtitle">Approved emotion annotations across the collection's documents. Click any evidence quote to open it in the source document.</p>
+        <%- include('partials/sentiment-panel', {
+          summary: sentimentSummary,
+          heading: 'Label distribution',
+          maxRows: 12
+        }) %>
+        <% if (sentimentList && sentimentList.length > 0) { %>
+          <h3 class="analytics-section-subheading">Recent evidence</h3>
+          <ol class="s-card-list">
+            <% sentimentList.forEach(function(ann) { %>
+              <li class="s-card-list-item">
+                <%- include('partials/sentiment-card', {
+                  annotation: ann,
+                  showDocument: true,
+                  canFlag: (currentUser && currentUser.role === 'admin')
+                }) %>
+              </li>
+            <% }) %>
+          </ol>
+          <p class="analytics-section-more">
+            <a href="/sentiment?collection=<%= collectionId %>">View all in research workbench &rarr;</a>
+          </p>
+        <% } %>
+      </section>
+    </div>
+  <% } %>
 
 <% } %>
 
-<!-- Inline data for charts -->
+<!-- Inline data for charts (chart code is defensive — initCharts no-ops
+     when topics aren't computed; tab-switching JS lives in the same file
+     and is needed any time we render the toolbar). -->
 <% if (analytics && analytics.topics_computed) { %>
-<script id="analytics-data" type="application/json"><%- JSON.stringify({
-  assignments: assignments,
-  topics: topics,
-  hierarchyData: hierarchyData || [],
-  evolution: evolution
-}).replace(/</g, '\\u003c') %></script>
-<script src="/chart.umd.min.js"></script>
-<script src="/js/collection-analytics.js"></script>
+  <script id="analytics-data" type="application/json"><%- JSON.stringify({
+    assignments: assignments,
+    topics: topics,
+    hierarchyData: hierarchyData || [],
+    evolution: evolution
+  }).replace(/</g, '\\u003c') %></script>
+  <script src="/chart.umd.min.js"></script>
+<% } %>
+<% if (hasAnalytics || hasSentiment) { %>
+  <script src="/js/collection-analytics.js"></script>
+<% } %>
+
+<% if (hasSentiment && currentUser && currentUser.role === 'admin') { %>
+  <script src="/js/sentiment-card-renderer.js"></script>
 <% } %>
 
 <%- include('partials/footer') %>
