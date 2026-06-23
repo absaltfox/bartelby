@@ -25,6 +25,19 @@ Then read the subsystem-specific docs that match the task:
   Touches `utils/worker-sentiment.js`, `utils/sentiment/*`,
   `database/models/sentiment.js`, `routes/admin-sentiment.js`,
   `views/admin/sentiment-review.ejs`.
+- Reader/researcher-facing sentiment surfaces (Phase 4 — shipped): the
+  workbench at `/sentiment`, the document-detail Sentiment tab, the reader
+  entity page at `/entities/:id`, the admin entity/authority Sentiment
+  knowledge-cards, and the graph-explorer drawer sentiment subsection are
+  also governed by [docs/sentiment-design.md](./docs/sentiment-design.md)
+  (Phase 4 entry). Three shared partials (`views/partials/sentiment-chips.ejs`,
+  `views/partials/sentiment-card.ejs`, `views/partials/sentiment-panel.ejs`)
+  and one client JS module (`public/js/sentiment-card-renderer.js` exporting
+  `window.SentimentCard.render / renderChipset / fetchJson / escape / el`)
+  drive every surface — extend those rather than open-coding new card or
+  chipset markup. The five route consumers go through `loadSentimentEntityPanel`
+  in `database/db.js` (logged soft-fail, EXISTS-probe short-circuit) rather
+  than assembling `accessSql + filters + Promise.all` by hand.
 - Background jobs, worker loop, analytics scheduler, SQLite queue model:
   [docs/background-jobs.md](./docs/background-jobs.md)
 - Deployment, Docker, Fly, Turso, and S3 expectations:
