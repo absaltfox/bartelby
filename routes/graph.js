@@ -75,7 +75,11 @@ router.get('/', requireAuth, (req, res) => {
     query: String(req.query.q || ''),
     graphReady: !!graphStores().graphAccess,
     entityId: req.query.entity || '',
-    collectionId: collectionFilterId(req) || ''
+    collectionId: collectionFilterId(req) || '',
+    // Phase 4 polish: drawer needs to know whether to render the
+    // Flag-for-review button on sentiment cards. Same role check as
+    // every other sentiment surface (admin-only for now).
+    viewerIsAdmin: !!(req.user && req.user.role === 'admin')
   });
 });
 

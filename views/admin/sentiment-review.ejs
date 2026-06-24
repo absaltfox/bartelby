@@ -55,6 +55,13 @@
             </div>
           </div>
 
+          <% if (a.review_note && a.review_note.indexOf('Flagged for review') === 0) { %>
+            <div class="sentiment-flag-notice" data-review-flag-note>
+              <span class="sentiment-flag-notice-icon" aria-hidden="true">⚑</span>
+              <span class="sentiment-flag-notice-text"><%= a.review_note %></span>
+            </div>
+          <% } %>
+
           <div class="authority-suggestion-context">
             <section class="authority-suggestion-context-section" aria-label="Evidence">
               <span class="authority-suggestion-section-label">Evidence</span>

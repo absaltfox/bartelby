@@ -1665,7 +1665,7 @@
       + '</div>';
   }
 
-  function renderDetail(detail, neighbors, container, onSelect, neighborMeta, onLoadMore) {
+  function renderDetail(detail, neighbors, container, onSelect, neighborMeta, onLoadMore, viewerIsAdmin) {
     var entity = detail && detail.entity ? detail.entity : {};
     var graphNode = detail && detail.graphNode ? detail.graphNode : null;
     var displayNode = graphNode || entity;
@@ -1873,7 +1873,7 @@
       if (mountPoint) {
         mountPoint.innerHTML = '';
         sentiment.recent.forEach(function (row) {
-          var card = window.SentimentCard.render(row, { showDocument: true });
+          var card = window.SentimentCard.render(row, { showDocument: true, canFlag: Boolean(viewerIsAdmin) });
           mountPoint.appendChild(card);
         });
         mountPoint.removeAttribute('aria-busy');
@@ -1927,6 +1927,7 @@
     const relFilter = qs('#graph-rel-filter', panel);
     const initialEntityId = parseInt(panel.dataset.initialEntityId || '', 10);
     const collectionId = panel.dataset.collectionId || '';
+    const viewerIsAdmin = panel.dataset.viewerIsAdmin === '1';
 
     const state = {
       entities: [],
@@ -2044,7 +2045,7 @@
             if (neighborMeta.hasMore && neighborMeta.nextOffset != null) {
               loadEntity(entityId, { append: true, offset: neighborMeta.nextOffset });
             }
-          });
+          }, viewerIsAdmin);
         }
 
         qsa('.graph-entity-card', entityList).forEach((card) => {

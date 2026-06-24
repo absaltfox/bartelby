@@ -362,6 +362,15 @@ router.get('/collections/:id/analytics', asyncHandler(async (req, res) => {
   const evolution = analytics ? await topicEvolutionAsync.getByCollection(collectionId) : [];
   const hierarchy = analytics ? await topicHierarchyAsync.getByCollection(collectionId) : null;
 
+  // Phase 4 polish: collection-scoped sentiment panel. The shared loader
+  // EXISTS-probes first so collections with no sentiment (procedural
+  // collections, in-progress imports) skip the GROUP BY scan.
+  const sentimentPanel = await loadSentimentEntityPanel(
+    { userId, isAdmin, accessAll },
+    { collection: collectionId },
+    { limit: 8 }
+  );
+
   res.render('collection-analytics', {
     pageTitle: `${collection.name} — Analytics`,
     collection,
@@ -373,6 +382,9 @@ router.get('/collections/:id/analytics', asyncHandler(async (req, res) => {
     hierarchyData: hierarchy?.hierarchy || [],
     hierarchyPlot: hierarchy?.plot || null,
     evolution,
+    sentimentSummary: sentimentPanel.summary,
+    sentimentList: sentimentPanel.recent,
+    sentimentHasMore: sentimentPanel.hasMore,
     currentUser: req.user || null,
     csrfToken: req.csrfToken ? req.csrfToken() : ''
   });

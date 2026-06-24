@@ -11469,6 +11469,30 @@ body.modal-open {
   border-left-color: var(--ink-faint);
 }
 
+/* Curator-queue notice when a row was flagged back from a research surface.
+   Renders in the pending card right above the evidence so the curator can
+   see WHY the row returned (surface + reason recorded by the flag endpoint). */
+.sentiment-flag-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: var(--accent-light);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  font-size: 0.88rem;
+  color: var(--accent-dark);
+  font-style: italic;
+}
+.sentiment-flag-notice-icon {
+  font-style: normal;
+  color: var(--accent);
+}
+.sentiment-flag-notice-text {
+  flex: 1;
+}
+
 .s-card-paradata {
   margin-top: 10px;
   padding: 10px 14px;
