@@ -109,6 +109,23 @@ describe('POST /admin/knowledge/sentiment/backfill/collection/:id', () => {
     expect(jobs.length).toBe(1);
   });
 
+  it('renders the Backfill sentiment button on /admin/collections only when sentiment_enabled=1', async () => {
+    const onName = 'backfill-button-on';
+    const offName = 'backfill-button-off';
+    const onId = await db.collectionsAsync.create({ name: onName, createdBy: null });
+    const offId = await db.collectionsAsync.create({ name: offName, createdBy: null });
+    await db.collectionsAsync.setSentimentEnabled(onId, 1);
+    await db.collectionsAsync.setSentimentEnabled(offId, 0);
+
+    const res = await adminAgent.get('/admin/collections');
+    expect(res.status).toBe(200);
+
+    const onAction = `/admin/knowledge/sentiment/backfill/collection/${onId}`;
+    const offAction = `/admin/knowledge/sentiment/backfill/collection/${offId}`;
+    expect(res.text).toContain(onAction);
+    expect(res.text).not.toContain(offAction);
+  });
+
   it('rejects requests without an authenticated admin session', async () => {
     const { collectionId } = await setupCollectionWithBestTranscripts('backfill-route-c', 1);
 
