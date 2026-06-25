@@ -39,6 +39,23 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return Boolean(row);
     },
 
+    async listBackfillCandidatesForCollection(collectionId) {
+      return await allAsync(
+        `SELECT t.id AS transcript_id, t.document_id
+           FROM transcripts t
+           INNER JOIN document_collections dc ON dc.document_id = t.document_id
+          WHERE dc.collection_id = ?
+            AND t.is_best = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM sentiment_extraction_jobs s
+               WHERE s.transcript_id = t.id
+                 AND s.status IN ('queued','running','batch_submitted','done')
+            )
+          ORDER BY t.id ASC`,
+        [collectionId]
+      );
+    },
+
     async claimNextQueued() {
       const row = await getAsync(
         `SELECT id FROM sentiment_extraction_jobs
