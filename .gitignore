@@ -16,3 +16,4 @@ __pycache__/
 .worktrees/
 .superpowers/
 docs/superpowers/
+backups/
