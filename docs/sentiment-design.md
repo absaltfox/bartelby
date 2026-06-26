@@ -258,6 +258,19 @@ filler — the absence of the field IS the "felt now" signal.
   cap at 200 ids.
 - Disabling `collections.sentiment_enabled` stops new jobs but does not delete
   existing annotations. The explicit wipe action ships in a follow-up.
+- **Per-collection sentiment backfill (admin-triggered):** `POST
+  /admin/knowledge/sentiment/backfill/collection/:id` queues a
+  `sentiment_extraction_jobs` row for every best transcript in the collection
+  that does not already have a queued, running, batch_submitted, or done
+  sentiment job. This is the canonical path for adding sentiment to a
+  historically extracted corpus without re-running entity extraction.
+  Auto-queueing via `autoQueueSentimentForTranscript` in
+  `utils/worker-extraction.js` continues to cover the forward-only case (new
+  extractions auto-enqueue when their containing collection has
+  `sentiment_enabled = 1`). Surfaced on `/admin/collections` as a row-level
+  "Backfill sentiment" button shown only when `sentiment_enabled = 1`. Per
+  [docs/development-principles.md](./development-principles.md) "Corpus
+  mutations require admin trigger".
 - Token usage and per-category validation-drop counts are recorded per job
   (`input_tokens`, `output_tokens`, `validation_drops` JSON) for cost and
   prompt-drift visibility.

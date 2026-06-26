@@ -104,6 +104,13 @@
                 <input type="hidden" name="returnTo" value="/admin/collections#collection-<%= c.id %>">
                 <button type="submit" class="btn-secondary btn-sm">Re-extract</button>
               </form>
+              <% if (c.sentiment_enabled) { %>
+                <form method="POST" action="/admin/knowledge/sentiment/backfill/collection/<%= c.id %>" class="inline-form"
+                      data-confirm-message="Queue sentiment extraction for all best transcripts in &quot;<%= c.name %>&quot; that don't already have a sentiment job?">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="btn-secondary btn-sm">Backfill sentiment</button>
+                </form>
+              <% } %>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Edit</button>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Preview Image</button>
               <% if (!c.is_public && !c.is_world_public) { %>

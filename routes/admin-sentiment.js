@@ -528,4 +528,36 @@ router.get('/labels', asyncHandler(async (req, res) => {
   });
 }));
 
+// POST /admin/knowledge/sentiment/backfill/collection/:id
+// Per docs/development-principles.md "Corpus mutations require admin trigger".
+// Queues a sentiment_extraction_jobs row for every best transcript in the
+// collection that does not already have a queued / running / batch_submitted
+// / done sentiment job. Auto-queueing in utils/worker-extraction.js handles
+// only the forward-only post-extraction case; this route is the explicit
+// admin-triggered backfill for historical corpora per docs/sentiment-design.md.
+router.post('/backfill/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(collectionId)) {
+    return res.redirect('/admin/collections?error=' + encodeURIComponent('Invalid collection id.'));
+  }
+
+  const candidates = await db.sentimentAsync.listBackfillCandidatesForCollection(collectionId);
+  let queued = 0;
+  for (const row of candidates) {
+    await db.sentimentAsync.createJob({
+      document_id: row.document_id,
+      transcript_id: row.transcript_id
+    });
+    queued += 1;
+  }
+
+  audit.log('admin.sentiment_backfill_queued', {
+    ...audit.reqContext(req),
+    collectionId,
+    queued
+  });
+
+  return res.redirect(`/admin/collections?saved=1&queuedCollectionName=sentiment&queuedCount=${queued}&queuedMode=sentiment-backfill#collection-${collectionId}`);
+}));
+
 module.exports = router;
