@@ -1740,6 +1740,18 @@ const citations = {
     return await this.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, limit, opts);
   },
 
+  // Spec § "Data flow and query scoping" (Review queue) calls this
+  // listPending; we add it as a thin convenience over list(...) so callers
+  // that want pending-only review-queue rows can pass { collectionId } (and
+  // the rest of the existing opts) directly. The underlying list() already
+  // accepts collectionId and joins through document_collections per
+  // buildCollectionDocumentFilter — see § "Data flow and query scoping" on
+  // the entities-have-no-document_id constraint (we route via citations.document_id).
+  async listPending(opts = {}) {
+    const { limit = 5000, ...rest } = opts;
+    return await this.list(CITATION_APPROVAL_STATUSES.PENDING, limit, 0, rest);
+  },
+
   async approve(id, approvedByUserId, method = 'manual') {
     await runAsync(`
       UPDATE citations
