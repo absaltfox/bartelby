@@ -454,6 +454,21 @@ const documentCollectionsAsync = {
     `, ids);
   },
 
+  // Returns the distinct collection ids that contain at least one document
+  // the entity is cited in. The curator-access predicate uses this to
+  // answer "which collections govern mutation rights on this entity?" —
+  // entities live in documents (via citations), not collections directly,
+  // so the chain runs entity → citations.document_id → document_collections.
+  async listCollectionIdsForEntity(entityId) {
+    const rows = await allAsync(`
+      SELECT DISTINCT dc.collection_id
+      FROM citations c
+      INNER JOIN document_collections dc ON dc.document_id = c.document_id
+      WHERE c.entity_id = ?
+    `, [entityId]);
+    return rows.map(r => r.collection_id);
+  },
+
   async setForDocument(documentId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
     await withExclusiveLock(async () => {

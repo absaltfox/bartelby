@@ -1580,11 +1580,13 @@ const { curatorAccessFactory } = require('./models/curator-access');
 const curatorAccessAsync = curatorAccessFactory({
   documentCollectionsAsync,
   collectionsAsync,
+  userCollectionAccessAsync,
   entitiesAsync: entities,
   citationsAsync: citations,
   relationshipsAsync: relationships,
   dateExpressionsAsync: dateExpressions,
-  authoritySuggestionsAsync: authorityLinkSuggestions
+  authoritySuggestionsAsync: authorityLinkSuggestions,
+  roleAtLeast
 });
 
 function getDb() { return db; }
