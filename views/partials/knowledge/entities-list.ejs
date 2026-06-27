@@ -1,0 +1,83 @@
+<%#
+  Entities list body (table + empty state + pagination).
+
+  Used by /admin/knowledge/entities and by the forthcoming collection-
+  scoped manage equivalent. Page header, filter tabs, and search form
+  remain in the parent template.
+
+  Per docs/ui-template-standards.md (Shared Partials) and
+  docs/superpowers/plans/2026-06-26-collection-scoped-knowledge-workbench.md
+  (Task 3.2).
+
+  Locals (required):
+    - entities: array of entity rows (id, entity_type, canonical_name, description, alias_count, citation_count)
+    - q: current search query string
+    - typeFilter: current type filter ('all' | type token)
+    - totalCount, totalPages, currentPage: pagination state
+  Locals (optional):
+    - urlPrefix: action URL prefix (default '/admin/knowledge')
+%>
+<%
+  const _urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+
+  function entitiesListHref(type, query, page) {
+    var params = [];
+    if (type && type !== 'all') params.push('type=' + encodeURIComponent(type));
+    if (query) params.push('q=' + encodeURIComponent(query));
+    if (page && page > 1) params.push('page=' + page);
+    return _urlPrefix + '/entities' + (params.length ? '?' + params.join('&') : '');
+  }
+%>
+  <% if (entities.length === 0) { %>
+    <div class="empty-state">
+      <p>No entities found<% if (q) { %> for "<%= q %>"<% } %><% if (typeFilter !== 'all') { %> in type "<%= typeFilter %>"<% } %>.</p>
+    </div>
+  <% } else { %>
+    <div class="workflows-table-wrap">
+      <table class="workflows-table">
+        <thead>
+          <tr>
+            <th scope="col">Type</th>
+            <th scope="col">Entity</th>
+            <th scope="col">Aliases</th>
+            <th scope="col">Citations</th>
+            <th scope="col" class="col-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% entities.forEach(function(entity) { %>
+            <tr>
+              <td><span class="entity-type-badge entity-type-<%= entity.entity_type %>"><%= entity.entity_type %></span></td>
+              <td>
+                <strong><a href="<%= _urlPrefix %>/entities/<%= entity.id %>"><%= entity.canonical_name %></a></strong>
+                <% if (entity.description) { %>
+                  <div class="muted"><%= entity.description %></div>
+                <% } %>
+              </td>
+              <td><%= entity.alias_count || 0 %></td>
+              <td><%= entity.citation_count || 0 %></td>
+              <td>
+                <a href="<%= _urlPrefix %>/entities/<%= entity.id %>" class="btn-secondary btn-sm">Open</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <% if (totalPages > 1) { %>
+      <div class="pagination">
+        <% if (currentPage > 1) { %>
+          <a href="<%= entitiesListHref(typeFilter, q, currentPage - 1) %>" class="pagination-btn">&lsaquo; Prev</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+        <% } %>
+        <span class="pagination-info">Page <%= currentPage %> of <%= totalPages %> <span class="muted">(<%= totalCount %> entities)</span></span>
+        <% if (currentPage < totalPages) { %>
+          <a href="<%= entitiesListHref(typeFilter, q, currentPage + 1) %>" class="pagination-btn">Next &rsaquo;</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
