@@ -25,6 +25,7 @@
     <a href="/manage/collections/<%= collection.id %>/documents" class="admin-subnav-link <%= activePage === 'documents' ? 'active' : '' %>">Documents</a>
     <a href="/manage/collections/<%= collection.id %>/import" class="admin-subnav-link <%= activePage === 'import' ? 'active' : '' %>">Import</a>
     <a href="/manage/collections/<%= collection.id %>/jobs" class="admin-subnav-link <%= activePage === 'jobs' ? 'active' : '' %>">Jobs</a>
+    <a href="/manage/collections/<%= collection.id %>/knowledge" class="admin-subnav-link <%= activePage === 'knowledge' ? 'active' : '' %>">Knowledge</a>
     <% if (!collection.is_public && !collection.is_world_public) { %>
       <a href="/manage/collections/<%= collection.id %>/users" class="admin-subnav-link <%= activePage === 'users' ? 'active' : '' %>">Users</a>
     <% } %>

@@ -1,0 +1,39 @@
+<%#
+  Collection-scoped review-extractions queue (manage/curator surface).
+
+  Wraps the shared partials/knowledge/review-extractions-list.ejs partial
+  with a manage-collection-nav + knowledge-workbench-rail composition.
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (List + queue pages, Shell composition) and
+  docs/superpowers/plans/2026-06-26-collection-scoped-knowledge-workbench.md
+  (Task 3.6).
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-page">
+    <header class="manage-knowledge-page-header">
+      <a href="<%= urlPrefix %>" class="back-link">&larr; Knowledge dashboard</a>
+      <h2><%= surfaceTitle %></h2>
+      <p class="subtitle">Approve, reject, or revisit extracted evidence scoped to this collection.</p>
+    </header>
+
+    <%- include('../../../partials/knowledge/review-extractions-list', {
+      reviewItems,
+      approvalStatus,
+      reviewKind,
+      reviewKindLabel,
+      totalCount,
+      totalPages,
+      currentPage,
+      csrfToken,
+      urlPrefix
+    }) %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

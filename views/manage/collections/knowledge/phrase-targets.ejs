@@ -1,0 +1,78 @@
+<%#
+  Collection-scoped sentiment phrase-targets queue (manage surface).
+
+  Wraps partials/knowledge/phrase-targets-list.ejs.
+
+  PR 3 v1 decision: the partial's promote / promote-existing / suppression
+  forms POST against `urlPrefix + '/sentiment/phrase-targets/...'`. The
+  manage router doesn't yet expose those POST endpoints (PR 4 work), so we
+  pass `listUrlPrefix: '/admin/knowledge'` for those forms; non-admin
+  managers will see the queue but actions will be admin-gated until PR 4.
+  Documented in routes/manage-knowledge.js and the plan.
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (List + queue pages) and docs/superpowers/plans/2026-06-26-collection-
+  scoped-knowledge-workbench.md (Task 3.6, Phrase-targets decision).
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-page">
+    <header class="manage-knowledge-page-header">
+      <a href="<%= urlPrefix %>" class="back-link">&larr; Knowledge dashboard</a>
+      <h2><%= surfaceTitle %></h2>
+      <p class="subtitle">Aggregated phrase-target annotations awaiting promotion or suppression for this collection.</p>
+    </header>
+
+    <div class="filter-tabs">
+      <a href="<%= urlPrefix %>/sentiment/phrase-targets?tab=active" class="filter-tab <%= tab === 'active' ? 'active' : '' %>">Active</a>
+      <a href="<%= urlPrefix %>/sentiment/phrase-targets?tab=suppressed" class="filter-tab <%= tab === 'suppressed' ? 'active' : '' %>">Suppressed</a>
+    </div>
+
+    <% if (tab === 'active') { %>
+      <form method="GET" action="<%= urlPrefix %>/sentiment/phrase-targets" class="knowledge-toolbar knowledge-toolbar--spaced">
+        <input type="hidden" name="tab" value="active">
+        <div class="edit-field">
+          <label for="phrase-q">Search</label>
+          <input type="search" id="phrase-q" name="q" value="<%= q || '' %>" placeholder="Phrase text">
+        </div>
+        <div class="edit-field">
+          <label for="phrase-polarity">Polarity</label>
+          <select id="phrase-polarity" name="polarity">
+            <option value="">All</option>
+            <% ['positive', 'negative', 'neutral', 'mixed'].forEach(function(p) { %>
+              <option value="<%= p %>" <%= polarity === p ? 'selected' : '' %>><%= p %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="edit-field">
+          <label for="phrase-min-frequency">Min frequency</label>
+          <input type="number" id="phrase-min-frequency" name="minFrequency" min="1" value="<%= minFrequency %>">
+        </div>
+        <div class="edit-actions">
+          <button type="submit" class="btn-secondary btn-sm">Filter</button>
+        </div>
+      </form>
+    <% } %>
+
+    <%- include('../../../partials/knowledge/phrase-targets-list', {
+      tab,
+      aggregated,
+      suppressed,
+      q,
+      collectionId: collection.id,
+      polarity,
+      minFrequency,
+      page,
+      totalPages,
+      totalCount,
+      csrfToken,
+      urlPrefix: listUrlPrefix
+    }) %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

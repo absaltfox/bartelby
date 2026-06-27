@@ -1,0 +1,47 @@
+<%#
+  Collection-scoped entities browse (manage surface).
+
+  Wraps partials/knowledge/entities-list.ejs.
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (List + queue pages, Data flow and query scoping — Entities list).
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-page">
+    <header class="manage-knowledge-page-header">
+      <a href="<%= urlPrefix %>" class="back-link">&larr; Knowledge dashboard</a>
+      <h2><%= surfaceTitle %></h2>
+      <p class="subtitle">Entities whose evidence lands in this collection.</p>
+    </header>
+
+    <div class="knowledge-toolbar">
+      <form method="GET" action="<%= urlPrefix %>/entities" class="admin-search-form">
+        <% if (typeFilter && typeFilter !== 'all') { %>
+          <input type="hidden" name="type" value="<%= typeFilter %>">
+        <% } %>
+        <input type="search" name="q" value="<%= q %>" placeholder="Search entities..." class="admin-search-input">
+        <button type="submit" class="btn-secondary btn-sm">Search</button>
+        <% if (q) { %>
+          <a href="<%= urlPrefix %>/entities<%= typeFilter && typeFilter !== 'all' ? '?type=' + encodeURIComponent(typeFilter) : '' %>" class="btn-secondary btn-sm">Clear</a>
+        <% } %>
+      </form>
+    </div>
+
+    <%- include('../../../partials/knowledge/entities-list', {
+      entities,
+      q,
+      typeFilter,
+      totalCount,
+      totalPages,
+      currentPage,
+      urlPrefix
+    }) %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

@@ -1,0 +1,54 @@
+<%#
+  Collection-scoped authorities browse (manage surface).
+
+  Wraps partials/knowledge/authorities-list.ejs. The `authorityListPath`
+  closure passed by the route builds manage-scoped URLs so sort/page links
+  stay on this surface.
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (List + queue pages, Authority list "N / M" annotation).
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-page">
+    <header class="manage-knowledge-page-header">
+      <a href="<%= urlPrefix %>" class="back-link">&larr; Knowledge dashboard</a>
+      <h2><%= surfaceTitle %></h2>
+      <p class="subtitle">Authorities whose member entities are cited in this collection.</p>
+    </header>
+
+    <div class="knowledge-toolbar">
+      <form method="GET" action="<%= urlPrefix %>/authorities" class="admin-search-form">
+        <% if (typeFilter) { %>
+          <input type="hidden" name="type" value="<%= typeFilter %>">
+        <% } %>
+        <input type="search" name="q" value="<%= q %>" placeholder="Search authorities..." class="admin-search-input">
+        <button type="submit" class="btn-secondary btn-sm">Search</button>
+        <% if (q) { %>
+          <a href="<%= urlPrefix %>/authorities<%= typeFilter ? '?type=' + encodeURIComponent(typeFilter) : '' %>" class="btn-secondary btn-sm">Clear</a>
+        <% } %>
+      </form>
+    </div>
+
+    <%- include('../../../partials/knowledge/authorities-list', {
+      authorities,
+      q,
+      typeFilter,
+      sort,
+      direction,
+      totalCount,
+      totalPages,
+      currentPage,
+      csrfToken,
+      currentUrl,
+      authorityListPath,
+      urlPrefix
+    }) %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

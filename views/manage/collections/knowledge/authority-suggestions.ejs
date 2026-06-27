@@ -1,0 +1,36 @@
+<%#
+  Collection-scoped authority-link suggestions queue (manage surface).
+
+  Wraps partials/knowledge/authority-suggestions-list.ejs.
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (List + queue pages) and docs/superpowers/plans/2026-06-26-collection-
+  scoped-knowledge-workbench.md (Task 3.6).
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-page">
+    <header class="manage-knowledge-page-header">
+      <a href="<%= urlPrefix %>" class="back-link">&larr; Knowledge dashboard</a>
+      <h2><%= surfaceTitle %></h2>
+      <p class="subtitle">Pending authority-link suggestions for entities cited in this collection.</p>
+    </header>
+
+    <%- include('../../../partials/knowledge/authority-suggestions-list', {
+      suggestions,
+      decisionUnits,
+      status,
+      matchMethodFilter,
+      nextCursor,
+      groupedTruncated,
+      groupedTotalUnits,
+      urlPrefix
+    }) %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

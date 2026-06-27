@@ -22,7 +22,19 @@ function getImportApiRouter() {
   return require('./import-api');
 }
 
+const manageKnowledgeRouter = require('./manage-knowledge');
+
 router.use(requireAdminOrManager);
+
+// Collection-scoped Knowledge workbench (dashboard + review queues + browse
+// pages). Mounted under /manage/collections/:collectionId/knowledge.
+//
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// (Mount points) and docs/superpowers/plans/2026-06-26-collection-scoped-knowledge-workbench.md
+// (Task 3.4). Per-collection authorization (requireCollectionRole('manager'))
+// is enforced inside manage-knowledge.js so each handler gets the check even
+// if a future refactor narrows the router.use chain.
+router.use('/collections/:collectionId/knowledge', manageKnowledgeRouter);
 
 // Helper: get managed collection IDs for current user
 async function getManagedIds(req) {
