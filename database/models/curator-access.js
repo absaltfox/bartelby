@@ -13,9 +13,8 @@
 // { allowed: true, collectionIds: null } so callers can detect the
 // short-circuit and skip the per-collection scoping work that follows.
 //
-// This module currently exposes entity, citation, relationship, and
-// date-expression predicates. The remaining authority-suggestion and
-// phrase-target predicates are added by subsequent tasks in PR 1.
+// This module exposes entity, citation, relationship, date-expression,
+// authority-suggestion, and phrase-target predicates.
 
 function curatorAccessFactory({
   documentCollectionsAsync,
@@ -118,12 +117,76 @@ function curatorAccessFactory({
     return userCanCurateEntity(user, de.entity_id);
   }
 
+  // Authority link suggestions hang off an entity via suggestion.entity_id.
+  // The suggestion's containing collections are the entity's containing
+  // collections, so we forward to the entity predicate once we've resolved
+  // the row. Per
+  // docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  // § "Permission predicate", curator-side authority-link actions
+  // (approve/reject the suggestion) are entity-side: they decide whether to
+  // attach a curator-owned entity to an authority. The authority-side
+  // actions (merge, rename, delete the authority itself) stay admin-only
+  // and live outside this predicate.
+  async function userCanCurateAuthoritySuggestion(user, suggestionId) {
+    const admin = adminShortCircuit(user);
+    if (admin) return admin;
+    if (!user || !user.id) return { allowed: false };
+
+    const suggestion = await authoritySuggestionsAsync.getById(suggestionId);
+    if (!suggestion) return { allowed: false };
+    return userCanCurateEntity(user, suggestion.entity_id);
+  }
+
+  // Phrase-targets have a DIFFERENT shape from the row-id predicates above:
+  // the input is a normalized phrase string, not a row id. A single phrase
+  // can appear across many documents in many collections, so the predicate
+  // returns the INTERSECTION of
+  //   - collections that contain at least one sentiment_annotations row
+  //     with target_kind='phrase' and a matching normalized target_phrase
+  //   - collections where the user holds manager-or-higher
+  // The phrase-target promote/suppress handler in PR 4 uses the returned
+  // collectionIds to scope the corpus-wide UPDATE down to authorized
+  // collections only.
+  //
+  // SECURITY-CRITICAL — see
+  // docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  // § "Phrase-target scope" and § "Phrase-target promotion blast radius".
+  // If this list ever included a collection the user does not manage, the
+  // PR 4 handler would silently retarget annotations across collection
+  // boundaries. The corpus-wide candidate set comes from
+  // documentCollectionsAsync.listCollectionsWithPhraseAnnotation, which
+  // applies the same LOWER + RTRIM trailing-punctuation normalization the
+  // existing admin handler uses (routes/admin-sentiment-phrase-targets.js).
+  // Callers should pass the phrase already normalized via
+  // db.normalizeSentimentPhrase so JS-side and SQL-side normalizations
+  // agree.
+  async function userCanCuratePhraseTarget(user, normalizedPhrase) {
+    const admin = adminShortCircuit(user);
+    if (admin) return admin;
+    if (!user || !user.id) return { allowed: false };
+    if (!normalizedPhrase) return { allowed: false };
+
+    const candidateCollectionIds = await documentCollectionsAsync.listCollectionsWithPhraseAnnotation(normalizedPhrase);
+    if (!candidateCollectionIds.length) return { allowed: false };
+
+    const permitted = [];
+    for (const cid of candidateCollectionIds) {
+      const role = await userCollectionAccessAsync.getRoleForUser(user.id, cid);
+      if (role && roleAtLeast(role, 'manager')) {
+        permitted.push(cid);
+      }
+    }
+    if (!permitted.length) return { allowed: false };
+    return { allowed: true, collectionIds: permitted };
+  }
+
   return {
     userCanCurateEntity,
     userCanCurateCitation,
     userCanCurateRelationship,
-    userCanCurateDateExpression
-    // userCanCurateAuthoritySuggestion added in Task 1.4
+    userCanCurateDateExpression,
+    userCanCurateAuthoritySuggestion,
+    userCanCuratePhraseTarget
   };
 }
 
