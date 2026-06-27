@@ -67,4 +67,42 @@ function requireCurate(kind, paramName) {
   });
 }
 
-module.exports = { requireCurate };
+// Bulk variant. Per spec § "Bulk endpoints", bulk approve/reject/delete on
+// citations and authority suggestions take up to 200 ids each. The middleware
+// resolves all ids by walking the predicate (which itself uses the
+// req.curatorPermissionCache to avoid re-querying the same entity twice when
+// many citations share an entity) and admits only if every id is permitted.
+// A mixed batch with any unpermitted id is rejected wholesale:
+//
+//   403 { error: 'partial_unauthorized', unauthorizedIds: [...] }
+//
+// The handler does NOT partial-apply; the client surfaces a toast listing
+// the rejected ids.
+function requireCurateAll(kind, bodyField) {
+  const methodName = KIND_TO_PREDICATE[kind];
+  if (!methodName) throw new Error(`requireCurateAll: unknown kind "${kind}"`);
+
+  return asyncHandler(async (req, res, next) => {
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    req.curatorPermissionCache = req.curatorPermissionCache || new Map();
+
+    const rawIds = Array.isArray(req.body && req.body[bodyField]) ? req.body[bodyField] : [];
+    const ids = rawIds.map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
+    if (!ids.length) return res.status(400).json({ error: `Missing or empty ${bodyField}.` });
+
+    const predicate = curatorAccessAsync[methodName];
+    const unauthorized = [];
+    for (const id of ids) {
+      const result = await predicate(req.user, id, { cache: req.curatorPermissionCache });
+      if (!result.allowed) unauthorized.push(id);
+    }
+    if (unauthorized.length) {
+      return res.status(403).json({ error: 'partial_unauthorized', unauthorizedIds: unauthorized });
+    }
+    return next();
+  });
+}
+
+module.exports = { requireCurate, requireCurateAll };
