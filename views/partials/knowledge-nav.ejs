@@ -24,46 +24,46 @@
 %>
 
 <%
-  const urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+  const resolvedUrlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
   const isAdminViewer = (typeof isAdmin !== 'undefined') ? !!isAdmin : true;
 
   const knowledgeGroups = [
     {
       label: 'Overview',
       items: [
-        { key: 'overview', href: `${urlPrefix}`, label: 'Overview' }
+        { key: 'overview', href: `${resolvedUrlPrefix}`, label: 'Overview' }
       ]
     },
     {
       label: 'Review',
       items: [
-        { key: 'review-extractions', href: `${urlPrefix}/review-extractions`, label: 'Entity Evidence Review' },
-        { key: 'authority-suggestions', href: `${urlPrefix}/authorities/suggestions`, label: 'Authority-Entity Review' },
-        { key: 'sentiment-review', href: `${urlPrefix}/sentiment/review`, label: 'Sentiment Review', adminOnly: true }
+        { key: 'review-extractions', href: `${resolvedUrlPrefix}/review-extractions`, label: 'Entity Evidence Review' },
+        { key: 'authority-suggestions', href: `${resolvedUrlPrefix}/authorities/suggestions`, label: 'Authority-Entity Review' },
+        { key: 'sentiment-review', href: `${resolvedUrlPrefix}/sentiment/review`, label: 'Sentiment Review', adminOnly: true }
       ]
     },
     {
       label: 'Correct',
       items: [
-        { key: 'entities', href: `${urlPrefix}/entities`, label: 'Entities' },
-        { key: 'merge-entities', href: `${urlPrefix}/entities/merge`, label: 'Entity Merge', adminOnly: true },
-        { key: 'authorities', href: `${urlPrefix}/authorities`, label: 'Authorities' }
+        { key: 'entities', href: `${resolvedUrlPrefix}/entities`, label: 'Entities' },
+        { key: 'merge-entities', href: `${resolvedUrlPrefix}/entities/merge`, label: 'Entity Merge', adminOnly: true },
+        { key: 'authorities', href: `${resolvedUrlPrefix}/authorities`, label: 'Authorities' }
       ]
     },
     {
       label: 'Reconcile',
       items: [
-        { key: 'sentiment-phrase-targets', href: `${urlPrefix}/sentiment/phrase-targets`, label: 'Phrase Targets' },
-        { key: 'authority-generic-terms', href: `${urlPrefix}/authorities/generic-terms`, label: 'Generic Terms', adminOnly: true },
-        { key: 'sentiment-clusters', href: `${urlPrefix}/sentiment/clusters`, label: 'Sentiment Clusters', adminOnly: true }
+        { key: 'sentiment-phrase-targets', href: `${resolvedUrlPrefix}/sentiment/phrase-targets`, label: 'Phrase Targets' },
+        { key: 'authority-generic-terms', href: `${resolvedUrlPrefix}/authorities/generic-terms`, label: 'Generic Terms', adminOnly: true },
+        { key: 'sentiment-clusters', href: `${resolvedUrlPrefix}/sentiment/clusters`, label: 'Sentiment Clusters', adminOnly: true }
       ]
     },
     {
       label: 'Maintain',
       adminOnly: true,
       items: [
-        { key: 'vocabularies', href: `${urlPrefix}/vocabularies/relationship-types`, label: 'Vocabularies' },
-        { key: 'authority-backfill', href: `${urlPrefix}/authorities/backfill`, label: 'Authority Backfill' }
+        { key: 'vocabularies', href: `${resolvedUrlPrefix}/vocabularies/relationship-types`, label: 'Vocabularies' },
+        { key: 'authority-backfill', href: `${resolvedUrlPrefix}/authorities/backfill`, label: 'Authority Backfill' }
       ]
     }
   ];
