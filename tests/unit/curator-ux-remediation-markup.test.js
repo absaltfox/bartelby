@@ -48,7 +48,10 @@ describe('Curator UX remediation markup', () => {
   });
 
   it('uses table-row expansion for phrase target promotion instead of clipped dropdown menus', () => {
-    const source = read('views/admin/sentiment-phrase-targets.ejs');
+    // The phrase-target table body lives in the shared partial; read both
+    // so the assertion sees the actual rendered markup.
+    const source = read('views/admin/sentiment-phrase-targets.ejs')
+      + read('views/partials/knowledge/phrase-targets-list.ejs');
 
     expect(source).toContain('phrase-target-expansion-row');
     expect(source).toContain('phrase-target-action-grid');
@@ -57,27 +60,30 @@ describe('Curator UX remediation markup', () => {
 
   it('groups every knowledge route exactly once in the workbench rail', () => {
     const source = read('views/partials/knowledge-nav.ejs');
-    const hrefs = [
-      '/admin/knowledge',
-      '/admin/knowledge/review-extractions',
-      '/admin/knowledge/authorities/suggestions',
-      '/admin/knowledge/sentiment/review',
-      '/admin/knowledge/entities',
-      '/admin/knowledge/entities/merge',
-      '/admin/knowledge/authorities',
-      '/admin/knowledge/sentiment/phrase-targets',
-      '/admin/knowledge/authorities/generic-terms',
-      '/admin/knowledge/sentiment/clusters',
-      '/admin/knowledge/vocabularies/relationship-types',
-      '/admin/knowledge/authorities/backfill'
+    // After the urlPrefix refactor, route paths are template strings
+    // rooted at ${urlPrefix}. The suffix (everything after the admin
+    // prefix) is the stable identifier.
+    const suffixes = [
+      '',                                       // Overview (urlPrefix itself)
+      '/review-extractions',
+      '/authorities/suggestions',
+      '/sentiment/review',
+      '/entities',
+      '/entities/merge',
+      '/authorities',
+      '/sentiment/phrase-targets',
+      '/authorities/generic-terms',
+      '/sentiment/clusters',
+      '/vocabularies/relationship-types',
+      '/authorities/backfill'
     ];
 
     ['Overview', 'Review', 'Correct', 'Reconcile', 'Maintain'].forEach((label) => {
       expect(source).toContain(`label: '${label}'`);
     });
 
-    hrefs.forEach((href) => {
-      const needle = `href: '${href}'`;
+    suffixes.forEach((suffix) => {
+      const needle = '`${resolvedUrlPrefix}' + suffix + '`';
       const matches = source.match(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || [];
       expect(matches).toHaveLength(1);
     });
@@ -88,7 +94,11 @@ describe('Curator UX remediation markup', () => {
   });
 
   it('keeps curator consequences next to high-impact actions', () => {
-    const review = read('views/admin/review-extractions.ejs');
+    // The review-extractions consequence text lives in the shared list
+    // partial that the admin page (and the manage page) includes. Read
+    // both so the assertion covers the rendered surface.
+    const review = read('views/admin/review-extractions.ejs')
+      + read('views/partials/knowledge/review-extractions-list.ejs');
     const entity = read('views/admin/entity-detail.ejs');
 
     expect(review).toContain('Makes this evidence eligible for visible graph views.');
