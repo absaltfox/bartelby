@@ -872,6 +872,25 @@ const authorityLinkSuggestions = {
       where += where ? ' AND als.entity_id = ?' : 'WHERE als.entity_id = ?';
       params.push(Number(opts.entityId));
     }
+    // Optional collection scope: authority_link_suggestions reference an
+    // entity_id; the resolution chain to a collection is
+    //   als.entity_id -> citations.entity_id -> citations.document_id
+    //   -> document_collections.collection_id
+    // Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-
+    // workbench-design.md § "Data flow and query scoping", entities have
+    // no document_id column (migrations.js v44), so the join routes
+    // through citations.
+    if (Number.isInteger(Number(opts.collectionId)) && Number(opts.collectionId) > 0) {
+      const clause = `als.entity_id IN (
+        SELECT DISTINCT c.entity_id
+        FROM citations c
+        INNER JOIN document_collections dc ON dc.document_id = c.document_id
+        WHERE dc.collection_id = ?
+          AND c.entity_id IS NOT NULL
+      )`;
+      where += where ? ' AND ' + clause : 'WHERE ' + clause;
+      params.push(Number(opts.collectionId));
+    }
     if (opts.cursor && opts.cursor.beforeCreatedAt && Number.isInteger(Number(opts.cursor.beforeId))) {
       const beforeExactNameMatch = Number(opts.cursor.beforeExactNameMatch);
       if (opts.orderExactFirst && Number.isInteger(beforeExactNameMatch)) {
@@ -910,6 +929,15 @@ const authorityLinkSuggestions = {
       LIMIT ?
     `, params);
     return includeContext ? await this.attachContext(rows) : rows;
+  },
+
+  // Convenience over list('pending', ...) — spec § "Data flow and query
+  // scoping" (Authority suggestions) refers to this as listPending. Any
+  // opt accepted by list() is passed through, including the optional
+  // { collectionId } scope.
+  async listPending(opts = {}) {
+    const { limit = 5000, ...rest } = opts;
+    return await this.list('pending', limit, rest);
   },
 
   async attachContext(rows = []) {
