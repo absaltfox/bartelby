@@ -7,55 +7,75 @@
   // convert the page into a 230px sticky-rail / content grid;
   // wrapping this partial in any other container will silently
   // fall back to the mobile horizontal-scroll variant on desktop.
+  //
+  // Locals (optional):
+  //   - urlPrefix: prefix applied to every group item href
+  //     (default '/admin/knowledge'). The collection-scoped
+  //     manage workbench passes e.g.
+  //     '/manage/collections/123/knowledge'.
+  //   - isAdmin: when false, items / groups marked adminOnly are
+  //     hidden per the hide-unavailable-actions rule (default true).
+  //   - activeKnowledgePage: key of the currently active item;
+  //     marked .active and aria-current="page".
+  //
+  // Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  // (workbench rail behavior) and docs/ui-template-standards.md
+  // (Conditional HTML Attributes).
 %>
 
 <%
+  const urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+  const isAdminViewer = (typeof isAdmin !== 'undefined') ? !!isAdmin : true;
+
   const knowledgeGroups = [
     {
       label: 'Overview',
       items: [
-        { key: 'overview', href: '/admin/knowledge', label: 'Overview' }
+        { key: 'overview', href: `${urlPrefix}`, label: 'Overview' }
       ]
     },
     {
       label: 'Review',
       items: [
-        { key: 'review-extractions', href: '/admin/knowledge/review-extractions', label: 'Entity Evidence Review' },
-        { key: 'authority-suggestions', href: '/admin/knowledge/authorities/suggestions', label: 'Authority-Entity Review' },
-        { key: 'sentiment-review', href: '/admin/knowledge/sentiment/review', label: 'Sentiment Review' }
+        { key: 'review-extractions', href: `${urlPrefix}/review-extractions`, label: 'Entity Evidence Review' },
+        { key: 'authority-suggestions', href: `${urlPrefix}/authorities/suggestions`, label: 'Authority-Entity Review' },
+        { key: 'sentiment-review', href: `${urlPrefix}/sentiment/review`, label: 'Sentiment Review', adminOnly: true }
       ]
     },
     {
       label: 'Correct',
       items: [
-        { key: 'entities', href: '/admin/knowledge/entities', label: 'Entities' },
-        { key: 'merge-entities', href: '/admin/knowledge/entities/merge', label: 'Entity Merge' },
-        { key: 'authorities', href: '/admin/knowledge/authorities', label: 'Authorities' }
+        { key: 'entities', href: `${urlPrefix}/entities`, label: 'Entities' },
+        { key: 'merge-entities', href: `${urlPrefix}/entities/merge`, label: 'Entity Merge', adminOnly: true },
+        { key: 'authorities', href: `${urlPrefix}/authorities`, label: 'Authorities' }
       ]
     },
     {
       label: 'Reconcile',
       items: [
-        { key: 'sentiment-phrase-targets', href: '/admin/knowledge/sentiment/phrase-targets', label: 'Phrase Targets' },
-        { key: 'authority-generic-terms', href: '/admin/knowledge/authorities/generic-terms', label: 'Generic Terms' },
-        { key: 'sentiment-clusters', href: '/admin/knowledge/sentiment/clusters', label: 'Sentiment Clusters' }
+        { key: 'sentiment-phrase-targets', href: `${urlPrefix}/sentiment/phrase-targets`, label: 'Phrase Targets' },
+        { key: 'authority-generic-terms', href: `${urlPrefix}/authorities/generic-terms`, label: 'Generic Terms', adminOnly: true },
+        { key: 'sentiment-clusters', href: `${urlPrefix}/sentiment/clusters`, label: 'Sentiment Clusters', adminOnly: true }
       ]
     },
     {
       label: 'Maintain',
+      adminOnly: true,
       items: [
-        { key: 'vocabularies', href: '/admin/knowledge/vocabularies/relationship-types', label: 'Vocabularies' },
-        { key: 'authority-backfill', href: '/admin/knowledge/authorities/backfill', label: 'Authority Backfill' }
+        { key: 'vocabularies', href: `${urlPrefix}/vocabularies/relationship-types`, label: 'Vocabularies' },
+        { key: 'authority-backfill', href: `${urlPrefix}/authorities/backfill`, label: 'Authority Backfill' }
       ]
     }
   ];
 %>
 <nav class="knowledge-workbench-rail" aria-label="Knowledge workbench">
   <% knowledgeGroups.forEach(function(group) { %>
+    <% if (group.adminOnly && !isAdminViewer) return; %>
     <section class="knowledge-workbench-group" aria-labelledby="knowledge-workbench-<%= group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-') %>">
       <p class="knowledge-workbench-group-title" id="knowledge-workbench-<%= group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-') %>"><%= group.label %></p>
       <div class="knowledge-workbench-links">
         <% group.items.forEach(function(item) { %>
+          <% if (item.adminOnly && !isAdminViewer) return; %>
           <a href="<%= item.href %>" class="knowledge-workbench-link <%= activeKnowledgePage === item.key ? 'active' : '' %>" <% if (activeKnowledgePage === item.key) { %>aria-current="page"<% } %>><%= item.label %></a>
         <% }) %>
       </div>
