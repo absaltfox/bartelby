@@ -1573,6 +1573,20 @@ const relationshipTypeAliasesAsync = require('./models/relationship-type-aliases
 const authorityChronologyAsync = require('./models/authority-chronology')(db, runAsync, getAsync, allAsync, saveDatabase);
 const sentimentPhraseSuppressionsAsync = require('./models/sentiment-phrase-suppressions')(db, runAsync, getAsync, allAsync, saveDatabase);
 
+// Curator-access predicates ("can this user mutate this knowledge-graph row?").
+// Constructed AFTER the underlying async models so the factory can close over
+// them. See database/models/curator-access.js for the design rationale.
+const { curatorAccessFactory } = require('./models/curator-access');
+const curatorAccessAsync = curatorAccessFactory({
+  documentCollectionsAsync,
+  collectionsAsync,
+  entitiesAsync: entities,
+  citationsAsync: citations,
+  relationshipsAsync: relationships,
+  dateExpressionsAsync: dateExpressions,
+  authoritySuggestionsAsync: authorityLinkSuggestions
+});
+
 function getDb() { return db; }
 
 // ---------------------------------------------------------------------------
@@ -1702,5 +1716,6 @@ module.exports = {
   graphAccessAsync: graphAccess,
   relationshipTypeAliasesAsync,
   authorityChronologyAsync,
-  sentimentPhraseSuppressionsAsync
+  sentimentPhraseSuppressionsAsync,
+  curatorAccessAsync
 };
