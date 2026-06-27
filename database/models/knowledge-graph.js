@@ -543,6 +543,39 @@ const authorities = {
     `, [Number(authorityId), limit])).map(hydrateEntity);
   },
 
+  // Spec § "Data flow and query scoping" (Authorities list) and the
+  // § "Authority list 'N / M' annotation" SQL recipe. Returns one row per
+  // authority that has at least one member entity cited in the given
+  // collection. `in_collection_members` counts distinct member entities
+  // whose citation lands in the collection; `total_members` is the
+  // authority's full corpus-wide member count (every authority-linked
+  // entity ever cited anywhere, distinct).
+  //
+  // The join chain is authority -> entities (e.authority_id) -> citations
+  // (c.entity_id) -> document_collections (dc.document_id), because
+  // entities have no document_id column (migrations.js v44).
+  // Conditional aggregation (SUM(CASE WHEN dc.collection_id = ? ...))
+  // keeps this to a single query rather than two passes.
+  async listTouchedByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return [];
+    return await allAsync(`
+      SELECT
+        a.id,
+        a.canonical_name,
+        a.authority_type,
+        COUNT(DISTINCT CASE WHEN dc.collection_id = ? THEN e.id END) AS in_collection_members,
+        COUNT(DISTINCT e.id) AS total_members
+      FROM authorities a
+      INNER JOIN entities e ON e.authority_id = a.id
+      INNER JOIN citations cit ON cit.entity_id = e.id
+      INNER JOIN document_collections dc ON dc.document_id = cit.document_id
+      GROUP BY a.id, a.canonical_name, a.authority_type
+      HAVING in_collection_members > 0
+      ORDER BY a.canonical_name
+    `, [normalizedId]);
+  },
+
   async getMemberAliases(authorityId, limit = 500) {
     if (!Number.isInteger(Number(authorityId)) || Number(authorityId) <= 0) return [];
     return await allAsync(`
