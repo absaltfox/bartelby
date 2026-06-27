@@ -454,6 +454,20 @@ const documentCollectionsAsync = {
     `, ids);
   },
 
+  // Returns the distinct collection ids that contain the given document.
+  // Used by the entity-authoring / relationship-authoring routes in PR 4 to
+  // resolve "which collections govern this transcript's document?" — the
+  // POST handler then checks the user's manager role on at least one of
+  // those collections before allowing manual entity creation.
+  async listCollectionIdsForDocument(documentId) {
+    const rows = await allAsync(`
+      SELECT collection_id
+      FROM document_collections
+      WHERE document_id = ?
+    `, [documentId]);
+    return rows.map(r => r.collection_id);
+  },
+
   // Returns the distinct collection ids that contain at least one document
   // the entity is cited in. The curator-access predicate uses this to
   // answer "which collections govern mutation rights on this entity?" —
