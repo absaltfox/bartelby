@@ -1,0 +1,113 @@
+<%#
+  Authorities list body (bulk form + table + empty state + pagination).
+
+  Used by /admin/knowledge/authorities and by the forthcoming collection-
+  scoped manage equivalent. Page header, stats cards, filter form, and
+  scripts remain in the parent template.
+
+  Per docs/ui-template-standards.md (Shared Partials) and
+  docs/superpowers/plans/2026-06-26-collection-scoped-knowledge-workbench.md
+  (Task 3.2).
+
+  Locals (required):
+    - authorities: array of authority rows (id, authority_type, canonical_name, description, member_count, document_count)
+    - q: current search query string
+    - typeFilter: current type filter (string or '')
+    - sort: 'name' | 'type' | 'members' | 'documents'
+    - direction: 'asc' | 'desc'
+    - totalCount, totalPages, currentPage: pagination state
+    - csrfToken
+    - currentUrl: current authority list URL (used as returnTo in bulk forms)
+    - authorityListPath: function(params) -> URL string for sort/page links
+  Locals (optional):
+    - urlPrefix: action URL prefix (default '/admin/knowledge')
+%>
+<%
+  const _urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+%>
+  <% if (authorities.length === 0) { %>
+    <div class="empty-state">
+      <p>No authorities found<% if (q) { %> for "<%= q %>"<% } %><% if (typeFilter) { %> with type "<%= typeFilter %>"<% } %>.</p>
+    </div>
+  <% } else { %>
+    <form method="POST" action="<%= _urlPrefix %>/authorities/bulk/merge" class="authority-bulk-form" data-authority-bulk-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="returnTo" value="<%= currentUrl %>">
+      <div class="bulk-toolbar suggestions-bulk-controls">
+        <label class="bulk-toolbar-select-all suggestions-select-all">
+          <input type="checkbox" id="authorities-select-all" data-authorities-select-all>
+          <span>Select all on page</span>
+        </label>
+        <div class="bulk-toolbar-actions bulk-actions is-hidden" data-authorities-bulk-actions>
+          <span class="bulk-toolbar-count" data-authorities-bulk-count>0 selected</span>
+          <label class="inline-form">
+            Keep
+            <select name="target_authority_id" data-authorities-merge-target>
+              <option value="">Choose authority...</option>
+              <% authorities.forEach(function(authority) { %>
+                <option value="<%= authority.id %>"><%= authority.canonical_name %> (<%= authority.authority_type %>)</option>
+              <% }) %>
+            </select>
+          </label>
+          <button type="submit" class="btn-secondary btn-sm" data-authorities-bulk-merge>Merge selected into target</button>
+          <button type="submit" class="btn-danger btn-sm" formaction="<%= _urlPrefix %>/authorities/bulk/delete" data-authorities-bulk-delete>Delete selected</button>
+        </div>
+      </div>
+
+      <div class="workflows-table-wrap">
+        <table class="workflows-table">
+          <thead>
+            <tr>
+              <th scope="col">Select</th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'type', direction: sort === 'type' && direction === 'asc' ? 'desc' : 'asc' }) %>">Type<%= sort === 'type' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'name', direction: sort === 'name' && direction === 'asc' ? 'desc' : 'asc' }) %>">Authority<%= sort === 'name' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'members', direction: sort === 'members' && direction === 'desc' ? 'asc' : 'desc' }) %>">Members<%= sort === 'members' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col">
+                <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: 'documents', direction: sort === 'documents' && direction === 'desc' ? 'asc' : 'desc' }) %>">Documents<%= sort === 'documents' ? (direction === 'asc' ? ' ↑' : ' ↓') : '' %></a>
+              </th>
+              <th scope="col" class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% authorities.forEach(function(authority) { %>
+              <tr>
+                <td><input type="checkbox" class="authority-cb" name="authority_ids" value="<%= authority.id %>" data-authority-checkbox></td>
+                <td><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span></td>
+                <td>
+                  <strong><a href="<%= _urlPrefix %>/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
+                  <% if (authority.description) { %>
+                    <div class="muted"><%= authority.description %></div>
+                  <% } %>
+                </td>
+                <td><%= authority.member_count || 0 %></td>
+                <td><%= authority.document_count || 0 %></td>
+                <td><a href="<%= _urlPrefix %>/authorities/<%= authority.id %>" class="btn-secondary btn-sm">Open</a></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </form>
+
+    <% if (totalPages > 1) { %>
+      <div class="pagination">
+        <% if (currentPage > 1) { %>
+          <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: sort, direction: direction, page: currentPage - 1 }) %>" class="pagination-btn">&lsaquo; Prev</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+        <% } %>
+        <span class="pagination-info">Page <%= currentPage %> of <%= totalPages %> <span class="muted">(<%= totalCount %> authorities)</span></span>
+        <% if (currentPage < totalPages) { %>
+          <a href="<%= authorityListPath({ q: q, type: typeFilter, sort: sort, direction: direction, page: currentPage + 1 }) %>" class="pagination-btn">Next &rsaquo;</a>
+        <% } else { %>
+          <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
