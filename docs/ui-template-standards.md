@@ -117,6 +117,48 @@ the workspace `<div>` before both the `admin-nav` and `knowledge-nav` includes,
 matching the pattern used in `views/admin/entity-detail.ejs`,
 `views/admin/sentiment-clusters.ejs`, and `views/admin/review-extractions.ejs`.
 
+`views/partials/knowledge-nav.ejs` accepts two optional locals so the same
+rail can serve both the global admin workbench and the collection-scoped
+manage workbench:
+
+- `urlPrefix` — string prepended to every group-item `href`. Defaults to
+  `/admin/knowledge`. The manage workbench passes
+  `/manage/collections/<%= collection.id %>/knowledge` so the same items
+  resolve to collection-scoped routes without duplicating the link
+  catalog.
+- `isAdmin` — when `false`, items and groups marked `adminOnly: true` in
+  the rail's group definition are hidden per the
+  hide-unavailable-actions rule. Defaults to `true`. The manage
+  workbench passes `false` so global-only maintenance items (entity
+  merge, generic terms, sentiment clusters, sentiment review, the entire
+  Maintain group) are dropped from the rail for non-admin managers.
+
+The manage-collection composition renders **three** direct children of
+the workspace: the global `admin-nav`, the `knowledge-workbench-rail`,
+and a `manage-collection-shell` content column. The desktop grid for
+this three-direct-child layout is keyed by
+`.admin-page--workspace:has(> .knowledge-workbench-rail):has(> .manage-collection-shell)`
+in `public/css/style.css` and lays out admin-nav / rail / shell in a
+single row at desktop widths. The two-child admin variant
+(`admin-page--workspace > admin-nav + knowledge-workbench-rail + page-body`)
+continues to work unchanged.
+
+Reusable knowledge list bodies live under `views/partials/knowledge/`
+and are shared between the admin and manage workbenches so the two
+surfaces stay in sync without template forks:
+
+- `views/partials/knowledge/review-extractions-list.ejs`
+- `views/partials/knowledge/authority-suggestions-list.ejs`
+- `views/partials/knowledge/entities-list.ejs`
+- `views/partials/knowledge/authorities-list.ejs`
+- `views/partials/knowledge/phrase-targets-list.ejs`
+
+Each partial expects the same set of locals from either the admin or
+manage page wrapper (record list, pagination metadata, `csrfToken`,
+`urlPrefix`, and the `isAdmin` flag governing inline action visibility)
+and renders the list body only — the page wrapper supplies the page
+title, breadcrumbs, surrounding shell, and rail include.
+
 ### Curator Consequence Text
 
 AI-assisted curator actions should explain the downstream consequence at the

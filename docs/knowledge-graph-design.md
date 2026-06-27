@@ -986,6 +986,62 @@ The same functionality is also reachable from contextual shortcuts in:
 
 Those shortcuts all route through the same backend rerun queue.
 
+### Collection-scoped Knowledge workbench (manage-side)
+
+Per-collection managers reach an in-scope, collection-filtered variant of
+the same workbench under
+`/manage/collections/:collectionId/knowledge/...`. The routes are mounted on
+the `/manage` router, gated by `requireCollectionRole('manager')`, and
+served by `routes/manage-knowledge.js`. The surface mirrors the admin
+information architecture above (Overview, Review, Correct, Reconcile,
+Maintain) but every list and dashboard count is filtered to the artifacts
+evidenced by the collection's documents. Maintenance items that act
+globally (vocabularies, generic terms, sentiment clusters, entity merge,
+authority backfill, sentiment review) are hidden from the rail per the
+`adminOnly` flag on `views/partials/knowledge-nav.ejs`; the page templates
+are reused via the shared partials under `views/partials/knowledge/`. The
+manage workbench is reachable from `views/partials/manage-collection-nav.ejs`
+as the "Knowledge" tab, and from per-row cross-links on `/admin/collections`
+and `/admin/knowledge` so admins can land directly in a collection's
+workbench.
+
+### Relaxed-auth pattern for in-scope POSTs
+
+The relevant POST endpoints that previously required `requireAdmin` are
+relaxed to `admin OR manager-on-the-containing-collection` via the
+`requireCurate(kind, param)` predicate family defined in
+`database/models/curator-access.js` and the
+`middleware/curator-permissions.js` factory. The predicate maps each
+endpoint to the resource kind it mutates (entity, citation, relationship,
+authority-suggestion, phrase-target, etc.) and resolves the affected
+collection set before allowing the action. The split is intentionally
+asymmetric: entity-side actions (link, unlink, reassign, approve/reject
+citation, author and correct entities, edit relationships, update
+phrase-target scope) are curator-eligible; authority-side actions (merge,
+rename, edit canonical fields, delete) remain admin-only because
+authorities span collections. Defense in depth: hidden buttons enforce
+the hide-unavailable-actions rule, but the predicate is the primary
+defense — the POST endpoints reject out-of-scope requests with the same
+shape as not-found so existence is not disclosed.
+
+### Multi-collection document consequence
+
+When a document D belongs to collections A and B, a manager on either A
+or B may curate entities evidenced by D. This is consistent with the
+existing collection-membership-based access model — a manager on a
+collection containing D already has read access to D's content; the
+relaxed-auth pattern extends that to curation. The practical
+consequence is that adding a document to a shared collection is a
+trust-distribution decision: the union of managers across the
+containing collections becomes the union of curators for that
+document's entities. Admins who want strict isolation must keep
+documents in a single collection. The admin-side "Edit Collections"
+modal on `/admin/documents` surfaces this consequence inline so admins
+acknowledge the trust distribution before saving. Per-collection
+audit-row attribution for the specific collection a curator acted via
+is a known gap deferred to the follow-up "per-collection audit
+attribution" spec.
+
 ## Rerun Semantics
 
 Reruns are intentionally reset-aware.
