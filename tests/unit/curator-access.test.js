@@ -245,6 +245,14 @@ describe('curatorAccessAsync.userCanCurateEntity', () => {
     const result = await curatorAccessAsync.userCanCurateEntity(user, 9999999);
     expect(result.allowed).toBe(false);
   });
+
+  test('cached lookup returns same result without re-querying', async () => {
+    const { user, entityId } = await seedEntityInCollection({ userRole: 'manager' });
+    const cache = new Map();
+    const r1 = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
+    const r2 = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
+    expect(r2).toBe(r1);  // same object reference -> served from cache
+  });
 });
 
 describe('curatorAccessAsync.userCanCurateCitation', () => {
