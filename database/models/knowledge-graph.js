@@ -109,6 +109,49 @@ const entities = {
     return rows.map(hydrateEntity);
   },
 
+  // Spec § "Data flow and query scoping" (Entities list) — a unified
+  // admin-listing entry point that accepts an opt bag with optional
+  // { collectionId, type, unresolved, limit, offset }. When no opts are
+  // supplied the call is equivalent to getAll(limit, offset). Per the
+  // spec, scoping always traverses document_collections (entities have no
+  // collection_id of their own — migrations.js v44 puts the entity ->
+  // document edge on citations.entity_id).
+  async listForAdmin(opts = {}) {
+    const limit = Number.isInteger(Number(opts.limit)) ? Number(opts.limit) : 50;
+    const offset = Number.isInteger(Number(opts.offset)) ? Number(opts.offset) : 0;
+    const where = [];
+    const params = [];
+
+    if (opts.type && typeof opts.type === 'string') {
+      where.push('e.entity_type = ?');
+      params.push(opts.type);
+    }
+    if (opts.unresolved === true) {
+      where.push('e.authority_id IS NULL');
+    }
+    if (Number.isInteger(Number(opts.collectionId)) && Number(opts.collectionId) > 0) {
+      where.push(`e.id IN (
+        SELECT DISTINCT c.entity_id
+        FROM citations c
+        INNER JOIN document_collections dc ON dc.document_id = c.document_id
+        WHERE dc.collection_id = ?
+          AND c.entity_id IS NOT NULL
+      )`);
+      params.push(Number(opts.collectionId));
+    }
+
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    params.push(limit, offset);
+
+    return (await allAsync(`
+      SELECT e.*
+      FROM entities e
+      ${whereClause}
+      ORDER BY e.canonical_name
+      LIMIT ? OFFSET ?
+    `, params)).map(hydrateEntity);
+  },
+
   async getByDocumentId(documentId, opts = {}) {
     const queryFilter = buildCitationQueryConditions({
       ...opts,
