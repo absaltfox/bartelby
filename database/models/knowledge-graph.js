@@ -152,6 +152,60 @@ const entities = {
     `, params)).map(hydrateEntity);
   },
 
+  // Spec § "Dashboard counts" (entities in collection). Counts distinct
+  // entities whose citations land in the given collection, with a byType
+  // breakdown by entity_type. Per § "Data flow and query scoping" the
+  // scope traverses document_collections via citations.entity_id ->
+  // citations.document_id, since entities have no document_id (migrations.js v44).
+  async countByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return { total: 0, byType: {} };
+    }
+    const rows = await allAsync(`
+      SELECT e.entity_type, COUNT(DISTINCT e.id) AS n
+      FROM entities e
+      INNER JOIN citations c ON c.entity_id = e.id
+      INNER JOIN document_collections dc ON dc.document_id = c.document_id
+      WHERE dc.collection_id = ?
+      GROUP BY e.entity_type
+    `, [normalizedId]);
+    const byType = {};
+    let total = 0;
+    for (const row of rows) {
+      const count = Number(row.n || 0);
+      byType[row.entity_type] = count;
+      total += count;
+    }
+    return { total, byType };
+  },
+
+  // Spec § "Dashboard counts" (unresolved entities). Same scoping as
+  // countByCollection plus authority_id IS NULL.
+  async countUnresolvedByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) {
+      return { total: 0, byType: {} };
+    }
+    const rows = await allAsync(`
+      SELECT e.entity_type, COUNT(DISTINCT e.id) AS n
+      FROM entities e
+      INNER JOIN citations c ON c.entity_id = e.id
+      INNER JOIN document_collections dc ON dc.document_id = c.document_id
+      WHERE dc.collection_id = ?
+        AND e.authority_id IS NULL
+      GROUP BY e.entity_type
+    `, [normalizedId]);
+    const byType = {};
+    let total = 0;
+    for (const row of rows) {
+      const count = Number(row.n || 0);
+      byType[row.entity_type] = count;
+      total += count;
+    }
+    return { total, byType };
+  },
+
   async getByDocumentId(documentId, opts = {}) {
     const queryFilter = buildCitationQueryConditions({
       ...opts,
@@ -574,6 +628,22 @@ const authorities = {
       HAVING in_collection_members > 0
       ORDER BY a.canonical_name
     `, [normalizedId]);
+  },
+
+  // Spec § "Dashboard counts" (distinct authorities touched). Same scope
+  // shape as listTouchedByCollection but compressed to a single COUNT(DISTINCT).
+  async countDistinctTouchedByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return { total: 0 };
+    const row = await getAsync(`
+      SELECT COUNT(DISTINCT a.id) AS n
+      FROM authorities a
+      INNER JOIN entities e ON e.authority_id = a.id
+      INNER JOIN citations cit ON cit.entity_id = e.id
+      INNER JOIN document_collections dc ON dc.document_id = cit.document_id
+      WHERE dc.collection_id = ?
+    `, [normalizedId]);
+    return { total: Number(row?.n || 0) };
   },
 
   async getMemberAliases(authorityId, limit = 500) {
@@ -1014,6 +1084,56 @@ const authorityLinkSuggestions = {
   async listPending(opts = {}) {
     const { limit = 5000, ...rest } = opts;
     return await this.list('pending', limit, rest);
+  },
+
+  // Spec § "Dashboard counts" (pending authority_link_suggestions). The
+  // total counts pending, actionable (e.authority_id IS NULL) suggestions
+  // whose entity is cited in the given collection. disambiguationGroups
+  // counts entities with >=2 pending suggestions — i.e. cases where the
+  // curator has to disambiguate between multiple candidate authorities.
+  // The scoping join routes through citations because entities have no
+  // document_id (migrations.js v44).
+  async countPendingByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    const zero = { total: 0, disambiguationGroups: 0 };
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return zero;
+    const totalRow = await getAsync(`
+      SELECT COUNT(*) AS n
+      FROM authority_link_suggestions als
+      INNER JOIN entities e ON e.id = als.entity_id
+      WHERE als.status = 'pending'
+        AND e.authority_id IS NULL
+        AND als.entity_id IN (
+          SELECT DISTINCT c.entity_id
+          FROM citations c
+          INNER JOIN document_collections dc ON dc.document_id = c.document_id
+          WHERE dc.collection_id = ?
+            AND c.entity_id IS NOT NULL
+        )
+    `, [normalizedId]);
+    const groupRow = await getAsync(`
+      SELECT COUNT(*) AS n
+      FROM (
+        SELECT als.entity_id
+        FROM authority_link_suggestions als
+        INNER JOIN entities e ON e.id = als.entity_id
+        WHERE als.status = 'pending'
+          AND e.authority_id IS NULL
+          AND als.entity_id IN (
+            SELECT DISTINCT c.entity_id
+            FROM citations c
+            INNER JOIN document_collections dc ON dc.document_id = c.document_id
+            WHERE dc.collection_id = ?
+              AND c.entity_id IS NOT NULL
+          )
+        GROUP BY als.entity_id
+        HAVING COUNT(*) >= 2
+      ) grouped
+    `, [normalizedId]);
+    return {
+      total: Number(totalRow?.n || 0),
+      disambiguationGroups: Number(groupRow?.n || 0)
+    };
   },
 
   async attachContext(rows = []) {
@@ -1854,6 +1974,38 @@ const citations = {
   async listPending(opts = {}) {
     const { limit = 5000, ...rest } = opts;
     return await this.list(CITATION_APPROVAL_STATUSES.PENDING, limit, 0, rest);
+  },
+
+  // Spec § "Dashboard counts" (pending citations split by kind). One
+  // query returns { entity, relationship, date, total } for pending
+  // citations whose document is in the given collection. The kind split
+  // mirrors buildReviewKindFilter: relationship_id NOT NULL is the
+  // relationship branch, date_expression_id NOT NULL is the date branch,
+  // and everything else is the entity branch.
+  async countPendingByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    const zero = { entity: 0, relationship: 0, date: 0, total: 0 };
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return zero;
+    const row = await getAsync(`
+      SELECT
+        SUM(CASE WHEN c.relationship_id IS NULL AND c.date_expression_id IS NULL THEN 1 ELSE 0 END) AS entity,
+        SUM(CASE WHEN c.relationship_id IS NOT NULL THEN 1 ELSE 0 END) AS relationship,
+        SUM(CASE WHEN c.date_expression_id IS NOT NULL THEN 1 ELSE 0 END) AS date,
+        COUNT(*) AS total
+      FROM citations c
+      WHERE c.approval_status = 'pending'
+        AND c.document_id IN (
+          SELECT dc.document_id
+          FROM document_collections dc
+          WHERE dc.collection_id = ?
+        )
+    `, [normalizedId]);
+    return {
+      entity: Number(row?.entity || 0),
+      relationship: Number(row?.relationship || 0),
+      date: Number(row?.date || 0),
+      total: Number(row?.total || 0)
+    };
   },
 
   async approve(id, approvedByUserId, method = 'manual') {
