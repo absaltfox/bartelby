@@ -352,6 +352,24 @@ describe('curatorAccessAsync.userCanCurateRelationship', () => {
     const result = await curatorAccessAsync.userCanCurateRelationship(user, 9999999);
     expect(result.allowed).toBe(false);
   });
+
+  test('manager on the target endpoint\'s collection is allowed even when source is in a different collection', async () => {
+    // Source entity is in collection A (manager has no rights). Target is
+    // in collection B (manager is). Predicate must admit via target fallback.
+    const collectionA = await seedEntityInCollection({ userRole: 'viewer' });
+    const collectionB = await seedEntityInCollection({ userRole: 'manager' });
+    const relationshipId = await relationshipsAsync.create({
+      source_entity_id: collectionA.entityId,
+      target_entity_id: collectionB.entityId,
+      relationship_type: 'knows',
+      label: 'cross-collection',
+      properties: {},
+      confidence: 1
+    });
+    const result = await curatorAccessAsync.userCanCurateRelationship(collectionB.user, relationshipId);
+    expect(result.allowed).toBe(true);
+    expect(result.collectionIds).toContain(collectionB.collectionId);
+  });
 });
 
 describe('curatorAccessAsync.userCanCurateDateExpression', () => {

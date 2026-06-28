@@ -119,10 +119,10 @@ function curatorAccessFactory({
   }
 
   // Relationships connect two entities. Both endpoints are valid handles
-  // into the collection-containment chain; we resolve through the source
-  // entity. (If a relationship's source and target sit in disjoint
-  // collections, the manager only needs rights to one of them — by
-  // convention we ask about source. Future task may broaden to union.)
+  // into the collection-containment chain. Source and target may sit in
+  // disjoint collections; a manager who curates either side legitimately
+  // owns the relationship-supporting citation. Try source first, then
+  // fall back to target if the source check denies.
   async function userCanCurateRelationship(user, relationshipId, opts) {
     return withCache('relationship', relationshipId, opts, async () => {
       const admin = adminShortCircuit(user);
@@ -131,7 +131,13 @@ function curatorAccessFactory({
 
       const rel = await relationshipsAsync.getById(relationshipId);
       if (!rel) return { allowed: false };
-      return userCanCurateEntity(user, rel.source_entity_id, opts);
+
+      const fromSource = await userCanCurateEntity(user, rel.source_entity_id, opts);
+      if (fromSource.allowed) return fromSource;
+      if (rel.target_entity_id && rel.target_entity_id !== rel.source_entity_id) {
+        return userCanCurateEntity(user, rel.target_entity_id, opts);
+      }
+      return { allowed: false };
     });
   }
 
