@@ -46,7 +46,15 @@ function curatorAccessFactory({
     if (!opts || !opts.cache) return compute();
     const key = `${kind}:${id}`;
     if (opts.cache.has(key)) return opts.cache.get(key);
-    const promise = compute();
+    // A rejected predicate promise must NOT stay in the cache; otherwise a
+    // single transient DB error propagates to every dependent permission
+    // check in the request (e.g. a bulk endpoint resolving 200 ids would
+    // see the same rejection 200 times). Delete the key on rejection so
+    // future callers can retry cleanly.
+    const promise = compute().catch(err => {
+      opts.cache.delete(key);
+      throw err;
+    });
     opts.cache.set(key, promise);
     return promise;
   }

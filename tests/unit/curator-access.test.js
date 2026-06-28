@@ -253,6 +253,29 @@ describe('curatorAccessAsync.userCanCurateEntity', () => {
     const r2 = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
     expect(r2).toBe(r1);  // same object reference -> served from cache
   });
+
+  test('rejected predicate is cleared from cache so subsequent calls retry', async () => {
+    const { user, entityId } = await seedEntityInCollection({ userRole: 'manager' });
+    const cache = new Map();
+    const originalGetById = entitiesAsync.getById;
+    let callCount = 0;
+    entitiesAsync.getById = async function (id) {
+      callCount += 1;
+      if (callCount === 1) throw new Error('synthetic transient failure');
+      return originalGetById.call(this, id);
+    };
+    try {
+      await expect(
+        curatorAccessAsync.userCanCurateEntity(user, entityId, { cache })
+      ).rejects.toThrow('synthetic transient failure');
+      // Cache entry must have been cleared, so the next call hits the (now successful) underlying lookup.
+      const recovered = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
+      expect(recovered.allowed).toBe(true);
+      expect(callCount).toBe(2);
+    } finally {
+      entitiesAsync.getById = originalGetById;
+    }
+  });
 });
 
 describe('curatorAccessAsync.userCanCurateCitation', () => {
