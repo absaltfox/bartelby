@@ -19,9 +19,16 @@
     - csrfToken
   Locals (optional):
     - urlPrefix: action URL prefix (default '/admin/knowledge')
+    - isAdmin: whether the viewer is an admin. Only admins can suppress
+      or un-suppress phrases (sentiment_phrase_suppressions is keyed
+      UNIQUE on target_phrase_normalized, so suppression is a global
+      decision by schema). Non-admin managers can still promote in the
+      active tab; the suppression controls are hidden per the
+      hide-unavailable-actions rule.
 %>
 <%
   const _urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+  const _isAdmin = (typeof isAdmin === 'undefined') ? true : !!isAdmin;
 %>
   <% if (tab === 'active') { %>
       <% if (!aggregated.length) { %>
@@ -69,17 +76,19 @@
                 <td><span class="status-badge status-trace"><%= p.suggestedType %></span></td>
                 <td class="col-actions">
                   <div class="table-actions">
-                    <form method="POST" action="<%= _urlPrefix %>/sentiment/phrase-targets/suppressions" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-                      <input type="hidden" name="tab" value="active">
-                      <input type="hidden" name="q" value="<%= q || '' %>">
-                      <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-                      <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                      <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
-                      <input type="hidden" name="page" value="<%= page || 1 %>">
-                      <button type="submit" class="btn-secondary btn-sm">Suppress</button>
-                    </form>
+                    <% if (_isAdmin) { %>
+                      <form method="POST" action="<%= _urlPrefix %>/sentiment/phrase-targets/suppressions" class="inline-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
+                        <input type="hidden" name="tab" value="active">
+                        <input type="hidden" name="q" value="<%= q || '' %>">
+                        <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
+                        <input type="hidden" name="polarity" value="<%= polarity || '' %>">
+                        <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
+                        <input type="hidden" name="page" value="<%= page || 1 %>">
+                        <button type="submit" class="btn-secondary btn-sm">Suppress</button>
+                      </form>
+                    <% } %>
                   </div>
                 </td>
               </tr>
@@ -201,12 +210,16 @@
                 <td><%= s.created_at %></td>
                 <td class="col-actions">
                   <div class="table-actions">
-                    <form method="POST" action="<%= _urlPrefix %>/sentiment/phrase-targets/suppressions/<%= s.id %>/delete" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="tab" value="suppressed">
-                      <input type="hidden" name="page" value="<%= page || 1 %>">
-                      <button type="submit" class="btn-danger btn-sm">Remove suppression</button>
-                    </form>
+                    <% if (_isAdmin) { %>
+                      <form method="POST" action="<%= _urlPrefix %>/sentiment/phrase-targets/suppressions/<%= s.id %>/delete" class="inline-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="tab" value="suppressed">
+                        <input type="hidden" name="page" value="<%= page || 1 %>">
+                        <button type="submit" class="btn-danger btn-sm">Remove suppression</button>
+                      </form>
+                    <% } else { %>
+                      <span class="muted">Admin only</span>
+                    <% } %>
                   </div>
                 </td>
               </tr>
