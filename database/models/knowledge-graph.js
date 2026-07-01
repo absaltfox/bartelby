@@ -619,7 +619,8 @@ const authorities = {
         a.canonical_name,
         a.authority_type,
         COUNT(DISTINCT CASE WHEN dc.collection_id = ? THEN e.id END) AS in_collection_members,
-        COUNT(DISTINCT e.id) AS total_members
+        COUNT(DISTINCT e.id) AS total_members,
+        COUNT(DISTINCT cit.document_id) AS document_count
       FROM authorities a
       INNER JOIN entities e ON e.authority_id = a.id
       INNER JOIN citations cit ON cit.entity_id = e.id

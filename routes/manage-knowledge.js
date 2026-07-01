@@ -274,18 +274,23 @@ router.get('/entities', asyncHandler(async (req, res) => {
 
   const typeFilter = req.query.type ? String(req.query.type) : 'all';
   const q = String(req.query.q || '').trim();
+  // The dashboard's "Unresolved entities" tile drill-links here with
+  // ?unresolved=1; the handler must honor it or the drill-down collapses
+  // to the full entities list.
+  const unresolved = req.query.unresolved === '1' || req.query.unresolved === 'true';
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
   let entities = [];
   let totalCount = 0;
   try {
-    // listForAdmin understands { collectionId, type, limit, offset }.
+    // listForAdmin understands { collectionId, type, unresolved, limit, offset }.
     const opts = {
       collectionId,
       limit: PAGE_SIZE,
       offset,
-      type: typeFilter !== 'all' ? typeFilter : undefined
+      type: typeFilter !== 'all' ? typeFilter : undefined,
+      unresolved: unresolved || undefined
     };
     entities = typeof entitiesAsync.listForAdmin === 'function'
       ? await entitiesAsync.listForAdmin(opts)
@@ -300,11 +305,19 @@ router.get('/entities', asyncHandler(async (req, res) => {
       entities = entities.filter((e) => (e.canonical_name || '').toLowerCase().includes(needle));
     }
 
-    const totals = await entitiesAsync.countByCollection(collectionId);
-    if (typeFilter !== 'all' && totals && totals.byType) {
-      totalCount = Number(totals.byType[typeFilter] || 0);
+    // Total count sourcing: for the unresolved-filter case we want the
+    // total number of unresolved entities in the collection (so pagination
+    // reflects the drill-down scope, not the whole collection).
+    if (unresolved) {
+      const unresolvedTotals = await entitiesAsync.countUnresolvedByCollection(collectionId);
+      totalCount = Number(unresolvedTotals && unresolvedTotals.total || 0);
     } else {
-      totalCount = Number(totals && totals.total || 0);
+      const totals = await entitiesAsync.countByCollection(collectionId);
+      if (typeFilter !== 'all' && totals && totals.byType) {
+        totalCount = Number(totals.byType[typeFilter] || 0);
+      } else {
+        totalCount = Number(totals && totals.total || 0);
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -374,10 +387,16 @@ router.get('/authorities', asyncHandler(async (req, res) => {
   // In-memory filtering + sort. The touched-by-collection helper returns
   // all rows (typically a few hundred at most for a single collection); a
   // dedicated paginated query is a future optimization if the page grows.
+  // `in_collection_members` = distinct entity rows cited in THIS collection
+  //   (shown as the "Members here" column via the shared partial's
+  //   `member_count` local).
+  // `document_count` = distinct source documents (across the corpus) that
+  //   have citations backing any member of the authority. Same semantic as
+  //   the admin authorities page uses.
   let filtered = rows.map((row) => ({
     ...row,
     member_count: Number(row.in_collection_members || row.member_count || 0),
-    document_count: Number(row.total_members || row.document_count || 0)
+    document_count: Number(row.document_count || 0)
   }));
   if (q) {
     const needle = q.toLowerCase();
