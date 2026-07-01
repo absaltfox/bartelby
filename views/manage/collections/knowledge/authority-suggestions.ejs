@@ -33,4 +33,16 @@
   </section>
 </div>
 
+<%#
+  authority-suggestions-list carries bulk toolbar + per-card decision
+  buttons wired by /js/admin-authority-suggestions.js. Without the
+  bootstrap + script tags the queue renders but clicks silently no-op.
+  Bulk POSTs land on the admin endpoints, which PR 4 relaxed to accept
+  collection managers.
+%>
+<script type="application/json" id="suggestions-bootstrap">
+  <%- JSON.stringify({ status: status, matchMethodFilter: matchMethodFilter, pageSize: pageSize }) %>
+</script>
+<script src="/js/admin-authority-suggestions.js"></script>
+
 <%- include('../../../partials/footer') %>

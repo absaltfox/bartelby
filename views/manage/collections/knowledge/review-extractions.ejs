@@ -36,4 +36,23 @@
   </section>
 </div>
 
+<%#
+  The review-extractions list partial carries data-attribute hooks
+  (data-review-preview-trigger, data-review-action-form) and the bulk
+  toolbar that /js/review-extractions.js and /js/review-extractions-bulk.js
+  drive. Without these scripts the preview overlay never opens and bulk
+  selection is a dead UI. Bulk URLs point at the admin endpoints because
+  the manage router does not (yet) mount its own bulk routes — PR 4
+  relaxed the admin endpoints to accept collection managers, so a
+  manager's request lands on the same handler an admin would hit.
+%>
+<script id="review-extractions-config" type="application/json"><%- JSON.stringify({
+  bulkApproveUrl: '/admin/knowledge/review-extractions/bulk/approve',
+  bulkRejectUrl: '/admin/knowledge/review-extractions/bulk/reject',
+  bulkDeleteUrl: '/admin/knowledge/review-extractions/bulk/delete',
+  csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : null
+}).replace(/</g, '\\u003c') %></script>
+<script src="/js/review-extractions.js"></script>
+<script src="/js/review-extractions-bulk.js"></script>
+
 <%- include('../../../partials/footer') %>

@@ -257,7 +257,11 @@ router.get('/authorities/suggestions', asyncHandler(async (req, res) => {
     matchMethodFilter,
     nextCursor,
     groupedTruncated,
-    groupedTotalUnits
+    groupedTotalUnits,
+    // Consumed by the admin-authority-suggestions.js bootstrap payload so
+    // the client script knows how many rows the server thinks fit on a
+    // page. Must match SUGGESTIONS_PAGE_SIZE above.
+    pageSize: SUGGESTIONS_PAGE_SIZE
   });
 }));
 
