@@ -278,6 +278,50 @@ describe('curatorAccessAsync.userCanCurateEntity', () => {
   });
 });
 
+describe('curatorAccessAsync.userCanCurateEntityFully', () => {
+  beforeAll(async () => { await initApp(); });
+
+  test('admin is always allowed', async () => {
+    const result = await curatorAccessAsync.userCanCurateEntityFully(
+      { id: 1, role: 'admin' },
+      9999
+    );
+    expect(result).toEqual({ allowed: true, collectionIds: null });
+  });
+
+  test('manager allowed when they hold role on the ONLY collection containing the entity', async () => {
+    const { user, entityId, collectionId } = await seedEntityInCollection({ userRole: 'manager' });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(user, entityId);
+    expect(result.allowed).toBe(true);
+    expect(result.collectionIds).toEqual([collectionId]);
+  });
+
+  test('manager DENIED when the entity has citations spanning collections outside their scope', async () => {
+    // Seed entity in collection A (manager has manager role).
+    const seed = await seedEntityInCollection({ userRole: 'manager' });
+    // Cite the SAME entity in a document that lives in a second collection
+    // where the manager has no rights. mergeEntities would blast citations
+    // in that second collection; userCanCurateEntityFully must deny.
+    const other = await seedEntityInCollection({ userRole: 'viewer' });
+    await citationsAsync.create({
+      entity_id: seed.entityId,
+      transcript_id: other.transcriptId,
+      document_id: other.documentId,
+      passage_text: 'cross-collection fixture citation',
+      extraction_method: 'manual',
+      approval_status: 'approved'
+    });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(seed.user, seed.entityId);
+    expect(result.allowed).toBe(false);
+  });
+
+  test('non-existent entity returns forbidden shape (no existence disclosure)', async () => {
+    const { user } = await seedEntityInCollection({ userRole: 'manager' });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(user, 9999999);
+    expect(result.allowed).toBe(false);
+  });
+});
+
 describe('curatorAccessAsync.userCanCurateCitation', () => {
   beforeAll(async () => { await initApp(); });
 

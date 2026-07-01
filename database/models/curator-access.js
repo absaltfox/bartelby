@@ -87,6 +87,36 @@ function curatorAccessFactory({
     });
   }
 
+  // Stricter variant of userCanCurateEntity: allowed only when the user
+  // holds manager-or-higher on EVERY collection that contains any of the
+  // entity's citations. Used by the merge gate — the merge operation is
+  // corpus-wide (re-points every citation of source → target), so an
+  // "any-collection" gate would let a manager mutate evidence in
+  // collections they don't authorize. Any-collection callers keep using
+  // userCanCurateEntity; whole-entity callers (merge, delete, corpus-wide
+  // rewrites) must use this stricter predicate.
+  async function userCanCurateEntityFully(user, entityId, opts) {
+    return withCache('entityFully', entityId, opts, async () => {
+      const admin = adminShortCircuit(user);
+      if (admin) return admin;
+      if (!user || !user.id) return { allowed: false };
+
+      const entity = await entitiesAsync.getById(entityId);
+      if (!entity) return { allowed: false };
+
+      const collectionIds = await documentCollectionsAsync.listCollectionIdsForEntity(entityId);
+      if (!collectionIds.length) return { allowed: false };
+
+      for (const collectionId of collectionIds) {
+        const role = await userCollectionAccessAsync.getRoleForUser(user.id, collectionId);
+        if (!role || !roleAtLeast(role, 'manager')) {
+          return { allowed: false };
+        }
+      }
+      return { allowed: true, collectionIds };
+    });
+  }
+
   // Citations attach to either an entity, a date_expression, or a
   // relationship. In all three cases the citation's containing collection
   // resolves through an entity, so we forward to userCanCurateEntity once
@@ -225,6 +255,7 @@ function curatorAccessFactory({
 
   return {
     userCanCurateEntity,
+    userCanCurateEntityFully,
     userCanCurateCitation,
     userCanCurateRelationship,
     userCanCurateDateExpression,

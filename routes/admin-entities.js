@@ -48,11 +48,18 @@ function requireCurateNewEntityForTranscript(req, res, next) {
   })(req, res, next);
 }
 
-// Custom middleware: gates POST /merge by requiring curator rights on BOTH
-// source and target entities. Calls userCanCurateEntity for each id; if
-// either check fails, the request is denied. Per the spec, entity merge
-// within collection is permitted "if both source and target entities
-// belong to documents in the curator's collection. Otherwise admin-only."
+// Custom middleware: gates POST /merge by requiring FULL curator rights on
+// BOTH source and target entities. mergeEntities re-points every citation
+// (and every relationship and date_expression) of source → target in one
+// corpus-wide UPDATE, so a "manages at least one containing collection"
+// gate would let a manager mutate evidence in collections they don't
+// authorize. userCanCurateEntityFully demands manager-or-higher on EVERY
+// collection containing either entity's citations; if the manager's scope
+// doesn't fully cover both entities, escalate to admin.
+//
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Security considerations" — the merge blast radius is the same class
+// of hazard as phrase-target promote.
 function requireCurateEntityMerge(req, res, next) {
   return asyncHandler(async (req2, res2, next2) => {
     if (!req2.isAuthenticated || !req2.isAuthenticated()) {
@@ -66,9 +73,9 @@ function requireCurateEntityMerge(req, res, next) {
 
     req2.curatorPermissionCache = req2.curatorPermissionCache || new Map();
     const cache = req2.curatorPermissionCache;
-    const sourceCheck = await db.curatorAccessAsync.userCanCurateEntity(req2.user, sourceId, { cache });
+    const sourceCheck = await db.curatorAccessAsync.userCanCurateEntityFully(req2.user, sourceId, { cache });
     if (!sourceCheck.allowed) return res2.status(404).end();
-    const targetCheck = await db.curatorAccessAsync.userCanCurateEntity(req2.user, targetId, { cache });
+    const targetCheck = await db.curatorAccessAsync.userCanCurateEntityFully(req2.user, targetId, { cache });
     if (!targetCheck.allowed) return res2.status(404).end();
     return next2();
   })(req, res, next);
