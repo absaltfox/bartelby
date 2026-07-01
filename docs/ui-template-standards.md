@@ -209,6 +209,32 @@ assistive tech, so the visual grouping is not conveyed. Either:
 The first form is preferred when the page already renders a visible group
 label, since the visible text and the accessible name stay in sync.
 
+### Curator action toolbar
+
+Pages that offer a curator multiple entry-point actions (Navigate, Correct,
+Author) MUST use the toolbar cluster:
+
+```html
+<div class="curator-action-toolbar entity-curator-toolbar">
+  <section class="curator-action-group" aria-labelledby="curator-action-navigate">
+    <p class="curator-action-group-label" id="curator-action-navigate">Navigate</p>
+    <div class="curator-action-buttons"> … </div>
+  </section>
+  <section class="curator-action-group" aria-labelledby="curator-action-correct">
+    <p class="curator-action-group-label" id="curator-action-correct">Correct</p>
+    <div class="curator-action-buttons"> … </div>
+    <p class="curator-action-note">Consequence text explaining what a correction
+      actually mutates.</p>
+  </section>
+</div>
+```
+
+**Canonical example:** `views/admin/entity-detail.ejs` (lines 25–49).
+
+Each `<section>` MUST carry `aria-labelledby`. The consequence text
+(`.curator-action-note`) MUST appear inside the group whose actions mutate
+corpus state.
+
 ### Conditional HTML Attributes
 
 When an HTML attribute must appear only under a condition (for example
