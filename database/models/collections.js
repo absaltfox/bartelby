@@ -454,6 +454,50 @@ const documentCollectionsAsync = {
     `, ids);
   },
 
+  // Returns the distinct collection ids that contain at least one document
+  // the entity is cited in. The curator-access predicate uses this to
+  // answer "which collections govern mutation rights on this entity?" —
+  // entities live in documents (via citations), not collections directly,
+  // so the chain runs entity → citations.document_id → document_collections.
+  async listCollectionIdsForEntity(entityId) {
+    const rows = await allAsync(`
+      SELECT DISTINCT dc.collection_id
+      FROM citations c
+      INNER JOIN document_collections dc ON dc.document_id = c.document_id
+      WHERE c.entity_id = ?
+    `, [entityId]);
+    return rows.map(r => r.collection_id);
+  },
+
+  // Returns the distinct collection ids that contain at least one
+  // sentiment_annotations row with target_kind='phrase' and a normalized
+  // target_phrase equal to the supplied normalizedPhrase. The curator-access
+  // predicate uses this to answer "which collections does this phrase
+  // appear in?" so it can intersect against the user's manager-or-higher
+  // collections.
+  //
+  // The phrase comparison matches the normalization the existing admin
+  // promote-to-entity handler uses (see
+  // routes/admin-sentiment-phrase-targets.js and
+  // database/models/sentiment.js normalizePhraseSql) — LOWER + RTRIM
+  // trailing punctuation (.,;:!?). Callers should pass the phrase already
+  // normalized via db.normalizeSentimentPhrase so the JS-side and SQL-side
+  // normalizations agree.
+  //
+  // Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  // § "Phrase-target scope" and § "Phrase-target promotion blast radius",
+  // this is the security-critical lookup for PR 4's scoped UPDATE.
+  async listCollectionsWithPhraseAnnotation(normalizedPhrase) {
+    const rows = await allAsync(`
+      SELECT DISTINCT dc.collection_id
+      FROM sentiment_annotations sa
+      INNER JOIN document_collections dc ON dc.document_id = sa.document_id
+      WHERE sa.target_kind = 'phrase'
+        AND LOWER(RTRIM(TRIM(sa.target_phrase), '.,;:!?')) = ?
+    `, [normalizedPhrase]);
+    return rows.map(r => r.collection_id);
+  },
+
   async setForDocument(documentId, collectionIds) {
     const ids = (collectionIds || []).map(Number).filter(Number.isInteger);
     await withExclusiveLock(async () => {

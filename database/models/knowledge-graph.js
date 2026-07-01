@@ -1257,6 +1257,13 @@ const dateExpressions = {
     return await this.create({ entity_id, label, earliest, latest, precision, qualifier, calendar });
   },
 
+  async getById(id) {
+    return await getAsync(`
+      SELECT * FROM date_expressions
+      WHERE id = ?
+    `, [id]);
+  },
+
   async getByEntityId(entityId) {
     return await allAsync(`
       SELECT * FROM date_expressions
