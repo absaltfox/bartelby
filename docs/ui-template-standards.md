@@ -505,6 +505,25 @@ Operational row actions should use one consistent button family:
 - if a link is presented as a button, its hover and focus treatment must match
   the button family rather than reverting to text-link behavior
 
+### Hide unavailable actions
+
+Actions the current viewer cannot perform (role-gated, not-yet-eligible,
+already-in-flight) MUST be hidden, not rendered as `disabled` with a tooltip.
+Rationale: curators triage by scanning; a disabled button reads as "I could do
+this if I fixed something," which wastes attention.
+
+**Exceptions where `disabled` is acceptable:**
+
+- The button's disabled state itself teaches the required precondition (e.g.,
+  "Merge" disabled until both source and target are selected — see
+  `views/admin/merge-entities.ejs`).
+- An in-flight action where "Running…" is a status the curator must see; in
+  this case, replace the button with a `status-badge status-running` chip
+  rather than leaving `<button disabled>`.
+
+For simple "user lacks permission" cases: omit the element entirely and let the
+layout re-flow.
+
 ## CSRF
 
 Every mutating HTML form must include a CSRF token. GET forms should not.
