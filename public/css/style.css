@@ -5430,12 +5430,25 @@ main { flex: 1; padding: 32px 0; }
     grid-column: 1 / -1;
   }
 
+  /* Manage-collection composition: manage-collection-shell + rail + content
+     are three direct children of .admin-page--workspace. The manage shell
+     spans the full width on top of the rail+content row so the rail still
+     anchors at 230px and the content shares the remaining track.
+
+     Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-
+     workbench-design.md § "Shell composition" and § "Mount points" — the
+     rail's :has() selector already converts the workspace to a grid, this
+     rule just slots the manage-collection-shell across the top row. */
+  .admin-page--workspace:has(> .knowledge-workbench-rail) > .manage-collection-shell {
+    grid-column: 1 / -1;
+  }
+
   .admin-page--workspace:has(> .knowledge-workbench-rail) > .knowledge-workbench-rail {
     grid-column: 1;
     grid-row: 2 / span 40;
   }
 
-  .admin-page--workspace:has(> .knowledge-workbench-rail) > :not(.admin-subnav):not(.knowledge-workbench-rail) {
+  .admin-page--workspace:has(> .knowledge-workbench-rail) > :not(.admin-subnav):not(.knowledge-workbench-rail):not(.manage-collection-shell) {
     grid-column: 2;
     min-width: 0;
   }
@@ -5515,6 +5528,118 @@ main { flex: 1; padding: 32px 0; }
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1.25rem;
   margin-bottom: 2rem;
+}
+
+/* Manage-collection Knowledge dashboard tiles.
+   Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-
+   workbench-design.md § "Dashboard": tile groups + tiles with soft-fail
+   error state. Tokens follow the existing admin shell. */
+.manage-knowledge-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.manage-knowledge-dashboard-header {
+  margin-bottom: 4px;
+}
+
+.manage-knowledge-dashboard-header h2 {
+  margin: 4px 0 6px;
+}
+
+.manage-knowledge-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.manage-knowledge-page-header h2 {
+  margin: 6px 0 4px;
+}
+
+.manage-knowledge-page-header .back-link {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  text-decoration: none;
+}
+
+.manage-knowledge-page-header .back-link:hover,
+.manage-knowledge-page-header .back-link:focus {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.dashboard-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-group-title {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.dashboard-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.dashboard-tile--error {
+  border-color: var(--border);
+  background: var(--surface-alt);
+}
+
+.dashboard-tile-title {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.dashboard-tile-value {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dashboard-tile-error {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
+.dashboard-tile-link {
+  margin-top: auto;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.dashboard-tile-link:hover,
+.dashboard-tile-link:focus {
+  text-decoration: underline;
 }
 
 .knowledge-overview-section,

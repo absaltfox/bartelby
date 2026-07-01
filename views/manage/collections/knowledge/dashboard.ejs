@@ -1,0 +1,104 @@
+<%#
+  Collection-scoped Knowledge dashboard.
+
+  Composition: manage-collection-nav (shared) + knowledge-workbench-rail
+  (shared, parameterized with urlPrefix + isAdmin) + dashboard content as
+  three direct children of .admin-page--workspace. The three-direct-child
+  CSS variant is added in public/css/style.css (Task 3.7).
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (Mount points / Dashboard / Shell composition / Grouped tile rule).
+  Per docs/ui-template-standards.md (Grouped Action Toolbars — each tile
+  group's <section> carries aria-labelledby pointing to its visible title).
+  Per docs/development-principles.md (Hide unavailable actions) — the
+  Maintenance group is admin-only and not rendered for non-admin managers.
+%>
+<%- include('../../../partials/header', { pageTitle, query: '' }) %>
+
+<div class="admin-page admin-page--workspace">
+  <%- include('../../../partials/manage-collection-nav', { collection, heading: collection.name, activePage: 'knowledge' }) %>
+  <%- include('../../../partials/knowledge-nav', { activeKnowledgePage, urlPrefix, isAdmin }) %>
+
+  <section class="manage-knowledge-dashboard">
+    <header class="manage-knowledge-dashboard-header">
+      <p class="kg-panel-eyebrow">Knowledge</p>
+      <h2>Curation overview for <%= collection.name %></h2>
+      <p class="subtitle">Pending review queues, knowledge graph footprint, and extraction hygiene for this collection.</p>
+    </header>
+
+    <section class="dashboard-group" aria-labelledby="manage-knowledge-group-review">
+      <p class="dashboard-group-title" id="manage-knowledge-group-review">Review</p>
+      <div class="tile-grid">
+        <%- include('partials/_dashboard-tile', {
+          title: 'Pending evidence review',
+          count: counts.pendingCitations,
+          link: urlPrefix + '/review-extractions',
+          formatDashboardCount
+        }) %>
+        <%- include('partials/_dashboard-tile', {
+          title: 'Pending authority suggestions',
+          count: counts.pendingSuggestions,
+          link: urlPrefix + '/authorities/suggestions',
+          formatDashboardCount
+        }) %>
+        <%- include('partials/_dashboard-tile', {
+          title: 'Pending phrase-targets',
+          count: counts.pendingPhraseTargets,
+          link: urlPrefix + '/sentiment/phrase-targets',
+          formatDashboardCount
+        }) %>
+      </div>
+    </section>
+
+    <section class="dashboard-group" aria-labelledby="manage-knowledge-group-browse">
+      <p class="dashboard-group-title" id="manage-knowledge-group-browse">Browse</p>
+      <div class="tile-grid">
+        <%- include('partials/_dashboard-tile', {
+          title: 'Entities in this collection',
+          count: counts.entityTotals,
+          link: urlPrefix + '/entities',
+          formatDashboardCount
+        }) %>
+        <%- include('partials/_dashboard-tile', {
+          title: 'Authorities touched',
+          count: counts.authoritiesTouched,
+          link: urlPrefix + '/authorities',
+          formatDashboardCount
+        }) %>
+        <%- include('partials/_dashboard-tile', {
+          title: 'Unresolved entities',
+          count: counts.unresolvedEntities,
+          link: urlPrefix + '/entities?unresolved=1',
+          formatDashboardCount
+        }) %>
+      </div>
+    </section>
+
+    <section class="dashboard-group" aria-labelledby="manage-knowledge-group-quality">
+      <p class="dashboard-group-title" id="manage-knowledge-group-quality">Quality</p>
+      <div class="tile-grid">
+        <%- include('partials/_dashboard-tile', {
+          title: 'Extraction-hygiene incidents',
+          count: counts.qualityCounters,
+          link: null,
+          formatDashboardCount
+        }) %>
+      </div>
+    </section>
+
+    <% if (isAdmin) { %>
+      <section class="dashboard-group" aria-labelledby="manage-knowledge-group-maintenance">
+        <p class="dashboard-group-title" id="manage-knowledge-group-maintenance">Maintenance</p>
+        <div class="tile-grid">
+          <div class="dashboard-tile">
+            <p class="dashboard-tile-title">Vocabularies, backfill, clusters</p>
+            <p class="dashboard-tile-value">Admin tools</p>
+            <a class="dashboard-tile-link" href="<%= urlPrefix %>/vocabularies/relationship-types">Open &rarr;</a>
+          </div>
+        </div>
+      </section>
+    <% } %>
+  </section>
+</div>
+
+<%- include('../../../partials/footer') %>

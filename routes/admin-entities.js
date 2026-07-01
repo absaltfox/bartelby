@@ -3,13 +3,83 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
+const { requireCurate } = require('../middleware/curator-permissions');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { resolveCitationEvidence } = require('../utils/citation-evidence');
 const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
-router.use(requireAdmin);
+// PR 4 — collection-scoped knowledge workbench.
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Relaxed POST endpoints", entity correction and authoring POSTs swap
+// requireAdmin for requireCurate(...). The router-wide requireAdmin gate
+// is replaced by per-route gating so individual POSTs can opt in to the
+// relaxed predicate while all GETs and unrelaxed POSTs remain admin-only.
+
+// Custom middleware: gates POST /new (entity authoring) via the chosen
+// transcript's document → collections chain. The user must hold manager
+// (or higher) on at least one collection containing the transcript's
+// document. Admins short-circuit per the spec's "admin behavior unchanged"
+// principle. Returns 404 on mismatch to avoid existence disclosure
+// (mirrors the curator-access predicate convention).
+function requireCurateNewEntityForTranscript(req, res, next) {
+  return asyncHandler(async (req2, res2, next2) => {
+    if (!req2.isAuthenticated || !req2.isAuthenticated()) {
+      return res2.status(401).json({ error: 'Authentication required.' });
+    }
+    if (req2.user.role === 'admin') return next2();
+
+    const transcriptId = parseInt(req2.body && req2.body.transcriptId, 10);
+    if (Number.isNaN(transcriptId)) return res2.status(400).end();
+
+    const transcript = await db.transcriptsAsync.getById(transcriptId);
+    if (!transcript) return res2.status(404).end();
+
+    const docCollectionIds = await db.documentCollectionsAsync.listCollectionIdsForDocument(transcript.document_id);
+    for (const cid of docCollectionIds) {
+      const role = await db.userCollectionAccessAsync.getRoleForUser(req2.user.id, cid);
+      if (role && db.roleAtLeast(role, 'manager')) {
+        req2.curatorAllowedCollectionIds = [cid];
+        return next2();
+      }
+    }
+    return res2.status(404).end();
+  })(req, res, next);
+}
+
+// Custom middleware: gates POST /merge by requiring FULL curator rights on
+// BOTH source and target entities. mergeEntities re-points every citation
+// (and every relationship and date_expression) of source → target in one
+// corpus-wide UPDATE, so a "manages at least one containing collection"
+// gate would let a manager mutate evidence in collections they don't
+// authorize. userCanCurateEntityFully demands manager-or-higher on EVERY
+// collection containing either entity's citations; if the manager's scope
+// doesn't fully cover both entities, escalate to admin.
+//
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Security considerations" — the merge blast radius is the same class
+// of hazard as phrase-target promote.
+function requireCurateEntityMerge(req, res, next) {
+  return asyncHandler(async (req2, res2, next2) => {
+    if (!req2.isAuthenticated || !req2.isAuthenticated()) {
+      return res2.status(401).json({ error: 'Authentication required.' });
+    }
+    if (req2.user.role === 'admin') return next2();
+
+    const sourceId = parseInt(req2.body && req2.body.source_entity_id, 10);
+    const targetId = parseInt(req2.body && req2.body.target_entity_id, 10);
+    if (Number.isNaN(sourceId) || Number.isNaN(targetId)) return res2.status(400).end();
+
+    req2.curatorPermissionCache = req2.curatorPermissionCache || new Map();
+    const cache = req2.curatorPermissionCache;
+    const sourceCheck = await db.curatorAccessAsync.userCanCurateEntityFully(req2.user, sourceId, { cache });
+    if (!sourceCheck.allowed) return res2.status(404).end();
+    const targetCheck = await db.curatorAccessAsync.userCanCurateEntityFully(req2.user, targetId, { cache });
+    if (!targetCheck.allowed) return res2.status(404).end();
+    return next2();
+  })(req, res, next);
+}
 
 const ENTITY_TYPES = ['person', 'place', 'event', 'date', 'organization', 'topic', 'artifact', 'claim', 'role'];
 const PAGE_SIZE = 25;
@@ -271,7 +341,7 @@ async function loadEntityDetailContext(id) {
   };
 }
 
-router.get('/api/search', asyncHandler(async (req, res) => {
+router.get('/api/search', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.entities || typeof stores.entities.search !== 'function') {
     return res.json({ results: [] });
@@ -307,7 +377,7 @@ router.get('/api/search', asyncHandler(async (req, res) => {
   return res.json({ results: enriched });
 }));
 
-router.get('/api/browse', asyncHandler(async (req, res) => {
+router.get('/api/browse', requireAdmin, asyncHandler(async (req, res) => {
   const typeFilter = String(req.query.type || 'all').trim();
   const q = String(req.query.q || '').trim();
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -324,7 +394,7 @@ router.get('/api/browse', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/api/:id/preview', asyncHandler(async (req, res) => {
+router.get('/api/:id/preview', requireAdmin, asyncHandler(async (req, res) => {
   const entityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(entityId)) {
     return res.status(400).json({ error: 'Invalid entity id.' });
@@ -338,7 +408,7 @@ router.get('/api/:id/preview', asyncHandler(async (req, res) => {
   return res.json({ entity: preview });
 }));
 
-router.get('/merge', asyncHandler(async (req, res) => {
+router.get('/merge', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -365,7 +435,7 @@ router.get('/merge', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/merge', express.urlencoded({ extended: false }), requireCurateEntityMerge, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const sourceId = parseInt(req.body.source_entity_id, 10);
   const targetId = parseInt(req.body.target_entity_id, 10);
@@ -387,7 +457,7 @@ router.post('/merge', express.urlencoded({ extended: false }), asyncHandler(asyn
   }
 }));
 
-router.get('/new', asyncHandler(async (req, res) => {
+router.get('/new', requireAdmin, asyncHandler(async (req, res) => {
   // Pre-populate from query string so a future document-reading-surface link
   // can deep-link with transcript_id, verbatim, etc. Curator-supplied integers
   // are coerced via parseInt; bad input becomes null and the form requires it.
@@ -422,7 +492,7 @@ router.get('/new', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/new', express.urlencoded({ extended: false }), requireCurateNewEntityForTranscript, asyncHandler(async (req, res) => {
   const errBack = (msg) => knowledgePath('/entities/new', '?error=' + encodeURIComponent(msg));
 
   const entityType = String(req.body.entity_type || '').trim();
@@ -501,7 +571,7 @@ router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async 
   res.redirect(knowledgePath(`/entities/${entityId}`));
 }));
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -532,7 +602,7 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/:id/edit', asyncHandler(async (req, res) => {
+router.get('/:id/edit', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     return res.redirect(knowledgePath(`/entities/${req.params.id}/edit`));
   }
@@ -552,7 +622,7 @@ router.get('/:id/edit', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/:id/split', asyncHandler(async (req, res) => {
+router.get('/:id/split', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     return res.redirect(knowledgePath(`/entities/${req.params.id}/split`));
   }
@@ -572,7 +642,7 @@ router.get('/:id/split', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin/entities') {
     return res.redirect(knowledgePath(`/entities/${req.params.id}`));
   }
@@ -601,7 +671,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:id/edit', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/edit', express.urlencoded({ extended: false }), requireCurate('entity', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const errBack = (msg) => knowledgePath(`/entities/${entityId}`, '?error=' + encodeURIComponent(msg));
@@ -693,7 +763,7 @@ function parseIdList(value) {
   return raw.map((item) => parseInt(item, 10)).filter(Number.isInteger);
 }
 
-router.post('/:id/split', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/split', express.urlencoded({ extended: false }), requireCurate('entity', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const sourceEntityId = parseInt(req.params.id, 10);
   const errBack = (msg) => knowledgePath(`/entities/${sourceEntityId}`, '?error=' + encodeURIComponent(msg));
@@ -798,7 +868,7 @@ router.post('/:id/split', express.urlencoded({ extended: false }), asyncHandler(
   res.redirect(knowledgePath(`/entities/${createdEntityId}`, '?splitCreated=1'));
 }));
 
-router.post('/:id/authority/create', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/authority/create', express.urlencoded({ extended: false }), requireCurate('entity', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(entityId)) {
@@ -839,7 +909,7 @@ router.post('/:id/authority/create', express.urlencoded({ extended: false }), as
   }
 }));
 
-router.post('/:id/authority/assign', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/authority/assign', express.urlencoded({ extended: false }), requireCurate('entity', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const authorityId = parseInt(req.body.authority_id, 10);
@@ -865,7 +935,7 @@ router.post('/:id/authority/assign', express.urlencoded({ extended: false }), as
   }
 }));
 
-router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencoded({ extended: false }), requireCurate('authoritySuggestion', 'suggestionId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const suggestionId = parseInt(req.params.suggestionId, 10);
@@ -887,7 +957,7 @@ router.post('/:id/authority-suggestions/:suggestionId/approve', express.urlencod
   }
 }));
 
-router.post('/:id/authority-suggestions/:suggestionId/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/authority-suggestions/:suggestionId/reject', express.urlencoded({ extended: false }), requireCurate('authoritySuggestion', 'suggestionId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const suggestionId = parseInt(req.params.suggestionId, 10);
@@ -907,7 +977,7 @@ router.post('/:id/authority-suggestions/:suggestionId/reject', express.urlencode
   }
 }));
 
-router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended: false }), requireCurate('citation', 'citationId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -927,7 +997,7 @@ router.post('/:id/citations/:citationId/approve', express.urlencoded({ extended:
   }
 }));
 
-router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: false }), requireCurate('citation', 'citationId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -947,7 +1017,7 @@ router.post('/:id/citations/:citationId/reject', express.urlencoded({ extended: 
   }
 }));
 
-router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: false }), requireCurate('citation', 'citationId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const entityId = parseInt(req.params.id, 10);
   const citationId = parseInt(req.params.citationId, 10);
@@ -967,7 +1037,7 @@ router.post('/:id/citations/:citationId/delete', express.urlencoded({ extended: 
   }
 }));
 
-router.post('/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/delete', express.urlencoded({ extended: false }), requireCurate('entity', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) {

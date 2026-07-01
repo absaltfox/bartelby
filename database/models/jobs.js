@@ -1621,6 +1621,47 @@ const adminJobsAsync = {
 };
 
 const extractionJobs = {
+  // Spec § "Dashboard counts" (extraction quality aggregate). Sums the
+  // drop/unresolved counters across every extraction_jobs row whose target
+  // document is in the given collection, plus counts of failed/running
+  // jobs. The drop-counter columns are introduced by migration v74
+  // (dropped_verbatim_mismatch_count) and v76 (unresolved_relationship_count,
+  // unresolved_date_count). NOTE for PR 3 dashboard handler: the spec said
+  // "latest job per document" but at the dashboard level we want the
+  // running total of LLM hygiene incidents the curator should be aware of,
+  // so this implementation sums across all jobs. If "latest per document"
+  // turns out to be the desired UX in PR 3, swap to a window-style query.
+  async sumQualityCountersByCollection(collectionId) {
+    const normalizedId = Number(collectionId);
+    const zero = {
+      verbatim_mismatch: 0,
+      unresolved_rel: 0,
+      unresolved_date: 0,
+      failed_jobs: 0,
+      running_jobs: 0
+    };
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return zero;
+    const row = await getAsync(`
+      SELECT
+        COALESCE(SUM(j.dropped_verbatim_mismatch_count), 0) AS verbatim_mismatch,
+        COALESCE(SUM(j.unresolved_relationship_count), 0) AS unresolved_rel,
+        COALESCE(SUM(j.unresolved_date_count), 0) AS unresolved_date,
+        SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed_jobs,
+        SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END) AS running_jobs
+      FROM extraction_jobs j
+      WHERE j.document_id IN (
+        SELECT document_id FROM document_collections WHERE collection_id = ?
+      )
+    `, [normalizedId]);
+    return {
+      verbatim_mismatch: Number(row?.verbatim_mismatch || 0),
+      unresolved_rel: Number(row?.unresolved_rel || 0),
+      unresolved_date: Number(row?.unresolved_date || 0),
+      failed_jobs: Number(row?.failed_jobs || 0),
+      running_jobs: Number(row?.running_jobs || 0)
+    };
+  },
+
   async create({
     transcript_id,
     document_id,

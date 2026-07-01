@@ -9,7 +9,37 @@ const db = require('../database/db');
 const { resolveCitationEvidence } = require('../utils/citation-evidence');
 const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
-router.use(requireAdmin);
+// PR 4 — collection-scoped knowledge workbench.
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Relaxed POST endpoints", POST /new (relationship authoring) gates
+// through the chosen transcript's document → collections chain — the
+// citation lives on the transcript, so we ask the same question as the
+// entity-authoring case: does the user have manager-or-higher on a
+// collection containing this transcript's document?
+function requireCurateNewRelationshipForTranscript(req, res, next) {
+  return asyncHandler(async (req2, res2, next2) => {
+    if (!req2.isAuthenticated || !req2.isAuthenticated()) {
+      return res2.status(401).json({ error: 'Authentication required.' });
+    }
+    if (req2.user.role === 'admin') return next2();
+
+    const transcriptId = parseInt(req2.body && req2.body.transcriptId, 10);
+    if (Number.isNaN(transcriptId)) return res2.status(400).end();
+
+    const transcript = await db.transcriptsAsync.getById(transcriptId);
+    if (!transcript) return res2.status(404).end();
+
+    const docCollectionIds = await db.documentCollectionsAsync.listCollectionIdsForDocument(transcript.document_id);
+    for (const cid of docCollectionIds) {
+      const role = await db.userCollectionAccessAsync.getRoleForUser(req2.user.id, cid);
+      if (role && db.roleAtLeast(role, 'manager')) {
+        req2.curatorAllowedCollectionIds = [cid];
+        return next2();
+      }
+    }
+    return res2.status(404).end();
+  })(req, res, next);
+}
 
 const VOICE_ROLES = Object.freeze(['author', 'speaker', 'described_subject']);
 
@@ -17,7 +47,7 @@ function knowledgePath(pathname, queryString) {
   return '/admin/knowledge' + pathname + (queryString || '');
 }
 
-router.get('/new', asyncHandler(async (req, res) => {
+router.get('/new', requireAdmin, asyncHandler(async (req, res) => {
   const prefill = {
     sourceEntityId: req.query.sourceEntityId ? parseInt(req.query.sourceEntityId, 10) : null,
     targetEntityId: req.query.targetEntityId ? parseInt(req.query.targetEntityId, 10) : null,
@@ -65,7 +95,7 @@ router.get('/new', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/new', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/new', express.urlencoded({ extended: false }), requireCurateNewRelationshipForTranscript, asyncHandler(async (req, res) => {
   const errBack = (msg) => knowledgePath('/relationships/new', '?error=' + encodeURIComponent(msg));
 
   const sourceId = parseInt(req.body.source_entity_id, 10);

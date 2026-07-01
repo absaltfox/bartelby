@@ -46,7 +46,15 @@ function curatorAccessFactory({
     if (!opts || !opts.cache) return compute();
     const key = `${kind}:${id}`;
     if (opts.cache.has(key)) return opts.cache.get(key);
-    const promise = compute();
+    // A rejected predicate promise must NOT stay in the cache; otherwise a
+    // single transient DB error propagates to every dependent permission
+    // check in the request (e.g. a bulk endpoint resolving 200 ids would
+    // see the same rejection 200 times). Delete the key on rejection so
+    // future callers can retry cleanly.
+    const promise = compute().catch(err => {
+      opts.cache.delete(key);
+      throw err;
+    });
     opts.cache.set(key, promise);
     return promise;
   }
@@ -76,6 +84,36 @@ function curatorAccessFactory({
         }
       }
       return { allowed: false };
+    });
+  }
+
+  // Stricter variant of userCanCurateEntity: allowed only when the user
+  // holds manager-or-higher on EVERY collection that contains any of the
+  // entity's citations. Used by the merge gate — the merge operation is
+  // corpus-wide (re-points every citation of source → target), so an
+  // "any-collection" gate would let a manager mutate evidence in
+  // collections they don't authorize. Any-collection callers keep using
+  // userCanCurateEntity; whole-entity callers (merge, delete, corpus-wide
+  // rewrites) must use this stricter predicate.
+  async function userCanCurateEntityFully(user, entityId, opts) {
+    return withCache('entityFully', entityId, opts, async () => {
+      const admin = adminShortCircuit(user);
+      if (admin) return admin;
+      if (!user || !user.id) return { allowed: false };
+
+      const entity = await entitiesAsync.getById(entityId);
+      if (!entity) return { allowed: false };
+
+      const collectionIds = await documentCollectionsAsync.listCollectionIdsForEntity(entityId);
+      if (!collectionIds.length) return { allowed: false };
+
+      for (const collectionId of collectionIds) {
+        const role = await userCollectionAccessAsync.getRoleForUser(user.id, collectionId);
+        if (!role || !roleAtLeast(role, 'manager')) {
+          return { allowed: false };
+        }
+      }
+      return { allowed: true, collectionIds };
     });
   }
 
@@ -111,10 +149,10 @@ function curatorAccessFactory({
   }
 
   // Relationships connect two entities. Both endpoints are valid handles
-  // into the collection-containment chain; we resolve through the source
-  // entity. (If a relationship's source and target sit in disjoint
-  // collections, the manager only needs rights to one of them — by
-  // convention we ask about source. Future task may broaden to union.)
+  // into the collection-containment chain. Source and target may sit in
+  // disjoint collections; a manager who curates either side legitimately
+  // owns the relationship-supporting citation. Try source first, then
+  // fall back to target if the source check denies.
   async function userCanCurateRelationship(user, relationshipId, opts) {
     return withCache('relationship', relationshipId, opts, async () => {
       const admin = adminShortCircuit(user);
@@ -123,7 +161,13 @@ function curatorAccessFactory({
 
       const rel = await relationshipsAsync.getById(relationshipId);
       if (!rel) return { allowed: false };
-      return userCanCurateEntity(user, rel.source_entity_id, opts);
+
+      const fromSource = await userCanCurateEntity(user, rel.source_entity_id, opts);
+      if (fromSource.allowed) return fromSource;
+      if (rel.target_entity_id && rel.target_entity_id !== rel.source_entity_id) {
+        return userCanCurateEntity(user, rel.target_entity_id, opts);
+      }
+      return { allowed: false };
     });
   }
 
@@ -211,6 +255,7 @@ function curatorAccessFactory({
 
   return {
     userCanCurateEntity,
+    userCanCurateEntityFully,
     userCanCurateCitation,
     userCanCurateRelationship,
     userCanCurateDateExpression,

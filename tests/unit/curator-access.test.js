@@ -253,6 +253,73 @@ describe('curatorAccessAsync.userCanCurateEntity', () => {
     const r2 = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
     expect(r2).toBe(r1);  // same object reference -> served from cache
   });
+
+  test('rejected predicate is cleared from cache so subsequent calls retry', async () => {
+    const { user, entityId } = await seedEntityInCollection({ userRole: 'manager' });
+    const cache = new Map();
+    const originalGetById = entitiesAsync.getById;
+    let callCount = 0;
+    entitiesAsync.getById = async function (id) {
+      callCount += 1;
+      if (callCount === 1) throw new Error('synthetic transient failure');
+      return originalGetById.call(this, id);
+    };
+    try {
+      await expect(
+        curatorAccessAsync.userCanCurateEntity(user, entityId, { cache })
+      ).rejects.toThrow('synthetic transient failure');
+      // Cache entry must have been cleared, so the next call hits the (now successful) underlying lookup.
+      const recovered = await curatorAccessAsync.userCanCurateEntity(user, entityId, { cache });
+      expect(recovered.allowed).toBe(true);
+      expect(callCount).toBe(2);
+    } finally {
+      entitiesAsync.getById = originalGetById;
+    }
+  });
+});
+
+describe('curatorAccessAsync.userCanCurateEntityFully', () => {
+  beforeAll(async () => { await initApp(); });
+
+  test('admin is always allowed', async () => {
+    const result = await curatorAccessAsync.userCanCurateEntityFully(
+      { id: 1, role: 'admin' },
+      9999
+    );
+    expect(result).toEqual({ allowed: true, collectionIds: null });
+  });
+
+  test('manager allowed when they hold role on the ONLY collection containing the entity', async () => {
+    const { user, entityId, collectionId } = await seedEntityInCollection({ userRole: 'manager' });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(user, entityId);
+    expect(result.allowed).toBe(true);
+    expect(result.collectionIds).toEqual([collectionId]);
+  });
+
+  test('manager DENIED when the entity has citations spanning collections outside their scope', async () => {
+    // Seed entity in collection A (manager has manager role).
+    const seed = await seedEntityInCollection({ userRole: 'manager' });
+    // Cite the SAME entity in a document that lives in a second collection
+    // where the manager has no rights. mergeEntities would blast citations
+    // in that second collection; userCanCurateEntityFully must deny.
+    const other = await seedEntityInCollection({ userRole: 'viewer' });
+    await citationsAsync.create({
+      entity_id: seed.entityId,
+      transcript_id: other.transcriptId,
+      document_id: other.documentId,
+      passage_text: 'cross-collection fixture citation',
+      extraction_method: 'manual',
+      approval_status: 'approved'
+    });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(seed.user, seed.entityId);
+    expect(result.allowed).toBe(false);
+  });
+
+  test('non-existent entity returns forbidden shape (no existence disclosure)', async () => {
+    const { user } = await seedEntityInCollection({ userRole: 'manager' });
+    const result = await curatorAccessAsync.userCanCurateEntityFully(user, 9999999);
+    expect(result.allowed).toBe(false);
+  });
 });
 
 describe('curatorAccessAsync.userCanCurateCitation', () => {
@@ -328,6 +395,24 @@ describe('curatorAccessAsync.userCanCurateRelationship', () => {
     const { user } = await seedRelationshipInCollection({ userRole: 'manager' });
     const result = await curatorAccessAsync.userCanCurateRelationship(user, 9999999);
     expect(result.allowed).toBe(false);
+  });
+
+  test('manager on the target endpoint\'s collection is allowed even when source is in a different collection', async () => {
+    // Source entity is in collection A (manager has no rights). Target is
+    // in collection B (manager is). Predicate must admit via target fallback.
+    const collectionA = await seedEntityInCollection({ userRole: 'viewer' });
+    const collectionB = await seedEntityInCollection({ userRole: 'manager' });
+    const relationshipId = await relationshipsAsync.create({
+      source_entity_id: collectionA.entityId,
+      target_entity_id: collectionB.entityId,
+      relationship_type: 'knows',
+      label: 'cross-collection',
+      properties: {},
+      confidence: 1
+    });
+    const result = await curatorAccessAsync.userCanCurateRelationship(collectionB.user, relationshipId);
+    expect(result.allowed).toBe(true);
+    expect(result.collectionIds).toContain(collectionB.collectionId);
   });
 });
 

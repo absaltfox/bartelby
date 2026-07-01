@@ -3,12 +3,22 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
+const { requireCurate, requireCurateAll } = require('../middleware/curator-permissions');
 const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { normalizeComparable } = require('../utils/entity-resolution');
 
-router.use(requireAdmin);
+// PR 4 — collection-scoped knowledge workbench.
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Relaxed POST endpoints (explicit enumeration)" and § "Authority
+// asymmetry", entity-side authority actions (approve / reject
+// suggestions, unlink / reassign entity members, disambiguation
+// approve / new-authority) gate on requireCurate(...). Authority-side
+// mutations — merge, rename, delete, bulk-delete, bulk-merge, generic
+// terms, backfill, and the suggestion-jobs triggers — stay admin-only
+// per the spec's hard split. The router-wide requireAdmin gate is
+// replaced with per-route gating to allow individual POSTs to opt in.
 
 const PAGE_SIZE = 25;
 const SUGGESTIONS_PAGE_SIZE = 25;
@@ -310,7 +320,7 @@ function normalizeSortDirection(value) {
   return String(value || '').toLowerCase() === 'desc' ? 'desc' : 'asc';
 }
 
-router.get('/api/search', asyncHandler(async (req, res) => {
+router.get('/api/search', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const q = String(req.query.q || '').trim();
   const typeFilter = String(req.query.type || '').trim();
@@ -325,7 +335,7 @@ router.get('/api/search', asyncHandler(async (req, res) => {
   return res.json({ results });
 }));
 
-router.post('/backfill', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/backfill', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const unresolvedIds = [];
   let offset = 0;
@@ -360,7 +370,7 @@ router.post('/backfill', express.urlencoded({ extended: false }), asyncHandler(a
   return res.redirect(knowledgePath(`/?queuedBackfill=${queuedJobs}`));
 }));
 
-router.get('/suggestions', asyncHandler(async (req, res) => {
+router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const status = String(req.query.status || 'pending').trim();
   const matchMethodFilter = parseMatchMethod(req);
@@ -433,7 +443,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/suggestions.json', asyncHandler(async (req, res) => {
+router.get('/suggestions.json', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [], nextCursor: null });
 
@@ -466,7 +476,7 @@ router.get('/suggestions.json', asyncHandler(async (req, res) => {
   res.json({ suggestions, nextCursor });
 }));
 
-router.get('/suggestions/context.json', asyncHandler(async (req, res) => {
+router.get('/suggestions/context.json', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [] });
 
@@ -479,7 +489,7 @@ router.get('/suggestions/context.json', asyncHandler(async (req, res) => {
   res.json({ suggestions: decorateSuggestionsDisplay(rows) });
 }));
 
-router.post('/suggestions/bulk/approve', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/bulk/approve', express.json(), requireCurateAll('authoritySuggestion', 'ids'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const rawIds = Array.isArray(req.body.ids) ? req.body.ids : [];
   const ids = rawIds.map(Number).filter(Number.isInteger);
@@ -524,7 +534,7 @@ router.post('/suggestions/bulk/approve', express.json(), asyncHandler(async (req
   res.json({ results, removedIds: Array.from(removedIds) });
 }));
 
-router.post('/suggestions/bulk/reject', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/bulk/reject', express.json(), requireCurateAll('authoritySuggestion', 'ids'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const rawIds = Array.isArray(req.body.ids) ? req.body.ids : [];
   const ids = rawIds.map(Number).filter(Number.isInteger);
@@ -564,7 +574,7 @@ router.post('/suggestions/bulk/reject', express.json(), asyncHandler(async (req,
   res.json({ results, removedIds: Array.from(removedIds) });
 }));
 
-router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/:id/approve', express.json(), requireCurate('authoritySuggestion', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id.' });
@@ -593,7 +603,7 @@ router.post('/suggestions/:id/approve', express.json(), asyncHandler(async (req,
   res.json({ success: true, suggestionId: id, removedSiblingIds });
 }));
 
-router.post('/suggestions/:id/reject', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/:id/reject', express.json(), requireCurate('authoritySuggestion', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id.' });
@@ -616,7 +626,7 @@ router.post('/suggestions/:id/reject', express.json(), asyncHandler(async (req, 
   res.json({ success: true, suggestionId: id });
 }));
 
-router.get('/generic-terms', asyncHandler(async (req, res) => {
+router.get('/generic-terms', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.authorityGenericTerms) {
     return res.status(404).render('error', { pageTitle: 'Not Found', message: 'Generic terms are unavailable.' });
@@ -636,7 +646,7 @@ router.get('/generic-terms', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/generic-terms', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/generic-terms', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const term = String(req.body.term || '').trim();
   const entityType = String(req.body.entity_type || '').trim() || null;
@@ -663,7 +673,7 @@ router.post('/generic-terms', express.urlencoded({ extended: false }), asyncHand
   }
 }));
 
-router.post('/generic-terms/settings', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/generic-terms/settings', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (stores.settings && stores.settings.set) {
     await stores.settings.set('authority_generic_learning_enabled', req.body.authority_generic_learning_enabled === 'on' ? '1' : '0');
@@ -673,7 +683,7 @@ router.post('/generic-terms/settings', express.urlencoded({ extended: false }), 
   res.redirect(appendRedirectParams(genericTermsPath({ status: String(req.body.status || 'suggested') }), { saved: 1 }));
 }));
 
-router.post('/generic-terms/:id/:action', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/generic-terms/:id/:action', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseInt(req.params.id, 10);
   const action = String(req.params.action || '').trim();
@@ -700,7 +710,7 @@ router.post('/generic-terms/:id/:action', express.urlencoded({ extended: false }
   res.redirect(appendRedirectParams(genericTermsPath({ status: nextStatus === 'active' ? 'active' : status }), { saved: 1 }));
 }));
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const q = String(req.query.q || '').trim();
   const typeFilter = String(req.query.type || '').trim();
@@ -755,7 +765,7 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/bulk/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/bulk/delete', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const returnTo = normalizeReturnTo(req.body.returnTo, knowledgePath('/authorities'));
   const ids = parseIdList(req.body.authority_ids);
@@ -784,7 +794,7 @@ router.post('/bulk/delete', express.urlencoded({ extended: false }), asyncHandle
   return res.redirect(appendRedirectParams(returnTo, { bulkDeleted: deleted }));
 }));
 
-router.post('/bulk/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/bulk/merge', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const returnTo = normalizeReturnTo(req.body.returnTo, knowledgePath('/authorities'));
   const ids = parseIdList(req.body.authority_ids);
@@ -841,7 +851,7 @@ router.post('/bulk/merge', express.urlencoded({ extended: false }), asyncHandler
 // (the per-row submit reuses POST /suggestion-jobs/collection/:id).
 // Must be registered BEFORE router.get('/:id') to prevent the wildcard from
 // intercepting /backfill.
-router.get('/backfill', asyncHandler(async (req, res) => {
+router.get('/backfill', requireAdmin, asyncHandler(async (req, res) => {
   const collections = await db.collectionsAsync.listSentimentPriorityForBackfill();
   res.render('admin/authority-backfill', {
     pageTitle: 'Authority Backfill',
@@ -860,7 +870,7 @@ router.get('/backfill', asyncHandler(async (req, res) => {
 // MUST be registered BEFORE router.get('/:id') so the literal '.json' suffix
 // wins over the /:id wildcard.
 // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.3 + U6.4.
-router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
+router.get('/:id/chronology.json', requireAdmin, asyncHandler(async (req, res) => {
   const authorityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(authorityId)) return res.status(400).json({ error: 'Invalid authority id.' });
 
@@ -886,7 +896,7 @@ router.get('/:id/chronology.json', asyncHandler(async (req, res) => {
 // the merged timeline (citations, relationships, sentiment, date events).
 // Registered BEFORE router.get('/:id') so the literal /chronology suffix wins.
 // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U6.1–U6.4.
-router.get('/:id/chronology', asyncHandler(async (req, res) => {
+router.get('/:id/chronology', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(authorityId)) {
@@ -945,7 +955,7 @@ router.get('/:id/chronology', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/:id', asyncHandler(async (req, res) => {
+router.get('/:id', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(authorityId) || !stores.authorities) {
@@ -981,7 +991,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/:id/members/:entityId/unlink', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/members/:entityId/unlink', express.urlencoded({ extended: false }), requireCurate('entity', 'entityId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
   const entityId = parseInt(req.params.entityId, 10);
@@ -1006,7 +1016,7 @@ router.post('/:id/members/:entityId/unlink', express.urlencoded({ extended: fals
   }
 }));
 
-router.post('/:id/members/:entityId/reassign', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/members/:entityId/reassign', express.urlencoded({ extended: false }), requireCurate('entity', 'entityId'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
   const entityId = parseInt(req.params.entityId, 10);
@@ -1046,7 +1056,7 @@ router.post('/:id/members/:entityId/reassign', express.urlencoded({ extended: fa
   }
 }));
 
-router.post('/:id/merge', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/:id/merge', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const authorityId = parseInt(req.params.id, 10);
   const targetAuthorityId = parseInt(req.body.target_authority_id, 10);
@@ -1065,7 +1075,7 @@ router.post('/:id/merge', express.urlencoded({ extended: false }), asyncHandler(
 }));
 
 // POST /admin/knowledge/authorities/suggestion-jobs — full-corpus authority suggestion run
-router.post('/suggestion-jobs', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/suggestion-jobs', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const jobId = await db.authoritySuggestionJobsAsync.create({
     collection_id: null,
     requested_by_user_id: req.user ? req.user.id : null
@@ -1074,7 +1084,7 @@ router.post('/suggestion-jobs', express.urlencoded({ extended: false }), asyncHa
 }));
 
 // POST /admin/knowledge/authorities/suggestion-jobs/collection/:id — collection-scoped run
-router.post('/suggestion-jobs/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/suggestion-jobs/collection/:id', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   if (!Number.isInteger(collectionId)) {
     return res.redirect(knowledgePath('/authorities?error=' + encodeURIComponent('Invalid collection id.')));
@@ -1094,7 +1104,7 @@ router.post('/suggestion-jobs/collection/:id', express.urlencoded({ extended: fa
 // Transactionally approves the chosen authority for a grouped disambiguation
 // decision: cascade-rejects sibling pending suggestions and links the entity.
 // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.3.
-router.post('/suggestions/disambiguation/:entityId/approve', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/disambiguation/:entityId/approve', express.json(), requireCurate('entity', 'entityId'), asyncHandler(async (req, res) => {
   const entityId = parseInt(req.params.entityId, 10);
   const authorityId = parseInt(req.body.authorityId, 10);
   if (!Number.isInteger(entityId) || !Number.isInteger(authorityId)) {
@@ -1133,7 +1143,7 @@ router.post('/suggestions/disambiguation/:entityId/approve', express.json(), asy
 // Rejects all pending suggestions for the entity and creates a fresh authority
 // record matching the entity's type + canonical_name, then links the entity.
 // Per docs/reviews/2026-05-31-entity-extraction-historian-lens.md U3.1, U3.3.
-router.post('/suggestions/disambiguation/:entityId/new-authority', express.json(), asyncHandler(async (req, res) => {
+router.post('/suggestions/disambiguation/:entityId/new-authority', express.json(), requireCurate('entity', 'entityId'), asyncHandler(async (req, res) => {
   const entityId = parseInt(req.params.entityId, 10);
   if (!Number.isInteger(entityId)) return res.status(400).json({ error: 'Invalid entityId' });
 
