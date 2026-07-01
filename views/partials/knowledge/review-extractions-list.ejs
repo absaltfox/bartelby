@@ -1,0 +1,249 @@
+<%#
+  Review-extractions list body.
+
+  Renders the queue panel for /admin/knowledge/review-extractions (and the
+  forthcoming collection-scoped manage equivalent). Extracted so the same
+  list body can be reused with a different urlPrefix without duplicating
+  the table/card markup.
+
+  Per docs/ui-template-standards.md (Shared Partials) and
+  docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (Phase 3 list extraction).
+
+  Locals (required):
+    - reviewItems: array of decorated citation review items
+    - approvalStatus: 'pending' | 'approved' | 'rejected' | 'all'
+    - reviewKind: filter token (or 'all')
+    - reviewKindLabel: human label for the active kind filter
+    - totalCount, totalPages, currentPage: pagination state
+    - csrfToken
+  Locals (optional):
+    - urlPrefix: action URL prefix (default '/admin/knowledge')
+%>
+<%
+  const _urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
+
+  function reviewListHref(targetStatus, targetPage, targetKind) {
+    var params = [];
+    if (targetStatus && targetStatus !== 'pending') params.push('status=' + encodeURIComponent(targetStatus));
+    var effectiveKind = targetKind || reviewKind || 'all';
+    if (effectiveKind && effectiveKind !== 'all') params.push('kind=' + encodeURIComponent(effectiveKind));
+    if (targetPage && targetPage > 1) params.push('page=' + encodeURIComponent(targetPage));
+    return _urlPrefix + '/review-extractions' + (params.length ? '?' + params.join('&') : '');
+  }
+
+  var listSummaryTail = '';
+  if (approvalStatus === 'pending') {
+    listSummaryTail = 'Approval makes pending evidence eligible to appear in the visible knowledge graph.';
+  } else if (approvalStatus === 'approved') {
+    listSummaryTail = 'Already-visible evidence can still be revisited or removed here.';
+  } else if (approvalStatus === 'rejected') {
+    listSummaryTail = 'Rejected evidence stays hidden from the graph until it is approved.';
+  } else {
+    listSummaryTail = 'Use the status tabs to narrow the queue when you are triaging specific states.';
+  }
+%>
+  <section class="settings-section review-extractions-panel" data-review-panel data-active-status="<%= approvalStatus %>" data-total-count="<%= totalCount %>">
+    <div class="review-extractions-panel-header">
+      <div>
+        <p class="kg-panel-eyebrow">Queue</p>
+        <h2>
+          <% if (approvalStatus === 'approved') { %>
+            Approved evidence
+          <% } else if (approvalStatus === 'rejected') { %>
+            Rejected evidence
+          <% } else if (approvalStatus === 'all') { %>
+            All evidence states
+          <% } else { %>
+            Pending review
+          <% } %>
+        </h2>
+        <p class="subtitle">
+          Showing <span data-review-visible-count><%= reviewItems.length %></span> of <span data-review-total-count><%= totalCount %></span> citation<span data-review-total-plural><%= totalCount === 1 ? '' : 's' %></span>.
+          <% if (reviewKind && reviewKind !== 'all') { %>
+            Filtered by <strong><%= reviewKindLabel %></strong>.
+          <% } %>
+          <span data-review-summary-tail><%= listSummaryTail %></span>
+        </p>
+      </div>
+    </div>
+
+    <div id="review-bulk-bar" class="bulk-toolbar is-hidden" aria-live="polite">
+      <label class="bulk-toolbar-select-all">
+        <input type="checkbox" id="review-select-all" />
+        <span id="review-select-all-label">Select all on page</span>
+      </label>
+      <span id="review-selection-count" class="bulk-count">0 selected</span>
+      <div class="bulk-toolbar-actions">
+        <button type="button" class="btn-secondary btn-sm" id="review-bulk-approve">Approve selected</button>
+        <button type="button" class="btn-secondary btn-sm" id="review-bulk-reject">Reject selected</button>
+        <button type="button" class="btn-danger btn-sm" id="review-bulk-delete">Delete selected</button>
+      </div>
+      <span class="curator-action-note review-bulk-consequence" id="review-bulk-consequence">Approve makes evidence eligible for graph views. Reject hides it but keeps review history. Delete removes the citation evidence record.</span>
+      <span class="save-status" id="review-bulk-status"></span>
+    </div>
+
+    <% if (reviewItems.length === 0) { %>
+      <div class="empty-state">
+        <% if (approvalStatus === 'pending') { %>
+          <p>No extraction evidence is waiting for review right now<%= reviewKind && reviewKind !== 'all' ? ' for this filter' : '' %>.</p>
+          <p class="muted">New low-confidence extractions will appear here automatically, while high-confidence evidence is auto-approved.</p>
+          <p><a href="<%= _urlPrefix %>">Return to Knowledge overview</a> or <a href="/admin/jobs?type=extraction">check extraction jobs</a>.</p>
+        <% } else if (approvalStatus === 'approved') { %>
+          <p>No approved evidence is available in this view.</p>
+          <p class="muted">Approved citations become visible in the knowledge graph and can still be managed from entity pages.</p>
+        <% } else if (approvalStatus === 'rejected') { %>
+          <p>No rejected evidence is recorded right now.</p>
+          <p class="muted">Rejected citations remain hidden from the graph until they are manually approved.</p>
+        <% } else { %>
+          <p>No extraction evidence has been recorded yet.</p>
+          <p class="muted">Run knowledge extraction from the Knowledge overview to begin building the review queue.</p>
+        <% } %>
+      </div>
+    <% } else { %>
+      <div class="review-extraction-list">
+        <% reviewItems.forEach(function(item) { %>
+          <article class="review-extraction-card" data-review-card data-citation-id="<%= item.id %>" data-citation-status="<%= item.approval_status || 'pending' %>" data-kind="<%= item.kind %>">
+            <header class="review-extraction-strip">
+              <input type="checkbox" class="review-row-cb" value="<%= item.id %>" data-status="<%= item.approvalStatus || item.approval_status || 'pending' %>" />
+              <span class="review-card-chip"><%= item.kind_label %></span>
+              <% if (item.confidence_label) { %>
+                <span class="review-card-chip review-card-chip--muted"><%= item.confidence_label %></span>
+              <% } %>
+              <% if (item.method_label) { %>
+                <span class="review-card-chip review-card-chip--muted"><%= item.method_label %></span>
+              <% } %>
+              <div class="review-extraction-strip-actions">
+                <span class="status-badge <%= item.status_class %>"><%= item.status_label %></span>
+                <% if (item.open_passage_href) { %>
+                  <a
+                    href="<%= item.open_passage_href %>"
+                    class="btn-secondary btn-sm review-preview-trigger"
+                    data-review-preview-trigger="1"
+                    data-review-preview-url="<%= item.preview_passage_href %>"
+                    data-review-preview-title="<%= item.claim_title %>"
+                    data-review-preview-document="<%= item.document_title || ('Document #' + item.document_id) %>"><%= item.open_passage_label %></a>
+                <% } %>
+              </div>
+            </header>
+
+            <div class="review-extraction-body">
+              <section class="review-extraction-claim review-extraction-zone">
+                <p class="review-extraction-col-label">Claim</p>
+                <h3><%= item.claim_title %></h3>
+                <p class="review-extraction-explainer"><%= item.claim_explainer %></p>
+                <% if (item.claim_detail) { %>
+                  <p class="review-extraction-detail"><%= item.claim_detail %></p>
+                <% } %>
+                <% if (item.kind === 'relationship') { %>
+                  <%- include('../voice-badge', {
+                    relationship: item,
+                    attributionEntity: (item.voice_role === 'speaker' && item.expressed_by_entity)
+                      || (item.voice_role === 'described_subject' && item.described_subject_entity)
+                      || null
+                  }) %>
+                <% } %>
+                <% if (item.claim_meta) { %>
+                  <p class="review-extraction-meta-line"><%= item.claim_meta %></p>
+                <% } %>
+              </section>
+
+              <section class="review-extraction-evidence-col review-extraction-zone">
+                <p class="review-extraction-col-label">
+                  Evidence<% if (item.evidence_blocks && item.evidence_blocks.length > 1) { %> (<%= item.evidence_blocks.length %> passages)<% } %>
+                </p>
+                <% if (item.evidence_blocks && item.evidence_blocks.length) { %>
+                  <% item.evidence_blocks.forEach(function(block) { %>
+                    <div class="review-evidence-block">
+                      <p class="review-evidence-block-label"><%= block.label %></p>
+                      <blockquote class="graph-citation-quote"><%= block.text %></blockquote>
+                    </div>
+                  <% }) %>
+                <% } else { %>
+                  <p class="graph-empty-state graph-empty-state--compact">No passage text was captured for this citation.</p>
+                <% } %>
+                <% if (item.review_notes && item.review_notes.length) { %>
+                  <% item.review_notes.forEach(function(note) { %>
+                    <p class="review-evidence-note <%= note.tone ? ('review-evidence-note--' + note.tone) : '' %>"><%= note.text %></p>
+                  <% }) %>
+                <% } %>
+              </section>
+            </div>
+
+            <footer class="review-extraction-footer">
+              <div class="review-extraction-meta">
+                <% if (item.document_id) { %>
+                  <span class="review-meta-item">Document <%= item.document_title || ('#' + item.document_id) %></span>
+                <% } %>
+                <span class="review-meta-item">Transcript #<%= item.transcript_id %></span>
+                <% if (item.created_at) { %>
+                  <span class="review-meta-item">Queued <%= new Date(item.created_at).toLocaleString() %></span>
+                <% } %>
+              </div>
+
+              <div class="review-extraction-actions" data-review-action-rail aria-label="Review decisions">
+                <div class="review-extraction-decisions">
+                  <% if (item.approval_status !== 'approved') { %>
+                    <div class="review-action-item">
+                      <form method="POST" action="<%= _urlPrefix %>/review-extractions/<%= item.id %>/confirm" class="inline-form" data-review-action-form="1" data-review-action="approve">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="status" value="<%= approvalStatus %>">
+                        <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
+                        <input type="hidden" name="page" value="<%= currentPage %>">
+                        <button type="submit" class="btn-primary btn-sm" data-review-action-button>Approve</button>
+                      </form>
+                      <p class="curator-action-note">Makes this evidence eligible for visible graph views.</p>
+                    </div>
+                  <% } %>
+                  <% if (item.approval_status !== 'rejected') { %>
+                    <div class="review-action-item">
+                      <form method="POST" action="<%= _urlPrefix %>/review-extractions/<%= item.id %>/reject" class="inline-form" data-review-confirm-message="Reject this evidence claim? Rejected evidence stays hidden from graph views but keeps review history." data-review-action-form="1" data-review-action="reject">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="status" value="<%= approvalStatus %>">
+                        <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
+                        <input type="hidden" name="page" value="<%= currentPage %>">
+                        <button type="submit" class="btn-secondary btn-sm" data-review-action-button>Reject</button>
+                      </form>
+                      <p class="curator-action-note">Hides evidence from graph views but keeps review history.</p>
+                    </div>
+                  <% } %>
+                </div>
+                <div class="review-action-item">
+                  <form method="POST" action="<%= _urlPrefix %>/review-extractions/<%= item.id %>/delete" class="inline-form" data-review-confirm-message="Delete this evidence permanently? This removes the citation evidence record." data-review-action-form="1" data-review-action="delete">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="status" value="<%= approvalStatus %>">
+                    <input type="hidden" name="kind" value="<%= reviewKind || 'all' %>">
+                    <input type="hidden" name="page" value="<%= currentPage %>">
+                    <button type="submit" class="btn-danger btn-sm" data-review-action-button>Delete evidence</button>
+                  </form>
+                  <p class="curator-action-note">Removes the citation evidence record.</p>
+                </div>
+              </div>
+            </footer>
+          </article>
+        <% }) %>
+      </div>
+      <p class="graph-empty-state graph-empty-state--compact review-empty-inline is-hidden" data-review-inline-empty>
+        No more citations remain in this page view. Use status tabs or pagination to continue triage.
+      </p>
+
+      <% if (totalPages > 1) { %>
+        <div class="pagination">
+          <% if (currentPage > 1) { %>
+            <a href="<%= reviewListHref(approvalStatus, currentPage - 1, reviewKind) %>" class="pagination-btn">&lsaquo; Prev</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">&lsaquo; Prev</span>
+          <% } %>
+          <span class="pagination-info">
+            Page <%= currentPage %> of <%= totalPages %>
+            <span class="muted">(<%= totalCount %> citations)</span>
+          </span>
+          <% if (currentPage < totalPages) { %>
+            <a href="<%= reviewListHref(approvalStatus, currentPage + 1, reviewKind) %>" class="pagination-btn">Next &rsaquo;</a>
+          <% } else { %>
+            <span class="pagination-btn pagination-btn--disabled">Next &rsaquo;</span>
+          <% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </section>

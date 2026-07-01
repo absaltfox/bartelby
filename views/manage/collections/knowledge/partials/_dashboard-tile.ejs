@@ -1,0 +1,24 @@
+<%#
+  Dashboard tile — single count or error placeholder.
+
+  Locals:
+    - title: short tile heading text
+    - count: { value } | { error: string } | null
+    - link: optional URL the tile links to
+    - formatDashboardCount: function(value) -> string
+
+  Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+  (Dashboard, "Soft-fail per tile") — when a count helper throws, this tile
+  renders an inline error placeholder rather than letting the whole page 500.
+%>
+<div class="dashboard-tile <%= (count && count.error) ? 'dashboard-tile--error' : '' %>">
+  <p class="dashboard-tile-title"><%= title %></p>
+  <% if (count && count.error) { %>
+    <p class="dashboard-tile-error">Couldn't load this count — refresh to retry.</p>
+  <% } else { %>
+    <p class="dashboard-tile-value"><%= formatDashboardCount(count && count.value) %></p>
+    <% if (link) { %>
+      <a class="dashboard-tile-link" href="<%= link %>">Open &rarr;</a>
+    <% } %>
+  <% } %>
+</div>

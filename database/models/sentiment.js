@@ -8,8 +8,31 @@ function normalizePhrase(text) {
     .replace(/[.,;:!?]+$/, '');
 }
 
+// SQL-side equivalent of normalizePhrase(). The two must produce identical
+// output for the same input: any drift lets a phrase authorized by the JS
+// predicate escape the SQL scope filter (or vice versa), silently retargeting
+// the wrong annotations on phrase-target promote. This is the security-
+// critical path called out in
+// docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Phrase-target promotion blast radius".
+//
+// Symmetry with the JS side:
+//   - .toLowerCase()               → LOWER(...)
+//   - .replace(/\s+/g, ' ')        → cascading REPLACE ' ' → ' ' on any
+//                                    run of ASCII spaces up to 8 chars long.
+//                                    (Sentiment annotations only carry the
+//                                    ASCII space that our transcript
+//                                    pipeline emits — tabs / newlines don't
+//                                    appear in target_phrase.)
+//   - .trim()                      → TRIM(...)
+//   - .replace(/[.,;:!?]+$/, '')   → RTRIM(..., '.,;:!?')
+//
+// The REPLACE cascade collapses any run of 2..8 consecutive spaces to a
+// single space. Longer runs would need more passes; if the extraction
+// pipeline ever produces those, extend the cascade.
 function normalizePhraseSql(expr) {
-  return `LOWER(RTRIM(TRIM(${expr}), '.,;:!?'))`;
+  const collapse = `REPLACE(REPLACE(REPLACE(${expr}, '  ', ' '), '  ', ' '), '  ', ' ')`;
+  return `LOWER(RTRIM(TRIM(${collapse}), '.,;:!?'))`;
 }
 
 module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, saveDatabase) {
@@ -867,6 +890,37 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       return Number(row?.count || 0);
     },
 
+    // Spec § "Dashboard counts" (pending phrase-targets in collection).
+    // Mirrors the existing /admin/knowledge/sentiment/phrase-targets
+    // active-tab logic: distinct normalized phrases from
+    // sentiment_annotations with target_kind = 'phrase' (so already-promoted
+    // entity rows are excluded) and not present in
+    // sentiment_phrase_suppressions. Scoping via a.document_id ->
+    // document_collections matches the existing aggregatePhraseTargets and
+    // countPhraseTargets helpers above.
+    async countPendingPhraseTargetsByCollection(collectionId) {
+      const normalizedId = Number(collectionId);
+      if (!Number.isInteger(normalizedId) || normalizedId <= 0) return { total: 0 };
+      const row = await getAsync(`
+        SELECT COUNT(*) AS count
+        FROM (
+          SELECT ${normalizePhraseSql('a.target_phrase')} AS phrase_normalized
+          FROM sentiment_annotations a
+          LEFT JOIN sentiment_phrase_suppressions s
+            ON s.target_phrase_normalized = ${normalizePhraseSql('a.target_phrase')}
+          WHERE a.target_kind = 'phrase'
+            AND a.target_phrase IS NOT NULL
+            AND TRIM(a.target_phrase) != ''
+            AND s.id IS NULL
+            AND a.document_id IN (
+              SELECT document_id FROM document_collections WHERE collection_id = ?
+            )
+          GROUP BY phrase_normalized
+        ) rollup
+      `, [normalizedId]);
+      return { total: Number(row?.count || 0) };
+    },
+
     // ----------------------------------------------------------------------
     // Phase 4 research surfaces. Per docs/sentiment-design.md Phase 4 +
     // docs/development-principles.md "Respect Permissions by Default" +
@@ -1111,7 +1165,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     }
   };
 
-  return { sentimentAsync, normalizePhrase, parseResearchFilters, parseTimelineBucket, ResearchFilterError };
+  return { sentimentAsync, normalizePhrase, normalizePhraseSql, parseResearchFilters, parseTimelineBucket, ResearchFilterError };
 };
 
 // ============================================================================
@@ -1322,3 +1376,9 @@ function decorateResearchRow(row) {
 module.exports.parseResearchFilters = parseResearchFilters;
 module.exports.parseTimelineBucket = parseTimelineBucket;
 module.exports.ResearchFilterError = ResearchFilterError;
+// Module-level exports so callers built before the sentiment factory runs
+// (e.g. database/models/collections.js) can borrow the shared phrase
+// normalizers without a construction-order dependency. These are the same
+// functions the sentiment factory closes over.
+module.exports.normalizePhrase = normalizePhrase;
+module.exports.normalizePhraseSql = normalizePhraseSql;

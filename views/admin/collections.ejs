@@ -111,6 +111,7 @@
                   <button type="submit" class="btn-secondary btn-sm">Backfill sentiment</button>
                 </form>
               <% } %>
+              <a href="/manage/collections/<%= c.id %>/knowledge" class="btn-secondary btn-sm">Knowledge &rarr;</a>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Edit</button>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Preview Image</button>
               <% if (!c.is_public && !c.is_world_public) { %>

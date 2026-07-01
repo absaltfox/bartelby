@@ -55,199 +55,37 @@
         </div>
       </form>
 
-      <% if (!aggregated.length) { %>
-        <div class="empty-state">
-          <p>No active phrase targets right now.</p>
-          <p class="muted">Either every phrase has been promoted or suppressed, or sentiment extraction hasn't produced phrase-target annotations yet.</p>
-        </div>
-      <% } else { %>
-      <div class="workflows-table-wrap">
-        <table class="workflows-table">
-          <thead>
-            <tr>
-              <th scope="col">Phrase</th>
-              <th scope="col">Frequency</th>
-              <th scope="col">Polarity (+ / – / ~ / mixed)</th>
-              <th scope="col">Samples</th>
-              <th scope="col">Suggested type</th>
-              <th scope="col" class="col-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% aggregated.forEach(function(p) { %>
-              <% var phraseDomId = p.phraseNormalized.replace(/[^a-z0-9_-]/gi, '-'); %>
-              <tr>
-                <td><code><%= p.phraseDisplay %></code></td>
-                <td><%= p.frequency %></td>
-                <td>
-                  <span title="positive"><%= p.polarity.positive %></span> /
-                  <span title="negative"><%= p.polarity.negative %></span> /
-                  <span title="neutral"><%= p.polarity.neutral %></span> /
-                  <span title="mixed"><%= p.polarity.mixed %></span>
-                </td>
-                <td>
-                  <% if (p.samples.length) { %>
-                    <details>
-                      <summary><%= p.samples.length %> sample<%= p.samples.length === 1 ? '' : 's' %></summary>
-                      <ul class="muted">
-                        <% p.samples.forEach(function(s) { %>
-                          <li><%= (s.evidence_excerpt || '').slice(0, 120) %><%= (s.evidence_excerpt || '').length > 120 ? '…' : '' %></li>
-                        <% }) %>
-                      </ul>
-                    </details>
-                  <% } %>
-                </td>
-                <td><span class="status-badge status-trace"><%= p.suggestedType %></span></td>
-                <td class="col-actions">
-                  <div class="table-actions">
-                    <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/suppressions" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-                      <input type="hidden" name="tab" value="active">
-                      <input type="hidden" name="q" value="<%= q || '' %>">
-                      <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-                      <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                      <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
-                      <input type="hidden" name="page" value="<%= page || 1 %>">
-                      <button type="submit" class="btn-secondary btn-sm">Suppress</button>
-                    </form>
-                  </div>
-                </td>
-              </tr>
-              <tr class="phrase-target-expansion-row">
-                <td colspan="6">
-                  <details class="phrase-target-expansion">
-                    <summary class="btn-primary btn-sm">Promote <%= p.phraseDisplay %></summary>
-                    <div class="phrase-target-action-grid">
-                      <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote" class="edit-form phrase-target-action-form">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-                        <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
-                        <input type="hidden" name="tab" value="active">
-                        <input type="hidden" name="q" value="<%= q || '' %>">
-                        <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-                        <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                        <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
-                        <input type="hidden" name="page" value="<%= page || 1 %>">
-                        <div class="form-section-header">
-                          <h3>Create new entity</h3>
-                          <p class="muted">Create a modeled entity and re-target matching phrase annotations.</p>
-                        </div>
-                        <div class="edit-field">
-                          <label for="phrase-entity-type-<%= phraseDomId %>">Entity type</label>
-                          <select id="phrase-entity-type-<%= phraseDomId %>" name="entity_type">
-                            <% ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'].forEach(function(t) { %>
-                              <option value="<%= t %>" <%= t === p.suggestedType ? 'selected' : '' %>><%= t %></option>
-                            <% }) %>
-                          </select>
-                        </div>
-                        <div class="edit-field">
-                          <label for="phrase-canonical-name-<%= phraseDomId %>">Canonical name</label>
-                          <input type="text" id="phrase-canonical-name-<%= phraseDomId %>" name="canonical_name" required value="<%= p.phraseDisplay %>">
-                        </div>
-                        <div class="edit-actions">
-                          <button type="submit" class="btn-primary btn-sm">Create entity + re-target <%= p.frequency %> annotation<%= p.frequency === 1 ? '' : 's' %></button>
-                        </div>
-                      </form>
-                      <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/promote-existing" class="edit-form phrase-target-action-form">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <input type="hidden" name="phrase" value="<%= p.phraseDisplay %>">
-                        <input type="hidden" name="phrase_normalized" value="<%= p.phraseNormalized %>">
-                        <input type="hidden" name="tab" value="active">
-                        <input type="hidden" name="q" value="<%= q || '' %>">
-                        <input type="hidden" name="collectionId" value="<%= collectionId || '' %>">
-                        <input type="hidden" name="polarity" value="<%= polarity || '' %>">
-                        <input type="hidden" name="minFrequency" value="<%= minFrequency || 1 %>">
-                        <input type="hidden" name="page" value="<%= page || 1 %>">
-                        <div class="form-section-header">
-                          <h3>Use existing entity</h3>
-                          <p class="muted">Retarget annotations to an entity that already exists.</p>
-                        </div>
-                        <div class="edit-field">
-                          <label for="tp-existing-<%= phraseDomId %>-search">Existing entity</label>
-                          <%- include('../partials/typeahead-picker', {
-                            name: 'entity_id',
-                            searchUrl: '/admin/knowledge/entities/api/search',
-                            placeholder: 'Search entities by canonical name...',
-                            selectedId: null,
-                            selectedLabel: '',
-                            required: true,
-                            id: 'tp-existing-' + phraseDomId
-                          }) %>
-                        </div>
-                        <div class="edit-actions">
-                          <button type="submit" class="btn-secondary btn-sm">Re-target to existing entity</button>
-                        </div>
-                      </form>
-                    </div>
-                  </details>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <%
-        function phrasePageHref(targetPage) {
-          var params = new URLSearchParams();
-          params.set('tab', 'active');
-          if (q) params.set('q', q);
-          if (collectionId) params.set('collectionId', collectionId);
-          if (polarity) params.set('polarity', polarity);
-          if (minFrequency && minFrequency !== 1) params.set('minFrequency', minFrequency);
-          params.set('page', targetPage);
-          return '/admin/knowledge/sentiment/phrase-targets?' + params.toString();
-        }
-      %>
-      <% if (totalPages > 1) { %>
-        <nav class="pagination">
-          <% if (page > 1) { %><a class="btn-secondary btn-sm" href="<%= phrasePageHref(page - 1) %>">Previous</a><% } %>
-          <span class="muted">Page <%= page %> of <%= totalPages %> · <%= totalCount %> phrases</span>
-          <% if (page < totalPages) { %><a class="btn-secondary btn-sm" href="<%= phrasePageHref(page + 1) %>">Next</a><% } %>
-        </nav>
-      <% } %>
-      <% } %>
+      <%- include('../partials/knowledge/phrase-targets-list', {
+        tab: tab,
+        aggregated: aggregated,
+        suppressed: suppressed,
+        q: q,
+        collectionId: collectionId,
+        polarity: polarity,
+        minFrequency: minFrequency,
+        page: page,
+        totalPages: totalPages,
+        totalCount: totalCount,
+        csrfToken: csrfToken,
+        urlPrefix: '/admin/knowledge'
+      }) %>
     </section>
   <% } else { %>
     <section class="settings-section">
-      <% if (!suppressed.length) { %>
-        <div class="empty-state">
-          <p>No suppressed phrases.</p>
-          <p class="muted">Suppress a phrase from the Active tab when you've decided it's not entity-worthy.</p>
-        </div>
-      <% } else { %>
-      <div class="workflows-table-wrap">
-        <table class="workflows-table">
-          <thead>
-            <tr>
-              <th scope="col">Phrase</th>
-              <th scope="col">Notes</th>
-              <th scope="col">Suppressed at</th>
-              <th scope="col" class="col-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% suppressed.forEach(function(s) { %>
-              <tr>
-                <td><code><%= s.target_phrase_display %></code></td>
-                <td><%= s.notes || '' %></td>
-                <td><%= s.created_at %></td>
-                <td class="col-actions">
-                  <div class="table-actions">
-                    <form method="POST" action="/admin/knowledge/sentiment/phrase-targets/suppressions/<%= s.id %>/delete" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="tab" value="suppressed">
-                      <input type="hidden" name="page" value="<%= page || 1 %>">
-                      <button type="submit" class="btn-danger btn-sm">Remove suppression</button>
-                    </form>
-                  </div>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <% } %>
+      <%- include('../partials/knowledge/phrase-targets-list', {
+        tab: tab,
+        aggregated: aggregated,
+        suppressed: suppressed,
+        q: q,
+        collectionId: collectionId,
+        polarity: polarity,
+        minFrequency: minFrequency,
+        page: page,
+        totalPages: totalPages,
+        totalCount: totalCount,
+        csrfToken: csrfToken,
+        urlPrefix: '/admin/knowledge'
+      }) %>
     </section>
   <% } %>
 </div>

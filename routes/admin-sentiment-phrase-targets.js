@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
+const { requireCurate } = require('../middleware/curator-permissions');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const db = require('../database/db');
@@ -15,7 +16,26 @@ const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/kno
 // views/admin/sentiment-phrase-targets.ejs.
 const ENTITY_TYPES = ['person', 'place', 'event', 'organization', 'topic', 'artifact', 'claim', 'role'];
 
-router.use(requireAdmin);
+// PR 4 — collection-scoped knowledge workbench, security-critical surface.
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Phrase-target promotion blast radius (highest-priority hazard)", the
+// admin promote handlers update every matching annotation across the
+// corpus. When a collection-manager promotes a phrase, the UPDATE must
+// be SCOPED — annotations of the same normalized phrase in other
+// collections must remain untouched. We achieve scoping by restricting
+// the candidate annotation set up front (the existing handler then
+// updates only the annotations in that set, naturally honoring the
+// scope) and by attaching req.curatorAllowedCollectionIds to the
+// annotation fetch via the new scopeCollectionIds parameter.
+//
+// Suppression endpoints stay admin-only. Per the table schema (see
+// database/migrations.js v50 sentiment_phrase_suppressions), suppression
+// is keyed on the normalized phrase with UNIQUE target_phrase_normalized
+// — it is a global decision by design. Allowing a single-collection
+// manager to add a global suppression would let one curator hide a
+// phrase target from every other collection. A future per-collection
+// suppression schema (not in scope here) is the right path; for now,
+// suppression stays admin-only.
 
 function path(suffix = '') {
   return '/admin/knowledge/sentiment/phrase-targets' + suffix;
@@ -65,6 +85,16 @@ function listPath(context = {}, extra = {}) {
   return path('?' + params.toString());
 }
 
+// Returns annotations matching the normalized phrase. The optional `scope`
+// supports:
+//   - collectionId: form-supplied single-collection narrowing (existing
+//     behavior; admin or manager can pass it to focus the promotion).
+//   - scopeCollectionIds: SECURITY-critical, supplied by the
+//     requireCurate middleware when a non-admin manager is acting. The
+//     UPDATE candidate set is restricted to documents in this
+//     collection-id list. Admins do NOT pass this — admin path is
+//     corpus-wide per spec.
+//   - polarity: optional polarity narrowing.
 async function getScopedPhraseAnnotations(phrase, scope = {}) {
   const normalized = scope.phraseNormalized || (db.normalizeSentimentPhrase
     ? db.normalizeSentimentPhrase(phrase)
@@ -74,6 +104,11 @@ async function getScopedPhraseAnnotations(phrase, scope = {}) {
   if (scope.collectionId) {
     filters.push('AND document_id IN (SELECT document_id FROM document_collections WHERE collection_id = ?)');
     params.push(Number(scope.collectionId));
+  }
+  if (Array.isArray(scope.scopeCollectionIds) && scope.scopeCollectionIds.length) {
+    const placeholders = scope.scopeCollectionIds.map(() => '?').join(',');
+    filters.push(`AND document_id IN (SELECT document_id FROM document_collections WHERE collection_id IN (${placeholders}))`);
+    params.push(...scope.scopeCollectionIds);
   }
   if (scope.polarity) {
     filters.push('AND polarity = ?');
@@ -88,7 +123,7 @@ async function getScopedPhraseAnnotations(phrase, scope = {}) {
   `, params);
 }
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', requireAdmin, asyncHandler(async (req, res) => {
   const tab = req.query.tab === 'suppressed' ? 'suppressed' : 'active';
   const minFrequency = Math.max(1, parseInt(req.query.minFrequency, 10) || 1);
   const q = String(req.query.q || '').trim();
@@ -162,7 +197,11 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/suppressions', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+// Suppression endpoints stay admin-only per the schema-level rationale
+// in the header comment: sentiment_phrase_suppressions is global by
+// design (UNIQUE on target_phrase_normalized). Promoting suppression to
+// per-collection scope requires a schema change beyond this PR's scope.
+router.post('/suppressions', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const context = parseListContext(req.body);
   const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
@@ -177,7 +216,7 @@ router.post('/suppressions', express.urlencoded({ extended: false }), asyncHandl
   }
 }));
 
-router.post('/suppressions/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/suppressions/:id/delete', requireAdmin, express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const context = parseListContext(req.body, { tab: 'suppressed' });
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return res.redirect(listPath(context, { tab: 'suppressed', error: 'Invalid id.' }));
@@ -186,7 +225,39 @@ router.post('/suppressions/:id/delete', express.urlencoded({ extended: false }),
   res.redirect(listPath(context, { tab: 'suppressed', saved: 1 }));
 }));
 
-router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+// requireCuratePhrase — phrase-target gate. The middleware factory's
+// generic phraseTarget kind reads `req.body.normalizedPhrase`, but this
+// route's form posts `phrase` (display) and `phrase_normalized` (normalized
+// form, computed client-side). We translate before delegating to the
+// generic predicate so the gate and the handler agree on the input.
+function requireCuratePhrase(req, res, next) {
+  return asyncHandler(async (req2, res2, next2) => {
+    if (!req2.isAuthenticated || !req2.isAuthenticated()) {
+      return res2.status(401).json({ error: 'Authentication required.' });
+    }
+    if (req2.user.role === 'admin') return next2();
+
+    const rawPhrase = String(
+      req2.body.phrase_normalized || req2.body.phrase || ''
+    ).trim();
+    if (!rawPhrase) return res2.status(404).end();
+    const normalized = db.normalizeSentimentPhrase
+      ? db.normalizeSentimentPhrase(rawPhrase)
+      : rawPhrase.toLowerCase();
+
+    req2.curatorPermissionCache = req2.curatorPermissionCache || new Map();
+    const result = await db.curatorAccessAsync.userCanCuratePhraseTarget(
+      req2.user,
+      normalized,
+      { cache: req2.curatorPermissionCache }
+    );
+    if (!result.allowed) return res2.status(404).end();
+    req2.curatorAllowedCollectionIds = result.collectionIds;
+    return next2();
+  })(req, res, next);
+}
+
+router.post('/promote', express.urlencoded({ extended: false }), requireCuratePhrase, asyncHandler(async (req, res) => {
   const context = parseListContext(req.body);
   const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
@@ -199,6 +270,16 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
 
   const scope = parsePromotionScope(req.body);
   scope.phraseNormalized = String(req.body.phrase_normalized || '').trim();
+  // SECURITY-CRITICAL — see file-header comment and spec § "Phrase-target
+  // promotion blast radius". When the request comes from a non-admin
+  // collection-manager, the predicate middleware attaches
+  // req.curatorAllowedCollectionIds. We narrow the candidate annotation
+  // set to documents in those collections so the per-annotation UPDATE
+  // loop below cannot touch other curators' rows. Admins do not pass
+  // scopeCollectionIds — the admin path is corpus-wide.
+  if (req.user.role !== 'admin' && Array.isArray(req.curatorAllowedCollectionIds)) {
+    scope.scopeCollectionIds = req.curatorAllowedCollectionIds;
+  }
   const annotations = await getScopedPhraseAnnotations(phrase, scope);
 
   if (!annotations.length) {
@@ -263,7 +344,7 @@ router.post('/promote', express.urlencoded({ extended: false }), asyncHandler(as
   res.redirect(listPath(context, { tab: 'active', saved: 1 }));
 }));
 
-router.post('/promote-existing', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/promote-existing', express.urlencoded({ extended: false }), requireCuratePhrase, asyncHandler(async (req, res) => {
   const context = parseListContext(req.body);
   const errBack = (msg) => listPath(context, { tab: 'active', error: msg });
   const phrase = String(req.body.phrase || '').trim();
@@ -275,6 +356,13 @@ router.post('/promote-existing', express.urlencoded({ extended: false }), asyncH
 
   const scope = parsePromotionScope(req.body);
   scope.phraseNormalized = String(req.body.phrase_normalized || '').trim();
+  // SECURITY-CRITICAL — same scope narrowing as /promote above. See
+  // spec § "Phrase-target promotion blast radius" and the file-header
+  // comment. Admins remain corpus-wide; managers are clipped to their
+  // authorized collections.
+  if (req.user.role !== 'admin' && Array.isArray(req.curatorAllowedCollectionIds)) {
+    scope.scopeCollectionIds = req.curatorAllowedCollectionIds;
+  }
   const annotations = await getScopedPhraseAnnotations(phrase, scope);
   if (!annotations.length) return res.redirect(errBack('No matching phrase annotations to re-target.'));
 

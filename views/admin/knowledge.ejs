@@ -123,6 +123,14 @@
             <button type="submit" class="btn-primary btn-sm">Queue Collection Re-extraction</button>
           </div>
         </form>
+        <% if (collections && collections.length > 0) { %>
+          <p class="field-hint">
+            View a single collection's knowledge workbench:
+            <% collections.forEach(function(collection, idx) { %>
+              <a href="/manage/collections/<%= collection.id %>/knowledge" class="muted-link"><%= collection.name %></a><%= idx < collections.length - 1 ? ', ' : '' %>
+            <% }) %>
+          </p>
+        <% } %>
       </section>
     </div>
   </section>

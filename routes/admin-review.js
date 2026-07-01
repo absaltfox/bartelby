@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
+const { requireCurate, requireCurateAll } = require('../middleware/curator-permissions');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES, EXTRACTION_METHODS, isValidExtractionMethod } = require('../utils/knowledge-approval');
 const { asyncHandler } = require('../utils/async-handler');
@@ -10,7 +11,13 @@ const audit = require('../utils/audit-log');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { buildComparisonPages, stripPageMarkers } = require('../utils/document-services');
 
-router.use(requireAdmin);
+// PR 4 — collection-scoped knowledge workbench.
+// Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Relaxed POST endpoints (explicit enumeration)", citation review POST
+// handlers swap requireAdmin for requireCurate('citation', ...). All other
+// routes keep requireAdmin; the previous top-level router.use(requireAdmin)
+// is replaced with per-route gating so the relaxed POSTs can opt in
+// individually.
 
 const PAGE_SIZE = 25;
 const ENTITY_TYPE_LABELS = Object.freeze({
@@ -753,7 +760,7 @@ async function reviewSuccessResponse(req, res, stores, payload = {}) {
   });
 }
 
-router.get('/review-extractions', asyncHandler(async (req, res) => {
+router.get('/review-extractions', requireAdmin, asyncHandler(async (req, res) => {
   if (req.baseUrl === '/admin') {
     const queryString = req.originalUrl.includes('?')
       ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
@@ -831,7 +838,7 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
+router.get('/review-extractions/:id/preview', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   const docs = documentStores();
   const id = parseId(req.params.id);
@@ -879,7 +886,7 @@ router.get('/review-extractions/:id/preview', asyncHandler(async (req, res) => {
   });
 }));
 
-router.get('/review-extractions/audit-verbatim', asyncHandler(async (req, res) => {
+router.get('/review-extractions/audit-verbatim', requireAdmin, asyncHandler(async (req, res) => {
   const rows = await db.allAsync(`
     SELECT c.id, c.document_id, c.transcript_id, c.passage_text, d.title AS document_title, t.content AS transcript_content
     FROM citations c
@@ -936,7 +943,7 @@ function parseBulkIds(req) {
   return ids;
 }
 
-router.post('/review-extractions/bulk/approve', express.json(), asyncHandler(async (req, res) => {
+router.post('/review-extractions/bulk/approve', express.json(), requireCurateAll('citation', 'ids'), asyncHandler(async (req, res) => {
   const ids = parseBulkIds(req);
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
@@ -955,7 +962,7 @@ router.post('/review-extractions/bulk/approve', express.json(), asyncHandler(asy
   res.json({ success: true, count });
 }));
 
-router.post('/review-extractions/bulk/reject', express.json(), asyncHandler(async (req, res) => {
+router.post('/review-extractions/bulk/reject', express.json(), requireCurateAll('citation', 'ids'), asyncHandler(async (req, res) => {
   const ids = parseBulkIds(req);
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
@@ -974,7 +981,7 @@ router.post('/review-extractions/bulk/reject', express.json(), asyncHandler(asyn
   res.json({ success: true, count });
 }));
 
-router.post('/review-extractions/bulk/delete', express.json(), asyncHandler(async (req, res) => {
+router.post('/review-extractions/bulk/delete', express.json(), requireCurateAll('citation', 'ids'), asyncHandler(async (req, res) => {
   const ids = parseBulkIds(req);
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
@@ -991,7 +998,7 @@ router.post('/review-extractions/bulk/delete', express.json(), asyncHandler(asyn
   res.json({ success: true, count });
 }));
 
-router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: false }), requireCurate('citation', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const status = normalizeStatus(req.body.status);
@@ -1021,7 +1028,7 @@ router.post('/review-extractions/:id/confirm', express.urlencoded({ extended: fa
   }
 }));
 
-router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/review-extractions/:id/reject', express.urlencoded({ extended: false }), requireCurate('citation', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const status = normalizeStatus(req.body.status);
@@ -1051,7 +1058,7 @@ router.post('/review-extractions/:id/reject', express.urlencoded({ extended: fal
   }
 }));
 
-router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+router.post('/review-extractions/:id/delete', express.urlencoded({ extended: false }), requireCurate('citation', 'id'), asyncHandler(async (req, res) => {
   const stores = graphStores();
   const id = parseId(req.params.id);
   const status = normalizeStatus(req.body.status);

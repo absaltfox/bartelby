@@ -144,6 +144,23 @@ describe('requireCurate middleware', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
   });
+
+  test('non-numeric route param returns 404 without running the predicate', async () => {
+    const res = await request(app).post('/test/5abc');
+    expect(res.status).toBe(404);
+  });
+
+  test('leading-zero route param is rejected', async () => {
+    // '007' -> parseInt gives 7 silently, but audit-log evidence should
+    // match the route param string exactly. Reject cleanly.
+    const res = await request(app).post('/test/007');
+    expect(res.status).toBe(404);
+  });
+
+  test('negative route param is rejected', async () => {
+    const res = await request(app).post('/test/-1');
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('requireCurateAll middleware', () => {
@@ -197,5 +214,20 @@ describe('requireCurateAll middleware', () => {
       .set('x-user-role', 'user')
       .send({ citationIds: [] });
     expect(res.status).toBe(400);
+  });
+
+  test('over-BULK_CAP payload is rejected with too_many_ids before any predicate runs', async () => {
+    // 201 numeric ids exceeds BULK_CAP=200. Middleware must reject with 400
+    // BEFORE issuing predicate work.
+    const seed = await seedEntityInCollection({ userRole: 'manager' });
+    const ids = Array.from({ length: 201 }, (_, i) => i + 1);
+    const res = await request(app)
+      .post('/bulk')
+      .set('x-user-id', String(seed.user.id))
+      .set('x-user-role', 'user')
+      .send({ citationIds: ids });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('too_many_ids');
+    expect(res.body.max).toBe(200);
   });
 });

@@ -1,5 +1,10 @@
 'use strict';
 
+// Shared phrase normalizer used by listCollectionsWithPhraseAnnotation.
+// Imported from the module-level export of sentiment.js so the SQL fragment
+// stays byte-identical to normalizePhraseSql everywhere else in the codebase.
+const { normalizePhraseSql } = require('./sentiment');
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
 // Turso (libsql over HTTP) auto-commits every statement and does not support
 // BEGIN EXCLUSIVE across separate HTTP calls.  On Turso we execute statements
@@ -454,6 +459,20 @@ const documentCollectionsAsync = {
     `, ids);
   },
 
+  // Returns the distinct collection ids that contain the given document.
+  // Used by the entity-authoring / relationship-authoring routes in PR 4 to
+  // resolve "which collections govern this transcript's document?" — the
+  // POST handler then checks the user's manager role on at least one of
+  // those collections before allowing manual entity creation.
+  async listCollectionIdsForDocument(documentId) {
+    const rows = await allAsync(`
+      SELECT collection_id
+      FROM document_collections
+      WHERE document_id = ?
+    `, [documentId]);
+    return rows.map(r => r.collection_id);
+  },
+
   // Returns the distinct collection ids that contain at least one document
   // the entity is cited in. The curator-access predicate uses this to
   // answer "which collections govern mutation rights on this entity?" —
@@ -488,12 +507,16 @@ const documentCollectionsAsync = {
   // § "Phrase-target scope" and § "Phrase-target promotion blast radius",
   // this is the security-critical lookup for PR 4's scoped UPDATE.
   async listCollectionsWithPhraseAnnotation(normalizedPhrase) {
+    // Route through the shared SQL normalizer so any drift in the JS side
+    // (db.normalizeSentimentPhrase) automatically applies here. Keeping the
+    // two aligned is security-critical: the predicate's authorization set
+    // must equal the actual UPDATE target set for phrase-target promote.
     const rows = await allAsync(`
       SELECT DISTINCT dc.collection_id
       FROM sentiment_annotations sa
       INNER JOIN document_collections dc ON dc.document_id = sa.document_id
       WHERE sa.target_kind = 'phrase'
-        AND LOWER(RTRIM(TRIM(sa.target_phrase), '.,;:!?')) = ?
+        AND ${normalizePhraseSql('sa.target_phrase')} = ?
     `, [normalizedPhrase]);
     return rows.map(r => r.collection_id);
   },
