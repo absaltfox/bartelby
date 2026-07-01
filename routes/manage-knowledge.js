@@ -175,18 +175,19 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
       reviewItems = [];
     }
   }
-  // Total count for the active status uses countPendingByCollection when
-  // status === 'pending'; for other statuses we fall back to the page size
-  // multiplied estimate (the partial only uses totalCount for the header).
+  // Total count for the active status. Both branches use a real SQL count
+  // so pagination reflects the true set. The previous fallback of
+  // `reviewItems.length + offset` for non-pending statuses lied whenever
+  // the current page was full — the header claimed totalPages=1 and rows
+  // beyond the first page were unreachable from the manager UI.
   try {
-    if (status === 'pending') {
-      const breakdown = await citationsAsync.countPendingByCollection(collectionId);
-      totalCount = reviewKind === 'all'
-        ? Number(breakdown.total || 0)
-        : Number(breakdown[reviewKind] || 0);
-    } else {
-      totalCount = reviewItems.length + offset;
-    }
+    const statusForCount = status === 'all' ? null : status;
+    const breakdown = status === 'pending'
+      ? await citationsAsync.countPendingByCollection(collectionId)
+      : await citationsAsync.countByCollectionAndStatus(collectionId, statusForCount);
+    totalCount = reviewKind === 'all'
+      ? Number(breakdown.total || 0)
+      : Number(breakdown[reviewKind] || 0);
   } catch (err) {
     totalCount = reviewItems.length;
   }
@@ -284,41 +285,28 @@ router.get('/entities', asyncHandler(async (req, res) => {
   let entities = [];
   let totalCount = 0;
   try {
-    // listForAdmin understands { collectionId, type, unresolved, limit, offset }.
+    // listForAdmin understands { collectionId, type, unresolved, q, limit,
+    // offset }. Search is pushed into SQL (PR 7 fix) so pagination reflects
+    // the true filtered set — the earlier in-memory filter applied AFTER
+    // LIMIT/OFFSET made rows past page 1 unreachable when a manager
+    // searched a large collection.
     const opts = {
       collectionId,
       limit: PAGE_SIZE,
       offset,
       type: typeFilter !== 'all' ? typeFilter : undefined,
-      unresolved: unresolved || undefined
+      unresolved: unresolved || undefined,
+      q: q || undefined
     };
     entities = typeof entitiesAsync.listForAdmin === 'function'
       ? await entitiesAsync.listForAdmin(opts)
       : [];
 
-    // Free-text q filter is applied in-memory for the collection-scoped page
-    // because the admin search() helper isn't collection-aware. Sticking with
-    // a simple substring match keeps the manager UX consistent with the
-    // admin page's behavior for browse/search.
-    if (q) {
-      const needle = q.toLowerCase();
-      entities = entities.filter((e) => (e.canonical_name || '').toLowerCase().includes(needle));
-    }
-
-    // Total count sourcing: for the unresolved-filter case we want the
-    // total number of unresolved entities in the collection (so pagination
-    // reflects the drill-down scope, not the whole collection).
-    if (unresolved) {
-      const unresolvedTotals = await entitiesAsync.countUnresolvedByCollection(collectionId);
-      totalCount = Number(unresolvedTotals && unresolvedTotals.total || 0);
-    } else {
-      const totals = await entitiesAsync.countByCollection(collectionId);
-      if (typeFilter !== 'all' && totals && totals.byType) {
-        totalCount = Number(totals.byType[typeFilter] || 0);
-      } else {
-        totalCount = Number(totals && totals.total || 0);
-      }
-    }
+    // Total count uses the same WHERE clause via countMatchingForAdmin so
+    // the header reflects the filtered set (not the collection total).
+    totalCount = typeof entitiesAsync.countMatchingForAdmin === 'function'
+      ? await entitiesAsync.countMatchingForAdmin(opts)
+      : entities.length;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[manage-knowledge] entities load failed:', err && err.message);

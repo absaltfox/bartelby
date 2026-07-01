@@ -111,11 +111,16 @@ const entities = {
 
   // Spec § "Data flow and query scoping" (Entities list) — a unified
   // admin-listing entry point that accepts an opt bag with optional
-  // { collectionId, type, unresolved, limit, offset }. When no opts are
+  // { collectionId, type, unresolved, q, limit, offset }. When no opts are
   // supplied the call is equivalent to getAll(limit, offset). Per the
   // spec, scoping always traverses document_collections (entities have no
   // collection_id of their own — migrations.js v44 puts the entity ->
   // document edge on citations.entity_id).
+  //
+  // `q` is a case-insensitive substring match against canonical_name.
+  // Pushed into SQL so pagination reflects the true filtered set — the
+  // manage handler previously applied `q` in-memory AFTER the LIMIT/OFFSET
+  // slice, so a matching row past page 1 was silently unreachable.
   async listForAdmin(opts = {}) {
     const limit = Number.isInteger(Number(opts.limit)) ? Number(opts.limit) : 50;
     const offset = Number.isInteger(Number(opts.offset)) ? Number(opts.offset) : 0;
@@ -128,6 +133,13 @@ const entities = {
     }
     if (opts.unresolved === true) {
       where.push('e.authority_id IS NULL');
+    }
+    if (opts.q && typeof opts.q === 'string' && opts.q.trim()) {
+      // ESCAPE the LIKE metacharacters so operators can't be sneaked in via
+      // curator-typed search text.
+      const needle = opts.q.trim().replace(/[\\%_]/g, '\\$&');
+      where.push(`LOWER(e.canonical_name) LIKE LOWER(?) ESCAPE '\\'`);
+      params.push(`%${needle}%`);
     }
     if (Number.isInteger(Number(opts.collectionId)) && Number(opts.collectionId) > 0) {
       where.push(`e.id IN (
@@ -150,6 +162,46 @@ const entities = {
       ORDER BY e.canonical_name
       LIMIT ? OFFSET ?
     `, params)).map(hydrateEntity);
+  },
+
+  // Companion to listForAdmin — returns a single COUNT matching the same
+  // WHERE clause (collectionId + type + unresolved + q). Manage-side
+  // pagination uses this instead of countByCollection so the header
+  // reflects the true filtered set. Kept as a separate method rather than
+  // an opt on countByCollection because the byType breakdown is a
+  // different shape and byType is meaningless when q is applied.
+  async countMatchingForAdmin(opts = {}) {
+    const where = [];
+    const params = [];
+    if (opts.type && typeof opts.type === 'string') {
+      where.push('e.entity_type = ?');
+      params.push(opts.type);
+    }
+    if (opts.unresolved === true) {
+      where.push('e.authority_id IS NULL');
+    }
+    if (opts.q && typeof opts.q === 'string' && opts.q.trim()) {
+      const needle = opts.q.trim().replace(/[\\%_]/g, '\\$&');
+      where.push(`LOWER(e.canonical_name) LIKE LOWER(?) ESCAPE '\\'`);
+      params.push(`%${needle}%`);
+    }
+    if (Number.isInteger(Number(opts.collectionId)) && Number(opts.collectionId) > 0) {
+      where.push(`e.id IN (
+        SELECT DISTINCT c.entity_id
+        FROM citations c
+        INNER JOIN document_collections dc ON dc.document_id = c.document_id
+        WHERE dc.collection_id = ?
+          AND c.entity_id IS NOT NULL
+      )`);
+      params.push(Number(opts.collectionId));
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const row = await getAsync(`
+      SELECT COUNT(*) AS n
+      FROM entities e
+      ${whereClause}
+    `, params);
+    return Number(row?.n || 0);
   },
 
   // Spec § "Dashboard counts" (entities in collection). Counts distinct
@@ -2001,6 +2053,42 @@ const citations = {
           WHERE dc.collection_id = ?
         )
     `, [normalizedId]);
+    return {
+      entity: Number(row?.entity || 0),
+      relationship: Number(row?.relationship || 0),
+      date: Number(row?.date || 0),
+      total: Number(row?.total || 0)
+    };
+  },
+
+  // Total count of citations in a collection at a given approval status,
+  // split by review kind. Powers the manage-knowledge review-extractions
+  // pagination when the tab is NOT 'pending' — the earlier fallback of
+  // `reviewItems.length + offset` lied whenever the current page was a
+  // full page (a 200-row status set showed totalPages=1 on page 1, hiding
+  // pages 2-4). `status: 'all'` returns the union across statuses.
+  async countByCollectionAndStatus(collectionId, status) {
+    const normalizedId = Number(collectionId);
+    const zero = { entity: 0, relationship: 0, date: 0, total: 0 };
+    if (!Number.isInteger(normalizedId) || normalizedId <= 0) return zero;
+    const ALLOWED_STATUSES = ['pending', 'approved', 'rejected'];
+    const conditions = [
+      `c.document_id IN (SELECT dc.document_id FROM document_collections dc WHERE dc.collection_id = ?)`
+    ];
+    const params = [normalizedId];
+    if (status && ALLOWED_STATUSES.includes(status)) {
+      conditions.push('c.approval_status = ?');
+      params.push(status);
+    }
+    const row = await getAsync(`
+      SELECT
+        SUM(CASE WHEN c.relationship_id IS NULL AND c.date_expression_id IS NULL THEN 1 ELSE 0 END) AS entity,
+        SUM(CASE WHEN c.relationship_id IS NOT NULL THEN 1 ELSE 0 END) AS relationship,
+        SUM(CASE WHEN c.date_expression_id IS NOT NULL THEN 1 ELSE 0 END) AS date,
+        COUNT(*) AS total
+      FROM citations c
+      WHERE ${conditions.join(' AND ')}
+    `, params);
     return {
       entity: Number(row?.entity || 0),
       relationship: Number(row?.relationship || 0),
