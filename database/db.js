@@ -1565,6 +1565,7 @@ const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsy
 const {
   sentimentAsync,
   normalizePhrase: normalizeSentimentPhrase,
+  normalizePhraseSql: normalizeSentimentPhraseSql,
   parseResearchFilters: parseSentimentResearchFilters,
   parseTimelineBucket: parseSentimentTimelineBucket,
   ResearchFilterError: SentimentResearchFilterError

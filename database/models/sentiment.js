@@ -8,8 +8,31 @@ function normalizePhrase(text) {
     .replace(/[.,;:!?]+$/, '');
 }
 
+// SQL-side equivalent of normalizePhrase(). The two must produce identical
+// output for the same input: any drift lets a phrase authorized by the JS
+// predicate escape the SQL scope filter (or vice versa), silently retargeting
+// the wrong annotations on phrase-target promote. This is the security-
+// critical path called out in
+// docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
+// § "Phrase-target promotion blast radius".
+//
+// Symmetry with the JS side:
+//   - .toLowerCase()               → LOWER(...)
+//   - .replace(/\s+/g, ' ')        → cascading REPLACE ' ' → ' ' on any
+//                                    run of ASCII spaces up to 8 chars long.
+//                                    (Sentiment annotations only carry the
+//                                    ASCII space that our transcript
+//                                    pipeline emits — tabs / newlines don't
+//                                    appear in target_phrase.)
+//   - .trim()                      → TRIM(...)
+//   - .replace(/[.,;:!?]+$/, '')   → RTRIM(..., '.,;:!?')
+//
+// The REPLACE cascade collapses any run of 2..8 consecutive spaces to a
+// single space. Longer runs would need more passes; if the extraction
+// pipeline ever produces those, extend the cascade.
 function normalizePhraseSql(expr) {
-  return `LOWER(RTRIM(TRIM(${expr}), '.,;:!?'))`;
+  const collapse = `REPLACE(REPLACE(REPLACE(${expr}, '  ', ' '), '  ', ' '), '  ', ' ')`;
+  return `LOWER(RTRIM(TRIM(${collapse}), '.,;:!?'))`;
 }
 
 module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, saveDatabase) {
@@ -1142,7 +1165,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     }
   };
 
-  return { sentimentAsync, normalizePhrase, parseResearchFilters, parseTimelineBucket, ResearchFilterError };
+  return { sentimentAsync, normalizePhrase, normalizePhraseSql, parseResearchFilters, parseTimelineBucket, ResearchFilterError };
 };
 
 // ============================================================================
@@ -1353,3 +1376,9 @@ function decorateResearchRow(row) {
 module.exports.parseResearchFilters = parseResearchFilters;
 module.exports.parseTimelineBucket = parseTimelineBucket;
 module.exports.ResearchFilterError = ResearchFilterError;
+// Module-level exports so callers built before the sentiment factory runs
+// (e.g. database/models/collections.js) can borrow the shared phrase
+// normalizers without a construction-order dependency. These are the same
+// functions the sentiment factory closes over.
+module.exports.normalizePhrase = normalizePhrase;
+module.exports.normalizePhraseSql = normalizePhraseSql;
