@@ -634,6 +634,40 @@ Shared modal behavior should handle:
 
 Avoid page-specific modal scripts that reimplement the same close behavior.
 
+### Evidence preview modal
+
+Curator review queues that show an item alongside its supporting transcript
+evidence MUST use the shared evidence preview modal pattern rather than
+inventing a new overlay.
+
+Structure:
+
+- Root element: `<div class="modal-overlay">` with `role="dialog"`,
+  `aria-modal="true"`, and `aria-labelledby` pointing to the modal title.
+  Uses an `id` attribute (e.g., `id="review-preview-modal"`) as the JS hook
+  — do not use `data-review-preview-modal`; the JS targets the `id` directly.
+- Dialog wrapper: `<div class="modal-dialog review-preview-modal-dialog">`
+- Header: `<div class="modal-header">` with a heading group and a close button
+  carrying `aria-label="Close"`.
+- Body: `<div class="modal-body review-preview-modal-body">` containing:
+  - A metadata bar (`div.review-preview-meta`)
+  - A two-panel layout (`div.review-preview-layout`):
+    - Left panel (`section.review-preview-panel`): original document page image
+      with speaker/timestamp label
+    - Right panel (`section.review-preview-panel`): transcript context excerpt
+      with passage note
+  - A context section (`div.review-preview-context`) for lazily rendered
+    corroborating evidence (co-extracted entities, same-document relationships,
+    authority memberships)
+  - A footer (`div.review-preview-footer`) with a link to open the full document
+
+**Canonical example:** `views/admin/review-extractions.ejs` (lines 107–145)
+with backing JS at `public/js/review-extractions.js`.
+
+Do not invent a new preview modal for future review queues. Reuse this pattern
+for sentiment review, phrase-target review, authority-suggestion review, and any
+subsequent queue.
+
 ## Accessibility Standards
 
 Minimum requirements:
