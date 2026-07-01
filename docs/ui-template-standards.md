@@ -112,10 +112,26 @@ The rail partial must be rendered as a **direct child** of the
 `admin-page--workspace` wrapper. The desktop layout uses
 `.admin-page--workspace:has(> .knowledge-workbench-rail)` to convert the page
 into a sticky-rail / content grid; wrapping the include in any other container
-silently falls back to the mobile horizontal-scroll variant on desktop. Open
-the workspace `<div>` before both the `admin-nav` and `knowledge-nav` includes,
-matching the pattern used in `views/admin/entity-detail.ejs`,
-`views/admin/sentiment-clusters.ejs`, and `views/admin/review-extractions.ejs`.
+silently falls back to the mobile horizontal-scroll variant on desktop.
+
+#### Required child order for `.admin-page--workspace` on Knowledge pages
+
+Direct children of `.admin-page--workspace` on Knowledge pages MUST appear in
+this order:
+
+1. `<%- include('../partials/admin-nav') %>`
+2. `<%- include('../partials/knowledge-nav', { activeKnowledgePage: '...' }) %>`
+3. `<div class="admin-header">…</div>`
+4. Any success/error alert blocks
+5. Page content sections
+
+**Canonical example:** `views/admin/entity-detail.ejs` (lines 3–14).
+
+Do not insert `admin-header` between the two nav includes. The CSS selector
+`.admin-page--workspace:has(> .knowledge-workbench-rail)` will still match
+either ordering, but the rail visibly shifts vertical position when the order
+drifts between sibling pages — curators see the rail jump up or down as they
+move through the workbench.
 
 `views/partials/knowledge-nav.ejs` accepts two optional locals so the same
 rail can serve both the global admin workbench and the collection-scoped
