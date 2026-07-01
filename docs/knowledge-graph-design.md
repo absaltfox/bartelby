@@ -1005,6 +1005,30 @@ as the "Knowledge" tab, and from per-row cross-links on `/admin/collections`
 and `/admin/knowledge` so admins can land directly in a collection's
 workbench.
 
+### Manage-collection knowledge workspace template composition
+
+Curators without full admin access reach the knowledge tools through
+`views/manage/collections/knowledge/*.ejs`. The manage template composition is:
+
+- Same `.admin-page--workspace` shell as admin pages.
+- `manage-collection-nav` breadcrumb (collection-scoped) replaces `admin-nav`
+  as the first direct child of `.admin-page--workspace`. It is rendered by
+  `views/partials/manage-collection-nav.ejs`.
+- Same `knowledge-nav` rail, passed `isAdmin: false` so items and groups
+  marked `adminOnly: true` (entity merge, generic terms, sentiment clusters,
+  sentiment review, the entire Maintain group) are hidden via role gating in
+  `views/partials/knowledge-nav.ejs`.
+- Same knowledge list body partials under `views/partials/knowledge/*.ejs` for
+  list-of-items views, shared with the admin workbench so the two surfaces stay
+  in sync without template forks.
+
+The three-direct-child layout (manage-collection-nav + knowledge-workbench-rail
++ page content) is keyed by
+`.admin-page--workspace:has(> .knowledge-workbench-rail):has(> .manage-collection-shell)`
+in `public/css/style.css`.
+
+**Canonical curator entry point:** `views/manage/collections/knowledge/dashboard.ejs`.
+
 ### Relaxed-auth pattern for in-scope POSTs
 
 The relevant POST endpoints that previously required `requireAdmin` are
