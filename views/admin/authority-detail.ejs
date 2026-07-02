@@ -148,33 +148,39 @@
       }) %>
     <% } %>
 
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Merge</p>
-        <h2>Merge into another authority</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="target_authority_id" value="" data-authority-id required>
-          <div class="edit-field">
-            <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
-            <input
-              type="search"
-              id="authority-merge-search-<%= authority.id %>"
-              class="admin-search-input"
-              placeholder="Search the authority to keep..."
-              autocomplete="off"
-              spellcheck="false"
-              data-authority-search
-            >
-          </div>
-          <div class="knowledge-document-selection" data-authority-selected hidden></div>
-          <div class="knowledge-document-results" data-authority-results hidden></div>
-          <div class="edit-actions">
-            <button type="submit" class="btn-danger btn-sm">Merge Authority</button>
-          </div>
-        </form>
+    <section class="danger-zone">
+      <h2>Danger zone</h2>
+      <p class="curator-action-note">Merging authorities is irreversible.
+        Members and citations of the source authority are re-parented onto
+        the target, and the source is deleted.</p>
+      <div class="graph-shell-card knowledge-card">
+        <div class="graph-sidebar-header">
+          <p class="kg-panel-eyebrow">Merge</p>
+          <h2>Merge into another authority</h2>
+        </div>
+        <div class="graph-sidebar-body">
+          <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="target_authority_id" value="" data-authority-id required>
+            <div class="edit-field">
+              <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
+              <input
+                type="search"
+                id="authority-merge-search-<%= authority.id %>"
+                class="admin-search-input"
+                placeholder="Search the authority to keep..."
+                autocomplete="off"
+                spellcheck="false"
+                data-authority-search
+              >
+            </div>
+            <div class="knowledge-document-selection" data-authority-selected hidden></div>
+            <div class="knowledge-document-results" data-authority-results hidden></div>
+            <div class="edit-actions">
+              <button type="submit" class="btn-danger btn-sm">Merge Authority</button>
+            </div>
+          </form>
+        </div>
       </div>
     </section>
   </div>

@@ -4755,6 +4755,26 @@ main { flex: 1; padding: 32px 0; }
   line-height: 1.28;
 }
 
+/* Danger zone — irreversible operations (merge, delete).
+   Per docs/ui-template-standards.md § Curator Consequence Text, wrap
+   irreversible forms in this section with explicit consequence text. */
+.danger-zone {
+  border: 1px solid #e5b4b4;
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.5rem;
+  background: #fff8f8;
+}
+.danger-zone h2 {
+  color: var(--red, #c0392b);
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+.danger-zone .curator-action-note {
+  margin-bottom: 1rem;
+}
+
 .review-bulk-consequence {
   flex: 1 1 280px;
   max-width: 520px;
