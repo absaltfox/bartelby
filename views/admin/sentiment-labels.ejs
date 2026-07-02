@@ -6,14 +6,6 @@
 
   <h1>Sentiment Phrase Labels</h1>
 
-  <nav class="filter-tabs">
-    <a href="/admin/knowledge/sentiment/clusters" class="filter-tab">Clusters</a>
-    <a href="/admin/knowledge/sentiment/clusters?tab=noise" class="filter-tab">Noise</a>
-    <a href="/admin/knowledge/sentiment/labels" class="filter-tab active">
-      Labels <span class="filter-count"><%= summary.total_labels %></span>
-    </a>
-  </nav>
-
   <p class="muted">
     <%= summary.total_labels %> labels covering
     <%= summary.total_labeled_phrases %> of <%= summary.total_phrases %> phrases

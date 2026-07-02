@@ -7,17 +7,14 @@
   <div class="admin-content">
     <h1>Sentiment Phrase Clusters</h1>
 
-    <nav class="filter-tabs">
-      <a href="?tab=clusters" class="filter-tab <%= tab === 'clusters' ? 'active' : '' %>">
+    <div class="segmented-control" role="tablist" aria-label="Clusters view">
+      <a href="?tab=clusters" role="tab" aria-current="<%= tab === 'clusters' ? 'true' : 'false' %>">
         Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
       </a>
-      <a href="?tab=noise" class="filter-tab <%= tab === 'noise' ? 'active' : '' %>">
+      <a href="?tab=noise" role="tab" aria-current="<%= tab === 'noise' ? 'true' : 'false' %>">
         Noise <span class="filter-count"><%= tabCounts.noise %></span>
       </a>
-      <a href="/admin/knowledge/sentiment/labels" class="filter-tab">
-        Labels <span class="filter-count"><%= tabCounts.labels %></span>
-      </a>
-    </nav>
+    </div>
 
     <% if (tab === 'clusters') { %>
       <p class="muted">
@@ -40,13 +37,13 @@
       </div>
 
       <div class="filter-bar">
-        <label>Show:
-          <a href="?tab=clusters&state=all" class="<%= stateFilter === 'all' ? 'active' : '' %>">all</a> ·
-          <a href="?tab=clusters&state=unlabeled" class="<%= stateFilter === 'unlabeled' ? 'active' : '' %>">unlabeled</a> ·
-          <a href="?tab=clusters&state=partial" class="<%= stateFilter === 'partial' ? 'active' : '' %>">partial</a> ·
-          <a href="?tab=clusters&state=mixed" class="<%= stateFilter === 'mixed' ? 'active' : '' %>">mixed</a> ·
-          <a href="?tab=clusters&state=full" class="<%= stateFilter === 'full' ? 'active' : '' %>">full</a>
-        </label>
+        <div class="segmented-control" role="tablist" aria-label="Filter by label state">
+          <a href="?tab=clusters&state=all" role="tab" aria-current="<%= stateFilter === 'all' ? 'true' : 'false' %>">all</a>
+          <a href="?tab=clusters&state=unlabeled" role="tab" aria-current="<%= stateFilter === 'unlabeled' ? 'true' : 'false' %>">unlabeled</a>
+          <a href="?tab=clusters&state=partial" role="tab" aria-current="<%= stateFilter === 'partial' ? 'true' : 'false' %>">partial</a>
+          <a href="?tab=clusters&state=mixed" role="tab" aria-current="<%= stateFilter === 'mixed' ? 'true' : 'false' %>">mixed</a>
+          <a href="?tab=clusters&state=full" role="tab" aria-current="<%= stateFilter === 'full' ? 'true' : 'false' %>">full</a>
+        </div>
         <form method="get" class="filter-label-form">
           <% if (tab !== 'clusters') { %><input type="hidden" name="tab" value="<%= tab %>"><% } %>
           <% if (stateFilter !== 'all') { %><input type="hidden" name="state" value="<%= stateFilter %>"><% } %>
