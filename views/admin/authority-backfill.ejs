@@ -55,12 +55,16 @@
                 <% } %>
               </td>
               <td class="col-actions">
-                <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs/collection/<%= c.id %>" class="inline-form">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <button type="submit" class="btn-primary btn-sm"<%= c.has_pending_suggestion_job ? ' disabled' : '' %>>
-                    Run backfill (<%= c.entity_count %> entities)
-                  </button>
-                </form>
+                <% if (c.has_pending_suggestion_job) { %>
+                  <span class="status-badge status-running">Running&hellip;</span>
+                <% } else { %>
+                  <form method="POST" action="/admin/knowledge/authorities/suggestion-jobs/collection/<%= c.id %>" class="inline-form">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn-primary btn-sm">
+                      Run backfill (<%= c.entity_count %> entities)
+                    </button>
+                  </form>
+                <% } %>
               </td>
             </tr>
           <% }) %>
