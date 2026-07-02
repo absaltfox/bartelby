@@ -192,7 +192,7 @@
             <h2>Recent changes</h2>
           </div>
           <div class="graph-sidebar-body">
-            <details>
+            <details class="entity-changes-card__disclosure">
               <summary>Show <%= recentChanges.length %> most recent change<%= recentChanges.length === 1 ? '' : 's' %></summary>
               <ul class="entity-changes-list">
                 <% recentChanges.forEach(function (chg) { %>
@@ -232,7 +232,7 @@
       </section>
 
       <section class="danger-zone" aria-labelledby="entity-rail-danger">
-        <h2 id="entity-rail-danger">Danger zone</h2>
+        <p class="curator-action-group-label" id="entity-rail-danger">Danger zone</p>
         <p class="curator-action-note">Deletion removes the entity, its citations, and its relationships. This cannot be undone.</p>
         <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/delete" data-confirm-message="Delete this entity? This cannot be undone.">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
