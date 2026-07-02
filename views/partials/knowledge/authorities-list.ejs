@@ -33,8 +33,8 @@
     <form method="POST" action="<%= _urlPrefix %>/authorities/bulk/merge" class="authority-bulk-form" data-authority-bulk-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="returnTo" value="<%= currentUrl %>">
-      <div class="bulk-toolbar suggestions-bulk-controls">
-        <label class="bulk-toolbar-select-all suggestions-select-all">
+      <div class="bulk-toolbar">
+        <label class="bulk-toolbar-select-all">
           <input type="checkbox" id="authorities-select-all" data-authorities-select-all>
           <span>Select all on page</span>
         </label>

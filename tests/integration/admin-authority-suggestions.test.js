@@ -330,7 +330,7 @@ describe('admin authority suggestions AJAX', () => {
     expect(res.text).toContain('filter-chips');
     expect(res.text).toContain('matchMethod=embedding');
     expect(res.text).toContain('Select exact names on page');
-    expect(res.text).toContain('authority-suggestion-bulk-bar');
+    expect(res.text).toContain('bulk-toolbar--suggestions');
     expect(res.text).toContain('authority-suggestion-card');
     expect(res.text).toContain('data-context-pending="1"');
     expect(res.text).toContain('skeleton-line');

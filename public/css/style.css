@@ -8271,9 +8271,7 @@ main { flex: 1; padding: 32px 0; }
 
 /* ── Bulk Toolbar ── */
 
-.bulk-toolbar,
-.doc-toolbar,
-.suggestions-bulk-controls {
+.bulk-toolbar {
   display: flex;
   align-items: center;
   gap: 10px 14px;
@@ -8288,22 +8286,19 @@ main { flex: 1; padding: 32px 0; }
   flex-wrap: wrap;
 }
 
-.bulk-toolbar--sticky,
-.doc-toolbar--sticky {
+.bulk-toolbar--sticky {
   position: sticky;
   top: 10px;
 }
 
-.bulk-toolbar-left,
-.doc-toolbar-left {
+.bulk-toolbar-left {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.bulk-toolbar-select-all,
-.doc-toolbar-select-all {
+.bulk-toolbar-select-all {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -8315,8 +8310,7 @@ main { flex: 1; padding: 32px 0; }
   user-select: none;
 }
 
-.bulk-toolbar-select-all input,
-.doc-toolbar-select-all input {
+.bulk-toolbar-select-all input {
   width: 16px;
   height: 16px;
   margin: 0;
@@ -8332,16 +8326,14 @@ main { flex: 1; padding: 32px 0; }
   white-space: nowrap;
 }
 
-.bulk-toolbar-actions,
-.doc-toolbar-actions {
+.bulk-toolbar-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.bulk-toolbar-right,
-.doc-toolbar-right {
+.bulk-toolbar-right {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -8350,14 +8342,11 @@ main { flex: 1; padding: 32px 0; }
 }
 
 @media (max-width: 760px) {
-  .bulk-toolbar,
-  .doc-toolbar,
-  .suggestions-bulk-controls {
+  .bulk-toolbar {
     align-items: flex-start;
   }
 
-  .bulk-toolbar-right,
-  .doc-toolbar-right {
+  .bulk-toolbar-right {
     margin-left: 0;
     width: 100%;
   }
@@ -10540,7 +10529,7 @@ body.modal-open {
 }
 .knowledge-citation-card .inline-error[hidden] { display: none; }
 
-.authority-suggestion-bulk-bar {
+.bulk-toolbar--suggestions {
   z-index: 20;
   margin: 0 0 16px;
 }
@@ -10699,7 +10688,7 @@ body.modal-open {
 .toast[hidden] { display: none; }
 
 @media (max-width: 760px) {
-  .authority-suggestion-bulk-bar {
+  .bulk-toolbar--suggestions {
     top: 6px;
     align-items: flex-start;
   }

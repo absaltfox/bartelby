@@ -27,8 +27,8 @@
   const _urlPrefix = (typeof urlPrefix !== 'undefined' && urlPrefix) ? urlPrefix : '/admin/knowledge';
 %>
   <% if (status === 'pending') { %>
-    <div class="bulk-toolbar bulk-toolbar--sticky suggestions-bulk-controls authority-suggestion-bulk-bar">
-      <label class="bulk-toolbar-select-all suggestions-select-all authority-suggestion-select-all">
+    <div class="bulk-toolbar bulk-toolbar--sticky bulk-toolbar--suggestions">
+      <label class="bulk-toolbar-select-all">
         <input type="checkbox" id="suggestions-select-all">
         <span>Select all on page</span>
       </label>
