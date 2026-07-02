@@ -10,6 +10,7 @@ const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { buildComparisonPages, stripPageMarkers } = require('../utils/document-services');
+const { flashesFromQuery } = require('../utils/flash-from-query');
 
 // PR 4 — collection-scoped knowledge workbench.
 // Per docs/superpowers/specs/2026-06-26-collection-scoped-knowledge-workbench-design.md
@@ -831,10 +832,7 @@ router.get('/review-extractions', requireAdmin, asyncHandler(async (req, res) =>
     graphReady: !!stores.citations,
     graphNotice: stores.citations ? null : 'Knowledge graph citation helpers are not wired yet.',
     activeKnowledgePage: 'review-extractions',
-    error: req.query.error || null,
-    confirmed: req.query.confirmed || null,
-    rejected: req.query.rejected || null,
-    deleted: req.query.deleted || null
+    flashes: flashesFromQuery(req.query, ['confirmed', 'rejected', 'deleted'])
   });
 }));
 

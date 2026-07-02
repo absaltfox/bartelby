@@ -1,0 +1,5 @@
+<% if (typeof flashes !== 'undefined' && flashes && flashes.length > 0) { %>
+  <% flashes.forEach(function(f) { %>
+    <div class="alert alert-<%= f.type %>"><%= f.message %></div>
+  <% }) %>
+<% } %>

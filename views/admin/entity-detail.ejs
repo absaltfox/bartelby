@@ -13,14 +13,7 @@
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
-  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
-  <% if (merged) { %><div class="alert alert-success">Entity merge completed.</div><% } %>
-  <% if (approved) { %><div class="alert alert-success">Citation approved.</div><% } %>
-  <% if (rejected) { %><div class="alert alert-success">Citation rejected.</div><% } %>
-  <% if (deleted) { %><div class="alert alert-success">Citation deleted.</div><% } %>
-  <% if (authorityUpdated) { %><div class="alert alert-success">Authority assignment updated.</div><% } %>
-  <% if (entityUpdated) { %><div class="alert alert-success">Entity updated.</div><% } %>
-  <% if (splitCreated) { %><div class="alert alert-success">Entity split created.</div><% } %>
+  <%- include('../partials/flash-alerts', { flashes }) %>
 
   <div class="curator-action-toolbar entity-curator-toolbar">
     <section class="curator-action-group" aria-labelledby="curator-action-navigate">

@@ -21,10 +21,7 @@
     </div>
   </div>
 
-  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
-  <% if (merged) { %><div class="alert alert-success">Authority merge completed.</div><% } %>
-  <% if (unlinked) { %><div class="alert alert-success">Entity unlinked from this authority.</div><% } %>
-  <% if (reassigned) { %><div class="alert alert-success">Entity moved to another authority.</div><% } %>
+  <%- include('../partials/flash-alerts', { flashes }) %>
 
   <div class="knowledge-toolbar knowledge-toolbar--spaced">
     <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
