@@ -6,14 +6,6 @@
 
   <h1>Sentiment Phrase Labels</h1>
 
-  <nav class="filter-tabs">
-    <a href="/admin/knowledge/sentiment/clusters" class="filter-tab">Clusters</a>
-    <a href="/admin/knowledge/sentiment/clusters?tab=noise" class="filter-tab">Noise</a>
-    <a href="/admin/knowledge/sentiment/labels" class="filter-tab active">
-      Labels <span class="filter-count"><%= summary.total_labels %></span>
-    </a>
-  </nav>
-
   <p class="muted">
     <%= summary.total_labels %> labels covering
     <%= summary.total_labeled_phrases %> of <%= summary.total_phrases %> phrases
@@ -23,15 +15,20 @@
   </p>
 
   <% if (labels.length === 0) { %>
-    <p class="muted">No labels yet. Visit the Clusters tab and click "Label →" on any cluster to create your first label.</p>
+    <div class="empty-state empty-state--padded-lg">
+      <h2>No labels yet</h2>
+      <p>Labels are created from clusters. Visit the Clusters tab, review cluster members,
+        and click "Label →" to apply your first label.</p>
+      <p><a href="/admin/knowledge/sentiment/clusters" class="btn-primary">Go to Clusters</a></p>
+    </div>
   <% } else { %>
     <table class="workflows-table" id="labels-table">
       <thead>
         <tr>
-          <th>Label</th>
-          <th>Phrases</th>
-          <th>Created</th>
-          <th>Actions</th>
+          <th scope="col">Label</th>
+          <th scope="col">Phrases</th>
+          <th scope="col">Created</th>
+          <th scope="col">Actions</th>
         </tr>
       </thead>
       <tbody>

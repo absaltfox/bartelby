@@ -2,13 +2,12 @@
 
 <div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
 
   <div class="admin-header">
     <h1>Phrase Targets</h1>
     <p class="subtitle">Aggregated sentiment-annotation phrase targets that aren't yet modeled as entities. Promote real entities, suppress non-entity phrases.</p>
   </div>
-
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
 
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (saved) { %><div class="alert alert-success">Update applied.</div><% } %>

@@ -112,10 +112,26 @@ The rail partial must be rendered as a **direct child** of the
 `admin-page--workspace` wrapper. The desktop layout uses
 `.admin-page--workspace:has(> .knowledge-workbench-rail)` to convert the page
 into a sticky-rail / content grid; wrapping the include in any other container
-silently falls back to the mobile horizontal-scroll variant on desktop. Open
-the workspace `<div>` before both the `admin-nav` and `knowledge-nav` includes,
-matching the pattern used in `views/admin/entity-detail.ejs`,
-`views/admin/sentiment-clusters.ejs`, and `views/admin/review-extractions.ejs`.
+silently falls back to the mobile horizontal-scroll variant on desktop.
+
+#### Required child order for `.admin-page--workspace` on Knowledge pages
+
+Direct children of `.admin-page--workspace` on Knowledge pages MUST appear in
+this order:
+
+1. `<%- include('../partials/admin-nav') %>`
+2. `<%- include('../partials/knowledge-nav', { activeKnowledgePage: '...' }) %>`
+3. `<div class="admin-header">…</div>`
+4. Any success/error alert blocks
+5. Page content sections
+
+**Canonical example:** `views/admin/entity-detail.ejs` (lines 3–14).
+
+Do not insert `admin-header` between the two nav includes. The CSS selector
+`.admin-page--workspace:has(> .knowledge-workbench-rail)` will still match
+either ordering, but the rail visibly shifts vertical position when the order
+drifts between sibling pages — curators see the rail jump up or down as they
+move through the workbench.
 
 `views/partials/knowledge-nav.ejs` accepts two optional locals so the same
 rail can serve both the global admin workbench and the collection-scoped
@@ -192,6 +208,37 @@ assistive tech, so the visual grouping is not conveyed. Either:
 
 The first form is preferred when the page already renders a visible group
 label, since the visible text and the accessible name stay in sync.
+
+### Curator action toolbar
+
+Pages that offer a curator multiple entry-point actions (Navigate, Correct,
+Author) MUST use the toolbar cluster. Follows the `aria-labelledby` requirement
+from § Grouped Action Toolbars above.
+
+```html
+<div class="curator-action-toolbar entity-curator-toolbar">
+  <section class="curator-action-group" aria-labelledby="curator-action-navigate">
+    <p class="curator-action-group-label" id="curator-action-navigate">Navigate</p>
+    <div class="curator-action-buttons"> … </div>
+  </section>
+  <section class="curator-action-group curator-action-group--primary" aria-labelledby="curator-action-correct">
+    <p class="curator-action-group-label" id="curator-action-correct">Correct</p>
+    <div class="curator-action-buttons"> … </div>
+    <p class="curator-action-note">Consequence text explaining what a correction
+      actually mutates.</p>
+  </section>
+  <section class="curator-action-group" aria-labelledby="curator-action-author">
+    <p class="curator-action-group-label" id="curator-action-author">Author</p>
+    <div class="curator-action-buttons"> … </div>
+    <p class="curator-action-note">Creates citation-backed evidence from this entity.</p>
+  </section>
+</div>
+```
+
+**Canonical example:** `views/admin/entity-detail.ejs` (lines 25–49).
+
+The consequence text (`.curator-action-note`) MUST appear inside the group
+whose actions mutate corpus state.
 
 ### Conditional HTML Attributes
 
@@ -489,6 +536,25 @@ Operational row actions should use one consistent button family:
 - if a link is presented as a button, its hover and focus treatment must match
   the button family rather than reverting to text-link behavior
 
+### Hide unavailable actions
+
+Actions the current viewer cannot perform (role-gated, not-yet-eligible,
+already-in-flight) MUST be hidden, not rendered as `disabled` with a tooltip.
+Rationale: curators triage by scanning; a disabled button reads as "I could do
+this if I fixed something," which wastes attention.
+
+**Exceptions where `disabled` is acceptable:**
+
+- The button's disabled state itself teaches the required precondition (e.g.,
+  "Merge" disabled until both source and target are selected — see
+  `views/admin/merge-entities.ejs`).
+- An in-flight action where "Running…" is a status the curator must see; in
+  this case, replace the button with a `status-badge status-running` chip
+  rather than leaving `<button disabled>`.
+
+For simple "user lacks permission" cases: omit the element entirely and let the
+layout re-flow.
+
 ## CSRF
 
 Every mutating HTML form must include a CSRF token. GET forms should not.
@@ -572,6 +638,40 @@ Shared modal behavior should handle:
 - focus restoration where practical
 
 Avoid page-specific modal scripts that reimplement the same close behavior.
+
+### Evidence preview modal
+
+Curator review queues that show an item alongside its supporting transcript
+evidence MUST use the shared evidence preview modal pattern rather than
+inventing a new overlay.
+
+Structure:
+
+- Root element: `<div class="modal-overlay">` with `role="dialog"`,
+  `aria-modal="true"`, and `aria-labelledby` pointing to the modal title.
+  Uses an `id` attribute (e.g., `id="review-preview-modal"`) as the JS hook
+  — do not use `data-review-preview-modal`; the JS targets the `id` directly.
+- Dialog wrapper: `<div class="modal-dialog review-preview-modal-dialog">`
+- Header: `<div class="modal-header">` with a heading group and a close button
+  carrying `aria-label="Close"`.
+- Body: `<div class="modal-body review-preview-modal-body">` containing:
+  - A metadata bar (`div.review-preview-meta`)
+  - A two-panel layout (`div.review-preview-layout`):
+    - Left panel (`section.review-preview-panel`): original document page image
+      with speaker/timestamp label
+    - Right panel (`section.review-preview-panel`): transcript context excerpt
+      with passage note
+  - A context section (`div.review-preview-context`) for lazily rendered
+    corroborating evidence (co-extracted entities, same-document relationships,
+    authority memberships)
+  - A footer (`div.review-preview-footer`) with a link to open the full document
+
+**Canonical example:** `views/admin/review-extractions.ejs` (lines 107–145)
+with backing JS at `public/js/review-extractions.js`.
+
+Do not invent a new preview modal for future review queues. Reuse this pattern
+for sentiment review, phrase-target review, authority-suggestion review, and any
+subsequent queue.
 
 ## Accessibility Standards
 

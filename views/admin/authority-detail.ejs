@@ -21,32 +21,35 @@
     </div>
   </div>
 
-  <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
-  <% if (merged) { %><div class="alert alert-success">Authority merge completed.</div><% } %>
-  <% if (unlinked) { %><div class="alert alert-success">Entity unlinked from this authority.</div><% } %>
-  <% if (reassigned) { %><div class="alert alert-success">Entity moved to another authority.</div><% } %>
+  <%- include('../partials/flash-alerts', { flashes }) %>
 
-  <div class="knowledge-toolbar knowledge-toolbar--spaced">
-    <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
-    <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
-    <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology" class="btn-secondary btn-sm">
-      Chronology
-    </a>
-    <details class="toolbar-details" data-authority-relationship-members>
-      <summary class="btn-secondary btn-sm">+ Add relationship from a member</summary>
-      <div class="toolbar-details-menu">
+  <div class="curator-action-toolbar authority-curator-toolbar">
+    <section class="curator-action-group" aria-labelledby="authority-navigate">
+      <p class="curator-action-group-label" id="authority-navigate">Navigate</p>
+      <div class="curator-action-buttons">
+        <a href="/admin/knowledge/authorities" class="btn-secondary btn-sm">&larr; Back to authorities</a>
+        <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
+        <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology" class="btn-secondary btn-sm">Chronology</a>
+      </div>
+    </section>
+    <section class="curator-action-group" aria-labelledby="authority-author" data-authority-relationship-members>
+      <p class="curator-action-group-label" id="authority-author">Author</p>
+      <div class="curator-action-buttons">
         <% if (Array.isArray(linkedEntities) && linkedEntities.length) { %>
-          <% linkedEntities.forEach(function(member) { %>
-            <a class="toolbar-details-menu-item"
-               href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>">
-              <%= member.canonical_name %><% if (member.entity_type) { %> <span class="muted">(<%= member.entity_type %>)</span><% } %>
+          <% linkedEntities.slice(0, 3).forEach(function(member) { %>
+            <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>"
+               class="btn-secondary btn-sm">
+              + Relationship from <%= member.canonical_name %>
             </a>
           <% }) %>
         <% } else { %>
-          <p class="toolbar-details-menu-empty muted">No member entities linked to this authority yet.</p>
+          <span class="curator-action-note">No member entities linked yet — add members first.</span>
         <% } %>
       </div>
-    </details>
+      <% if (Array.isArray(linkedEntities) && linkedEntities.length) { %>
+        <p class="curator-action-note">Relationships are authored per entity; pick a member to start.</p>
+      <% } %>
+    </section>
   </div>
 
   <section class="authority-workspace" data-authority-workspace>
@@ -148,33 +151,39 @@
       }) %>
     <% } %>
 
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Merge</p>
-        <h2>Merge into another authority</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="target_authority_id" value="" data-authority-id required>
-          <div class="edit-field">
-            <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
-            <input
-              type="search"
-              id="authority-merge-search-<%= authority.id %>"
-              class="admin-search-input"
-              placeholder="Search the authority to keep..."
-              autocomplete="off"
-              spellcheck="false"
-              data-authority-search
-            >
-          </div>
-          <div class="knowledge-document-selection" data-authority-selected hidden></div>
-          <div class="knowledge-document-results" data-authority-results hidden></div>
-          <div class="edit-actions">
-            <button type="submit" class="btn-danger btn-sm">Merge Authority</button>
-          </div>
-        </form>
+    <section class="danger-zone">
+      <h2>Danger zone</h2>
+      <p class="curator-action-note">Merging authorities is irreversible.
+        Members and citations of the source authority are re-parented onto
+        the target, and the source is deleted.</p>
+      <div class="graph-shell-card knowledge-card">
+        <div class="graph-sidebar-header">
+          <p class="kg-panel-eyebrow">Merge</p>
+          <h2>Merge into another authority</h2>
+        </div>
+        <div class="graph-sidebar-body">
+          <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="target_authority_id" value="" data-authority-id required>
+            <div class="edit-field">
+              <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
+              <input
+                type="search"
+                id="authority-merge-search-<%= authority.id %>"
+                class="admin-search-input"
+                placeholder="Search the authority to keep..."
+                autocomplete="off"
+                spellcheck="false"
+                data-authority-search
+              >
+            </div>
+            <div class="knowledge-document-selection" data-authority-selected hidden></div>
+            <div class="knowledge-document-results" data-authority-results hidden></div>
+            <div class="edit-actions">
+              <button type="submit" class="btn-danger btn-sm">Merge Authority</button>
+            </div>
+          </form>
+        </div>
       </div>
     </section>
   </div>

@@ -4,22 +4,20 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-clusters' }) %>
 
-  <div class="admin-content">
+  <div class="admin-header">
     <h1>Sentiment Phrase Clusters</h1>
+  </div>
 
-    <nav class="filter-tabs">
-      <a href="?tab=clusters" class="filter-tab <%= tab === 'clusters' ? 'active' : '' %>">
-        Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
-      </a>
-      <a href="?tab=noise" class="filter-tab <%= tab === 'noise' ? 'active' : '' %>">
-        Noise <span class="filter-count"><%= tabCounts.noise %></span>
-      </a>
-      <a href="/admin/knowledge/sentiment/labels" class="filter-tab">
-        Labels <span class="filter-count"><%= tabCounts.labels %></span>
-      </a>
-    </nav>
+  <div class="segmented-control" role="tablist" aria-label="Clusters view">
+    <a href="?tab=clusters" role="tab"<% if (tab === 'clusters') { %> aria-current="true"<% } %>>
+      Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
+    </a>
+    <a href="?tab=noise" role="tab"<% if (tab === 'noise') { %> aria-current="true"<% } %>>
+      Noise <span class="filter-count"><%= tabCounts.noise %></span>
+    </a>
+  </div>
 
-    <% if (tab === 'clusters') { %>
+  <% if (tab === 'clusters') { %>
       <p class="muted">
         Each cluster shows its derived label state from member phrases. Click "Label" to open the drawer,
         review members, and apply or change labels. Labels persist across re-clustering.
@@ -40,13 +38,13 @@
       </div>
 
       <div class="filter-bar">
-        <label>Show:
-          <a href="?tab=clusters&state=all" class="<%= stateFilter === 'all' ? 'active' : '' %>">all</a> ·
-          <a href="?tab=clusters&state=unlabeled" class="<%= stateFilter === 'unlabeled' ? 'active' : '' %>">unlabeled</a> ·
-          <a href="?tab=clusters&state=partial" class="<%= stateFilter === 'partial' ? 'active' : '' %>">partial</a> ·
-          <a href="?tab=clusters&state=mixed" class="<%= stateFilter === 'mixed' ? 'active' : '' %>">mixed</a> ·
-          <a href="?tab=clusters&state=full" class="<%= stateFilter === 'full' ? 'active' : '' %>">full</a>
-        </label>
+        <div class="segmented-control" role="tablist" aria-label="Filter by label state">
+          <a href="?tab=clusters&state=all" role="tab"<% if (stateFilter === 'all') { %> aria-current="true"<% } %>>all</a>
+          <a href="?tab=clusters&state=unlabeled" role="tab"<% if (stateFilter === 'unlabeled') { %> aria-current="true"<% } %>>unlabeled</a>
+          <a href="?tab=clusters&state=partial" role="tab"<% if (stateFilter === 'partial') { %> aria-current="true"<% } %>>partial</a>
+          <a href="?tab=clusters&state=mixed" role="tab"<% if (stateFilter === 'mixed') { %> aria-current="true"<% } %>>mixed</a>
+          <a href="?tab=clusters&state=full" role="tab"<% if (stateFilter === 'full') { %> aria-current="true"<% } %>>full</a>
+        </div>
         <form method="get" class="filter-label-form">
           <% if (tab !== 'clusters') { %><input type="hidden" name="tab" value="<%= tab %>"><% } %>
           <% if (stateFilter !== 'all') { %><input type="hidden" name="state" value="<%= stateFilter %>"><% } %>
@@ -68,7 +66,7 @@
         <p class="muted">No clustering runs yet. Click "Run clustering now" to start one.</p>
       <% } else { %>
         <table class="workflows-table">
-          <thead><tr><th>Run</th><th>Status</th><th>Created</th><th>Result</th></tr></thead>
+          <thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Result</th></tr></thead>
           <tbody>
             <% for (const r of recentRuns) { %>
               <tr>
@@ -107,11 +105,11 @@
           <table class="workflows-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Size</th>
-                <th>State</th>
-                <th>Sample / Label</th>
-                <th>Action</th>
+                <th scope="col">#</th>
+                <th scope="col">Size</th>
+                <th scope="col">State</th>
+                <th scope="col">Sample / Label</th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -181,7 +179,6 @@
         <p class="muted">Loading noise phrases…</p>
       </div>
     <% } %>
-  </div>
 </div>
 
 <script src="/js/sentiment-clusters-drawer.js" defer></script>

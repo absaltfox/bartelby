@@ -59,6 +59,25 @@ with its archival, operational, and usability goals.
   if the LLM never ran. If not, the system has gaps in curator authority
   that should be flagged.
 
+### Corpus mutations require an explicit admin trigger
+
+Backfills, re-extractions, re-suggestion runs, re-clustering, and any other
+operation that alters corpus-scoped state MUST be triggered by an explicit
+admin action (a button POST, not an auto-run on page load or background timer).
+Rationale: an admin must remain accountable for the volume and timing of corpus
+mutations, and must be able to inspect prior state before mutating.
+
+**Affected pages** (each MUST gate its mutation behind an explicit
+`<form method="POST">` submit):
+
+- `views/admin/authority-backfill.ejs` — collection-scoped authority suggestion
+  run
+- `views/admin/knowledge.ejs` — document/collection re-extraction and authority
+  re-suggestion
+- `views/admin/extraction-jobs.ejs` — retry / re-run
+- `views/admin/sentiment-clusters.ejs` — "Run clustering now"
+- `views/admin/authority-suggestions.ejs` — apply-suggestion actions
+
 ## Engineering Principles
 
 ### Local, Docker, and Fly Should Stay Aligned

@@ -2,6 +2,7 @@
 
 <div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
 
   <div class="admin-header">
     <h1>Review Extractions</h1>
@@ -9,12 +10,7 @@
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
-
-  <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
-  <% if (typeof confirmed !== 'undefined' && confirmed) { %><div class="alert alert-success">Citation approved.</div><% } %>
-  <% if (typeof rejected !== 'undefined' && rejected) { %><div class="alert alert-success">Citation rejected.</div><% } %>
-  <% if (typeof deleted !== 'undefined' && deleted) { %><div class="alert alert-success">Citation deleted.</div><% } %>
+  <%- include('../partials/flash-alerts', { flashes }) %>
   <div class="alert is-hidden" data-review-live-message role="status" aria-live="polite"></div>
 
   <%

@@ -8,6 +8,7 @@ const db = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { resolveCitationEvidence } = require('../utils/citation-evidence');
+const { flashesFromQuery } = require('../utils/flash-from-query');
 const { EXTRACTION_METHODS, CITATION_APPROVAL_STATUSES } = require('../utils/knowledge-approval');
 
 // PR 4 — collection-scoped knowledge workbench.
@@ -660,14 +661,10 @@ router.get('/:id', requireAdmin, asyncHandler(async (req, res) => {
     graphReady: true,
     graphNotice: null,
     activeKnowledgePage: 'entities',
-    error: req.query.error || null,
-    merged: req.query.merged || null,
-    approved: req.query.approved || null,
-    rejected: req.query.rejected || null,
-    deleted: req.query.deleted || null,
-    authorityUpdated: req.query.authorityUpdated || null,
-    entityUpdated: req.query.entityUpdated || null,
-    splitCreated: req.query.splitCreated || null
+    flashes: flashesFromQuery(req.query, [
+      'merged', 'approved', 'rejected', 'deleted',
+      'authorityUpdated', 'entityUpdated', 'splitCreated'
+    ])
   });
 }));
 

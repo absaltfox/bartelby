@@ -2,14 +2,13 @@
 
 <div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'merge-entities' }) %>
 
   <div class="admin-header">
     <h1>Merge Entities</h1>
     <p class="subtitle">Search for a source entity and a target entity, then compare their evidence before merging into one canonical node.</p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
-
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'merge-entities' }) %>
 
   <section class="settings-section merge-workspace-section">
     <div class="merge-workspace-header">
@@ -106,6 +105,8 @@
       </div>
 
       <div class="edit-actions merge-entities-actions">
+        <%# Intentional `disabled`: teaches curator that source+target must be selected. %>
+        <%# Per docs/ui-template-standards.md § Hide unavailable actions (Exceptions). %>
         <button type="submit" class="btn-primary btn-sm" data-merge-submit disabled>Merge Entities</button>
         <p class="muted">Review both entities below before merging. This action cannot be automatically undone.</p>
       </div>

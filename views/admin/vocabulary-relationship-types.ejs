@@ -2,13 +2,12 @@
 
 <div class="admin-page admin-page--workspace">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
 
   <div class="admin-header">
     <h1>Relationship Vocabulary</h1>
     <p class="subtitle">Curator-managed controlled vocabulary for relationship types and their aliases.</p>
   </div>
-
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
 
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (saved) { %><div class="alert alert-success">Vocabulary updated.</div><% } %>

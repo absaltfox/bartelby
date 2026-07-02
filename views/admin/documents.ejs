@@ -22,19 +22,19 @@
     </div>
   <% } %>
 
-  <div class="bulk-toolbar bulk-toolbar--sticky doc-toolbar doc-toolbar--sticky">
-    <div class="bulk-toolbar-left doc-toolbar-left">
-      <label class="bulk-toolbar-select-all doc-toolbar-select-all" title="Select all documents on this page">
+  <div class="bulk-toolbar bulk-toolbar--sticky">
+    <div class="bulk-toolbar-left">
+      <label class="bulk-toolbar-select-all" title="Select all documents on this page">
         <input type="checkbox" id="select-all-cb">
         <span id="select-all-label">Select all on page</span>
       </label>
       <span id="bulk-count" class="bulk-toolbar-count bulk-count is-hidden">0 selected</span>
     </div>
-    <div class="bulk-toolbar-actions doc-toolbar-actions is-hidden" id="bulk-actions">
+    <div class="bulk-toolbar-actions is-hidden" id="bulk-actions">
       <button type="button" class="btn-secondary btn-sm" id="bulk-tag-btn">Add to Collection</button>
       <button type="button" class="btn-danger btn-sm" id="bulk-delete-btn">Delete Selected</button>
     </div>
-    <div class="bulk-toolbar-right doc-toolbar-right">
+    <div class="bulk-toolbar-right">
       <% if (allCollections.length > 0) { %>
         <select id="collection-filter" class="doc-filter-select">
           <option value="">All collections</option>
