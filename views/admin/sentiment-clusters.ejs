@@ -68,7 +68,7 @@
         <p class="muted">No clustering runs yet. Click "Run clustering now" to start one.</p>
       <% } else { %>
         <table class="workflows-table">
-          <thead><tr><th>Run</th><th>Status</th><th>Created</th><th>Result</th></tr></thead>
+          <thead><tr><th scope="col">Run</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Result</th></tr></thead>
           <tbody>
             <% for (const r of recentRuns) { %>
               <tr>
@@ -107,11 +107,11 @@
           <table class="workflows-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Size</th>
-                <th>State</th>
-                <th>Sample / Label</th>
-                <th>Action</th>
+                <th scope="col">#</th>
+                <th scope="col">Size</th>
+                <th scope="col">State</th>
+                <th scope="col">Sample / Label</th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
             <tbody>
