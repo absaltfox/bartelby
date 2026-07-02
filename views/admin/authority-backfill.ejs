@@ -17,7 +17,12 @@
   <% } %>
 
   <% if (!collections || collections.length === 0) { %>
-    <div class="empty-state"><p>No collections found.</p></div>
+    <div class="empty-state empty-state--padded-lg">
+      <h2>No collections available for backfill</h2>
+      <p>Authority backfill runs per collection. Create a collection first,
+        then return here to queue a suggestion run.</p>
+      <p><a href="/admin/collections" class="btn-primary">Manage collections</a></p>
+    </div>
   <% } else { %>
     <div class="workflows-table-wrap">
       <table class="workflows-table workflows-table--auto">

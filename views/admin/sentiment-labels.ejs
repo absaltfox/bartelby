@@ -23,7 +23,12 @@
   </p>
 
   <% if (labels.length === 0) { %>
-    <p class="muted">No labels yet. Visit the Clusters tab and click "Label →" on any cluster to create your first label.</p>
+    <div class="empty-state empty-state--padded-lg">
+      <h2>No labels yet</h2>
+      <p>Labels are created from clusters. Visit the Clusters tab, review cluster members,
+        and click "Label →" to apply your first label.</p>
+      <p><a href="/admin/knowledge/sentiment/clusters" class="btn-primary">Go to Clusters</a></p>
+    </div>
   <% } else { %>
     <table class="workflows-table" id="labels-table">
       <thead>

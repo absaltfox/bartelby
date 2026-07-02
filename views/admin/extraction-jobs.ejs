@@ -13,8 +13,11 @@
   <p class="search-advanced-link-row"><a href="/admin/knowledge/review-extractions">Review extractions</a></p>
 
   <% if (jobs.length === 0) { %>
-    <div class="empty-state">
-      <p>No extraction jobs found.</p>
+    <div class="empty-state empty-state--padded-lg">
+      <h2>No extraction jobs</h2>
+      <p>Extraction jobs are queued from a document's Knowledge tab or via
+        collection re-extraction on
+        <a href="/admin/knowledge">Knowledge Overview</a>.</p>
     </div>
   <% } else { %>
     <div class="workflows-table-wrap">
