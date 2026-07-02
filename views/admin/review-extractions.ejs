@@ -2,14 +2,13 @@
 
 <div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
 
   <div class="admin-header">
     <h1>Review Extractions</h1>
     <p class="subtitle">Approve, reject, or remove extracted evidence before it becomes visible in the knowledge graph.</p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
-
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
 
   <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
   <% if (typeof confirmed !== 'undefined' && confirmed) { %><div class="alert alert-success">Citation approved.</div><% } %>

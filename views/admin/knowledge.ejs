@@ -2,13 +2,12 @@
 
 <div class="admin-page admin-page--workspace workflows-page">
   <%- include('../partials/admin-nav') %>
+  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'overview' }) %>
 
   <div class="admin-header">
     <h1>Knowledge</h1>
     <p class="subtitle">Manage entity extraction, approve graph evidence, and re-run knowledge graph generation for existing materials.</p>
   </div>
-
-  <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'overview' }) %>
 
   <% if (error) { %>
     <div class="alert alert-error"><%= error %></div>
