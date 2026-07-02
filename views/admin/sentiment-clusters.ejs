@@ -8,16 +8,16 @@
     <h1>Sentiment Phrase Clusters</h1>
   </div>
 
-    <div class="segmented-control" role="tablist" aria-label="Clusters view">
-      <a href="?tab=clusters" role="tab" aria-current="<%= tab === 'clusters' ? 'true' : 'false' %>">
-        Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
-      </a>
-      <a href="?tab=noise" role="tab" aria-current="<%= tab === 'noise' ? 'true' : 'false' %>">
-        Noise <span class="filter-count"><%= tabCounts.noise %></span>
-      </a>
-    </div>
+  <div class="segmented-control" role="tablist" aria-label="Clusters view">
+    <a href="?tab=clusters" role="tab"<% if (tab === 'clusters') { %> aria-current="true"<% } %>>
+      Clusters <span class="filter-count"><%= tabCounts.clusters %></span>
+    </a>
+    <a href="?tab=noise" role="tab"<% if (tab === 'noise') { %> aria-current="true"<% } %>>
+      Noise <span class="filter-count"><%= tabCounts.noise %></span>
+    </a>
+  </div>
 
-    <% if (tab === 'clusters') { %>
+  <% if (tab === 'clusters') { %>
       <p class="muted">
         Each cluster shows its derived label state from member phrases. Click "Label" to open the drawer,
         review members, and apply or change labels. Labels persist across re-clustering.
@@ -39,11 +39,11 @@
 
       <div class="filter-bar">
         <div class="segmented-control" role="tablist" aria-label="Filter by label state">
-          <a href="?tab=clusters&state=all" role="tab" aria-current="<%= stateFilter === 'all' ? 'true' : 'false' %>">all</a>
-          <a href="?tab=clusters&state=unlabeled" role="tab" aria-current="<%= stateFilter === 'unlabeled' ? 'true' : 'false' %>">unlabeled</a>
-          <a href="?tab=clusters&state=partial" role="tab" aria-current="<%= stateFilter === 'partial' ? 'true' : 'false' %>">partial</a>
-          <a href="?tab=clusters&state=mixed" role="tab" aria-current="<%= stateFilter === 'mixed' ? 'true' : 'false' %>">mixed</a>
-          <a href="?tab=clusters&state=full" role="tab" aria-current="<%= stateFilter === 'full' ? 'true' : 'false' %>">full</a>
+          <a href="?tab=clusters&state=all" role="tab"<% if (stateFilter === 'all') { %> aria-current="true"<% } %>>all</a>
+          <a href="?tab=clusters&state=unlabeled" role="tab"<% if (stateFilter === 'unlabeled') { %> aria-current="true"<% } %>>unlabeled</a>
+          <a href="?tab=clusters&state=partial" role="tab"<% if (stateFilter === 'partial') { %> aria-current="true"<% } %>>partial</a>
+          <a href="?tab=clusters&state=mixed" role="tab"<% if (stateFilter === 'mixed') { %> aria-current="true"<% } %>>mixed</a>
+          <a href="?tab=clusters&state=full" role="tab"<% if (stateFilter === 'full') { %> aria-current="true"<% } %>>full</a>
         </div>
         <form method="get" class="filter-label-form">
           <% if (tab !== 'clusters') { %><input type="hidden" name="tab" value="<%= tab %>"><% } %>

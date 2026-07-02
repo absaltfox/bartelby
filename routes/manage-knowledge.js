@@ -84,7 +84,7 @@ async function safeCount(label, fn) {
 // helpers return objects with shapes like { total, byType } or { total },
 // or job-counter objects with multiple keys. For job counters we sum the
 // hygiene-relevant counters so curators see a single "incidents" tile value;
-// the breakdown is available in the extraction-jobs page.
+// the breakdown is available at /admin/jobs?type=extraction.
 function formatDashboardCount(value) {
   if (value == null) return '0';
   if (typeof value === 'number') return String(value);
