@@ -376,6 +376,12 @@ router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
   const matchMethodFilter = parseMatchMethod(req);
   const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
 
+  // Fetch stats for the header before the main query.
+  // Per docs/knowledge-graph-design.md, curators need queue scale on load.
+  const suggestionStats = stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.getStatusCounts
+    ? await stores.authorityLinkSuggestions.getStatusCounts()
+    : { pending: 0, approved: 0, rejected: 0, byMethod: [] };
+
   // U3.1/U3.4: pending queue uses grouped lister so entities with ≥2 pending
   // suggestions become a single decision unit. Non-pending statuses use the
   // flat list (no grouping needed for approved/rejected review).
@@ -426,6 +432,7 @@ router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
 
   res.render('admin/authority-suggestions', {
     pageTitle: 'Authority Suggestions',
+    suggestionStats,
     suggestions: displaySuggestions,
     decisionUnits,
     totalGroups,

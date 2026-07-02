@@ -9,6 +9,25 @@
     <p class="subtitle">Review medium-confidence authority links before they affect authority-backed graph focus.</p>
   </div>
 
+  <div class="admin-stats">
+    <div class="stat-card">
+      <div class="stat-value"><%= suggestionStats.pending %></div>
+      <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= suggestionStats.approved %></div>
+      <div class="stat-label">Approved</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= suggestionStats.rejected %></div>
+      <div class="stat-label">Rejected</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value"><%= suggestionStats.byMethod.length %></div>
+      <div class="stat-label">Match methods</div>
+    </div>
+  </div>
+
   <div class="filter-tabs">
     <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && matchMethodFilter.length === 0 ? 'active' : '' %>">Pending</a>
     <a href="<%= suggestionsPath({ status: 'approved' }) %>" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>

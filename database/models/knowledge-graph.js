@@ -1046,6 +1046,28 @@ const authorityLinkSuggestions = {
     return Number(row?.n || 0);
   },
 
+  // Returns { pending, approved, rejected, byMethod } for the stat header.
+  // Per docs/knowledge-graph-design.md, curators need queue scale before
+  // diving into review.
+  async getStatusCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS n
+      FROM authority_link_suggestions
+      GROUP BY status
+    `);
+    const byStatus = Object.fromEntries((rows || []).map(r => [r.status, Number(r.n || 0)]));
+    const methodRows = await allAsync(`
+      SELECT DISTINCT match_method FROM authority_link_suggestions WHERE match_method IS NOT NULL
+    `);
+    const byMethod = (methodRows || []).map(r => r.match_method).filter(Boolean);
+    return {
+      pending: byStatus.pending || 0,
+      approved: byStatus.approved || 0,
+      rejected: byStatus.rejected || 0,
+      byMethod
+    };
+  },
+
   async list(status = 'pending', limit = 25, opts = {}) {
     const exactNameSql = "LOWER(TRIM(e.canonical_name)) = LOWER(TRIM(a.canonical_name))";
     const actionablePendingSql = "e.authority_id IS NULL";
