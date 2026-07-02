@@ -1,0 +1,21 @@
+<%
+// crumbs: array of { label: string, href?: string }
+// The last crumb represents the current page — render as text with aria-current, no link.
+const _crumbs = Array.isArray(crumbs) ? crumbs.filter(function (c) { return c && c.label; }) : [];
+%>
+<% if (_crumbs.length > 0) { %>
+  <nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol class="breadcrumbs__list">
+      <% _crumbs.forEach(function (crumb, idx) { %>
+        <li class="breadcrumbs__item">
+          <% if (idx < _crumbs.length - 1 && crumb.href) { %>
+            <a href="<%= crumb.href %>" class="breadcrumbs__link"><%= crumb.label %></a>
+            <span class="breadcrumbs__sep" aria-hidden="true">/</span>
+          <% } else { %>
+            <span class="breadcrumbs__current" aria-current="page"><%= crumb.label %></span>
+          <% } %>
+        </li>
+      <% }) %>
+    </ol>
+  </nav>
+<% } %>
