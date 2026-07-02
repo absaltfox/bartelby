@@ -4,310 +4,242 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'entities' }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Entities', href: '/admin/knowledge/entities' },
+    { label: entity.canonical_name }
+  ] }) %>
+
+  <div class="admin-header entity-header">
     <h1><%= entity.canonical_name %></h1>
-    <p class="subtitle">
+    <p class="entity-meta">
       <span class="entity-type-badge entity-type-<%= entity.entity_type %>"><%= entity.entity_type %></span>
-      Knowledge graph entity
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span class="entity-meta__id">id <%= entity.id %></span>
+      <% var _role = (entity.properties && entity.properties.role) ? String(entity.properties.role) : null; %>
+      <% if (_role) { %>
+        <span class="entity-meta__sep" aria-hidden="true">·</span>
+        <span class="entity-meta__role"><%= _role %></span>
+      <% } %>
     </p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
   <%- include('../partials/flash-alerts', { flashes }) %>
 
-  <div class="curator-action-toolbar entity-curator-toolbar">
-    <section class="curator-action-group" aria-labelledby="curator-action-navigate">
-      <p class="curator-action-group-label" id="curator-action-navigate">Navigate</p>
-      <div class="curator-action-buttons">
-        <a href="/admin/knowledge/entities" class="btn-secondary btn-sm">&larr; Back to entities</a>
-      </div>
-    </section>
-
-    <section class="curator-action-group curator-action-group--primary" aria-labelledby="curator-action-correct">
-      <p class="curator-action-group-label" id="curator-action-correct">Correct</p>
-      <div class="curator-action-buttons">
-        <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
-        <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
-        <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge entities</a>
-      </div>
-      <p class="curator-action-note">Edit preserves evidence; split moves only selected evidence; merge consolidates records.</p>
-    </section>
-
-    <section class="curator-action-group" aria-labelledby="curator-action-author">
-      <p class="curator-action-group-label" id="curator-action-author">Author</p>
-      <div class="curator-action-buttons">
-        <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">Add relationship</a>
-      </div>
-      <p class="curator-action-note">Creates citation-backed relationship evidence from this entity.</p>
-    </section>
-  </div>
-
-  <p class="correction-workspace-note">
-    Entity corrections are audited. Edit changes preserve attached evidence; split moves only the evidence selected for the new entity.
-  </p>
-
-  <% if (entity.description) { %>
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-body">
-        <p><%= entity.description %></p>
-      </div>
-    </section>
-  <% } %>
-
-  <div class="knowledge-detail-grid">
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Authority</p>
-        <h2>Cross-document identity</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <% if (authority) { %>
-          <div class="graph-detail-card">
-            <strong><a href="/admin/knowledge/authorities/<%= authority.id %>"><%= authority.canonical_name %></a></strong>
-            <div class="graph-muted"><span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span> authority</div>
+  <div class="entity-dossier">
+    <main class="entity-dossier__main">
+      <% if (entity.description) { %>
+        <section class="graph-shell-card knowledge-card">
+          <div class="graph-sidebar-body">
+            <p><%= entity.description %></p>
           </div>
-          <% if (linkedEntities && linkedEntities.length) { %>
+        </section>
+      <% } %>
+
+      <%- include('./partials/entity-identity-card', {
+        entity: entity,
+        authority: authority,
+        linkedEntities: linkedEntities,
+        authoritySuggestions: authoritySuggestions,
+        csrfToken: csrfToken
+      }) %>
+
+      <section class="graph-shell-card knowledge-card">
+        <div class="graph-sidebar-header">
+          <p class="kg-panel-eyebrow">Profile</p>
+          <h2>Properties</h2>
+        </div>
+        <div class="graph-sidebar-body">
+          <dl class="metadata-list">
+            <dt>ID</dt>
+            <dd><%= entity.id %></dd>
+            <dt>Type</dt>
+            <dd><%= entity.entity_type %></dd>
+            <dt>Canonical name</dt>
+            <dd><%= entity.canonical_name %></dd>
+            <% Object.entries(entity.properties || {}).forEach(function(entry) { %>
+              <dt><%= entry[0] %></dt>
+              <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
+            <% }) %>
+          </dl>
+        </div>
+      </section>
+
+      <% if (sentimentSummary && sentimentSummary.length > 0) { %>
+        <%- include('partials/sentiment-kg-card', {
+          summary: sentimentSummary,
+          list: sentimentList,
+          heading: 'Label distribution for ' + entity.canonical_name,
+          workbenchHref: '/sentiment?entity_id=' + entity.id
+        }) %>
+      <% } %>
+
+      <% if (relationships.length > 0) { %>
+        <section class="graph-shell-card knowledge-card">
+          <div class="graph-sidebar-header">
+            <p class="kg-panel-eyebrow">Relationships</p>
+            <h2>Connected edges</h2>
+          </div>
+          <div class="graph-sidebar-body">
             <div class="graph-detail-list">
-              <% linkedEntities.forEach(function(linked) { %>
+              <% relationships.forEach(function(rel) { %>
                 <div class="graph-detail-card">
-                  <strong><a href="/admin/knowledge/entities/<%= linked.id %>"><%= linked.canonical_name %></a></strong>
-                  <div class="graph-muted">Member entity #<%= linked.id %></div>
+                  <strong><%= rel.relationship_type || rel.type || 'related_to' %></strong>
+                  <% if (rel.relationship_type_deprecated_at) { %>
+                    <span class="status-badge status-trace">deprecated</span>
+                  <% } %>
+                  <div class="graph-muted"><%= rel.source_name || 'Unknown source' %> → <%= rel.target_name || 'Unknown target' %></div>
+                  <%- include('../partials/voice-badge', {
+                    relationship: rel,
+                    attributionEntity: (rel.voice_role === 'speaker' && rel.expressed_by_entity)
+                      || (rel.voice_role === 'described_subject' && rel.described_subject_entity)
+                      || null
+                  }) %>
                 </div>
               <% }) %>
             </div>
-          <% } %>
-        <% } else { %>
-          <p class="graph-empty-state">This entity does not have an authority yet.</p>
-        <% } %>
-
-        <% if (!entity.authority_id) { %>
-          <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/create" class="inline-form">
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button type="submit" class="btn-secondary btn-sm"><%= authority ? 'Create New Authority' : 'Create Authority' %></button>
-          </form>
-        <% } %>
-
-        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/assign" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= entity.entity_type %>">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="authority_id" value="" data-authority-id required>
-          <div class="edit-field">
-            <label for="authority-search-<%= entity.id %>">Assign to authority</label>
-            <input
-              type="search"
-              id="authority-search-<%= entity.id %>"
-              class="admin-search-input"
-              placeholder="Search authorities by name or member alias..."
-              autocomplete="off"
-              spellcheck="false"
-              data-authority-search
-            >
           </div>
-          <div class="knowledge-document-selection" data-authority-selected hidden></div>
-          <div class="knowledge-document-results" data-authority-results hidden></div>
-          <div class="edit-actions">
-            <button type="submit" class="btn-primary btn-sm">Assign Authority</button>
-          </div>
-        </form>
-
-        <% if (authoritySuggestions && authoritySuggestions.length) { %>
-          <div class="graph-detail-list">
-            <% authoritySuggestions.forEach(function(suggestion) { %>
-              <div class="graph-detail-card">
-                <strong><a href="/admin/knowledge/authorities/<%= suggestion.suggested_authority_id %>"><%= suggestion.suggested_authority_name %></a></strong>
-                <div class="graph-muted">
-                  <span class="status-badge <%= suggestion.status === 'approved' ? 'status-done' : suggestion.status === 'rejected' ? 'status-failed' : 'status-running' %>"><%= suggestion.status %></span>
-                  <% if (suggestion.confidence != null) { %>
-                    <span>Confidence <%= Math.round(Number(suggestion.confidence) * 100) %>%</span>
-                  <% } %>
-                  <% if (suggestion.match_method) { %>
-                    <span><%= suggestion.match_method %></span>
-                  <% } %>
-                </div>
-                <% if (suggestion.status === 'pending') { %>
-                  <div class="job-actions">
-                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= suggestion.id %>/approve" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn-primary btn-sm">Approve</button>
-                    </form>
-                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= suggestion.id %>/reject" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
-                    </form>
-                  </div>
-                <% } %>
-              </div>
-            <% }) %>
-          </div>
-        <% } %>
-      </div>
-    </section>
-
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Profile</p>
-        <h2>Properties</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <dl class="metadata-list">
-          <dt>ID</dt>
-          <dd><%= entity.id %></dd>
-          <dt>Type</dt>
-          <dd><%= entity.entity_type %></dd>
-          <dt>Canonical name</dt>
-          <dd><%= entity.canonical_name %></dd>
-          <% Object.entries(entity.properties || {}).forEach(function(entry) { %>
-            <dt><%= entry[0] %></dt>
-            <dd><%= typeof entry[1] === 'object' ? JSON.stringify(entry[1]) : entry[1] %></dd>
-          <% }) %>
-        </dl>
-      </div>
-    </section>
-
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Aliases</p>
-        <h2>Known names</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <% if (aliases.length === 0) { %>
-          <p class="graph-empty-state">No aliases recorded.</p>
-        <% } else { %>
-          <div class="graph-alias-list">
-            <% aliases.forEach(function(alias) { %>
-              <div class="graph-detail-card">
-                <strong><%= alias.alias || alias.label || alias.canonical_name || alias %></strong>
-                <div class="graph-muted"><%= alias.source || 'alias' %></div>
-              </div>
-            <% }) %>
-          </div>
-        <% } %>
-      </div>
-    </section>
-
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Dates</p>
-        <h2>Date expressions</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <% if (dates.length === 0) { %>
-          <p class="graph-empty-state">No date expressions recorded.</p>
-        <% } else { %>
-          <div class="graph-citation-list">
-            <% dates.forEach(function(date) { %>
-              <div class="graph-citation-card">
-                <strong><%= date.label || date.mention %></strong>
-                <div class="graph-muted"><%= date.earliest || 'Unknown' %><% if (date.latest && date.latest !== date.earliest) { %> to <%= date.latest %><% } %></div>
-              </div>
-            <% }) %>
-          </div>
-        <% } %>
-      </div>
-    </section>
-
-    <section class="graph-shell-card knowledge-card">
-      <div class="graph-sidebar-header">
-        <p class="kg-panel-eyebrow">Relationships</p>
-        <h2>Connected edges</h2>
-      </div>
-      <div class="graph-sidebar-body">
-        <% if (relationships.length === 0) { %>
-          <p class="graph-empty-state">No relationships recorded.</p>
-        <% } else { %>
-          <div class="graph-detail-list">
-            <% relationships.forEach(function(rel) { %>
-              <div class="graph-detail-card">
-                <strong><%= rel.relationship_type || rel.type || 'related_to' %></strong>
-                <% if (rel.relationship_type_deprecated_at) { %>
-                  <span class="status-badge status-trace">deprecated</span>
-                <% } %>
-                <div class="graph-muted"><%= rel.source_name || 'Unknown source' %> → <%= rel.target_name || 'Unknown target' %></div>
-                <%- include('../partials/voice-badge', {
-                  relationship: rel,
-                  attributionEntity: (rel.voice_role === 'speaker' && rel.expressed_by_entity)
-                    || (rel.voice_role === 'described_subject' && rel.described_subject_entity)
-                    || null
-                }) %>
-              </div>
-            <% }) %>
-          </div>
-        <% } %>
-      </div>
-    </section>
-  </div>
-
-  <% if (sentimentSummary && sentimentSummary.length > 0) { %>
-    <%- include('partials/sentiment-kg-card', {
-      summary: sentimentSummary,
-      list: sentimentList,
-      heading: 'Label distribution for ' + entity.canonical_name,
-      workbenchHref: '/sentiment?entity_id=' + entity.id
-    }) %>
-  <% } %>
-
-  <section class="graph-shell-card knowledge-card">
-    <div class="graph-sidebar-header">
-      <p class="kg-panel-eyebrow">Evidence</p>
-      <h2>Citations</h2>
-    </div>
-    <div class="graph-sidebar-body">
-      <% if (citations.length === 0) { %>
-        <p class="graph-empty-state">No citations recorded.</p>
-      <% } else { %>
-        <div class="knowledge-citation-list">
-          <% citations.forEach(function(citation) { %>
-            <%
-              var citationStatus = citation.approval_status || 'pending';
-              var statusClass = citationStatus === 'approved'
-                ? 'status-done'
-                : citationStatus === 'rejected'
-                  ? 'status-failed'
-                  : 'status-running';
-            %>
-            <article class="knowledge-citation-card">
-              <div class="knowledge-citation-card-header">
-                <div>
-                  <strong><a href="/documents/<%= citation.document_id %>"><%= citation.document_title || ('Document ' + citation.document_id) %></a></strong>
-                  <div class="graph-muted">
-                    <span class="status-badge <%= statusClass %>"><%= citationStatus %></span>
-                    <% if (citation.confidence != null) { %>
-                      <span>Confidence <%= Math.round(Number(citation.confidence) * 100) %>%</span>
-                    <% } %>
-                  </div>
-                </div>
-                <div class="job-actions">
-                  <% if (citationStatus !== 'approved') { %>
-                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/approve" class="inline-form">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn-primary btn-sm">Approve</button>
-                    </form>
-                  <% } %>
-                  <% if (citationStatus !== 'rejected') { %>
-                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
-                    </form>
-                  <% } %>
-                  <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction evidence permanently?">
-                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                    <button type="submit" class="btn-danger btn-sm">Delete</button>
-                  </form>
-                </div>
-              </div>
-              <p><%= citation.passage_text %></p>
-            </article>
-          <% }) %>
-        </div>
+        </section>
       <% } %>
-    </div>
-  </section>
 
-  <div class="admin-actions mt-5">
-    <h2>Danger zone</h2>
-    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/delete" data-confirm-message="Delete this entity? This cannot be undone.">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button type="submit" class="btn-danger btn-sm">Delete Entity</button>
-    </form>
+      <% if (dates.length > 0) { %>
+        <section class="graph-shell-card knowledge-card">
+          <div class="graph-sidebar-header">
+            <p class="kg-panel-eyebrow">Dates</p>
+            <h2>Date expressions</h2>
+          </div>
+          <div class="graph-sidebar-body">
+            <div class="graph-citation-list">
+              <% dates.forEach(function(date) { %>
+                <div class="graph-citation-card">
+                  <strong><%= date.label || date.mention %></strong>
+                  <div class="graph-muted"><%= date.earliest || 'Unknown' %><% if (date.latest && date.latest !== date.earliest) { %> to <%= date.latest %><% } %></div>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+        </section>
+      <% } %>
+
+      <% if (aliases.length > 0) { %>
+        <section class="graph-shell-card knowledge-card">
+          <div class="graph-sidebar-header">
+            <p class="kg-panel-eyebrow">Aliases</p>
+            <h2>Known names</h2>
+          </div>
+          <div class="graph-sidebar-body">
+            <div class="graph-alias-list">
+              <% aliases.forEach(function(alias) { %>
+                <div class="graph-detail-card">
+                  <strong><%= alias.alias || alias.label || alias.canonical_name || alias %></strong>
+                  <div class="graph-muted"><%= alias.source || 'alias' %></div>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+        </section>
+      <% } %>
+
+      <section class="graph-shell-card knowledge-card">
+        <div class="graph-sidebar-header">
+          <p class="kg-panel-eyebrow">Evidence</p>
+          <h2>Citations</h2>
+          <p class="entity-evidence-summary">
+            <% var _total = citations.length; %>
+            <% var _approved = citations.filter(function (c) { return c.approval_status === 'approved'; }).length; %>
+            <% var _pendingCit = citations.filter(function (c) { return !c.approval_status || c.approval_status === 'pending'; }).length; %>
+            <% var _rejected = citations.filter(function (c) { return c.approval_status === 'rejected'; }).length; %>
+            <% var _docs = new Set(citations.map(function (c) { return c.document_id; })).size; %>
+            <% if (_total === 0) { %>
+              No citations yet.
+            <% } else { %>
+              <%= _total %> citation<%= _total === 1 ? '' : 's' %> across <%= _docs %> document<%= _docs === 1 ? '' : 's' %> ·
+              <span class="status-badge status-done"><%= _approved %> approved</span>
+              <% if (_pendingCit > 0) { %><span class="status-badge status-running"><%= _pendingCit %> pending</span><% } %>
+              <% if (_rejected > 0) { %><span class="status-badge status-failed"><%= _rejected %> rejected</span><% } %>
+            <% } %>
+          </p>
+        </div>
+        <div class="graph-sidebar-body">
+          <% if (citations.length === 0) { %>
+            <p class="graph-empty-state">No citations recorded.</p>
+          <% } else { %>
+            <div class="knowledge-citation-list">
+              <% var _shownCits = citations.slice(0, 5); %>
+              <% var _hiddenCits = citations.slice(5); %>
+              <% _shownCits.forEach(function (citation) { %>
+                <%- include('./partials/entity-citation-row', { entity: entity, citation: citation, csrfToken: csrfToken }) %>
+              <% }) %>
+              <% if (_hiddenCits.length > 0) { %>
+                <details class="knowledge-citation-list__more">
+                  <summary>Show <%= _hiddenCits.length %> more citation<%= _hiddenCits.length === 1 ? '' : 's' %></summary>
+                  <% _hiddenCits.forEach(function (citation) { %>
+                    <%- include('./partials/entity-citation-row', { entity: entity, citation: citation, csrfToken: csrfToken }) %>
+                  <% }) %>
+                </details>
+              <% } %>
+            </div>
+          <% } %>
+        </div>
+      </section>
+
+      <% if (recentChanges && recentChanges.length > 0) { %>
+        <section class="graph-shell-card knowledge-card entity-changes-card">
+          <div class="graph-sidebar-header">
+            <p class="kg-panel-eyebrow">History</p>
+            <h2>Recent changes</h2>
+          </div>
+          <div class="graph-sidebar-body">
+            <details>
+              <summary>Show <%= recentChanges.length %> most recent change<%= recentChanges.length === 1 ? '' : 's' %></summary>
+              <ul class="entity-changes-list">
+                <% recentChanges.forEach(function (chg) { %>
+                  <li>
+                    <span class="graph-muted"><%= new Date(chg.changed_at).toISOString().slice(0, 10) %></span>
+                    <%= chg.field %> changed
+                    <% if (chg.old_value) { %><span class="graph-muted">from <em><%= chg.old_value %></em></span><% } %>
+                    <% if (chg.new_value) { %><span class="graph-muted">to <em><%= chg.new_value %></em></span><% } %>
+                    <% if (chg.changed_by_username) { %><span class="graph-muted"> by <%= chg.changed_by_username %></span><% } %>
+                    <% if (chg.change_note) { %><em class="graph-muted"> — <%= chg.change_note %></em><% } %>
+                  </li>
+                <% }) %>
+              </ul>
+            </details>
+          </div>
+        </section>
+      <% } %>
+    </main>
+
+    <aside class="entity-dossier__rail" aria-label="Entity actions">
+      <section class="curator-action-group" aria-labelledby="entity-rail-correct">
+        <p class="curator-action-group-label" id="entity-rail-correct">Correct</p>
+        <div class="curator-action-buttons">
+          <a href="/admin/knowledge/entities/<%= entity.id %>/edit" class="btn-secondary btn-sm">Edit entity</a>
+          <a href="/admin/knowledge/entities/<%= entity.id %>/split" class="btn-secondary btn-sm">Split entity</a>
+          <a href="/admin/knowledge/entities/merge" class="btn-secondary btn-sm">Merge entities</a>
+        </div>
+        <p class="curator-action-note">Edit preserves evidence; split moves only selected evidence; merge consolidates records.</p>
+      </section>
+
+      <section class="curator-action-group" aria-labelledby="entity-rail-author">
+        <p class="curator-action-group-label" id="entity-rail-author">Author</p>
+        <div class="curator-action-buttons">
+          <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= entity.id %>" class="btn-secondary btn-sm">Add relationship</a>
+        </div>
+        <p class="curator-action-note">Creates citation-backed relationship evidence from this entity.</p>
+      </section>
+
+      <section class="danger-zone" aria-labelledby="entity-rail-danger">
+        <h2 id="entity-rail-danger">Danger zone</h2>
+        <p class="curator-action-note">Deletion removes the entity, its citations, and its relationships. This cannot be undone.</p>
+        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/delete" data-confirm-message="Delete this entity? This cannot be undone.">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" class="btn-danger btn-sm">Delete Entity</button>
+        </form>
+      </section>
+    </aside>
   </div>
 </div>
 
