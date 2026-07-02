@@ -810,10 +810,6 @@ Rules:
 - prefer semantic shell classes such as `admin-page--workspace` over
   presentation-only names such as `wide`
 
-> **Deprecation note:** `.admin-content` currently appears only in
-> `views/admin/sentiment-clusters.ejs`. It is not a documented width archetype
-> and should be removed in Phase 3 of the audit-fix plan.
-
 ## List Pages
 
 Examples:

@@ -4,8 +4,9 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-clusters' }) %>
 
-  <div class="admin-content">
+  <div class="admin-header">
     <h1>Sentiment Phrase Clusters</h1>
+  </div>
 
     <div class="segmented-control" role="tablist" aria-label="Clusters view">
       <a href="?tab=clusters" role="tab" aria-current="<%= tab === 'clusters' ? 'true' : 'false' %>">
@@ -178,7 +179,6 @@
         <p class="muted">Loading noise phrases…</p>
       </div>
     <% } %>
-  </div>
 </div>
 
 <script src="/js/sentiment-clusters-drawer.js" defer></script>
