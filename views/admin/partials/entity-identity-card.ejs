@@ -1,0 +1,114 @@
+<%
+// Expected locals: entity, authority, linkedEntities, authoritySuggestions, csrfToken
+var _pending = (authoritySuggestions || []).filter(function (s) { return s.status === 'pending'; });
+var _pastSuggestions = (authoritySuggestions || []).filter(function (s) { return s.status !== 'pending'; });
+_pending.sort(function (a, b) {
+  var ca = a.confidence == null ? -1 : Number(a.confidence);
+  var cb = b.confidence == null ? -1 : Number(b.confidence);
+  return cb - ca;
+});
+var _primary = _pending[0];
+var _otherPending = _pending.slice(1);
+%>
+<section class="graph-shell-card knowledge-card entity-identity-card">
+  <div class="graph-sidebar-header">
+    <p class="kg-panel-eyebrow">Identity</p>
+    <h2>Cross-document identity</h2>
+  </div>
+  <div class="graph-sidebar-body">
+    <% if (authority) { %>
+      <div class="entity-identity-card__assigned">
+        <p class="entity-identity-card__eyebrow">Assigned authority</p>
+        <p class="entity-identity-card__authority-name">
+          <a href="/admin/knowledge/authorities/<%= authority.id %>"><strong><%= authority.canonical_name %></strong></a>
+          <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
+        </p>
+        <% if (linkedEntities && linkedEntities.length) { %>
+          <p class="entity-identity-card__members">
+            <%= linkedEntities.length %> other member entit<%= linkedEntities.length === 1 ? 'y' : 'ies' %>
+            —
+            <a href="/admin/knowledge/authorities/<%= authority.id %>">View authority workspace</a>
+          </p>
+        <% } %>
+      </div>
+    <% } else if (_primary) { %>
+      <div class="entity-identity-card__suggestion">
+        <p class="entity-identity-card__eyebrow">Suggested authority</p>
+        <p class="entity-identity-card__authority-name">
+          <a href="/admin/knowledge/authorities/<%= _primary.suggested_authority_id %>"><strong><%= _primary.suggested_authority_name %></strong></a>
+        </p>
+        <p class="entity-identity-card__confidence">
+          <% if (_primary.confidence != null) { %>
+            Confidence <%= Math.round(Number(_primary.confidence) * 100) %>%
+          <% } %>
+          <% if (_primary.match_method) { %>
+            <span class="graph-muted"> · <%= _primary.match_method %></span>
+          <% } %>
+        </p>
+        <div class="entity-identity-card__actions">
+          <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= _primary.id %>/approve" class="inline-form">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button type="submit" class="btn-primary btn-sm">Approve suggestion</button>
+          </form>
+          <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= _primary.id %>/reject" class="inline-form">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button type="submit" class="btn-secondary btn-sm">Reject</button>
+          </form>
+        </div>
+
+        <% if (_otherPending.length) { %>
+          <details class="entity-identity-card__other-suggestions">
+            <summary>Other suggestions (<%= _otherPending.length %>)</summary>
+            <ul class="entity-identity-card__suggestion-list">
+              <% _otherPending.forEach(function (s) { %>
+                <li>
+                  <a href="/admin/knowledge/authorities/<%= s.suggested_authority_id %>"><%= s.suggested_authority_name %></a>
+                  <% if (s.confidence != null) { %>
+                    <span class="graph-muted"><%= Math.round(Number(s.confidence) * 100) %>%</span>
+                  <% } %>
+                  <span class="entity-identity-card__row-actions">
+                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= s.id %>/approve" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-secondary btn-sm">Approve</button>
+                    </form>
+                    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority-suggestions/<%= s.id %>/reject" class="inline-form">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn-secondary btn-sm">Reject</button>
+                    </form>
+                  </span>
+                </li>
+              <% }) %>
+            </ul>
+          </details>
+        <% } %>
+
+        <details class="entity-identity-card__manual">
+          <summary>Assign manually instead</summary>
+          <%- include('./entity-identity-card-manual', { entity: entity, csrfToken: csrfToken, authorityExists: !!authority }) %>
+        </details>
+      </div>
+    <% } else { %>
+      <div class="entity-identity-card__unassigned">
+        <p class="graph-empty-state">No authority assigned and no suggestions pending.</p>
+        <%- include('./entity-identity-card-manual', { entity: entity, csrfToken: csrfToken, authorityExists: false }) %>
+      </div>
+    <% } %>
+
+    <% if (_pastSuggestions.length) { %>
+      <details class="entity-identity-card__history">
+        <summary>Suggestion history (<%= _pastSuggestions.length %>)</summary>
+        <ul class="entity-identity-card__history-list">
+          <% _pastSuggestions.forEach(function (s) { %>
+            <li>
+              <a href="/admin/knowledge/authorities/<%= s.suggested_authority_id %>"><%= s.suggested_authority_name %></a>
+              <span class="status-badge <%= s.status === 'approved' ? 'status-done' : 'status-failed' %>"><%= s.status %></span>
+              <% if (s.confidence != null) { %>
+                <span class="graph-muted"><%= Math.round(Number(s.confidence) * 100) %>%</span>
+              <% } %>
+            </li>
+          <% }) %>
+        </ul>
+      </details>
+    <% } %>
+  </div>
+</section>

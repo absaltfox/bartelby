@@ -12066,3 +12066,219 @@ body.modal-open {
   .s-timeline-chart { height: 180px; }
   .entity-reader-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── Breadcrumbs (shared partial: views/partials/breadcrumbs.ejs) ── */
+.breadcrumbs {
+  margin: 0 0 var(--import-space-sm, 0.5rem);
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+}
+.breadcrumbs__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+.breadcrumbs__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.breadcrumbs__link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+}
+.breadcrumbs__link:hover,
+.breadcrumbs__link:focus {
+  color: var(--ink);
+  border-bottom-style: solid;
+}
+.breadcrumbs__sep {
+  color: var(--ink-muted);
+}
+.breadcrumbs__current {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ── Entity header meta line (Task 2) ── */
+.entity-header .entity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin: 0.25rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+}
+.entity-meta__sep {
+  color: var(--ink-muted);
+}
+.entity-meta__role {
+  font-style: italic;
+}
+
+/* ── Entity header meta line (Task 2) ── */
+.entity-header .entity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin: 0.25rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+}
+.entity-meta__sep {
+  color: var(--ink-muted);
+}
+.entity-meta__role {
+  font-style: italic;
+}
+
+/* ── Entity dossier + action rail layout (Task 3) ── */
+.entity-dossier {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 1.5rem;
+  align-items: start;
+}
+.entity-dossier__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.entity-dossier__main > section {
+  margin: 0;
+}
+.entity-dossier__rail {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.entity-dossier__rail .curator-action-group,
+.entity-dossier__rail .danger-zone {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--parchment-alt);
+}
+.entity-dossier__rail .curator-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.entity-dossier__rail .curator-action-buttons > a,
+.entity-dossier__rail .curator-action-buttons > form {
+  display: block;
+  width: 100%;
+}
+.entity-dossier__rail .btn-secondary,
+.entity-dossier__rail .btn-danger,
+.entity-dossier__rail .btn-primary {
+  width: 100%;
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .entity-dossier {
+    grid-template-columns: 1fr;
+  }
+  .entity-dossier__rail {
+    position: static;
+    order: 2;
+  }
+}
+
+/* ── Entity identity card (Task 4) ── */
+.entity-identity-card__eyebrow {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  margin: 0 0 0.25rem;
+}
+.entity-identity-card__authority-name {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.entity-identity-card__members,
+.entity-identity-card__confidence {
+  margin: 0 0 0.5rem;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+.entity-identity-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+}
+.entity-identity-card__other-suggestions,
+.entity-identity-card__manual,
+.entity-identity-card__history {
+  margin-top: 0.75rem;
+}
+.entity-identity-card__suggestion-list,
+.entity-identity-card__history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.entity-identity-card__row-actions {
+  display: inline-flex;
+  gap: 0.35rem;
+  margin-left: 0.5rem;
+}
+.entity-identity-card__manual-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+}
+
+/* ── Evidence summary + collapsed citation list (Task 5) ── */
+.entity-evidence-summary {
+  margin: 0.25rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+.entity-evidence-summary .status-badge {
+  font-size: 0.75rem;
+}
+.knowledge-citation-list__more {
+  margin-top: 0.5rem;
+}
+.knowledge-citation-list__more > summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  color: var(--ink);
+}
+
+/* ── Recent changes list (Task 6) ── */
+.entity-changes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}

@@ -57,7 +57,11 @@ describe('GET /admin/knowledge/entities/:id correction pages', () => {
     const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}`).expect(200);
     expect(res.text).toContain(`/admin/knowledge/entities/${entityId}/edit`);
     expect(res.text).toContain(`/admin/knowledge/entities/${entityId}/split`);
-    expect(res.text).toContain('Entity corrections are audited');
+    // Consequence text now lives in the rail's Correct group (entity-dossier__rail).
+    // The old correction-workspace-note paragraph was removed per Task 2 (duplicate text).
+    // Per docs/ui-template-standards.md § Curator Consequence Text, consequence text
+    // belongs inside the group that mutates — which is the rail's Correct section.
+    expect(res.text).toContain('Edit preserves evidence');
     expect(res.text).not.toContain(`<form method="POST" action="/admin/knowledge/entities/${entityId}/edit"`);
     expect(res.text).not.toContain(`<form method="POST" action="/admin/knowledge/entities/${entityId}/split"`);
   });

@@ -1,0 +1,29 @@
+<% // Expected locals: entity, csrfToken, authorityExists %>
+<div class="entity-identity-card__manual-body">
+  <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/create" class="inline-form entity-identity-card__create">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button type="submit" class="btn-secondary btn-sm"><%= authorityExists ? 'Create New Authority Instead' : 'Create Authority from this entity' %></button>
+  </form>
+
+  <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/authority/assign" class="edit-form authority-picker-form" data-authority-picker-form data-authority-type="<%= entity.entity_type %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="authority_id" value="" data-authority-id required>
+    <div class="edit-field">
+      <label for="authority-search-<%= entity.id %>">Assign to existing authority</label>
+      <input
+        type="search"
+        id="authority-search-<%= entity.id %>"
+        class="admin-search-input"
+        placeholder="Search authorities by name or member alias…"
+        autocomplete="off"
+        spellcheck="false"
+        data-authority-search
+      >
+    </div>
+    <div class="knowledge-document-selection" data-authority-selected hidden></div>
+    <div class="knowledge-document-results" data-authority-results hidden></div>
+    <div class="edit-actions">
+      <button type="submit" class="btn-secondary btn-sm">Assign Authority</button>
+    </div>
+  </form>
+</div>
