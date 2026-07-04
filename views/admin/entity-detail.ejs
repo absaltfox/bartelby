@@ -287,10 +287,10 @@
       </div>
     </section>
 
-    <section class="entity-detail__danger" aria-labelledby="entity-danger-label">
+    <section class="workspace-danger" aria-labelledby="entity-danger-label">
       <div>
-        <p class="entity-detail__danger-title" id="entity-danger-label">Danger zone</p>
-        <p class="entity-detail__danger-note">Deletion removes the entity, its citations, and its relationships. This cannot be undone.</p>
+        <p class="workspace-danger-title" id="entity-danger-label">Danger zone</p>
+        <p class="workspace-danger-note">Deletion removes the entity, its citations, and its relationships. This cannot be undone.</p>
       </div>
       <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/delete" data-confirm-message="Delete this entity? This cannot be undone.">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">

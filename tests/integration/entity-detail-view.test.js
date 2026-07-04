@@ -89,7 +89,7 @@ describe('GET /admin/knowledge/entities/:id — redesigned view', () => {
     const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}`);
     expect(res.status).toBe(200);
     // Danger zone appears after the record-actions cluster and posts to /delete.
-    expect(res.text).toMatch(/entity-detail__record-actions[\s\S]*?entity-detail__danger[\s\S]*?\/delete/);
+    expect(res.text).toMatch(/entity-detail__record-actions[\s\S]*?workspace-danger[\s\S]*?\/delete/);
     expect(res.text).toContain('Delete entity');
   });
 
