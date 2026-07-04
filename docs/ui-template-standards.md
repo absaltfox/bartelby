@@ -38,6 +38,60 @@ explicit, documented exception.
 6. The main navigation level on a page must always be visually stronger than any
    child navigation level.
 
+## Composition Principles
+
+Cross-cutting visual and information-architecture rules for any page in the
+workspace. Specific page families (detail, list, workflow) add more constraints
+on top of these — see § Entity detail — actions after context and § Curator
+action toolbar. These principles were distilled from the entity-detail
+redesign; regressions here tend to surface as the same class of "why does this
+page feel off" bug reports.
+
+1. **Interactive elements must contrast with their container.**
+   Buttons, inputs, and other affordances must sit on a background token that
+   is one step lighter or darker than the surface they occupy. A
+   `.btn-secondary` (`--parchment-alt`) inside a `--parchment-alt` panel
+   produces zero affordance; users read it as label text, not as something to
+   click. Use design tokens rather than eyeballing hex values.
+
+2. **Match visual weight to consequence.**
+   Destructive actions must not share an equal-weight container with routine
+   corrections. Delete gets its own visual region (red-tinted card, page
+   end); Correct/Author sit in the neutral end-of-record cluster. Restates
+   § Actions in operational terms.
+
+3. **Sections size to their content, not to their peers.**
+   Multi-column card rows must use `align-items: start` so a sparse card does
+   not stretch to match a dense neighbor. Empty sections must not render at
+   all — hide the card when there is nothing to say. A card exists to signal
+   that a section carries weight; empty cards break that contract.
+
+4. **Density comes from typography and whitespace, not from nested chrome.**
+   Lists inside a detail card use hairline dividers and text weight, not
+   nested card chrome (border + background + radius per row). Reserve card
+   chrome for section boundaries. Row-level chrome ("card inside a card")
+   inflates height without adding legibility.
+
+5. **Contextual actions live with what they mutate.**
+   An action that only affects one section's data belongs in that section's
+   header as a quiet ghost button (e.g., "Edit identity" in the Identity
+   card header, "Add relationship" in the Connected edges header).
+   Cross-cutting mutations (Edit / Split / Merge / Delete) belong in the
+   page-level actions cluster, not in individual card headers. Extends
+   § Curator Consequence Text.
+
+6. **Do not repeat what the header already shows.**
+   Section content omits fields already surfaced in the page header (title,
+   type badge, id meta line). A Properties section that lists the entity's
+   ID, type, and canonical name is noise; show only the fields not already
+   visible.
+
+7. **Status is coded at the row's edge, not only in a badge.**
+   Any list of records that carry an approval / review state (citations,
+   extraction review queue, authority suggestions) should use a colored
+   edge marker in addition to a text badge, so a curator can scan a stack
+   of evidence without reading each row.
+
 ## Current Priority Issues
 
 These issues should be treated as the first cleanup tranche because they affect
@@ -211,12 +265,19 @@ label, since the visible text and the accessible name stay in sync.
 
 ### Curator action toolbar
 
-Pages that offer a curator multiple entry-point actions (Navigate, Correct,
-Author) MUST use the toolbar cluster. Follows the `aria-labelledby` requirement
-from § Grouped Action Toolbars above.
+Pages that offer a curator multiple **navigation entry-points** (Navigate,
+Correct, Author) at the top of a workspace MAY use the horizontal toolbar
+cluster below. This pattern is appropriate for list/index/workspace pages
+where the toolbar orients the curator before they begin work.
+
+Detail/inspection pages MUST NOT use the top toolbar for mutation actions —
+see § Entity detail — actions after context.
+
+Follows the `aria-labelledby` requirement from § Grouped Action Toolbars
+above.
 
 ```html
-<div class="curator-action-toolbar entity-curator-toolbar">
+<div class="curator-action-toolbar">
   <section class="curator-action-group" aria-labelledby="curator-action-navigate">
     <p class="curator-action-group-label" id="curator-action-navigate">Navigate</p>
     <div class="curator-action-buttons"> … </div>
@@ -235,10 +296,48 @@ from § Grouped Action Toolbars above.
 </div>
 ```
 
-**Canonical example:** `views/admin/entity-detail.ejs` (lines 25–49).
-
 The consequence text (`.curator-action-note`) MUST appear inside the group
 whose actions mutate corpus state.
+
+### Entity detail — actions after context
+
+Detail pages (entity detail, authority detail, and any future
+inspect-and-decide surface) MUST sequence the layout as
+**information first, actions after**. Curators are experts reading the
+evidence; the record must be visible before the mutations that would act
+on it. Presenting mutation controls above the identity, facts, edges,
+and citations forces a decision before the context that would inform
+it — which conflicts with
+[docs/development-principles.md § Curator Is the Expert; LLM Is Scaffolding](./development-principles.md#curator-is-the-expert-llm-is-scaffolding).
+
+Required order on entity-detail (and equivalent detail surfaces):
+
+1. Header (breadcrumbs, title, meta line)
+2. Identity card — MAY carry a single contextual ghost action in its
+   header when that action mutates only identity data
+   (e.g., "Edit identity")
+3. Structured facts — Properties, Aliases, and other short cards, laid
+   out side-by-side via `.entity-detail__row` when there is more than
+   one
+4. Connected edges (relationships) — MAY carry a single contextual
+   ghost action in its header ("Add relationship")
+5. Citations (evidence)
+6. History / audit sections
+7. `entity-detail__record-actions` — the end-of-record curator actions
+   cluster, with Correct and Author rows, each carrying its own
+   `.entity-detail__record-actions-note` consequence text
+8. `entity-detail__danger` — a visible but subdued red-tinted card
+   containing the sole Delete action
+
+Delete never appears alongside Correct or Author as an equal-weight
+control (see § Actions: avoid mixing navigation and destructive
+behavior in the same visual treatment). The `.entity-detail__danger`
+card is always the final section on the page.
+
+Every group inside `entity-detail__record-actions` MUST reference its
+label via `aria-labelledby` (see § Grouped Action Toolbars).
+
+**Canonical example:** `views/admin/entity-detail.ejs`.
 
 ### Conditional HTML Attributes
 

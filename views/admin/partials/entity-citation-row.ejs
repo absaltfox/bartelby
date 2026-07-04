@@ -5,36 +5,57 @@ var statusClass = citationStatus === 'approved'
   : citationStatus === 'rejected'
     ? 'status-failed'
     : 'status-running';
+var modClass = citationStatus === 'approved'
+  ? ''
+  : citationStatus === 'rejected'
+    ? ' entity-detail__citation--rejected'
+    : ' entity-detail__citation--pending';
+var confPct = citation.confidence != null
+  ? Math.round(Number(citation.confidence) * 100)
+  : null;
+var loc = null;
+if (citation.passage_start != null) {
+  loc = citation.passage_end != null
+    ? citation.passage_start + '–' + citation.passage_end
+    : String(citation.passage_start);
+}
 %>
-<article class="knowledge-citation-card">
-  <div class="knowledge-citation-card-header">
-    <div>
-      <strong><a href="/documents/<%= citation.document_id %>"><%= citation.document_title || ('Document ' + citation.document_id) %></a></strong>
-      <div class="graph-muted">
-        <span class="status-badge <%= statusClass %>"><%= citationStatus %></span>
-        <% if (citation.confidence != null) { %>
-          <span>Confidence <%= Math.round(Number(citation.confidence) * 100) %>%</span>
-        <% } %>
-      </div>
-    </div>
-    <div class="job-actions">
-      <% if (citationStatus !== 'approved') { %>
-        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/approve" class="inline-form">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button type="submit" class="btn-primary btn-sm">Approve</button>
-        </form>
+<article class="entity-detail__citation<%= modClass %>">
+  <div class="entity-detail__citation-bar" aria-hidden="true"></div>
+  <div class="entity-detail__citation-body">
+    <% if (citation.passage_text) { %>
+      <p class="entity-detail__citation-quote"><%= citation.passage_text %></p>
+    <% } %>
+    <div class="entity-detail__citation-source">
+      <a href="/documents/<%= citation.document_id %>"><%= citation.document_title || ('Document ' + citation.document_id) %></a>
+      <% if (loc) { %>
+        <span class="entity-detail__citation-loc">offset <%= loc %></span>
       <% } %>
-      <% if (citationStatus !== 'rejected') { %>
-        <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button type="submit" class="btn-secondary btn-sm">Reject</button>
-        </form>
+      <span class="status-badge <%= statusClass %>"><%= citationStatus %></span>
+      <% if (confPct != null) { %>
+        <span class="entity-detail__citation-conf"><%= confPct %>%</span>
       <% } %>
-      <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction evidence permanently?">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button type="submit" class="btn-danger btn-sm">Delete</button>
-      </form>
+      <% if (citation.approval_method) { %>
+        <span class="entity-detail__citation-method"><%= citation.approval_method %></span>
+      <% } %>
     </div>
   </div>
-  <p><%= citation.passage_text %></p>
+  <div class="entity-detail__citation-actions">
+    <% if (citationStatus !== 'approved') { %>
+      <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/approve" class="inline-form">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="entity-detail__citation-btn entity-detail__citation-btn--approve">Approve</button>
+      </form>
+    <% } %>
+    <% if (citationStatus !== 'rejected') { %>
+      <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/reject" class="inline-form" data-confirm-message="Reject this extraction evidence?">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="entity-detail__citation-btn">Reject</button>
+      </form>
+    <% } %>
+    <form method="POST" action="/admin/knowledge/entities/<%= entity.id %>/citations/<%= citation.id %>/delete" class="inline-form" data-confirm-message="Delete this extraction evidence permanently?">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="entity-detail__citation-btn entity-detail__citation-btn--delete">Delete</button>
+    </form>
+  </div>
 </article>

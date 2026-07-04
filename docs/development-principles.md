@@ -167,3 +167,12 @@ mutations, and must be able to inspect prior state before mutating.
   the repo
 - Major product, architecture, workflow, and UI conventions should live in docs
   that future humans and agents can find from the repo root
+- When a template diverges from a canonical example cited in a doc (for
+  example, a rewrite of a page that
+  `docs/ui-template-standards.md` names as its canonical example), the same
+  commit MUST update the doc — either to bless the new pattern or to move the
+  canonical-example citation to a page that still matches. Silent divergence
+  causes downstream contributors (and agents) to keep polishing a shape that
+  no longer honors the documented rule, producing the same class of UX
+  regression twice. Treat undocumented divergence as a bug, not as
+  contributor freedom.

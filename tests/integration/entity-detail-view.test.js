@@ -75,20 +75,22 @@ describe('GET /admin/knowledge/entities/:id — redesigned view', () => {
     expect(res.text).not.toContain('Entity corrections are audited.');
   });
 
-  it('renders the dossier layout with a main column and action rail', async () => {
+  it('renders the entity-detail layout with an end-of-record actions cluster', async () => {
     const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}`);
     expect(res.status).toBe(200);
-    expect(res.text).toContain('class="entity-dossier"');
-    expect(res.text).toContain('class="entity-dossier__main"');
-    expect(res.text).toContain('class="entity-dossier__rail"');
+    expect(res.text).toContain('class="entity-detail"');
+    expect(res.text).toContain('class="entity-detail__record-actions"');
+    // Correct + Author groups both present, aria-labelledby-anchored labels.
+    expect(res.text).toMatch(/id="entity-record-actions-correct">Correct/);
+    expect(res.text).toMatch(/id="entity-record-actions-author">Author/);
   });
 
-  it('places the danger zone inside the rail with a Delete button', async () => {
+  it('places a visible Danger zone after the actions with a Delete button', async () => {
     const res = await adminAgent.get(`/admin/knowledge/entities/${entityId}`);
     expect(res.status).toBe(200);
-    // The rail contains a section.danger-zone with a form posting to /delete.
-    expect(res.text).toMatch(/entity-dossier__rail[\s\S]*?danger-zone[\s\S]*?\/delete/);
-    expect(res.text).toContain('Delete Entity');
+    // Danger zone appears after the record-actions cluster and posts to /delete.
+    expect(res.text).toMatch(/entity-detail__record-actions[\s\S]*?entity-detail__danger[\s\S]*?\/delete/);
+    expect(res.text).toContain('Delete entity');
   });
 
   it('surfaces the entity meta line with type and id', async () => {
