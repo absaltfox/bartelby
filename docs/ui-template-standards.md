@@ -265,13 +265,16 @@ label, since the visible text and the accessible name stay in sync.
 
 ### Curator action toolbar
 
-Pages that offer a curator multiple **navigation entry-points** (Navigate,
-Correct, Author) at the top of a workspace MAY use the horizontal toolbar
-cluster below. This pattern is appropriate for list/index/workspace pages
-where the toolbar orients the curator before they begin work.
+The horizontal `.curator-action-toolbar` cluster is reserved for
+**pure navigation entry-points** (e.g., "Back to authorities", "Review
+suggestions", "Chronology") at the top of a workspace or index page. It
+orients the curator before they begin work.
 
-Detail/inspection pages MUST NOT use the top toolbar for mutation actions —
-see § Entity detail — actions after context.
+Mutation actions (Correct, Author, Delete, Merge) MUST NOT appear in a
+top toolbar on any curator page, including workspace pages —
+see § Actions after context. Placing mutation controls before the
+evidence that would inform them conflicts with
+[docs/development-principles.md § Curator Is the Expert; LLM Is Scaffolding](./development-principles.md#curator-is-the-expert-llm-is-scaffolding).
 
 Follows the `aria-labelledby` requirement from § Grouped Action Toolbars
 above.
@@ -299,45 +302,60 @@ above.
 The consequence text (`.curator-action-note`) MUST appear inside the group
 whose actions mutate corpus state.
 
-### Entity detail — actions after context
+### Actions after context
 
-Detail pages (entity detail, authority detail, and any future
-inspect-and-decide surface) MUST sequence the layout as
-**information first, actions after**. Curators are experts reading the
-evidence; the record must be visible before the mutations that would act
-on it. Presenting mutation controls above the identity, facts, edges,
-and citations forces a decision before the context that would inform
-it — which conflicts with
+**All curator pages that expose mutation actions** — detail pages
+(entity, authority), workspace pages, and any future inspect-and-decide
+surface — MUST sequence the layout as **information first, actions
+after**. Curators are experts reading the evidence; the record must be
+visible before the mutations that would act on it. This is a
+consequence of
 [docs/development-principles.md § Curator Is the Expert; LLM Is Scaffolding](./development-principles.md#curator-is-the-expert-llm-is-scaffolding).
 
-Required order on entity-detail (and equivalent detail surfaces):
+Applies to:
 
-1. Header (breadcrumbs, title, meta line)
-2. Identity card — MAY carry a single contextual ghost action in its
-   header when that action mutates only identity data
-   (e.g., "Edit identity")
-3. Structured facts — Properties, Aliases, and other short cards, laid
-   out side-by-side via `.entity-detail__row` when there is more than
-   one
-4. Connected edges (relationships) — MAY carry a single contextual
-   ghost action in its header ("Add relationship")
-5. Citations (evidence)
-6. History / audit sections
-7. `entity-detail__record-actions` — the end-of-record curator actions
-   cluster, with Correct and Author rows, each carrying its own
-   `.entity-detail__record-actions-note` consequence text
-8. `entity-detail__danger` — a visible but subdued red-tinted card
-   containing the sole Delete action
+- **Detail pages** (entity, authority) — sequence: header → structured
+  facts → edges → citations → curator actions cluster → danger panel.
+  Mutation actions live at end of the reading flow; contextual ghost
+  actions in a section header are allowed when the action mutates only
+  that section's data (e.g., "Edit identity" in the Identity card,
+  "Add relationship" in the Connected edges card).
+- **Workspace pages** (authority-detail's member browser, and similar
+  future surfaces) — the primary workspace panels come first;
+  contextual mutation affordances live inside the row or panel they
+  act on (e.g., "+Add relationship" per member row, "+Add relationship"
+  in the Selected member panel header). Page-level mutation clusters,
+  if needed, follow the workspace panels — never precede them.
 
-Delete never appears alongside Correct or Author as an equal-weight
-control (see § Actions: avoid mixing navigation and destructive
-behavior in the same visual treatment). The `.entity-detail__danger`
-card is always the final section on the page.
+Required elements:
 
-Every group inside `entity-detail__record-actions` MUST reference its
-label via `aria-labelledby` (see § Grouped Action Toolbars).
+1. Header (breadcrumbs, title, meta line, optional stat block)
+2. Content: identity → structured facts → edges → citations →
+   history (or the workspace-equivalent primary panels)
+3. `entity-detail__record-actions` on detail pages — the end-of-record
+   curator actions cluster (Correct, Author rows), each with its own
+   consequence text. Workspace pages skip this block when contextual
+   affordances already cover the mutation surface.
+4. `.workspace-danger` — a visible but subdued red-tinted card
+   containing the single irreversible action (Delete, Merge). Always
+   the final section on the page.
 
-**Canonical example:** `views/admin/entity-detail.ejs`.
+The destructive action never appears alongside routine corrections as
+an equal-weight control (see § Actions: avoid mixing navigation and
+destructive behavior in the same visual treatment).
+
+Every action group with a visible label MUST reference that label via
+`aria-labelledby` (see § Grouped Action Toolbars).
+
+Citations and connected edges MUST use the shared `.workspace-citation`
+and `.workspace-edge` patterns so the two pages share the same visual
+grammar (Composition Principle #4 — density comes from typography, not
+per-page chrome). See CSS block in `public/css/style.css`.
+
+**Canonical example:** `views/admin/entity-detail.ejs`. Applied to
+`views/admin/authority-detail.ejs` for its Selected Member panel
+Citations/Connected edges tabs (rendered by
+`public/js/authority-detail-page.js`).
 
 ### Conditional HTML Attributes
 

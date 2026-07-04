@@ -125,32 +125,32 @@
           </div>
         </div>
         <div class="graph-sidebar-body">
-          <div class="entity-detail__edges">
+          <div class="workspace-edges">
             <% relationships.forEach(function(rel) { %>
               <%
                 var _outgoing = rel.direction === 'outgoing' || rel.source_entity_id === entity.id;
                 var _relType = rel.relationship_type || rel.type || 'related_to';
                 var _confPct = rel.confidence != null ? Math.round(Number(rel.confidence) * 100) : null;
               %>
-              <div class="entity-detail__edge">
-                <span class="entity-detail__edge-type"><%= _relType %></span>
-                <span class="entity-detail__edge-path">
+              <div class="workspace-edge">
+                <span class="workspace-edge-type"><%= _relType %></span>
+                <span class="workspace-edge-path">
                   <% if (_outgoing) { %>
-                    <span class="entity-detail__edge-self"><%= entity.canonical_name %></span>
-                    <span class="entity-detail__edge-arrow" aria-hidden="true">→</span>
-                    <span class="entity-detail__edge-other"><%= rel.target_name || 'Unknown target' %></span>
+                    <span class="workspace-edge-self"><%= entity.canonical_name %></span>
+                    <span class="workspace-edge-arrow" aria-hidden="true">→</span>
+                    <span class="workspace-edge-other"><%= rel.target_name || 'Unknown target' %></span>
                   <% } else { %>
-                    <span class="entity-detail__edge-other"><%= rel.source_name || 'Unknown source' %></span>
-                    <span class="entity-detail__edge-arrow" aria-hidden="true">→</span>
-                    <span class="entity-detail__edge-self"><%= entity.canonical_name %></span>
+                    <span class="workspace-edge-other"><%= rel.source_name || 'Unknown source' %></span>
+                    <span class="workspace-edge-arrow" aria-hidden="true">→</span>
+                    <span class="workspace-edge-self"><%= entity.canonical_name %></span>
                   <% } %>
                 </span>
-                <span class="entity-detail__edge-meta">
+                <span class="workspace-edge-meta">
                   <% if (rel.relationship_type_deprecated_at) { %>
                     <span class="status-badge status-trace">deprecated</span>
                   <% } %>
                   <% if (_confPct != null) { %>
-                    <span class="entity-detail__edge-conf"><%= _confPct %>%</span>
+                    <span class="workspace-edge-conf"><%= _confPct %>%</span>
                   <% } %>
                   <%- include('../partials/voice-badge', {
                     relationship: rel,
@@ -213,14 +213,14 @@
         <% if (citations.length === 0) { %>
           <p class="graph-empty-state">No citations recorded.</p>
         <% } else { %>
-          <div class="entity-detail__citations">
+          <div class="workspace-citations">
             <% var _shownCits = citations.slice(0, 5); %>
             <% var _hiddenCits = citations.slice(5); %>
             <% _shownCits.forEach(function (citation) { %>
               <%- include('./partials/entity-citation-row', { entity: entity, citation: citation, csrfToken: csrfToken }) %>
             <% }) %>
             <% if (_hiddenCits.length > 0) { %>
-              <details class="entity-detail__citations-more">
+              <details class="workspace-citations-more">
                 <summary>Show <%= _hiddenCits.length %> more citation<%= _hiddenCits.length === 1 ? '' : 's' %></summary>
                 <% _hiddenCits.forEach(function (citation) { %>
                   <%- include('./partials/entity-citation-row', { entity: entity, citation: citation, csrfToken: csrfToken }) %>

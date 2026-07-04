@@ -30,33 +30,18 @@
 
   <%- include('../partials/flash-alerts', { flashes }) %>
 
-  <div class="curator-action-toolbar authority-curator-toolbar">
-    <section class="curator-action-group" aria-labelledby="authority-navigate">
-      <p class="curator-action-group-label" id="authority-navigate">Navigate</p>
-      <div class="curator-action-buttons">
-        <a href="/admin/knowledge/authorities/suggestions" class="btn-secondary btn-sm">Review Suggestions</a>
-        <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology" class="btn-secondary btn-sm">Chronology</a>
-      </div>
-    </section>
-    <section class="curator-action-group" aria-labelledby="authority-author" data-authority-relationship-members>
-      <p class="curator-action-group-label" id="authority-author">Author</p>
-      <div class="curator-action-buttons">
-        <% if (Array.isArray(linkedEntities) && linkedEntities.length) { %>
-          <% linkedEntities.slice(0, 3).forEach(function(member) { %>
-            <a href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>"
-               class="btn-secondary btn-sm">
-              + Relationship from <%= member.canonical_name %>
-            </a>
-          <% }) %>
-        <% } else { %>
-          <span class="curator-action-note">No member entities linked yet — add members first.</span>
-        <% } %>
-      </div>
-      <% if (Array.isArray(linkedEntities) && linkedEntities.length) { %>
-        <p class="curator-action-note">Relationships are authored per entity; pick a member to start.</p>
-      <% } %>
-    </section>
-  </div>
+  <%
+    // Per docs/ui-template-standards.md § Actions after context: mutation
+    // actions are not offered before the record is shown. Chronology stays
+    // as a pure-navigation affordance; the per-member "+Add relationship"
+    // link now lives on each member row below.
+  %>
+  <nav class="authority-header-links" aria-label="Authority views">
+    <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology">Chronology</a>
+    <span aria-hidden="true">·</span>
+    <a href="/admin/knowledge/authorities/suggestions">Review suggestions</a>
+  </nav>
+  <div data-authority-relationship-members hidden></div>
 
   <section class="authority-workspace" data-authority-workspace>
     <div class="graph-shell-card knowledge-card authority-member-browser">
@@ -81,24 +66,32 @@
         <% if (!members.length) { %>
           <p class="graph-empty-state">No member entities are linked to this authority.</p>
         <% } else { %>
-          <div class="authority-member-list" data-authority-member-list>
+          <div class="authority-member-list" data-authority-member-list role="listbox" aria-label="Linked entities">
             <% members.forEach(function(member, index) { %>
-              <a
-                href="/admin/knowledge/entities/<%= member.id %>"
+              <div
                 class="authority-member-row <%= index === 0 ? 'is-selected' : '' %>"
                 data-authority-member-id="<%= member.id %>"
                 data-authority-member-search="<%= [member.id, member.canonical_name, member.entity_type].join(' ').toLowerCase() %>"
+                role="option"
+                aria-selected="<%= index === 0 ? 'true' : 'false' %>"
+                tabindex="0"
               >
-                <span>
+                <div class="authority-member-row-body">
                   <strong><%= member.canonical_name %></strong>
                   <span class="graph-muted">Entity #<%= member.id %> &bull; <%= member.entity_type %></span>
-                </span>
+                </div>
                 <span class="authority-member-row-meta">
                   <span><%= member.document_count %> docs</span>
                   <span><%= member.citation_count %> cites</span>
                   <span><%= member.relationship_count %> edges</span>
                 </span>
-              </a>
+                <a
+                  href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>"
+                  class="authority-member-row-rel"
+                  data-authority-passthrough
+                  title="Add relationship from <%= member.canonical_name %>"
+                >+ Rel</a>
+              </div>
             <% }) %>
           </div>
         <% } %>
@@ -111,7 +104,10 @@
           <p class="kg-panel-eyebrow">Selected member</p>
           <h2 data-authority-selected-title><%= members[0] ? members[0].canonical_name : 'No entity selected' %></h2>
         </div>
-        <a class="btn-secondary btn-sm" href="<%= members[0] ? '/admin/knowledge/entities/' + members[0].id : '/admin/knowledge/entities' %>" data-authority-selected-link>Open Entity</a>
+        <div class="authority-selected-actions">
+          <a class="btn-ghost" href="<%= members[0] ? '/admin/knowledge/relationships/new?sourceEntityId=' + members[0].id : '#' %>" data-authority-selected-add-relationship>Add relationship</a>
+          <a class="btn-secondary btn-sm" href="<%= members[0] ? '/admin/knowledge/entities/' + members[0].id : '/admin/knowledge/entities' %>" data-authority-selected-link>Open Entity</a>
+        </div>
       </div>
       <div class="graph-sidebar-body">
         <div class="authority-selected-meta" data-authority-selected-meta></div>
