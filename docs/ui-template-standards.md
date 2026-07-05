@@ -361,6 +361,33 @@ per-page chrome). See CSS block in `public/css/style.css`.
 Citations/Connected edges tabs (rendered by
 `public/js/authority-detail-page.js`).
 
+### Breadcrumbs
+
+Every admin, manage, and workspace page MUST render breadcrumbs
+via `views/partials/breadcrumbs.ejs` immediately after the
+`admin-nav` / `knowledge-nav` includes and before the page header
+(`.admin-header entity-header`). Breadcrumbs are the primary
+back-navigation affordance across the app; when they're present, do
+NOT add "← Back to X" buttons in the page body — the breadcrumb
+already covers that path and the button is redundant chrome.
+
+Crumb shape follows the actual admin hierarchy, not the URL literally:
+
+- Top-level admin pages: `Admin → Knowledge`.
+- Nested sections: `Admin → Knowledge → Authorities`,
+  `Admin → Knowledge → Sentiment`, etc.
+- Record pages: `Admin → Knowledge → Authorities → <canonical name>`.
+- Record subpages: `Admin → Knowledge → Authorities → <name> → Chronology`,
+  `→ Merge`, `→ Edit`, `→ Split`.
+- The final crumb is the current page and MUST NOT be a link (the
+  breadcrumbs partial handles this — pass it without an `href`).
+
+The crumb partial has `aria-label="Breadcrumb"` and marks the current
+page with `aria-current="page"`. Do not hand-roll breadcrumb markup;
+always use the partial so the a11y semantics stay consistent.
+
+Canonical example: every page under `/admin/knowledge/`.
+
 ### Header meta line
 
 Detail-page headers use a **single-line inline meta row** below the
@@ -382,6 +409,19 @@ Structure:
 - Middle segments are the record's count metrics — read as
   orientation, not as actions. For authority: N members, N
   documents, N aliases, N citations, N edges.
+- **Counts MUST link to a filtered destination when one exists.**
+  Any number in the meta line that names rows a curator could
+  inspect (`N failed extractions`, `3 backfill jobs queued`,
+  `2 pending suggestions`) MUST be wrapped in an `<a>` that
+  navigates to the filtered view of those exact rows
+  (`/admin/jobs?filter=failed&type=extraction`,
+  `/admin/knowledge/authorities/suggestions`, etc.). Inert counts
+  in a meta line are the same antipattern as inert stat cards —
+  they occupy attention without offering an action. Only pure
+  totals with no meaningful "show me those rows" destination stay
+  as plain text (e.g., a corpus-wide total that has no filter).
+  Style warning-tinted counts with `.entity-meta__warn` (used for
+  "N failed"-style hints).
 - Right-side segments (visually right-aligned via flex) hold
   **pure-navigation sub-links** — Chronology, Review suggestions,
   etc. These are plain text links (see § Element choice vs visual
@@ -444,6 +484,100 @@ Canonical example: `views/admin/authority-suggestions.ejs` (rendered by
 Cites § Header meta line; § Actions after context (mutation actions,
 including bulk selection, follow the evidence).
 
+### Typography hierarchy
+
+Every admin page must present a **visibly distinct** heading ladder
+so the eye can locate itself. The rungs, in decreasing weight:
+
+1. **Page `<h1>`** (inside `.admin-header entity-header`) — the
+   record or page name. Set by
+   `docs/ui-template-standards.md` § Header meta line.
+2. **Section `<h2>`** — landmarks inside the page shell
+   (`.knowledge-overview-header h2`, `.merge-step__header h2`, and
+   similar). Below the page `<h1>`, above card headings.
+3. **Card `<h2>`** or **card `<h3>`** — the heading INSIDE a card
+   (`.graph-sidebar-header h2`, `.knowledge-task-card h3`,
+   `.knowledge-guidance-card h3`). The smallest heading rung.
+4. **Body copy** — muted description, list rows, etc.
+
+Rules:
+
+- Each rung MUST be visibly smaller than the one above and larger
+  than the one below at the default viewport. If two adjacent rungs
+  collide (page `<h1>` competes with section `<h2>`, section `<h2>`
+  competes with card heading), the sizes are wrong — fix them, don't
+  work around by removing headings.
+- Exact rem values live in `public/css/style.css`, not in this doc,
+  so the ladder can be tuned without a doc round-trip. The current
+  values were established when we killed top-of-page stat cards and
+  clarified the h1 / section-h2 / card-h3 gap; keep them
+  proportional as you evolve.
+- Do NOT use `<h1>` for anything below the page header. Do NOT
+  demote a real section landmark to a `<p class="knowledge-card-label">`
+  or similar just to avoid the heading — that hides structure from
+  screen readers.
+- Card body copy (`.knowledge-task-card > .muted`,
+  `.knowledge-guidance-card > .muted`) is smaller and looser-lined
+  than page body copy; it's supporting text under the card heading,
+  not a second title.
+
+### Casing
+
+Page and section headings use **Title Case** — the established site
+convention. Examples:
+
+- Page `<h1>`: `Merge Entities`, `Edit Entity`, `Sentiment Review`,
+  `Phrase Targets`.
+- Section `<h2>`: `Queue Re-extraction`, `Authority Maintenance`.
+
+Card headings and body copy:
+
+- Task-card `<h3>` (imperative, actionable) — Title Case:
+  `Re-run One Document`, `Queue Authority Backfill`.
+- Guidance-card `<h3>` (informational, topical) — Sentence case:
+  `Approval rules`, `Authority backfill`, `Batch behavior`.
+- Buttons — Title Case for verb + noun labels:
+  `Merge Authority`, `Queue Document Re-extraction`. Danger-zone
+  buttons follow the same convention.
+- Filter chips and status labels — Sentence case:
+  `Exact canonical`, `Member exact`, `Pending`, `Approved`.
+
+Do NOT flip a page's title from Title Case to sentence case without
+also updating tests that assert the exact string. Integration tests
+under `tests/integration/` frequently pin the h1 text with `toContain`.
+
+### List row disambiguation
+
+Curator lists frequently surface many rows that share a canonical
+name — five entity records named "British Columbia," multiple
+authorities called "John Smith," several documents titled
+"Untitled." A row that shows only the canonical name is unusable in
+that situation; the curator can't pick the right one to open.
+
+When a list is expected to contain **homonymous rows**, surface a
+**derived evidence hint** on each row that names *why this row is
+this row*. Prefer a hint drawn from data already loaded for the
+list so no extra query is needed:
+
+- **Members list on authority-detail** — top-cited document per
+  member, rendered as `mostly in <em>Newcombe Field Diary</em>`.
+  Grouped from the citation rows already fetched by
+  `citations.getByEntityIds`.
+- **Entity suggestions / disambiguation groups** — the entity's
+  source document + a short excerpt.
+- **Duplicate authority candidates** — the top member name for
+  each candidate, so a cluster of "Smith" authorities shows
+  `John Smith · James Smith · …` rather than five identical rows.
+
+Style the hint as small muted text on its own line under the row
+name (`.authority-member-row-evidence` is the canonical example).
+Rows that have no data to disambiguate omit the hint entirely —
+don't show `mostly in —` or an empty span.
+
+Cites [docs/development-principles.md § Keep Evidence Traceable](./development-principles.md#keep-evidence-traceable):
+the disambiguating hint is a curator-facing pointer back to the
+evidence that makes the row unique.
+
 ### Conditional HTML Attributes
 
 When an HTML attribute must appear only under a condition (for example
@@ -481,9 +615,11 @@ Current canonical shared partials include:
 - `views/partials/header.ejs`
 - `views/partials/footer.ejs`
 - `views/partials/admin-nav.ejs`
-- `views/partials/manage-nav.ejs`
+- `views/partials/knowledge-nav.ejs`
 - `views/partials/manage-collection-nav.ejs`
 - `views/partials/collection-hero.ejs`
+- `views/partials/breadcrumbs.ejs` (see § Breadcrumbs)
+- `views/partials/flash-alerts.ejs`
 
 When a pattern appears in three or more templates, it should usually become a
 shared partial or a shared helper partial.
@@ -567,6 +703,46 @@ If the same inline style appears in more than one place, it should become a CSS
 class.
 
 ## CSS Standards
+
+### Doc citations belong in CSS comments
+
+Per [CLAUDE.md § Citation Requirement](../CLAUDE.md), any CSS block
+that encodes a documented rule MUST cite the governing doc section
+in a leading comment. Example (from `public/css/style.css`):
+
+```css
+/* Queue page filter cluster — per docs/ui-template-standards.md § Queue
+   page (labeled axes, counts on tabs, no top stat-card block). Cites
+   the same doc's § Composition Principles #4. */
+.queue-filters { … }
+```
+
+Two reasons this matters more for CSS than for view templates: (1)
+CSS rules travel across sections of the file and evolve
+independently, so the "why" evaporates fast without an inline
+pointer; (2) tuning a CSS value (padding, gap, font-size) often
+looks purely cosmetic but is tightening a rule laid out in the
+doc — the citation warns the next editor away from unmoored
+"cleanup" that would drift back to the antipattern the rule fixed.
+
+Also cite when removing a class that a doc used as a canonical
+example, so the doc example can be updated in the same commit.
+
+### Utility classes carry their own presentation
+
+When a class is used bare (not always inside a container that
+already gives it padding/border), it MUST style itself completely.
+`.admin-search-input` is the canonical example: it started as
+`{ min-width: 260px }` and relied on being inside `.edit-field`
+for padding/border/focus. Once curators dropped the input straight
+into a card body, it rendered as a browser-default `<input>` with
+squished padding.
+
+The fix: give `.admin-search-input` its own `padding`, `border`,
+`background`, `border-radius`, focus outline, and font. Now the
+class stands alone in any container. Follow the same principle for
+any utility a page uses without a wrapper — do not lean on a
+container's rules for base presentation.
 
 ## Design Tokens
 

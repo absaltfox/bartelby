@@ -20,6 +20,8 @@ It supports historians engaged in research by making the data and connections co
   [docs/knowledge-graph-design.md](./docs/knowledge-graph-design.md)
 - UI, EJS, and CSS conventions for all presentation-layer changes:
   [docs/ui-template-standards.md](./docs/ui-template-standards.md)
+- Schema migrations, drift risk, and repair patterns:
+  [docs/db-migrations.md](./docs/db-migrations.md)
 - Contribution workflow:
   [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Deployment notes for Docker and Fly:

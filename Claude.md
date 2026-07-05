@@ -48,6 +48,8 @@ Cite from this set whenever the subsystem applies:
   [docs/knowledge-graph-design.md](./docs/knowledge-graph-design.md)
 - Background jobs, worker loop, analytics scheduler, SQLite queue model:
   [docs/background-jobs.md](./docs/background-jobs.md)
+- Schema migrations, drift risk, and repair patterns:
+  [docs/db-migrations.md](./docs/db-migrations.md)
 
 ## How to Cite
 

@@ -40,6 +40,8 @@ Then read the subsystem-specific docs that match the task:
   than assembling `accessSql + filters + Promise.all` by hand.
 - Background jobs, worker loop, analytics scheduler, SQLite queue model:
   [docs/background-jobs.md](./docs/background-jobs.md)
+- Schema migrations, drift risk, and repair patterns:
+  [docs/db-migrations.md](./docs/db-migrations.md)
 - Deployment, Docker, Fly, Turso, and S3 expectations:
   [DEPLOY.md](./DEPLOY.md)
 
