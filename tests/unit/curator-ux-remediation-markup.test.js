@@ -104,19 +104,21 @@ describe('Curator UX remediation markup', () => {
     expect(review).toContain('Makes this evidence eligible for visible graph views.');
     expect(review).toContain('Hides evidence from graph views but keeps review history.');
     expect(review).toContain('Removes the citation evidence record.');
-    // entity-detail was redesigned: actions now live in an aside rail
-    // (entity-dossier__rail) instead of the old top curator-action-toolbar.
-    // Per docs/ui-template-standards.md § Grouped Action Toolbars, consequence
-    // text lives next to the buttons that trigger the mutation — the Correct
-    // and Author sections are in the right-side sticky rail.
+    // entity-detail was redesigned again: curator mutation actions now
+    // appear AFTER the reading flow (identity → facts → edges → citations)
+    // in an entity-detail__record-actions cluster. Per the "actions after
+    // context" principle documented in
+    // docs/ui-template-standards.md § Entity detail — actions after context,
+    // consequence text still lives next to the buttons that trigger the
+    // mutation.
     expect(entity).toContain('Edit preserves evidence; split moves only selected evidence; merge consolidates records.');
-    expect(entity).toContain('entity-dossier__rail');
+    expect(entity).toContain('entity-detail__record-actions');
     expect(entity).toContain('Correct');
     expect(entity).toContain('Author');
-    expect(entity).toMatch(/<section class="curator-action-group[^"]*" aria-labelledby="entity-rail-correct"/);
-    expect(entity).toMatch(/<section class="curator-action-group[^"]*" aria-labelledby="entity-rail-author"/);
-    expect(entity).toMatch(/<p class="curator-action-group-label" id="entity-rail-correct">/);
-    expect(entity).toMatch(/<p class="curator-action-group-label" id="entity-rail-author">/);
+    expect(entity).toMatch(/aria-labelledby="entity-record-actions-correct"/);
+    expect(entity).toMatch(/aria-labelledby="entity-record-actions-author"/);
+    expect(entity).toMatch(/id="entity-record-actions-correct"/);
+    expect(entity).toMatch(/id="entity-record-actions-author"/);
   });
 
   it('renders document metadata via a single shared partial in both layout branches', () => {

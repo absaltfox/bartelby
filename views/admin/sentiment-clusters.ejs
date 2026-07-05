@@ -4,8 +4,18 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-clusters' }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Sentiment' },
+    { label: 'Clusters' }
+  ] }) %>
+
+  <div class="admin-header entity-header">
     <h1>Sentiment Phrase Clusters</h1>
+    <p class="entity-meta">
+      <span>Group similar phrase targets so labels can be applied to whole clusters at once.</span>
+    </p>
   </div>
 
   <div class="segmented-control" role="tablist" aria-label="Clusters view">

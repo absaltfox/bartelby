@@ -20,6 +20,7 @@
     var filterInput = root.querySelector('[data-authority-member-filter]');
     var titleEl = root.querySelector('[data-authority-selected-title]');
     var linkEl = root.querySelector('[data-authority-selected-link]');
+    var addRelEl = root.querySelector('[data-authority-selected-add-relationship]');
     var metaEl = root.querySelector('[data-authority-selected-meta]');
     var panelEl = root.querySelector('[data-authority-detail-panel]');
     var tabButtons = Array.from(root.querySelectorAll('[data-authority-detail-tab]'));
@@ -58,37 +59,27 @@
       return n + ' ' + (n === 1 ? singular : (plural || singular + 's'));
     }
 
-    function formatConfidence(confidence) {
-      if (confidence === null || confidence === undefined || Number.isNaN(Number(confidence))) return '';
-      return '<span>Confidence ' + Math.round(Number(confidence) * 100) + '%</span>';
-    }
-
-    function renderDateMeta(rel) {
-      var parts = [];
-      if (rel.start_date || rel.end_date) {
-        parts.push(escapeHtml(rel.start_date || 'Unknown') + (rel.end_date && rel.end_date !== rel.start_date ? ' to ' + escapeHtml(rel.end_date) : ''));
-      }
-      if (rel.date_precision) parts.push(escapeHtml(rel.date_precision));
-      if (rel.date_qualifier) parts.push(escapeHtml(rel.date_qualifier));
-      return parts.length ? '<div class="graph-muted">' + parts.join(' &bull; ') + '</div>' : '';
-    }
-
     function renderCitations(member) {
       var citations = citationsFor(member);
       if (!citations.length) {
         return '<p class="graph-empty-state">No approved citations were found for this member entity.</p>';
       }
-      return '<div class="knowledge-citation-list authority-context-list">' + citations.map(function(citation) {
+      // Shared visual grammar with entity-detail; see
+      // docs/ui-template-standards.md § Actions after context and the
+      // .workspace-citation block in public/css/style.css.
+      return '<div class="workspace-citations">' + citations.map(function(citation) {
         var docLabel = citation.document_title || ('Document ' + citation.document_id);
+        var conf = citation.confidence == null ? null : Math.round(Number(citation.confidence) * 100);
         return ''
-          + '<article class="knowledge-citation-card">'
-          +   '<div class="knowledge-citation-card-header">'
-          +     '<div>'
-          +       '<strong><a href="/documents/' + escapeHtml(citation.document_id) + '">' + escapeHtml(docLabel) + '</a></strong>'
-          +       '<div class="graph-muted">' + formatConfidence(citation.confidence) + '</div>'
+          + '<article class="workspace-citation">'
+          +   '<div class="workspace-citation-bar" aria-hidden="true"></div>'
+          +   '<div class="workspace-citation-body">'
+          +     '<p class="workspace-citation-quote">' + escapeHtml(citation.passage_text || 'No passage excerpt recorded.') + '</p>'
+          +     '<div class="workspace-citation-source">'
+          +       '<a href="/documents/' + escapeHtml(citation.document_id) + '">' + escapeHtml(docLabel) + '</a>'
+          +       (conf != null ? '<span class="workspace-citation-conf">' + conf + '%</span>' : '')
           +     '</div>'
           +   '</div>'
-          +   '<p>' + escapeHtml(citation.passage_text || 'No passage excerpt recorded.') + '</p>'
           + '</article>';
       }).join('') + '</div>';
     }
@@ -112,42 +103,35 @@
       return '';
     }
 
-    function renderRelationshipEvidence(rel) {
-      var evidence = Array.isArray(rel.evidence) ? rel.evidence : [];
-      if (!evidence.length) return '<p class="graph-muted">No approved relationship citation excerpt recorded.</p>';
-      return '<div class="authority-edge-evidence">' + evidence.slice(0, 3).map(function(citation) {
-        var docLabel = citation.document_title || ('Document ' + citation.document_id);
-        return ''
-          + '<div class="authority-edge-evidence-card">'
-          +   '<strong><a href="/documents/' + escapeHtml(citation.document_id) + '">' + escapeHtml(docLabel) + '</a></strong>'
-          +   '<p>' + escapeHtml(citation.passage_text || 'No passage excerpt recorded.') + '</p>'
-          + '</div>';
-      }).join('') + '</div>';
-    }
-
     function renderEdges(member) {
       var relationships = relationshipsFor(member);
       if (!relationships.length) {
         return '<p class="graph-empty-state">No connected edges were found for this member entity.</p>';
       }
-      return '<div class="graph-detail-list authority-context-list">' + relationships.map(function(rel) {
+      // Shared visual grammar with entity-detail; see
+      // docs/ui-template-standards.md § Actions after context and the
+      // .workspace-edge block in public/css/style.css.
+      return '<div class="workspace-edges">' + relationships.map(function(rel) {
         var isSource = Number(rel.source_entity_id) === Number(member.id);
-        var direction = isSource ? 'Outgoing' : 'Incoming';
+        var relType = rel.relationship_type || rel.type || 'related_to';
+        var conf = rel.confidence == null ? null : Math.round(Number(rel.confidence) * 100);
+        var otherId = isSource ? rel.target_entity_id : rel.source_entity_id;
+        var otherName = isSource ? (rel.target_name || 'Unknown target') : (rel.source_name || 'Unknown source');
+        var selfHtml = '<span class="workspace-edge-self">' + escapeHtml(member.canonical_name || 'This entity') + '</span>';
+        var otherHtml = '<a class="workspace-edge-other" href="/admin/knowledge/entities/' + escapeHtml(otherId) + '">' + escapeHtml(otherName) + '</a>';
+        var arrow = '<span class="workspace-edge-arrow" aria-hidden="true">&rarr;</span>';
+        var path = isSource
+          ? selfHtml + arrow + otherHtml
+          : otherHtml + arrow + selfHtml;
         return ''
-          + '<article class="graph-detail-card authority-edge-card">'
-          +   '<div class="authority-edge-header">'
-          +     '<strong>' + escapeHtml(rel.relationship_type || rel.type || 'related_to') + '</strong>'
-          +     '<span class="status-badge">' + direction + '</span>'
-          +   '</div>'
-          +   '<div class="graph-muted">'
-          +     '<a href="/admin/knowledge/entities/' + escapeHtml(rel.source_entity_id) + '">' + escapeHtml(rel.source_name || 'Unknown source') + '</a>'
-          +     ' &rarr; '
-          +     '<a href="/admin/knowledge/entities/' + escapeHtml(rel.target_entity_id) + '">' + escapeHtml(rel.target_name || 'Unknown target') + '</a>'
-          +   '</div>'
-          +   renderDateMeta(rel)
-          +   renderVoiceBadge(rel)
-          +   renderRelationshipEvidence(rel)
-          + '</article>';
+          + '<div class="workspace-edge">'
+          +   '<span class="workspace-edge-type">' + escapeHtml(relType) + '</span>'
+          +   '<span class="workspace-edge-path">' + path + '</span>'
+          +   '<span class="workspace-edge-meta">'
+          +     (conf != null ? '<span class="workspace-edge-conf">' + conf + '%</span>' : '')
+          +     renderVoiceBadge(rel)
+          +   '</span>'
+          + '</div>';
       }).join('') + '</div>';
     }
 
@@ -186,6 +170,7 @@
 
       if (titleEl) titleEl.textContent = member.canonical_name || ('Entity #' + member.id);
       if (linkEl) linkEl.setAttribute('href', '/admin/knowledge/entities/' + member.id);
+      if (addRelEl) addRelEl.setAttribute('href', '/admin/knowledge/relationships/new?sourceEntityId=' + member.id);
       if (metaEl) {
         metaEl.innerHTML = ''
           + '<span class="entity-type-badge entity-type-' + escapeHtml(member.entity_type) + '">' + escapeHtml(member.entity_type) + '</span>'
@@ -209,13 +194,22 @@
     function selectMember(id) {
       selectedId = Number(id);
       rows.forEach(function(row) {
-        row.classList.toggle('is-selected', Number(row.getAttribute('data-authority-member-id')) === selectedId);
+        var match = Number(row.getAttribute('data-authority-member-id')) === selectedId;
+        row.classList.toggle('is-selected', match);
+        if (row.hasAttribute('aria-selected')) {
+          row.setAttribute('aria-selected', match ? 'true' : 'false');
+        }
       });
       renderPanel();
     }
 
     rows.forEach(function(row) {
       row.addEventListener('click', function(event) {
+        event.preventDefault();
+        selectMember(row.getAttribute('data-authority-member-id'));
+      });
+      row.addEventListener('keydown', function(event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
         selectMember(row.getAttribute('data-authority-member-id'));
       });

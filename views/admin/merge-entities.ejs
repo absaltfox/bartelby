@@ -4,74 +4,104 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'merge-entities' }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Entities', href: '/admin/knowledge/entities' },
+    { label: 'Merge' }
+  ] }) %>
+
+  <%
+    // Header meta line — per docs/ui-template-standards.md § Header meta line.
+    var _mergeTotal = entityTypes.reduce(function(t, k) { return t + (typeCounts[k] || 0); }, 0);
+  %>
+  <div class="admin-header entity-header">
     <h1>Merge Entities</h1>
-    <p class="subtitle">Search for a source entity and a target entity, then compare their evidence before merging into one canonical node.</p>
+    <p class="entity-meta">
+      <span><%= _mergeTotal %> total entit<%= _mergeTotal === 1 ? 'y' : 'ies' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span>Consolidate two duplicate entities into one canonical record.</span>
+    </p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 
-  <section class="settings-section merge-workspace-section">
-    <div class="merge-workspace-header">
-      <div>
-        <p class="admin-section-label">Entity Selection</p>
-        <h2>Find the two entities to compare</h2>
-        <p class="subtitle">Use search to locate duplicates by canonical name or alias. Select both sides before merging.</p>
-      </div>
-    </div>
+  <form
+    method="POST"
+    action="/admin/knowledge/entities/merge"
+    class="edit-form merge-entities-form"
+    data-merge-entities-form
+    data-confirm-message="Merge these two entities? The source will be re-parented onto the target and deleted. This cannot be undone."
+  >
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 
-    <section class="merge-browse-panel" data-merge-browser>
-      <div class="merge-browse-header">
+    <%
+      // Step 1 — Pick two entities.
+      // Browse-by-type is a discovery affordance for curators who don't
+      // know the exact name; the two search slots below feed the source
+      // and target. Per docs/ui-template-standards.md § Element choice
+      // vs visual weight, the "Use as source / Use as target" controls
+      // are <button>s (in-page state change, no URL nav) and the type
+      // filter is a segmented control of the same.
+    %>
+    <section class="merge-step">
+      <header class="merge-step__header">
+        <span class="merge-step__number" aria-hidden="true">1</span>
         <div>
-          <p class="admin-section-label">Browse</p>
-          <h3>Discover entities by type</h3>
-          <p class="subtitle">Browse a type, refine the list, and send an entity directly into the merge comparison workspace.</p>
+          <h2>Pick two entities</h2>
+          <p class="entity-detail__section-meta">Browse by type or search directly to fill the source and target slots.</p>
         </div>
-      </div>
+      </header>
 
-      <div class="filter-tabs merge-browse-tabs" data-merge-browse-types>
-        <button type="button" class="filter-tab active" data-merge-browse-type="all">
-          All
-          <span class="filter-count"><%= entityTypes.reduce(function(total, type) { return total + (typeCounts[type] || 0); }, 0) %></span>
-        </button>
-        <% entityTypes.forEach(function(type) { %>
-          <button type="button" class="filter-tab" data-merge-browse-type="<%= type %>">
-            <%= type.charAt(0).toUpperCase() + type.slice(1) %>
-            <span class="filter-count"><%= typeCounts[type] || 0 %></span>
+      <div class="merge-browse-panel" data-merge-browser>
+        <div class="filter-tabs merge-browse-tabs" data-merge-browse-types>
+          <button type="button" class="filter-tab active" data-merge-browse-type="all">
+            All <span class="filter-count"><%= _mergeTotal %></span>
           </button>
-        <% }) %>
-      </div>
-
-      <div class="merge-browse-toolbar">
-        <div class="edit-field merge-browse-search-field">
-          <label for="merge-browse-search">Filter this list</label>
-          <input type="search" id="merge-browse-search" class="admin-search-input merge-search-input" placeholder="Filter the selected type by name or alias..." autocomplete="off" spellcheck="false" data-merge-browse-search>
+          <% entityTypes.forEach(function(type) { %>
+            <button type="button" class="filter-tab" data-merge-browse-type="<%= type %>">
+              <%= type.charAt(0).toUpperCase() + type.slice(1) %>
+              <span class="filter-count"><%= typeCounts[type] || 0 %></span>
+            </button>
+          <% }) %>
         </div>
-        <div class="merge-browse-meta" data-merge-browse-meta>Loading entities…</div>
+
+        <div class="merge-browse-toolbar">
+          <div class="edit-field merge-browse-search-field">
+            <label for="merge-browse-search" class="sr-only">Filter this list</label>
+            <input
+              type="search"
+              id="merge-browse-search"
+              class="admin-search-input"
+              placeholder="Filter the selected type by name or alias..."
+              autocomplete="off"
+              spellcheck="false"
+              data-merge-browse-search
+            >
+          </div>
+          <div class="merge-browse-meta" data-merge-browse-meta>Loading entities…</div>
+        </div>
+
+        <div class="merge-browse-results" data-merge-browse-results></div>
+
+        <div class="merge-browse-pagination" data-merge-browse-pagination hidden>
+          <button type="button" class="btn-secondary btn-sm" data-merge-browse-prev>← Previous</button>
+          <span class="muted" data-merge-browse-page-label></span>
+          <button type="button" class="btn-secondary btn-sm" data-merge-browse-next>Next →</button>
+        </div>
       </div>
 
-      <div class="merge-browse-results" data-merge-browse-results></div>
-
-      <div class="merge-browse-pagination" data-merge-browse-pagination hidden>
-        <button type="button" class="btn-secondary btn-sm" data-merge-browse-prev>Previous</button>
-        <span class="muted" data-merge-browse-page-label></span>
-        <button type="button" class="btn-secondary btn-sm" data-merge-browse-next>Next</button>
-      </div>
-    </section>
-
-    <form method="POST" action="/admin/knowledge/entities/merge" class="edit-form merge-entities-form" data-merge-entities-form>
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="merge-picker-grid">
         <section class="merge-picker-card" data-merge-picker="source">
-          <p class="knowledge-card-label">Source</p>
+          <p class="kg-panel-eyebrow">Source</p>
           <h3>Entity to merge away</h3>
-          <p class="muted">This record will be folded into the target.</p>
+          <p class="entity-detail__section-meta">This record is folded into the target.</p>
           <input type="hidden" name="source_entity_id" data-merge-entity-id="source" required>
           <div class="edit-field">
-            <label for="merge-source-search">Search source entity</label>
+            <label for="merge-source-search" class="sr-only">Search source entity</label>
             <input
               type="search"
               id="merge-source-search"
-              class="admin-search-input merge-search-input"
+              class="admin-search-input"
               placeholder="Search by canonical name or alias..."
               autocomplete="off"
               spellcheck="false"
@@ -83,16 +113,16 @@
         </section>
 
         <section class="merge-picker-card" data-merge-picker="target">
-          <p class="knowledge-card-label">Target</p>
+          <p class="kg-panel-eyebrow">Target</p>
           <h3>Canonical entity to keep</h3>
-          <p class="muted">The source entity, aliases, and evidence will be reassigned here.</p>
+          <p class="entity-detail__section-meta">Aliases and evidence from the source are reassigned here.</p>
           <input type="hidden" name="target_entity_id" data-merge-entity-id="target" required>
           <div class="edit-field">
-            <label for="merge-target-search">Search target entity</label>
+            <label for="merge-target-search" class="sr-only">Search target entity</label>
             <input
               type="search"
               id="merge-target-search"
-              class="admin-search-input merge-search-input"
+              class="admin-search-input"
               placeholder="Search by canonical name or alias..."
               autocomplete="off"
               spellcheck="false"
@@ -103,34 +133,54 @@
           <div class="merge-picker-results" data-merge-results="target" hidden></div>
         </section>
       </div>
+    </section>
 
-      <div class="edit-actions merge-entities-actions">
-        <%# Intentional `disabled`: teaches curator that source+target must be selected. %>
-        <%# Per docs/ui-template-standards.md § Hide unavailable actions (Exceptions). %>
-        <button type="submit" class="btn-primary btn-sm" data-merge-submit disabled>Merge Entities</button>
-        <p class="muted">Review both entities below before merging. This action cannot be automatically undone.</p>
+    <%
+      // Step 2 — Compare evidence. Placeholder text is shown until each
+      // side is picked. Per docs/ui-template-standards.md § Actions
+      // after context, the review sits between selection and the
+      // destructive action so curators see the evidence before they
+      // commit.
+    %>
+    <section class="merge-step" data-merge-review>
+      <header class="merge-step__header">
+        <span class="merge-step__number" aria-hidden="true">2</span>
+        <div>
+          <h2>Compare evidence</h2>
+          <p class="entity-detail__section-meta">Aliases, citation counts, and recent evidence for each side. Reads only after both are picked.</p>
+        </div>
+      </header>
+
+      <div class="merge-review-grid">
+        <section class="graph-shell-card knowledge-card merge-review-card" data-merge-preview="source">
+          <div class="graph-empty-state">Pick a source entity above to preview its aliases and evidence here.</div>
+        </section>
+        <section class="graph-shell-card knowledge-card merge-review-card" data-merge-preview="target">
+          <div class="graph-empty-state">Pick a target entity above to preview its aliases and evidence here.</div>
+        </section>
       </div>
-    </form>
-  </section>
+    </section>
 
-  <section class="settings-section merge-review-section" data-merge-review>
-    <div class="merge-workspace-header">
+    <%
+      // Step 3 — Danger zone. Per docs/ui-template-standards.md § Danger
+      // zone: constant title, verb on the button, single btn-danger.
+      // The disabled state itself teaches the required precondition
+      // (both slots picked) per § Hide unavailable actions (Exceptions).
+    %>
+    <section class="workspace-danger" aria-labelledby="merge-entities-danger-label">
       <div>
-        <p class="admin-section-label">Review</p>
-        <h2>Compare before merging</h2>
-        <p class="subtitle">Aliases, citation counts, and recent evidence help confirm whether these two entities should become one.</p>
+        <p class="workspace-danger-title" id="merge-entities-danger-label">Danger zone</p>
+        <p class="workspace-danger-note">
+          Merging is irreversible. The source entity — including its
+          aliases, citations, and relationships — is re-parented onto
+          the target, and the source record is deleted.
+        </p>
       </div>
-    </div>
-
-    <div class="merge-review-grid">
-      <section class="graph-shell-card knowledge-card merge-review-card" data-merge-preview="source">
-        <div class="graph-empty-state">Choose a source entity to review its aliases and evidence.</div>
-      </section>
-      <section class="graph-shell-card knowledge-card merge-review-card" data-merge-preview="target">
-        <div class="graph-empty-state">Choose a target entity to review its aliases and evidence.</div>
-      </section>
-    </div>
-  </section>
+      <div>
+        <button type="submit" class="btn-danger" data-merge-submit disabled>Merge entities</button>
+      </div>
+    </section>
+  </form>
 </div>
 
 <script src="/js/merge-entities-page.js"></script>

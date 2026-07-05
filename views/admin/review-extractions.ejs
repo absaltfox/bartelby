@@ -4,9 +4,17 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'review-extractions' }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Review extractions' }
+  ] }) %>
+
+  <div class="admin-header entity-header">
     <h1>Review Extractions</h1>
-    <p class="subtitle">Approve, reject, or remove extracted evidence before it becomes visible in the knowledge graph.</p>
+    <p class="entity-meta">
+      <span>Approve, reject, or remove extracted evidence before it becomes visible in the knowledge graph.</span>
+    </p>
     <% if (graphNotice) { %><p class="export-context-note"><%= graphNotice %></p><% } %>
   </div>
 

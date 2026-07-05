@@ -4,54 +4,100 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: activeKnowledgePage || 'authority-suggestions' }) %>
 
-  <div class="admin-header">
+  <%
+    // Header meta line — per docs/ui-template-standards.md § Header meta line.
+    // Queue orientation appears here (total volume) rather than in a stat-card
+    // block. Per-status counts are folded into the filter tabs below.
+    var _stats = suggestionStats || { pending: 0, approved: 0, rejected: 0, byMethod: [] };
+    var _totalAll = (_stats.pending || 0) + (_stats.approved || 0) + (_stats.rejected || 0);
+    // Humanize a snake_case match-method token for display. Underlying enum
+    // values remain unchanged in the URL (?matchMethod=embedding).
+    function _humanizeMethod(token) {
+      var s = String(token || '').replace(/_/g, ' ');
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    }
+  %>
+  <div class="admin-header entity-header">
     <h1>Authority Suggestions</h1>
-    <p class="subtitle">Review medium-confidence authority links before they affect authority-backed graph focus.</p>
+    <p class="entity-meta">
+      <span><%= _totalAll %> total decision<%= _totalAll === 1 ? '' : 's' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span>Review medium-confidence authority links before they affect authority-backed graph focus.</span>
+    </p>
   </div>
 
-  <div class="admin-stats">
-    <div class="stat-card">
-      <div class="stat-value"><%= suggestionStats.pending %></div>
-      <div class="stat-label">Pending</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value"><%= suggestionStats.approved %></div>
-      <div class="stat-label">Approved</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value"><%= suggestionStats.rejected %></div>
-      <div class="stat-label">Rejected</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-value"><%= suggestionStats.byMethod.length %></div>
-      <div class="stat-label">Match methods</div>
-    </div>
-  </div>
-
-  <div class="filter-tabs">
-    <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && matchMethodFilter.length === 0 ? 'active' : '' %>">Pending</a>
-    <a href="<%= suggestionsPath({ status: 'approved' }) %>" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">Approved</a>
-    <a href="<%= suggestionsPath({ status: 'rejected' }) %>" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">Rejected</a>
-    <a href="<%= suggestionsPath({ status: 'all' }) %>" class="filter-tab <%= status === 'all' ? 'active' : '' %>">All</a>
-  </div>
-
-  <% if (status === 'pending') { %>
-    <div class="filter-chips">
-      <% knownMatchMethods.forEach(function(method) { %>
-        <% var isActive = matchMethodFilter.indexOf(method) !== -1; %>
-        <% var next = isActive
-          ? matchMethodFilter.filter(function(m) { return m !== method; })
-          : matchMethodFilter.concat(method); %>
-        <a href="<%= suggestionsPath({ status: 'pending', matchMethod: next.length > 0 ? next.join(',') : null }) %>"
-           class="filter-tab <%= isActive ? 'active' : '' %>">
-          <%= method %>
+  <%
+    // Queue filters — per docs/ui-template-standards.md § Queue page. Counts
+    // fold into the tabs (kills the redundant stat-card block); the two
+    // filter axes get labeled groups so the layout reads at a glance.
+  %>
+  <section class="queue-filters" aria-labelledby="queue-filters-status-label">
+    <div class="filter-chips-group">
+      <p class="filter-chips-group-label" id="queue-filters-status-label">Status</p>
+      <div class="filter-tabs">
+        <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab <%= status === 'pending' && matchMethodFilter.length === 0 ? 'active' : '' %>">
+          Pending <span class="filter-count"><%= _stats.pending %></span>
         </a>
-      <% }); %>
-      <% if (matchMethodFilter.length > 0) { %>
-        <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab">clear</a>
-      <% } %>
+        <a href="<%= suggestionsPath({ status: 'approved' }) %>" class="filter-tab <%= status === 'approved' ? 'active' : '' %>">
+          Approved <span class="filter-count"><%= _stats.approved %></span>
+        </a>
+        <a href="<%= suggestionsPath({ status: 'rejected' }) %>" class="filter-tab <%= status === 'rejected' ? 'active' : '' %>">
+          Rejected <span class="filter-count"><%= _stats.rejected %></span>
+        </a>
+        <a href="<%= suggestionsPath({ status: 'all' }) %>" class="filter-tab <%= status === 'all' ? 'active' : '' %>">
+          All <span class="filter-count"><%= _totalAll %></span>
+        </a>
+      </div>
     </div>
-  <% } %>
+
+    <% if (status === 'pending') { %>
+      <div class="filter-chips-group" aria-labelledby="queue-filters-method-label">
+        <p class="filter-chips-group-label" id="queue-filters-method-label">Match method</p>
+        <div class="filter-chips">
+          <% knownMatchMethods.forEach(function(method) { %>
+            <% var isActive = matchMethodFilter.indexOf(method) !== -1; %>
+            <% var next = isActive
+              ? matchMethodFilter.filter(function(m) { return m !== method; })
+              : matchMethodFilter.concat(method); %>
+            <a href="<%= suggestionsPath({ status: 'pending', matchMethod: next.length > 0 ? next.join(',') : null }) %>"
+               class="filter-tab <%= isActive ? 'active' : '' %>">
+              <%= _humanizeMethod(method) %>
+            </a>
+          <% }); %>
+          <% if (matchMethodFilter.length > 0) { %>
+            <a href="<%= suggestionsPath({ status: 'pending' }) %>" class="filter-tab filter-tab--clear">Clear</a>
+          <% } %>
+        </div>
+      </div>
+    <% } %>
+
+    <%
+      // Grouped-queue pager. Per docs/ui-template-standards.md § Queue
+      // page (pagination replaces the "phase-1" truncation notice).
+      // Only render when there's more than one page of decisions.
+    %>
+    <% if (typeof totalPages !== 'undefined' && totalPages > 1) { %>
+      <nav class="queue-pager" aria-label="Decision queue pagination">
+        <% var _prev = Math.max(1, (currentPage || 1) - 1); %>
+        <% var _next = Math.min(totalPages, (currentPage || 1) + 1); %>
+        <a href="<%= suggestionsPath({ status: status, matchMethod: matchMethodFilter.length > 0 ? matchMethodFilter.join(',') : null, page: _prev }) %>"
+           class="queue-pager__link <%= (currentPage || 1) <= 1 ? 'is-disabled' : '' %>"
+           <% if ((currentPage || 1) <= 1) { %>aria-disabled="true" tabindex="-1"<% } %>>
+          ← Previous
+        </a>
+        <span class="queue-pager__label">
+          Page <%= currentPage || 1 %> of <%= totalPages %>
+          <span class="entity-meta__sep" aria-hidden="true">·</span>
+          <%= groupedTotalUnits %> decision<%= groupedTotalUnits === 1 ? '' : 's' %>
+        </span>
+        <a href="<%= suggestionsPath({ status: status, matchMethod: matchMethodFilter.length > 0 ? matchMethodFilter.join(',') : null, page: _next }) %>"
+           class="queue-pager__link <%= (currentPage || 1) >= totalPages ? 'is-disabled' : '' %>"
+           <% if ((currentPage || 1) >= totalPages) { %>aria-disabled="true" tabindex="-1"<% } %>>
+          Next →
+        </a>
+      </nav>
+    <% } %>
+  </section>
 
   <%- include('../partials/knowledge/authority-suggestions-list', {
     suggestions: suggestions,

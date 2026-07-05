@@ -52,11 +52,12 @@ describe('agent-agnostic curator UI contracts', () => {
 
   it('keeps correction and manual authoring workflows reachable without relying on LLM output', async () => {
     const detail = await fetchParsed(adminAgent, `/admin/knowledge/entities/${fixture.entityId}`);
-    // entity-detail was redesigned: actions live in the sticky rail (entity-dossier__rail).
-    // IDs updated from curator-action-correct/author to entity-rail-correct/author.
-    expect(detail.$('.curator-action-group[aria-labelledby="entity-rail-correct"]').text()).toContain('Edit entity');
-    expect(detail.$('.curator-action-group[aria-labelledby="entity-rail-author"]').text()).toContain('Add relationship');
-    expect(detail.$('.curator-action-note').text()).toContain('Edit preserves evidence');
+    // entity-detail was redesigned: actions live in the end-of-record cluster
+    // (entity-detail__record-actions). See docs/ui-template-standards.md
+    // § Entity detail — actions after context.
+    expect(detail.$('[aria-labelledby="entity-record-actions-correct"]').text()).toContain('Edit entity');
+    expect(detail.$('[aria-labelledby="entity-record-actions-author"]').text()).toContain('Add relationship');
+    expect(detail.$('.entity-detail__record-actions-note').text()).toContain('Edit preserves evidence');
 
     const edit = await fetchParsed(adminAgent, `/admin/knowledge/entities/${fixture.entityId}/edit`);
     expect(edit.$('.correction-workspace').length).toBeGreaterThan(0);

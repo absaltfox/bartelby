@@ -81,6 +81,7 @@ function suggestionsPath(params = {}) {
   query.set('status', params.status || 'pending');
   if (params.nameSignal) query.set('nameSignal', params.nameSignal);
   if (params.matchMethod) query.set('matchMethod', params.matchMethod);
+  if (params.page && params.page > 1) query.set('page', String(params.page));
   return knowledgePath('/authorities/suggestions', '?' + query.toString());
 }
 
@@ -196,12 +197,33 @@ async function buildAuthorityDetailViewModel(authorityId) {
   const membersWithStats = members.map((member) => {
     const memberCitations = citationsByEntityId[String(member.id)] || [];
     const memberRelationships = relationshipsByEntityId[String(member.id)] || [];
+    // Evidence hint: identify the document with the most citations of this
+    // specific member entity, so a member list of homonyms (five "British
+    // Columbia" entries) can be visually disambiguated by where they're
+    // mentioned. document_title is already joined onto citation rows in
+    // knowledge-graph.js § citations.getByEntityIds — no extra query.
+    const docCounts = new Map();
+    memberCitations.forEach((cite) => {
+      if (!cite.document_id || !cite.document_title) return;
+      const key = String(cite.document_id);
+      const prior = docCounts.get(key) || { title: cite.document_title, count: 0 };
+      prior.count += 1;
+      docCounts.set(key, prior);
+    });
+    let topDocument = null;
+    docCounts.forEach((value) => {
+      if (!topDocument || value.count > topDocument.count) topDocument = value;
+    });
     return {
       ...member,
       properties: parseJsonMaybe(member.properties),
       citation_count: memberCitations.length,
       relationship_count: memberRelationships.length,
-      document_count: uniqueCount(memberCitations, 'document_id')
+      document_count: uniqueCount(memberCitations, 'document_id'),
+      top_document_title: topDocument ? topDocument.title : null,
+      top_document_share: topDocument && memberCitations.length
+        ? topDocument.count / memberCitations.length
+        : null
     };
   });
 
@@ -395,17 +417,26 @@ router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
   let groupedTruncated = false;
   let nextCursor = null;
 
+  // Grouped-queue pagination — the store already accepts offset; the
+  // route now wires ?page=N to it. Per docs/ui-template-standards.md
+  // § Queue page and knowledge-graph.js:1436 (grouped pagination
+  // follow-up).
+  const pageParam = parseInt(req.query.page, 10);
+  const currentPage = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
+  let totalPages = 1;
+
   if (status === 'pending' && stores.authorityLinkSuggestions && stores.authorityLinkSuggestions.listPendingGrouped) {
     const grouped = await stores.authorityLinkSuggestions.listPendingGrouped({
       matchMethodFilter,
       limit: SUGGESTIONS_PAGE_SIZE,
-      offset: 0
+      offset: (currentPage - 1) * SUGGESTIONS_PAGE_SIZE
     });
     decisionUnits = grouped.decisionUnits;
     totalGroups = grouped.totalGroups;
     totalSingles = grouped.totalSingles;
     totalUnits = grouped.totalUnits;
     groupedTruncated = !!grouped.truncated;
+    totalPages = Math.max(1, Math.ceil(totalUnits / SUGGESTIONS_PAGE_SIZE));
 
     // Flatten singles for the display decoration path used by the existing view.
     const singleRows = grouped.decisionUnits
@@ -446,6 +477,8 @@ router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
     knownMatchMethods: KNOWN_MATCH_METHODS,
     nextCursor,
     pageSize: SUGGESTIONS_PAGE_SIZE,
+    currentPage,
+    totalPages,
     suggestionsPath,
     activeKnowledgePage: 'authority-suggestions'
   });
@@ -866,6 +899,33 @@ router.get('/backfill', requireAdmin, asyncHandler(async (req, res) => {
     collections,
     activeKnowledgePage: 'authority-backfill',
     queuedJobId: req.query.suggestionJobQueued || null,
+    errorMessage: req.query.error || null
+  });
+}));
+
+// GET /admin/knowledge/authorities/merge — dedicated Merge Authority workflow
+// page. Landed here (per docs/ui-template-standards.md § Danger zone) so the
+// authority-detail danger zone can remain a single-button link matching the
+// entity-detail pattern. Accepts ?source_id=<n> to pre-load the source
+// authority. Target is picked on this page; POST goes to /:id/merge below.
+// MUST be registered BEFORE router.get('/:id').
+router.get('/merge', requireAdmin, asyncHandler(async (req, res) => {
+  const stores = graphStores();
+  const sourceId = parseInt(req.query.source_id, 10);
+  const sourceAuthority = Number.isInteger(sourceId) && stores.authorities
+    ? await stores.authorities.getById(sourceId)
+    : null;
+  if (!sourceAuthority) {
+    return res.status(404).render('error', { message: 'Source authority not found', error: {} });
+  }
+  res.render('admin/merge-authority', {
+    pageTitle: `Merge Authority: ${sourceAuthority.canonical_name}`,
+    sourceAuthority: {
+      ...sourceAuthority,
+      properties: parseJsonMaybe(sourceAuthority.properties)
+    },
+    csrfToken: req.csrfToken ? req.csrfToken() : '',
+    activeKnowledgePage: 'authorities',
     errorMessage: req.query.error || null
   });
 }));
