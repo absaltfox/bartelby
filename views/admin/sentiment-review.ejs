@@ -62,6 +62,10 @@
                 <span class="status-badge status-running"><%= a.polarity %> · <%= a.intensity %></span>
                 <span class="authority-suggestion-meta-note">voice: <%= a.voice_role %></span>
                 <span class="authority-suggestion-meta-note">confidence: <%= Number(a.confidence || 0).toFixed(2) %></span>
+                <% if (a.register === 'conventional') { %>
+                  <span class="s-chip s-chip--register s-chip--register-conventional"
+                        title="Formulaic epistolary performance — register describes the form, not sincerity">conventional</span>
+                <% } %>
               </div>
             </div>
           </div>

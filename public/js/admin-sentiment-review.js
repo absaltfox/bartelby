@@ -119,6 +119,7 @@
                   <span class="status-badge status-running">${esc(a.polarity)} · ${esc(a.intensity)}</span>
                   <span class="authority-suggestion-meta-note">voice: ${esc(a.voice_role)}</span>
                   <span class="authority-suggestion-meta-note">confidence: ${Number(a.confidence || 0).toFixed(2)}</span>
+                  ${a.register === 'conventional' ? '<span class="s-chip s-chip--register s-chip--register-conventional" title="Formulaic epistolary performance — register describes the form, not sincerity">conventional</span>' : ''}
                 </div>
               </div>
             </div>

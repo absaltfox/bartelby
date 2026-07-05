@@ -7,6 +7,7 @@ const TARGET_KIND = new Set(['entity', 'phrase']); // theme stripped in Phase 1
 const EMOTION_ABOUT_PRECISION_VALUES = new Set([
   'day', 'month', 'season', 'year', 'decade', 'century', 'unknown'
 ]);
+const REGISTER_VALUES = new Set(['conventional', 'personal']);
 
 function tryExtractJson(raw) {
   if (typeof raw !== 'string') return null;
@@ -34,7 +35,8 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     below_review_floor: 0,
     theme_kind_phase1: 0,
     span_out_of_range: 0,
-    missing_target: 0
+    missing_target: 0,
+    invalid_register: 0
   };
 
   const data = tryExtractJson(raw);
@@ -133,6 +135,20 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       ? a.emotion_about_qualifier.trim().toLowerCase() || null
       : null;
 
+    // F1 (epistolary register design): optional register field marks
+    // conventional epistolary formulas vs. freshly composed expression.
+    // Invalid values null out with a counter — the annotation is kept,
+    // matching the optional-field handling for emotion_about_precision.
+    let register = null;
+    if (a.register != null && a.register !== '') {
+      const registerRaw = String(a.register).trim().toLowerCase();
+      if (REGISTER_VALUES.has(registerRaw)) {
+        register = registerRaw;
+      } else {
+        drops.invalid_register++;
+      }
+    }
+
     const auto = conf >= autoApproveThreshold;
     out.push({
       span_start: resolvedStart,
@@ -153,6 +169,7 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       emotion_about_latest: aboutLatest,
       emotion_about_precision: aboutPrecision,
       emotion_about_qualifier: aboutQualifier,
+      register,
       plutchik_hint: a.plutchik_hint ?? null,
       notes: typeof a.notes === 'string' && a.notes.trim() ? a.notes.trim() : null,
       approval_status: auto ? 'approved' : 'pending',

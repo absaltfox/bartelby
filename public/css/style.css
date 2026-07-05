@@ -11559,6 +11559,16 @@ body.modal-open {
 .s-chip--voice-described_subject::before { content: '['; font-style: normal; color: var(--ink-faint); }
 .s-chip--voice-described_subject::after  { content: ']'; font-style: normal; color: var(--ink-faint); }
 
+/* Register — quiet dotted-outline chip, rendered only for 'conventional'
+   (epistolary formula annotations; F1 of the epistolary register design). */
+.s-chip--register {
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px dotted var(--border);
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+
 /* ---------- Annotation card ------------------------------- */
 
 .s-card {

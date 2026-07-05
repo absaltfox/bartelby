@@ -659,8 +659,9 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
              approval_status, auto_approved, reviewed_at,
              extracted_by, extraction_job_id, extracted_at,
              emotion_about_phrase_verbatim, emotion_about_earliest,
-             emotion_about_latest, emotion_about_precision, emotion_about_qualifier
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             emotion_about_latest, emotion_about_precision, emotion_about_qualifier,
+             register
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             a.transcript_id, a.document_id, a.span_start, a.span_end, a.evidence_excerpt,
             a.polarity, a.intensity, a.confidence, a.voice_role, a.target_kind,
@@ -677,7 +678,8 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
             a.emotion_about_earliest ?? null,
             a.emotion_about_latest ?? null,
             a.emotion_about_precision ?? null,
-            a.emotion_about_qualifier ?? null
+            a.emotion_about_qualifier ?? null,
+            a.register ?? null
           ]
         );
         written++;
@@ -1284,6 +1286,7 @@ const RESEARCH_BASE_SELECT = `
     a.notes, a.approval_status, a.extracted_at,
     a.emotion_about_phrase_verbatim, a.emotion_about_earliest,
     a.emotion_about_latest, a.emotion_about_precision, a.emotion_about_qualifier,
+    a.register,
     COALESCE(a.emotion_about_earliest, d.date_created) AS research_date,
     d.title AS document_title,
     d.date_created AS document_date,

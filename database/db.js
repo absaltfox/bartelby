@@ -653,6 +653,17 @@ MIGRATIONS.push(`
     ON sentiment_annotations(described_subject_entity_id);
 `);
 
+// v76 — F1 of docs/2026-07-05-epistolary-register-design.md: epistolary
+// register on sentiment annotations. 'conventional' = formulaic epistolary
+// performance (openings, deference markers, closings, stock condolence);
+// 'personal' = freshly composed emotional expression. NULL = unclassified —
+// all pre-existing rows stay visibly unclassified rather than silently
+// labeled (E5.2 precedent in the historian-lens review); no backfill.
+MIGRATIONS.push(`
+  ALTER TABLE sentiment_annotations ADD COLUMN register TEXT
+    CHECK (register IN ('conventional','personal'));
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
