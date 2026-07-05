@@ -136,8 +136,10 @@ describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
       expect.objectContaining({ document_id: outOfScopeDocId, polarity: 'positive', target_entity_id: null })
     ]);
 
+    // D4: passage_text is the annotation's transcript verbatim, never the
+    // LLM's target phrase.
     const citations = await db.allAsync(`SELECT document_id, passage_text FROM citations WHERE entity_id = ?`, [entity.id]);
-    expect(citations).toEqual([{ document_id: inScopeDocId, passage_text: scopedPhrase }]);
+    expect(citations).toEqual([{ document_id: inScopeDocId, passage_text: 'admired' }]);
   });
 
   it('creates the entity, re-targets matching annotations, and derives citations', async () => {
@@ -176,7 +178,9 @@ describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
     citations.forEach((c) => {
       expect(c.extraction_method).toBe('manual');
       expect(c.approval_status).toBe('approved');
-      expect(c.passage_text).toBe('the school house');
+      // D4: evidence is the emotion-phrase verbatim at the stored span, not
+      // the promoted target phrase.
+      expect(c.passage_text).toBe('love');
     });
   });
 
@@ -228,9 +232,45 @@ describe('POST /admin/knowledge/sentiment/phrase-targets/promote', () => {
     const citation = await db.getAsync(`SELECT entity_id, passage_text, approval_status FROM citations WHERE entity_id = ?`, [entityId]);
     expect(citation).toEqual(expect.objectContaining({
       entity_id: entityId,
-      passage_text: phrase,
+      passage_text: 'observed', // D4: transcript verbatim, not the target phrase
       approval_status: 'approved'
     }));
+
+    // D4: the promoted phrase lands on the entity's properties instead.
+    const promoted = await db.entitiesAsync.getById(entityId);
+    expect(promoted.properties.promoted_from_phrase).toBe(phrase);
+  });
+
+  it('re-targets annotations whose target_phrase has doubled spaces (D6)', async () => {
+    // The listing aggregates with the whitespace-collapsing SQL normalizer;
+    // before D6 the promote match key did not collapse, so this annotation
+    // was counted but never re-targeted.
+    const docId = 5106;
+    await db.runAsync(`INSERT OR IGNORE INTO documents (id, title) VALUES (?, ?)`, [docId, 'D6 Doubled Spaces Doc']);
+    await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (?, ?, ?)`, [docId, docId, 'the west wing was chilly']);
+    await db.runAsync(`INSERT INTO sentiment_annotations
+      (transcript_id, document_id, span_start, span_end, evidence_excerpt,
+       polarity, intensity, voice_role, target_kind, target_phrase, emotion_phrase_verbatim)
+      VALUES (?, ?, 18, 24, ?, 'negative', 'low', 'author', 'phrase', 'the  west  wing.', 'chilly')`,
+      [docId, docId, 'chilly']);
+
+    const res = await adminAgent
+      .post('/admin/knowledge/sentiment/phrase-targets/promote')
+      .type('form')
+      .send({
+        _csrf: csrfToken,
+        phrase: 'the west wing',
+        entity_type: 'place',
+        canonical_name: 'The West Wing'
+      });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/saved=1/);
+
+    const row = await db.getAsync(
+      `SELECT target_kind, target_entity_id FROM sentiment_annotations WHERE target_phrase = 'the  west  wing.'`
+    );
+    expect(row.target_kind).toBe('entity');
+    expect(row.target_entity_id).not.toBeNull();
   });
 
   it('rejects an invalid entity_type', async () => {

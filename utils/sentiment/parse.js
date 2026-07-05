@@ -7,6 +7,11 @@ const TARGET_KIND = new Set(['entity', 'phrase']); // theme stripped in Phase 1
 const EMOTION_ABOUT_PRECISION_VALUES = new Set([
   'day', 'month', 'season', 'year', 'decade', 'century', 'unknown'
 ]);
+const REGISTER_VALUES = new Set(['conventional', 'personal']);
+// YYYY, YYYY-MM, or YYYY-MM-DD — the same shape asIsoDate enforces on
+// research filter inputs. Anything else ("last spring", "1873?") is not
+// storable as an analytic date.
+const ISO_PARTIAL_DATE_RE = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 
 function tryExtractJson(raw) {
   if (typeof raw !== 'string') return null;
@@ -34,7 +39,9 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     below_review_floor: 0,
     theme_kind_phase1: 0,
     span_out_of_range: 0,
-    missing_target: 0
+    missing_target: 0,
+    invalid_register: 0,
+    invalid_emotion_about_date: 0
   };
 
   const data = tryExtractJson(raw);
@@ -117,12 +124,36 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       && a.emotion_about_phrase_verbatim.trim()
       ? a.emotion_about_phrase_verbatim.trim()
       : null;
-    const aboutEarliest = aboutVerbatim && typeof a.emotion_about_earliest === 'string'
+    let aboutEarliest = aboutVerbatim && typeof a.emotion_about_earliest === 'string'
       ? a.emotion_about_earliest.trim() || null
       : null;
-    const aboutLatest = aboutVerbatim && typeof a.emotion_about_latest === 'string'
+    let aboutLatest = aboutVerbatim && typeof a.emotion_about_latest === 'string'
       ? a.emotion_about_latest.trim() || null
       : null;
+    // D9 (2026-07-04 review): these strings flow into research_date, the
+    // timeline's SUBSTR bucketing, and range filters. Non-ISO values ("last
+    // spring") or an inverted range null out with a counter — the annotation
+    // is kept, only the analytic date is dropped.
+    if (aboutEarliest && !ISO_PARTIAL_DATE_RE.test(aboutEarliest)) {
+      aboutEarliest = null;
+      drops.invalid_emotion_about_date++;
+    }
+    if (aboutLatest && !ISO_PARTIAL_DATE_RE.test(aboutLatest)) {
+      aboutLatest = null;
+      drops.invalid_emotion_about_date++;
+    }
+    if (aboutEarliest && aboutLatest) {
+      // Compare the earliest date's period start against the latest date's
+      // period end so mixed precision works ("1873-05" vs "1873" is fine;
+      // "1874" vs "1873" is inverted). ISO strings compare lexically.
+      const periodStart = (d) => (d.length === 4 ? `${d}-01-01` : d.length === 7 ? `${d}-01` : d);
+      const periodEnd = (d) => (d.length === 4 ? `${d}-12-31` : d.length === 7 ? `${d}-31` : d);
+      if (periodStart(aboutEarliest) > periodEnd(aboutLatest)) {
+        aboutEarliest = null;
+        aboutLatest = null;
+        drops.invalid_emotion_about_date++;
+      }
+    }
     const aboutPrecisionRaw = aboutVerbatim && typeof a.emotion_about_precision === 'string'
       ? a.emotion_about_precision.trim().toLowerCase()
       : null;
@@ -132,6 +163,20 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
     const aboutQualifier = aboutVerbatim && typeof a.emotion_about_qualifier === 'string'
       ? a.emotion_about_qualifier.trim().toLowerCase() || null
       : null;
+
+    // F1 (epistolary register design): optional register field marks
+    // conventional epistolary formulas vs. freshly composed expression.
+    // Invalid values null out with a counter — the annotation is kept,
+    // matching the optional-field handling for emotion_about_precision.
+    let register = null;
+    if (a.register != null && a.register !== '') {
+      const registerRaw = String(a.register).trim().toLowerCase();
+      if (REGISTER_VALUES.has(registerRaw)) {
+        register = registerRaw;
+      } else {
+        drops.invalid_register++;
+      }
+    }
 
     const auto = conf >= autoApproveThreshold;
     out.push({
@@ -153,6 +198,7 @@ function parseAndValidate({ raw, transcriptContent, knownEntities, reviewFloor, 
       emotion_about_latest: aboutLatest,
       emotion_about_precision: aboutPrecision,
       emotion_about_qualifier: aboutQualifier,
+      register,
       plutchik_hint: a.plutchik_hint ?? null,
       notes: typeof a.notes === 'string' && a.notes.trim() ? a.notes.trim() : null,
       approval_status: auto ? 'approved' : 'pending',

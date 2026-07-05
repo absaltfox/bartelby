@@ -1,9 +1,15 @@
 'use strict';
 
+// The suppression key MUST use the same normalizer as the phrase-target
+// listing's SQL join key (normalizePhraseSql), or a suppression can be
+// written under a key the listing never produces and silently do nothing —
+// finding D6 in docs/reviews/2026-07-04-sentiment-emotion-analysis-review.md.
+// The previous local normalizer lacked the trailing-punctuation strip, so
+// suppressing a display phrase like "the school house." missed forever.
+const { normalizePhrase } = require('./sentiment');
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase) => {
-  function normalize(phrase) {
-    return String(phrase || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  }
+  const normalize = normalizePhrase;
 
   return {
     normalize,

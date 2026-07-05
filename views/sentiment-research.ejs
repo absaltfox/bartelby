@@ -10,7 +10,9 @@
                     filters.target_kind || filters.author_text ||
                     filters.date_from || filters.date_to || filters.q ||
                     filters.entity_id || filters.authority_id ||
+                    (filters.register && filters.register !== 'default') ||
                     filters.status === 'pending');
+  var registerDefaultActive = !filters.register || filters.register === 'default';
   var totalAnnotations = summary.reduce(function(n, r) { return n + (r.annotation_count || 0); }, 0);
   var collectionOptions = (availableCollections || []).map(function(c) {
     return { value: c.id, label: c.name };
@@ -133,6 +135,20 @@
           ]
         }) %>
 
+        <%- include('partials/filter-select', {
+          id: 's-filter-register',
+          name: 'register',
+          label: 'Register',
+          blankLabel: 'Default (exclude conventional)',
+          selectedValue: registerDefaultActive ? '' : filters.register,
+          autoSubmit: true,
+          options: [
+            { value: 'all',          label: 'All' },
+            { value: 'conventional', label: 'Conventional only' },
+            { value: 'personal',     label: 'Personal only' }
+          ]
+        }) %>
+
         <% if (collectionOptions.length > 0) { %>
           <%- include('partials/filter-select', {
             id: 's-filter-collection',
@@ -181,6 +197,12 @@
         heading: hasFilters ? 'Label distribution (filtered)' : 'Label distribution',
         maxRows: panelTopLabels
       }) %>
+
+      <% if (registerDefaultActive) { %>
+        <p class="s-research-method-note">
+          Conventional epistolary formulas are excluded; choose &ldquo;All&rdquo; under Register to include them.
+        </p>
+      <% } %>
 
       <div class="s-research-mode-bar" role="tablist" aria-label="Result view">
         <button type="button"

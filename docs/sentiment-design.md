@@ -144,6 +144,16 @@ Expected output:
     - "entity" + `target_entity_id`: a named entity from the inventory below (use only ids from that list)
 - `confidence`: 0.0 to 1.0. Most letter sentiment is 0.6-0.85.
 - `span_start`, `span_end`: rough character positions. Approximate is fine — the system finds the exact location.
+- `register` (optional): "conventional" | "personal".
+  "conventional" = formulaic epistolary performance: prescribed
+  openings ("I have the honour to..."), deference markers
+  ("I would most respectfully submit"), closings ("your obedient
+  servant"), stock condolence/gratitude/apology formulas.
+  Emit these at intensity "low" unless the writer intensifies or
+  breaks the formula. "personal" = freshly composed emotional
+  expression. Omit the field if unsure.
+  A formulaic phrase can still be sincere — register describes the
+  FORM. Judge polarity/intensity/voice on the content as usual.
 - `plutchik_hint` (optional): array from {joy, trust, fear, surprise, sadness, disgust, anger, anticipation}.
 - `notes` (optional): 1-2 sentences explaining your reasoning for this annotation.
   Why does this verbatim warrant this polarity/intensity/voice combination?
@@ -163,10 +173,27 @@ Expected output:
 - Positive evaluation: "first rate", "progressing well"
 - Frustration / sarcasm
 - Approval / disapproval of conditions, decisions, or persons
+- Conventional epistolary formulas ("I have the honour to request",
+  "Your obedient servant", "I beg to inform you") — mark these with
+  register: "conventional" and intensity "low" unless the writer
+  intensifies or breaks the formula
+
+Worked example for a conventional formula:
+"I have the honour to be, Sir, your obedient servant" →
+{
+  "emotion_phrase_verbatim": "I have the honour to be, Sir, your obedient servant",
+  "polarity": "positive",
+  "intensity": "low",
+  "voice_role": "author",
+  "target_kind": "entity",
+  "target_entity_id": <the recipient's id from the inventory>,
+  "register": "conventional",
+  "confidence": 0.85,
+  "notes": "Standard official closing formula; deference to office, not personal warmth."
+}
 
 # DO NOT emit for
 
-- Pure formal register: "I have the honour to request", "Your obedient servant", "I beg to inform you"
 - Bare procedural facts: "The school is in Cariboo. There are 23 pupils."
 
 # OUTPUT TARGET
@@ -238,6 +265,49 @@ Worked example (paste into the prompt's worked-example section):
 referent, leave the `emotion_about_*` fields out entirely (NULL).
 Do not emit `emotion_about_phrase_verbatim: "now"` or similar
 filler — the absence of the field IS the "felt now" signal.
+
+**Anchoring and validation (D8/D9, added 2026-07-05):**
+`{{document_metadata}}` now carries `Title` / `Date` / `Author` (date and
+author when known) and is a *required* placeholder — template validation
+rejects prompts without it, since the temporal contract above is
+uncomputable without the letter date. On the parse side,
+`emotion_about_earliest`/`latest` must be ISO-shaped
+(`YYYY` / `YYYY-MM` / `YYYY-MM-DD`) and non-inverted; invalid values null
+out with an `invalid_emotion_about_date` drop counter while the
+annotation itself is kept.
+
+### Register (F1/F2, added 2026-07-05)
+
+Per [docs/2026-07-05-epistolary-register-design.md](./2026-07-05-epistolary-register-design.md),
+annotations carry an optional `register ∈ {conventional, personal}`
+column (migration v76):
+
+- **`conventional`** — formulaic epistolary performance (prescribed
+  openings, deference markers, closings, stock condolence / gratitude /
+  apology formulas). These are evidence of the corpus's *emotionology*
+  (its conventions about emotion), not noise; the extractor emits them
+  at low intensity instead of suppressing them.
+- **`personal`** — freshly composed emotional expression.
+- **`NULL` means unclassified**, not personal: every annotation
+  extracted before v76 (or by a prompt without the register rule) is
+  NULL and stays that way — no backfill, per the E5.2 forward-only
+  precedent.
+
+**Default exclusion (F2).** Conventional register targets the recipient
+as office-holder, not the recipient's qualities, so it would distort
+entity-level sentiment rollups ("obedient servant" ≠ warm regard for
+Jessop). The research filter parser therefore excludes
+`register = 'conventional'` by default (NULL and `personal` rows pass);
+researchers opt in with `register=all` (or select `conventional` /
+`personal` explicitly — the latter excludes NULL). The exclusion lives
+in ONE place, `buildResearchWhere`, and every research surface
+(workbench, document tab, entity panels, rollups, network edges)
+inherits it through `parseResearchFilters`. The admin review queue is
+NOT register-filtered — curators review everything. A method note on
+the research workbench discloses the active default.
+
+Invalid `register` values from the LLM null out with an
+`invalid_register` drop counter; the annotation is kept.
 
 ## Phase 1 vs later phases
 
