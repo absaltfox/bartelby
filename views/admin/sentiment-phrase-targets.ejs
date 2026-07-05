@@ -4,9 +4,20 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Sentiment' },
+    { label: 'Phrase targets' }
+  ] }) %>
+
+  <div class="admin-header entity-header">
     <h1>Phrase Targets</h1>
-    <p class="subtitle">Aggregated sentiment-annotation phrase targets that aren't yet modeled as entities. Promote real entities, suppress non-entity phrases.</p>
+    <p class="entity-meta">
+      <span>Aggregated sentiment-annotation phrase targets that aren't yet modeled as entities.</span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span>Promote real entities, suppress non-entity phrases.</span>
+    </p>
   </div>
 
   <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>

@@ -61,13 +61,10 @@
       </div>
     <% } %>
 
-    <% if (typeof groupedTruncated !== 'undefined' && groupedTruncated && useDecisionUnits) { %>
-      <div class="callout callout--warning" data-grouped-truncated="1">
-        Showing the first <%= decisionUnits.length %> of <%= groupedTotalUnits %> entity decisions.
-        Full pagination for the grouped queue is a follow-up; for now, narrow with the matchMethod
-        filter or address these first to reveal the remaining items.
-      </div>
-    <% } %>
+    <%# Truncation hint moved out of the list body into the queue-filters
+        block in views/admin/authority-suggestions.ejs, so it sits with the
+        filters that would narrow the queue. Per docs/ui-template-standards.md
+        § Queue page. %>
 
     <%
       // Task 9: full disambiguation card UI.

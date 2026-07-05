@@ -163,6 +163,18 @@ body {
 
 .admin-search-input {
   min-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: 'EB Garamond', serif;
+  font-size: 0.9375rem;
+  color: var(--ink);
+  background: var(--parchment);
+  transition: border-color 0.15s;
+}
+.admin-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .admin-search-input--compact {
@@ -2744,13 +2756,10 @@ main { flex: 1; padding: 32px 0; }
   flex-wrap: wrap;
 }
 
-.admin-search-input {
-  min-width: 260px;
-}
-
-.admin-search-input--compact {
-  min-width: 180px;
-}
+/* Duplicate of the canonical .admin-search-input block above — kept as
+   a no-op alias so any late-loaded rules that reset padding don't win.
+   The self-styled rule (padding, border, focus) lives earlier in this
+   file; do not restore inline overrides here. */
 .search-advanced-link-row a {
   color: var(--accent-dark);
   background: rgba(93, 57, 32, 0.08);
@@ -3631,6 +3640,14 @@ main { flex: 1; padding: 32px 0; }
 .graph-sidebar-header {
   padding: 16px 18px 14px;
   border-bottom: 1px solid var(--border-light);
+}
+/* Card-header h2 sits between the page h1 (2.05rem) and body copy —
+   size it as a clear subheading, not competing with the page title.
+   Per docs/ui-template-standards.md § Header meta line context. */
+.graph-sidebar-header h2 {
+  font-size: 1.1rem;
+  line-height: 1.25;
+  margin: 0;
 }
 
 .graph-sidebar-body,
@@ -5020,46 +5037,9 @@ main { flex: 1; padding: 32px 0; }
   margin-bottom: 10px;
 }
 
-.authority-workspace-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
-}
-
-.authority-workspace-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(72px, 1fr));
-  gap: 8px;
-  min-width: min(620px, 100%);
-}
-
-.authority-workspace-stats div {
-  padding: 10px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  background: var(--surface-alt);
-}
-
-.authority-workspace-stats strong,
-.authority-workspace-stats span {
-  display: block;
-}
-
-.authority-workspace-stats strong {
-  font-size: 1.2rem;
-  line-height: 1.1;
-  color: var(--ink);
-}
-
-.authority-workspace-stats span {
-  margin-top: 3px;
-  color: var(--ink-muted);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
+/* Authority workspace header stat block removed; the same numbers
+   render inline via .entity-meta on .entity-header. Per
+   docs/ui-template-standards.md § Header meta line. */
 
 .authority-workspace {
   display: grid;
@@ -5100,20 +5080,25 @@ main { flex: 1; padding: 32px 0; }
   padding-right: 4px;
 }
 
+/* Member row — compact single-line layout. Per
+   docs/ui-template-standards.md § Actions after context (workspace
+   pages) the row is orientation, not action: no per-row mutation
+   affordance. Contextual authoring lives in the Selected member
+   panel header. */
 .authority-member-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid var(--border-light);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--surface-alt);
   color: var(--ink);
   text-decoration: none;
   text-align: left;
   cursor: pointer;
-  align-items: center;
 }
 .authority-member-row:focus {
   outline: 2px solid var(--accent);
@@ -5125,67 +5110,30 @@ main { flex: 1; padding: 32px 0; }
   background: var(--surface);
   box-shadow: 0 2px 10px rgba(124, 77, 46, 0.08);
 }
-.authority-member-row-body { min-width: 0; }
-.authority-member-row-body strong,
-.authority-member-row-body .graph-muted {
-  display: block;
+.authority-member-row-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Evidence hint — the top-cited document for this specific member
+   entity. Disambiguates homonymous rows (multiple "British Columbia"
+   member entities) by naming where each is mentioned. */
+.authority-member-row-evidence {
+  color: var(--ink-mid);
+  font-size: 0.85rem;
+}
+.authority-member-row-evidence em {
+  color: var(--ink);
+  font-style: italic;
 }
 .authority-member-row-meta {
-  display: flex;
-  align-items: flex-end;
-  flex-direction: column;
-  gap: 2px;
-  color: var(--ink-muted);
-  font-size: 0.78rem;
-  white-space: nowrap;
-}
-.authority-member-row-rel {
   display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--accent);
-  font-size: 0.82rem;
-  font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s;
-}
-.authority-member-row-rel:hover,
-.authority-member-row-rel:focus {
-  background: var(--accent-light);
-  border-color: var(--border);
-  color: var(--accent-dark);
-  text-decoration: none;
-}
-
-/* Header sub-links row (Chronology, Review suggestions) — pure
-   navigation affordances per § Curator action toolbar. */
-.authority-header-links {
-  margin: 0.35rem 0 0.75rem;
-  color: var(--ink-muted);
-  font-size: 0.9rem;
-  display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
   align-items: baseline;
-  flex-wrap: wrap;
+  gap: 0 6px;
+  color: var(--ink-muted);
+  font-size: 0.82rem;
 }
-.authority-header-links a {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.authority-header-links a:hover { color: var(--accent-dark); }
-
-/* Selected member panel action cluster (Add relationship + Open Entity). */
-.authority-selected-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+.authority-member-row-meta > span { white-space: nowrap; }
 
 .authority-selected-meta {
   display: flex;
@@ -5260,14 +5208,6 @@ main { flex: 1; padding: 32px 0; }
   .authority-workspace,
   .authority-secondary-grid {
     grid-template-columns: 1fr;
-  }
-
-  .authority-workspace-header {
-    flex-direction: column;
-  }
-
-  .authority-workspace-stats {
-    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   }
 
   .kg-panel-meta,
@@ -5673,23 +5613,38 @@ main { flex: 1; padding: 32px 0; }
 
 .knowledge-overview-section,
 .knowledge-guidance-section {
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 
+/* Section header on knowledge landing — per docs/ui-template-standards.md
+   § Header meta line (visual hierarchy: h1 = 2.05rem, section h2 = ~1.35rem,
+   card h3 = ~1.05rem). Section description is subtle muted prose, not
+   italic; italic is reserved for the older `.subtitle` byline pattern. */
 .knowledge-overview-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px 24px;
-  margin-bottom: 18px;
+  gap: 12px 24px;
+  margin-bottom: 14px;
 }
 
-.knowledge-overview-header h2 {
-  margin-bottom: 6px;
+.knowledge-overview-header h2,
+.settings-section .knowledge-overview-header h2 {
+  font-size: 1.35rem;
+  line-height: 1.2;
+  margin: 0 0 4px;
+  padding-bottom: 0;
+  border-bottom: none;
+  display: block;
 }
 
 .knowledge-overview-header .subtitle {
   max-width: 72ch;
+  margin: 0;
+  font-style: normal;
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
 }
 
 .admin-section-label,
@@ -5713,22 +5668,33 @@ main { flex: 1; padding: 32px 0; }
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  padding: 22px 24px;
+  padding: 20px 22px;
 }
 
+/* Card h3 — sits below section h2 in the hierarchy. Per
+   docs/ui-template-standards.md § Header meta line (h1 → section h2 →
+   card h3 progression). */
 .knowledge-task-card h3,
 .knowledge-guidance-card h3 {
-  margin-bottom: 8px;
+  font-size: 1.05rem;
+  line-height: 1.3;
+  margin: 0 0 6px;
+}
+
+/* Card body copy: slightly muted, wider line-height for scanning. Not
+   italic — supplements h3, doesn't second-title it. */
+.knowledge-task-card > .muted,
+.knowledge-guidance-card > .muted {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ink-mid);
+  margin: 0 0 14px;
 }
 
 .knowledge-guidance-card {
   background: linear-gradient(180deg, rgba(255, 254, 251, 0.98) 0%, rgba(248, 244, 238, 0.9) 100%);
   border-color: rgba(124, 77, 46, 0.12);
   box-shadow: none;
-}
-
-.knowledge-guidance-card h3 {
-  font-size: 1rem;
 }
 
 .knowledge-guidance-card .muted {
@@ -5853,6 +5819,39 @@ main { flex: 1; padding: 32px 0; }
 .merge-workspace-section,
 .merge-review-section {
   margin-bottom: 28px;
+}
+
+/* Merge Entities — numbered steps. Per docs/ui-template-standards.md
+   § Actions after context (pick → compare → danger zone) and § Header
+   meta line (single meta row on the workflow header). */
+.merge-step {
+  margin: 0 0 28px;
+}
+.merge-step__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.merge-step__header h2 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+.merge-step__number {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1;
+  margin-top: 2px;
 }
 
 .merge-browse-panel {
@@ -6267,7 +6266,7 @@ main { flex: 1; padding: 32px 0; }
   margin-top: 6px;
   margin-bottom: 24px;
 }
-.admin-header h1 { font-size: 1.65rem; margin-bottom: 4px; }
+.admin-header h1 { font-size: 2.05rem; line-height: 1.15; margin-bottom: 4px; }
 .admin-header .subtitle { color: var(--ink-muted); font-style: italic; }
 
 /* Stats */
@@ -9458,11 +9457,97 @@ main { flex: 1; padding: 32px 0; }
 
 /* ── Workflows page ── */
 
+/* Queue page filter cluster — per docs/ui-template-standards.md § Queue
+   page (labeled axes, counts on tabs, no top stat-card block). Cites
+   the same doc's § Composition Principles #4 (density from typography,
+   not per-page chrome). */
+.queue-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin: 0 0 1.25rem;
+}
+.filter-chips-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.filter-chips-group-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.filter-tab--clear {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
 .filter-tabs {
   display: flex;
-  gap: 4px;
-  margin-bottom: 1.5rem;
+  gap: 6px;
+  margin-bottom: 1.25rem;
   flex-wrap: wrap;
+  align-items: center;
+}
+/* Inside a queue-filters block the outer container owns vertical
+   rhythm; suppress the default filter-tabs margin so groups stack
+   cleanly. Per docs/ui-template-standards.md § Queue page. */
+.queue-filters .filter-tabs { margin-bottom: 0; }
+/* Match-method chip row lives in `.filter-chips`; the status row uses
+   `.filter-tabs`. Per docs/ui-template-standards.md § Queue page, the
+   two axes read as parallel filter groups — so their chip rows share
+   layout even though they carry different HTML class names for the
+   test-invariants recorded in
+   tests/integration/admin-authority-suggestions.test.js. Gap tuned to
+   6px: tight enough to read as a group, loose enough that the pills
+   don't visually touch given their 14px horizontal padding. */
+.filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.filter-chips-group .filter-tabs,
+.filter-chips-group .filter-chips { row-gap: 6px; }
+/* Grouped-queue pager — sits inside the queue-filters block, below the
+   axis chips. Prev / Page X of Y · N decisions / Next. Per
+   docs/ui-template-standards.md § Queue page. */
+.queue-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--parchment-alt);
+  color: var(--ink-mid);
+  font-size: 0.9rem;
+}
+.queue-pager__link {
+  color: var(--accent);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.queue-pager__link:hover {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--accent-dark);
+}
+.queue-pager__link.is-disabled {
+  color: var(--ink-muted);
+  pointer-events: none;
+  opacity: 0.55;
+}
+.queue-pager__label {
+  color: var(--ink-mid);
 }
 
 .filter-tab {
@@ -12114,7 +12199,8 @@ body.modal-open {
   font-weight: 500;
 }
 
-/* ── Entity header meta line (Task 2) ── */
+/* ── Detail-page header meta line — per docs/ui-template-standards.md
+   § Header meta line. Shared by entity-detail and authority-detail. ── */
 .entity-header .entity-meta {
   display: flex;
   flex-wrap: wrap;
@@ -12130,23 +12216,39 @@ body.modal-open {
 .entity-meta__role {
   font-style: italic;
 }
-
-/* ── Entity header meta line (Task 2) ── */
-.entity-header .entity-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+.entity-meta__label {
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+/* Right-aligned pure-navigation sub-links (Chronology, Review
+   suggestions). Text links styled per § Element choice vs visual
+   weight (navigation, not action). */
+.entity-meta__nav {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 12px;
   align-items: baseline;
-  margin: 0.25rem 0 0;
-  color: var(--ink-muted);
-  font-size: 0.95rem;
+  flex-wrap: wrap;
 }
-.entity-meta__sep {
-  color: var(--ink-muted);
+.entity-meta__nav a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
-.entity-meta__role {
-  font-style: italic;
+.entity-meta__nav a:hover { color: var(--accent-dark); }
+/* Warning-tinted inline meta segment — used for "N failed" style hints
+   that a curator should notice and act on. Cites
+   docs/ui-template-standards.md § Header meta line (orientation and
+   navigation only; the underlying <a> links to the failed-jobs queue). */
+.entity-meta__warn a {
+  color: var(--red);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
+.entity-meta__warn a:hover { color: #7b231a; }
 
 /* ─────────────────────────────────────────────────────────────
    Entity detail — actions-after-context layout.
@@ -12180,10 +12282,22 @@ body.modal-open {
 }
 .entity-detail__card-actions {
   display: flex;
-  gap: 6px;
+  gap: 10px;
   align-items: center;
   flex-wrap: wrap;
 }
+/* Plain text link for pure-navigation actions inside a card-actions
+   slot (e.g., "Open entity" in the Selected member panel header).
+   Per docs/ui-template-standards.md § Element choice vs visual
+   weight — navigation, no button chrome. */
+.entity-detail__section-link {
+  color: var(--accent);
+  font-size: 0.9rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+.entity-detail__section-link:hover { color: var(--accent-dark); }
 .entity-detail__section-meta {
   color: var(--ink-muted);
   font-size: 0.88rem;
@@ -12492,28 +12606,10 @@ body.modal-open {
   line-height: 1.4;
   margin: 0;
 }
-/* --form variant: destructive action needs its own inputs (e.g., merge
-   target picker). Stack the panel vertically and put the inline form
-   after the caption. Composition Principle #4: no nested card chrome
-   inside the danger panel. */
-.workspace-danger--form {
-  grid-template-columns: 1fr;
-  gap: 14px;
-  align-items: stretch;
-}
-.workspace-danger-body { min-width: 0; }
-.workspace-danger-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: transparent;
-}
-.workspace-danger-form .edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin: 4px 0 0;
-}
+/* Danger zone stays single-shape across detail pages. When the
+   destructive action needs additional input (e.g., merge target
+   picker), promote it to a dedicated route rather than stretching
+   the panel. Per docs/ui-template-standards.md § Danger zone. */
 @media (max-width: 720px) {
   .workspace-danger {
     grid-template-columns: 1fr;

@@ -205,15 +205,11 @@
 
     rows.forEach(function(row) {
       row.addEventListener('click', function(event) {
-        // Nested anchors (e.g., per-row "+Rel") own their own navigation;
-        // do not steal that click for member selection.
-        if (event.target.closest('a[data-authority-passthrough]')) return;
         event.preventDefault();
         selectMember(row.getAttribute('data-authority-member-id'));
       });
       row.addEventListener('keydown', function(event) {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        if (event.target.closest('a[data-authority-passthrough]')) return;
         event.preventDefault();
         selectMember(row.getAttribute('data-authority-member-id'));
       });

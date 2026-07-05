@@ -4,15 +4,26 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav') %>
 
-  <h1>Sentiment Phrase Labels</h1>
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Sentiment' },
+    { label: 'Labels' }
+  ] }) %>
 
-  <p class="muted">
-    <%= summary.total_labels %> labels covering
-    <%= summary.total_labeled_phrases %> of <%= summary.total_phrases %> phrases
-    (<%= summary.total_phrases > 0
-        ? ((summary.total_labeled_phrases / summary.total_phrases) * 100).toFixed(1)
-        : '0.0' %>%)
-  </p>
+  <div class="admin-header entity-header">
+    <h1>Sentiment Phrase Labels</h1>
+    <p class="entity-meta">
+      <span><%= summary.total_labels %> label<%= summary.total_labels === 1 ? '' : 's' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span>
+        <%= summary.total_labeled_phrases %> of <%= summary.total_phrases %> phrases labeled
+        (<%= summary.total_phrases > 0
+            ? ((summary.total_labeled_phrases / summary.total_phrases) * 100).toFixed(1)
+            : '0.0' %>%)
+      </span>
+    </p>
+  </div>
 
   <% if (labels.length === 0) { %>
     <div class="empty-state empty-state--padded-lg">

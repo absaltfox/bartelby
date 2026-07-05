@@ -323,13 +323,17 @@ Applies to:
 - **Workspace pages** (authority-detail's member browser, and similar
   future surfaces) — the primary workspace panels come first;
   contextual mutation affordances live inside the row or panel they
-  act on (e.g., "+Add relationship" per member row, "+Add relationship"
-  in the Selected member panel header). Page-level mutation clusters,
-  if needed, follow the workspace panels — never precede them.
+  act on (e.g., `+ Add relationship` in the Selected member panel
+  header). Page-level mutation clusters, if needed, follow the
+  workspace panels — never precede them.
 
 Required elements:
 
-1. Header (breadcrumbs, title, meta line, optional stat block)
+1. **Header** — breadcrumbs, `<h1>` title, and a single-line inline
+   meta row that summarizes the record (type badge, id, key
+   metrics, and any pure-navigation sub-links like Chronology or a
+   count-badged Review-suggestions link). See § Header meta line
+   below.
 2. Content: identity → structured facts → edges → citations →
    history (or the workspace-equivalent primary panels)
 3. `entity-detail__record-actions` on detail pages — the end-of-record
@@ -356,6 +360,89 @@ per-page chrome). See CSS block in `public/css/style.css`.
 `views/admin/authority-detail.ejs` for its Selected Member panel
 Citations/Connected edges tabs (rendered by
 `public/js/authority-detail-page.js`).
+
+### Header meta line
+
+Detail-page headers use a **single-line inline meta row** below the
+`<h1>`, not a card row of stats. Reasoning: five inert stat cards
+across the top of a page eat vertical real estate without telling a
+curator what to do; the same numbers rendered as a scannable muted
+line orient the reader without competing with the working surface
+below.
+
+Structure:
+
+- A single `<p>` (or equivalent) with class `entity-meta` (canonical
+  entity-detail class; reuse on other detail pages so hover, color,
+  and spacing stay consistent).
+- Segments joined by a `·` separator (`<span class="entity-meta__sep"
+  aria-hidden="true">·</span>`).
+- Left-side segments name the record: type badge, `id N`, and any
+  record-defining property (role, cluster kind, etc.).
+- Middle segments are the record's count metrics — read as
+  orientation, not as actions. For authority: N members, N
+  documents, N aliases, N citations, N edges.
+- Right-side segments (visually right-aligned via flex) hold
+  **pure-navigation sub-links** — Chronology, Review suggestions,
+  etc. These are plain text links (see § Element choice vs visual
+  weight); if a sub-link points to a work queue, badge it with the
+  pending count and hide the sub-link entirely when the count is
+  zero (see § Hide unavailable actions).
+
+Do NOT:
+
+- Render top-of-page stat *cards* (`.authority-workspace-stats` and
+  similar). If the numbers are worth surfacing, they belong in the
+  meta line.
+- Place mutation actions in the meta line. It is for orientation
+  and navigation only.
+- Introduce a separate `<nav>` band between the header and the
+  first section for two floating links. Fold those links into the
+  meta line so they inherit the header's context.
+
+### Queue page
+
+Curator queue pages (authority suggestions, extraction review, sentiment
+review, entity suggestions, and future inspect-and-decide surfaces) share
+one shape:
+
+1. **Header** — title + one-line meta row (§ Header meta line). Include
+   the queue's total volume in the meta so a curator sees the workload
+   at a glance. Do NOT precede the queue with a card grid of
+   `Pending / Approved / Rejected` stats; those numbers belong on the
+   filter tabs, not floating above them.
+2. **Filters** — one `.queue-filters` block that groups every filter
+   axis (status, match method, collection, etc.). Each axis is a
+   `.filter-chips-group` with a small uppercase label; grouping makes
+   the two-axis case (status + method) scan as two decisions instead of
+   one wall of chips.
+3. **Filter tabs carry the counts** — status tabs get `<span class="filter-count">N</span>`
+   badges. The per-axis label reads at a glance (`Pending 28`,
+   `Approved 1`, `Rejected 56`, `All 85`) and eliminates the parallel
+   stat block.
+4. **Humanize enum labels** — DB-facing tokens (`exact_canonical`,
+   `member_exact`) are lowercase snake_case; presented labels are
+   Sentence case (`Exact canonical`, `Member exact`). The URL param
+   stays raw.
+5. **Bulk-selection toolbar and list** — the bulk toolbar and the
+   list body are one visual section, so the mutation gateway hugs
+   the evidence it will act on. Use `.bulk-toolbar--sticky` when the
+   list runs long enough to scroll.
+6. **Pagination** — when the queue exceeds one page, render a
+   `.queue-pager` (Prev / `Page X of Y · N decisions` / Next) inside
+   the `.queue-filters` block, below the axis chips. A one-page queue
+   omits the pager entirely (never render an empty pager). Do NOT
+   ship a "phase-1" truncation notice in place of pagination; if the
+   store supports offset/cursor, wire it. Grouped and flat queues can
+   use different pagination styles (Prev/Next page vs. load-more)
+   depending on their store shape, but each must show a total count
+   so a curator sees the workload.
+
+Canonical example: `views/admin/authority-suggestions.ejs` (rendered by
+`routes/admin-authorities.js` GET /suggestions).
+
+Cites § Header meta line; § Actions after context (mutation actions,
+including bulk selection, follow the evidence).
 
 ### Conditional HTML Attributes
 
@@ -638,6 +725,10 @@ Rules:
 - use links for navigation
 - avoid mixing navigation and destructive behavior in the same visual treatment
 
+For the finer distinction between "action" and "navigation," and how
+that decision separates from visual weight, see § Element choice vs
+visual weight below.
+
 Operational row actions should use one consistent button family:
 
 - neutral actions such as `Open`, `Log`, `Continue`, `Retry`, `Filter`, and
@@ -671,6 +762,101 @@ this if I fixed something," which wastes attention.
 
 For simple "user lacks permission" cases: omit the element entirely and let the
 layout re-flow.
+
+### Element choice vs visual weight
+
+The rule "buttons for actions, links for navigation" mixes two
+orthogonal decisions. Keep them separate.
+
+**Element choice is semantic, non-negotiable.** It follows what the
+control does at the transport layer, not how it looks:
+
+- `<a href>` — anything that changes the URL. Includes
+  "navigate to a form that will then mutate." A link to
+  `/admin/knowledge/relationships/new?...` is still a link even
+  though the destination is an authoring surface.
+- `<button>` inside a `<form method="POST">` — anything that
+  mutates state in place: submits, toggles, disclosures, menus.
+- Never wrap a `<button>` in an `<a>` or vice versa. Accessibility
+  (announced role, Enter/Space behavior, screen-reader navigation,
+  right-click menus) depends on picking the correct element.
+
+**Visual weight is chosen per container** based on the affordance's
+role in that container, not on whether the element is an anchor or a
+button. The same button family classes apply to both.
+
+| Class | Use when |
+|---|---|
+| `btn-primary` | The single dominant action per row/card. Only one per group. Reserved for the action a curator will click most often in that context (Save, Approve, Edit entity as the primary correction). |
+| `btn-secondary` | Co-equal alternatives to the primary. Row-level "Correct" cluster items (Split, Merge alongside Edit). |
+| `btn-ghost` | Contextual affordance sitting inside another element's header. Muted, low-weight. `+ Add relationship` in an edges card header, `Edit identity` in an identity card. |
+| plain text link (no button class) | Pure navigation to a sibling record with no authoring implied. `Open entity`, breadcrumbs, `Chronology`. |
+| `btn-danger` | Only inside `.workspace-danger`. Never mixed with routine buttons. See § Danger zone. |
+
+**Worked example.** In the authority-detail Selected member panel
+header we present `Open entity` and `+ Add relationship`. Both are
+`<a>` semantically (both change the URL). They get *different*
+visual weight because they play different roles in the container:
+`Open entity` is pure navigation to a sibling record and renders as
+a plain text link; `+ Add relationship` is a contextual authoring
+affordance in that panel's header and renders as `btn-ghost`. This
+is not an inconsistency — it is what the rule looks like when the two
+decisions (semantic element, visual weight) are made independently.
+
+Cites [docs/development-principles.md § Curator Is the Expert; LLM Is Scaffolding](./development-principles.md#curator-is-the-expert-llm-is-scaffolding):
+authoring affordances get more visual weight than pure navigation
+because curator authorship is the primary work.
+
+### Danger zone
+
+Every detail page ends with a `.workspace-danger` section that
+isolates the single irreversible action for that record (Delete,
+Merge, Purge). The pattern is a landmark curators can recognize on
+sight across pages.
+
+Structure:
+
+1. `<section class="workspace-danger">` with `aria-labelledby`
+   referencing the title id.
+2. A fixed title **`Danger zone`** — a constant landmark. The
+   destructive verb goes on the button, not the title. Do NOT write
+   `Danger zone — merge authorities`.
+3. A one-sentence note that names the destructive verb ("Deletion
+   removes …", "Merging is irreversible …") and states that the
+   action cannot be undone.
+4. A `<form method="POST">` (or `<a class="btn-danger">` when the
+   action needs additional input on a dedicated page — see below)
+   ending in a single `<button type="submit" class="btn-danger">`
+   whose label is verb + noun ("Delete entity", "Merge authority").
+
+Do NOT:
+
+- Merge the destructive verb into the title. The title is a
+  landmark; the button carries the verb.
+- Place multiple destructive actions in one danger zone. If a
+  record needs both Delete and Merge, promote the more complex
+  action to a dedicated route (like
+  `/admin/knowledge/entities/merge`) and keep the danger zone
+  singular.
+- Wrap the confirm control in an "are you sure?" collapsed
+  disclosure. Use `data-confirm-message` on the form so the shared
+  confirm dialog fires on submit.
+
+When the destructive action needs additional inline input (target
+selection, evidence review), do NOT stretch the danger zone into a
+two-column layout with an embedded form. Instead, promote the action
+to a dedicated route (`/admin/knowledge/<noun>/merge`) and let the
+danger zone be a single-button link that navigates there. This keeps
+every detail-page danger zone visually identical and lets the
+picker/comparison surface breathe on its own page.
+
+Canonical examples: `views/admin/entity-detail.ejs` (Delete),
+`views/admin/authority-detail.ejs` (Merge — navigates to the
+dedicated `/admin/knowledge/authorities/merge` page).
+
+Cites § Actions (`avoid mixing navigation and destructive behavior
+in the same visual treatment`) and § Actions after context (the
+danger zone is always the final section on the page).
 
 ## CSRF
 

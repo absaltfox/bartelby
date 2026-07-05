@@ -32,11 +32,17 @@ function initAuthorityPicker(form) {
     resultsPanel.hidden = true;
   }
 
+  function toggleSubmit(enabled) {
+    var submit = form.querySelector('[data-authority-picker-submit]');
+    if (submit) submit.disabled = !enabled;
+  }
+
   function clearSelection() {
     hiddenInput.value = '';
     selectedLabel = '';
     selectedPanel.hidden = true;
     selectedPanel.innerHTML = '';
+    toggleSubmit(false);
   }
 
   function renderSelected(result) {
@@ -53,6 +59,7 @@ function initAuthorityPicker(form) {
       + '</div>';
     clearResults();
     searchInput.value = result.canonical_name || '';
+    toggleSubmit(true);
   }
 
   function bindResults() {

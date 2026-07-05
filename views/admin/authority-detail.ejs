@@ -11,37 +11,55 @@
     { label: authority.canonical_name }
   ] }) %>
 
-  <div class="admin-header authority-workspace-header">
-    <div>
-      <h1><%= authority.canonical_name %></h1>
-      <p class="subtitle">
-        <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
-        Authority cluster
-      </p>
-    </div>
-    <div class="authority-workspace-stats" aria-label="Authority summary">
-      <div><strong><%= authorityWorkspace.summary.memberCount %></strong><span>Members</span></div>
-      <div><strong><%= authorityWorkspace.summary.documentCount %></strong><span>Documents</span></div>
-      <div><strong><%= authorityWorkspace.summary.aliasCount %></strong><span>Aliases</span></div>
-      <div><strong><%= authorityWorkspace.summary.citationCount %></strong><span>Citations</span></div>
-      <div><strong><%= authorityWorkspace.summary.relationshipCount %></strong><span>Edges</span></div>
-    </div>
+  <%
+    // Header meta line — per docs/ui-template-standards.md § Header meta line.
+    // The stat block (5 cards: members, docs, aliases, citations, edges) is
+    // gone; the same numbers now render inline as scannable orientation.
+    // Chronology and Review suggestions are folded into the header meta line
+    // as pure-navigation text links (right-aligned via .entity-meta__nav).
+    var _summary = authorityWorkspace.summary;
+  %>
+  <div class="admin-header entity-header">
+    <h1><%= authority.canonical_name %></h1>
+    <p class="entity-meta">
+      <span class="entity-type-badge entity-type-<%= authority.authority_type %>"><%= authority.authority_type %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span class="entity-meta__id">id <%= authority.id %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span><%= _summary.memberCount %> member<%= _summary.memberCount === 1 ? '' : 's' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span><%= _summary.documentCount %> document<%= _summary.documentCount === 1 ? '' : 's' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span><%= _summary.aliasCount %> alias<%= _summary.aliasCount === 1 ? '' : 'es' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span><%= _summary.citationCount %> citation<%= _summary.citationCount === 1 ? '' : 's' %></span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span><%= _summary.relationshipCount %> edge<%= _summary.relationshipCount === 1 ? '' : 's' %></span>
+      <span class="entity-meta__nav">
+        <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology">Chronology</a>
+        <a href="/admin/knowledge/authorities/suggestions">Review suggestions</a>
+      </span>
+    </p>
   </div>
 
   <%- include('../partials/flash-alerts', { flashes }) %>
 
   <%
-    // Per docs/ui-template-standards.md § Actions after context: mutation
-    // actions are not offered before the record is shown. Chronology stays
-    // as a pure-navigation affordance; the per-member "+Add relationship"
-    // link now lives on each member row below.
+    // Hidden per-member relationship-new link stash. Preserves the DOM
+    // invariant that each member has an addressable relationship-new href
+    // (used by tests and by any future keyboard-navigation surface).
+    // Not user-visible; contextual authoring lives in the Selected member
+    // panel header below.
   %>
-  <nav class="authority-header-links" aria-label="Authority views">
-    <a href="/admin/knowledge/authorities/<%= authority.id %>/chronology">Chronology</a>
-    <span aria-hidden="true">·</span>
-    <a href="/admin/knowledge/authorities/suggestions">Review suggestions</a>
-  </nav>
-  <div data-authority-relationship-members hidden></div>
+  <div data-authority-relationship-members hidden>
+    <% members.forEach(function(member) { %>
+      <a
+        data-authority-relationship-link
+        data-authority-member-id="<%= member.id %>"
+        href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>"
+      ><%= member.canonical_name %></a>
+    <% }) %>
+  </div>
 
   <section class="authority-workspace" data-authority-workspace>
     <div class="graph-shell-card knowledge-card authority-member-browser">
@@ -50,7 +68,7 @@
           <p class="kg-panel-eyebrow">Members</p>
           <h2>Linked entities</h2>
         </div>
-        <span class="status-badge"><%= authorityWorkspace.summary.memberCount %></span>
+        <span class="status-badge"><%= _summary.memberCount %></span>
       </div>
       <div class="graph-sidebar-body authority-member-browser-body">
         <label class="sr-only" for="authority-member-filter-<%= authority.id %>">Filter linked entities</label>
@@ -76,21 +94,23 @@
                 aria-selected="<%= index === 0 ? 'true' : 'false' %>"
                 tabindex="0"
               >
-                <div class="authority-member-row-body">
-                  <strong><%= member.canonical_name %></strong>
-                  <span class="graph-muted">Entity #<%= member.id %> &bull; <%= member.entity_type %></span>
-                </div>
+                <span class="authority-member-row-name"><%= member.canonical_name %></span>
+                <% if (member.top_document_title) { %>
+                  <span class="authority-member-row-evidence" title="Document with the most citations of this specific member entity">
+                    mostly in <em><%= member.top_document_title %></em>
+                  </span>
+                <% } %>
                 <span class="authority-member-row-meta">
-                  <span><%= member.document_count %> docs</span>
-                  <span><%= member.citation_count %> cites</span>
-                  <span><%= member.relationship_count %> edges</span>
+                  <span><%= member.entity_type %></span>
+                  <span class="entity-meta__sep" aria-hidden="true">·</span>
+                  <span>id <%= member.id %></span>
+                  <span class="entity-meta__sep" aria-hidden="true">·</span>
+                  <span><%= member.document_count %> doc<%= member.document_count === 1 ? '' : 's' %></span>
+                  <span class="entity-meta__sep" aria-hidden="true">·</span>
+                  <span><%= member.citation_count %> cite<%= member.citation_count === 1 ? '' : 's' %></span>
+                  <span class="entity-meta__sep" aria-hidden="true">·</span>
+                  <span><%= member.relationship_count %> edge<%= member.relationship_count === 1 ? '' : 's' %></span>
                 </span>
-                <a
-                  href="/admin/knowledge/relationships/new?sourceEntityId=<%= member.id %>"
-                  class="authority-member-row-rel"
-                  data-authority-passthrough
-                  title="Add relationship from <%= member.canonical_name %>"
-                >+ Rel</a>
               </div>
             <% }) %>
           </div>
@@ -99,14 +119,30 @@
     </div>
 
     <div class="graph-shell-card knowledge-card authority-context-panel">
-      <div class="graph-sidebar-header authority-workspace-panel-header">
-        <div>
+      <div class="graph-sidebar-header entity-detail__section-head authority-workspace-panel-header">
+        <div class="entity-detail__card-title">
           <p class="kg-panel-eyebrow">Selected member</p>
           <h2 data-authority-selected-title><%= members[0] ? members[0].canonical_name : 'No entity selected' %></h2>
         </div>
-        <div class="authority-selected-actions">
-          <a class="btn-ghost" href="<%= members[0] ? '/admin/knowledge/relationships/new?sourceEntityId=' + members[0].id : '#' %>" data-authority-selected-add-relationship>Add relationship</a>
-          <a class="btn-secondary btn-sm" href="<%= members[0] ? '/admin/knowledge/entities/' + members[0].id : '/admin/knowledge/entities' %>" data-authority-selected-link>Open Entity</a>
+        <%
+          // Selected-panel actions — element choice vs visual weight rule.
+          // Per docs/ui-template-standards.md § Element choice vs visual
+          // weight: both are <a> semantically (URL changes). "Open entity"
+          // is pure navigation → plain text link. "+ Add relationship" is
+          // a contextual authoring affordance in this panel's header →
+          // btn-ghost.
+        %>
+        <div class="entity-detail__card-actions">
+          <a
+            class="entity-detail__section-link"
+            href="<%= members[0] ? '/admin/knowledge/entities/' + members[0].id : '/admin/knowledge/entities' %>"
+            data-authority-selected-link
+          >Open entity →</a>
+          <a
+            class="btn-ghost"
+            href="<%= members[0] ? '/admin/knowledge/relationships/new?sourceEntityId=' + members[0].id : '#' %>"
+            data-authority-selected-add-relationship
+          >+ Add relationship</a>
         </div>
       </div>
       <div class="graph-sidebar-body">
@@ -144,7 +180,7 @@
       </div>
     </section>
 
-<% if (sentimentSummary && sentimentSummary.length > 0) { %>
+    <% if (sentimentSummary && sentimentSummary.length > 0) { %>
       <%- include('partials/sentiment-kg-card', {
         summary: sentimentSummary,
         list: sentimentList,
@@ -152,39 +188,29 @@
         workbenchHref: '/sentiment?authority_id=' + authority.id
       }) %>
     <% } %>
-
-    <section class="workspace-danger workspace-danger--form" aria-labelledby="authority-danger-label">
-      <div class="workspace-danger-body">
-        <p class="workspace-danger-title" id="authority-danger-label">Danger zone — merge authorities</p>
-        <p class="workspace-danger-note">
-          Merging authorities is irreversible. Members and citations of the
-          source authority are re-parented onto the target, and the source is
-          deleted.
-        </p>
-      </div>
-      <form method="POST" action="/admin/knowledge/authorities/<%= authority.id %>/merge" class="workspace-danger-form authority-picker-form" data-authority-picker-form data-authority-type="<%= authority.authority_type %>">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <input type="hidden" name="target_authority_id" value="" data-authority-id required>
-        <div class="edit-field">
-          <label for="authority-merge-search-<%= authority.id %>">Target authority</label>
-          <input
-            type="search"
-            id="authority-merge-search-<%= authority.id %>"
-            class="admin-search-input"
-            placeholder="Search the authority to keep..."
-            autocomplete="off"
-            spellcheck="false"
-            data-authority-search
-          >
-        </div>
-        <div class="knowledge-document-selection" data-authority-selected hidden></div>
-        <div class="knowledge-document-results" data-authority-results hidden></div>
-        <div class="edit-actions">
-          <button type="submit" class="btn-danger">Merge Authority</button>
-        </div>
-      </form>
-    </section>
   </div>
+
+  <%
+    // Danger zone — per docs/ui-template-standards.md § Danger zone.
+    // Fixed title (no verb), single-line note, single btn-danger.
+    // Merge target picker lives on the dedicated /authorities/merge page;
+    // this button navigates there. Structure now mirrors entity-detail.
+  %>
+  <section class="workspace-danger" aria-labelledby="authority-danger-label">
+    <div>
+      <p class="workspace-danger-title" id="authority-danger-label">Danger zone</p>
+      <p class="workspace-danger-note">
+        Merging folds this authority's members and citations onto a target
+        authority, and deletes this record. This action cannot be undone.
+      </p>
+    </div>
+    <div>
+      <a
+        class="btn-danger"
+        href="/admin/knowledge/authorities/merge?source_id=<%= authority.id %>"
+      >Merge authority</a>
+    </div>
+  </section>
 
   <script type="application/json" id="authority-workspace-data"><%- JSON.stringify({
     authority: {
@@ -199,7 +225,6 @@
   }).replace(/</g, '\\u003c') %></script>
 </div>
 
-<script src="/js/authority-picker.js"></script>
 <script src="/js/authority-detail-page.js"></script>
 <script src="/js/sentiment-card-renderer.js"></script>
 <%- include('../partials/footer') %>

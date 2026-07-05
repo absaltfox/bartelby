@@ -4,9 +4,20 @@
   <%- include('../partials/admin-nav') %>
   <%- include('../partials/knowledge-nav', { activeKnowledgePage: 'sentiment-review' }) %>
 
-  <div class="admin-header">
+  <%- include('../partials/breadcrumbs', { crumbs: [
+    { label: 'Admin', href: '/admin' },
+    { label: 'Knowledge', href: '/admin/knowledge' },
+    { label: 'Sentiment' },
+    { label: 'Review' }
+  ] }) %>
+
+  <div class="admin-header entity-header">
     <h1>Sentiment Review</h1>
-    <p class="subtitle">Approve, reject, or delete pending sentiment annotations. Auto-approved rows are not shown.</p>
+    <p class="entity-meta">
+      <span>Approve, reject, or delete pending sentiment annotations.</span>
+      <span class="entity-meta__sep" aria-hidden="true">·</span>
+      <span>Auto-approved rows are not shown.</span>
+    </p>
   </div>
 
   <form method="get" action="" class="filter-bar">
