@@ -354,5 +354,6 @@ module.exports = {
   runSentimentExtractionCycle,
   pollRunningSentimentBatches,
   processSingletonJob,
+  loadKnownEntities,
   SENTIMENT_BATCH_MAX_CLAIM
 };

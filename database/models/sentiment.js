@@ -245,11 +245,31 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     // batch correlation + per-job paradata so the worker rebuilds the request
     // cleanly. Mirrors transcriptionJobsAsync.retry / extractionJobsAsync.retry
     // so the admin /admin/jobs Retry button works across all job types.
+    //
+    // Non-negotiable #5 (staged reset): a retry of a job whose transcript
+    // already has annotations must run with reset_existing = 1, or the rerun
+    // appends duplicates (double-counted phrases, polluted review queue).
+    // Keying on "annotations exist for this transcript" covers both the
+    // done-retry case and a job that wrote annotations then failed at
+    // markDone — finding D2 in
+    // docs/reviews/2026-07-04-sentiment-emotion-analysis-review.md.
     async retry(id) {
+      const job = await getAsync(
+        `SELECT transcript_id FROM sentiment_extraction_jobs
+          WHERE id = ? AND status IN ('failed', 'done')`,
+        [id]
+      );
+      const hasAnnotations = job
+        ? Boolean(await getAsync(
+            `SELECT 1 AS hit FROM sentiment_annotations WHERE transcript_id = ? LIMIT 1`,
+            [job.transcript_id]
+          ))
+        : false;
       const result = await runAsync(
         `UPDATE sentiment_extraction_jobs
             SET status = 'queued',
                 kind = 'singleton',
+                reset_existing = CASE WHEN ? THEN 1 ELSE reset_existing END,
                 batch_remote_id = NULL,
                 batch_submitted_at = NULL,
                 batch_finalization_claimed_at = NULL,
@@ -267,7 +287,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
                 system_prompt = NULL,
                 extraction_notes = NULL
           WHERE id = ? AND status IN ('failed', 'done')`,
-        [id]
+        [hasAnnotations ? 1 : 0, id]
       );
       await saveDatabase();
       return result;
