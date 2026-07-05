@@ -72,6 +72,7 @@ describe('sentiment research model (Phase 4)', () => {
       approval_status: 'approved',
       extracted_at: '2026-01-01 00:00:00',
       emotion_about_earliest: null,
+      register: null,
       ...overrides
     };
     const r = await db.runAsync(
@@ -81,14 +82,14 @@ describe('sentiment research model (Phase 4)', () => {
          target_entity_id, target_phrase,
          expressed_by_entity_id, described_subject_entity_id,
          emotion_phrase_id, emotion_phrase_verbatim,
-         approval_status, extracted_at, emotion_about_earliest)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         approval_status, extracted_at, emotion_about_earliest, register)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [a.transcript_id, a.document_id, a.span_start, a.span_end, a.evidence_excerpt,
        a.polarity, a.intensity, a.confidence, a.voice_role, a.target_kind,
        a.target_entity_id, a.target_phrase,
        a.expressed_by_entity_id, a.described_subject_entity_id,
        a.emotion_phrase_id, a.emotion_phrase_verbatim,
-       a.approval_status, a.extracted_at, a.emotion_about_earliest]
+       a.approval_status, a.extracted_at, a.emotion_about_earliest, a.register]
     );
     return r.lastInsertRowid;
   }
@@ -178,6 +179,21 @@ describe('sentiment research model (Phase 4)', () => {
 
     test('non-object input is rejected', () => {
       expect(() => parseFilters('foo')).toThrow(ResearchFilterError);
+    });
+
+    test('register defaults to the default sentinel when absent or invalid (F2)', () => {
+      expect(parseFilters({}).register).toBe('default');
+      expect(parseFilters({ register: 'formulaic' }).register).toBe('default');
+      expect(parseFilters({ register: '' }).register).toBe('default');
+    });
+
+    test('register accepts all four modes (F2)', () => {
+      expect(parseFilters({ register: 'all' }).register).toBe('all');
+      expect(parseFilters({ register: 'conventional' }).register).toBe('conventional');
+      expect(parseFilters({ register: 'personal' }).register).toBe('personal');
+      // 'default' round-trips because the workbench bootstrap re-sends
+      // parsed filters on annotations.json requests.
+      expect(parseFilters({ register: 'default' }).register).toBe('default');
     });
   });
 
@@ -287,6 +303,115 @@ describe('sentiment research model (Phase 4)', () => {
       const byDoc = Object.fromEntries(rows.map(r => [r.document_id, r.is_undated]));
       expect(byDoc[1]).toBe(false);
       expect(byDoc[3]).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // register gating (F2 of the epistolary register design)
+  // -------------------------------------------------------------------------
+
+  describe('register filter (F2)', () => {
+    let conventionalId, personalId, nullId;
+
+    beforeEach(async () => {
+      await insertCollection({ id: 1, name: 'Pub', isWorld: 1 });
+      await insertDocument({ id: 1, title: 'A', dateCreated: '1875-04-15', collectionId: 1 });
+      conventionalId = await insertAnnotation({ register: 'conventional', emotion_phrase_verbatim: 'your obedient servant' });
+      personalId = await insertAnnotation({ register: 'personal', emotion_phrase_verbatim: 'greatly distressed' });
+      nullId = await insertAnnotation({ register: null, emotion_phrase_verbatim: 'first rate' });
+    });
+
+    test('default mode excludes conventional; NULL and personal pass', async () => {
+      const { rows } = await sentimentAsync.listResearchAnnotations(parseFilters({}), adminAccess());
+      const ids = rows.map(r => r.id).sort();
+      expect(ids).toEqual([personalId, nullId].sort());
+    });
+
+    test('register=all includes conventional', async () => {
+      const { rows } = await sentimentAsync.listResearchAnnotations(parseFilters({ register: 'all' }), adminAccess());
+      expect(rows).toHaveLength(3);
+    });
+
+    test('register=conventional selects only conventional', async () => {
+      const { rows } = await sentimentAsync.listResearchAnnotations(parseFilters({ register: 'conventional' }), adminAccess());
+      expect(rows.map(r => r.id)).toEqual([conventionalId]);
+    });
+
+    test('register=personal selects only personal (NULL excluded)', async () => {
+      const { rows } = await sentimentAsync.listResearchAnnotations(parseFilters({ register: 'personal' }), adminAccess());
+      expect(rows.map(r => r.id)).toEqual([personalId]);
+    });
+
+    test('rows carry the register column for chip rendering', async () => {
+      const { rows } = await sentimentAsync.listResearchAnnotations(parseFilters({ register: 'all' }), adminAccess());
+      const byId = Object.fromEntries(rows.map(r => [r.id, r.register]));
+      expect(byId[conventionalId]).toBe('conventional');
+      expect(byId[personalId]).toBe('personal');
+      expect(byId[nullId]).toBeNull();
+    });
+
+    test('summarizeByLabel honors the default exclusion', async () => {
+      const summary = await sentimentAsync.summarizeByLabel(parseFilters({}), adminAccess());
+      const total = summary.reduce((n, r) => n + r.annotation_count, 0);
+      expect(total).toBe(2);
+      const all = await sentimentAsync.summarizeByLabel(parseFilters({ register: 'all' }), adminAccess());
+      expect(all.reduce((n, r) => n + r.annotation_count, 0)).toBe(3);
+    });
+
+    test('timelineByBucket honors the default exclusion', async () => {
+      const rows = await sentimentAsync.timelineByBucket(parseFilters({}), adminAccess(), { bucket: 'decade' });
+      expect(rows.reduce((n, r) => n + r.annotation_count, 0)).toBe(2);
+    });
+
+    test('cooccurrenceWithEntity honors the default exclusion', async () => {
+      await insertEntity({ id: 10, name: 'Jessop' });
+      await insertAnnotation({
+        register: 'conventional', target_kind: 'entity', target_entity_id: 10
+      });
+      await insertAnnotation({
+        register: null, target_kind: 'entity', target_entity_id: 10
+      });
+      // Default: only the two non-conventional phrase annotations plus the
+      // NULL entity-target one are countable in docs touching entity 10.
+      const rows = await sentimentAsync.cooccurrenceWithEntity(10, parseFilters({}), adminAccess());
+      const total = rows.reduce((n, r) => n + r.annotation_count, 0);
+      expect(total).toBe(3); // personal + null + null entity-target; conventional ones excluded
+      const allRows = await sentimentAsync.cooccurrenceWithEntity(10, parseFilters({ register: 'all' }), adminAccess());
+      expect(allRows.reduce((n, r) => n + r.annotation_count, 0)).toBe(5);
+    });
+
+    test('networkSentimentEdges honors the default exclusion', async () => {
+      await insertEntity({ id: 10, name: 'Jessop' });
+      await insertEntity({ id: 11, name: 'McColl' });
+      const conventionalEdge = await insertAnnotation({
+        register: 'conventional', target_kind: 'entity', target_entity_id: 10,
+        voice_role: 'speaker', expressed_by_entity_id: 11
+      });
+      const plainEdge = await insertAnnotation({
+        register: null, target_kind: 'entity', target_entity_id: 10,
+        voice_role: 'speaker', expressed_by_entity_id: 11
+      });
+      const edges = await sentimentAsync.networkSentimentEdges(parseFilters({}), adminAccess());
+      expect(edges.map(e => e.annotation_id)).toEqual([plainEdge]);
+      const allEdges = await sentimentAsync.networkSentimentEdges(parseFilters({ register: 'all' }), adminAccess());
+      expect(allEdges.map(e => e.annotation_id).sort()).toEqual([conventionalEdge, plainEdge].sort());
+    });
+
+    test('entity panel acceptance: recipient with 5 conventional + 1 personal shows 1 by default', async () => {
+      await insertEntity({ id: 20, name: 'Superintendent Jessop' });
+      for (let i = 0; i < 5; i++) {
+        await insertAnnotation({
+          register: 'conventional', target_kind: 'entity', target_entity_id: 20,
+          emotion_phrase_verbatim: 'your obedient servant'
+        });
+      }
+      const personalTarget = await insertAnnotation({
+        register: 'personal', target_kind: 'entity', target_entity_id: 20,
+        emotion_phrase_verbatim: 'sincerely grateful to Mr. Jessop'
+      });
+      const filters = parseFilters({ entity_id: '20' });
+      const { rows } = await sentimentAsync.listResearchAnnotations(filters, adminAccess());
+      expect(rows.map(r => r.id)).toEqual([personalTarget]);
     });
   });
 

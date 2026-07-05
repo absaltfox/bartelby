@@ -1209,6 +1209,11 @@ const INTENSITIES   = new Set(['low', 'moderate', 'strong']);
 const TARGET_KINDS  = new Set(['entity', 'phrase', 'theme']);
 const STATUSES      = new Set(['approved', 'pending']);
 const TIMELINE_BUCKETS = new Set(['decade', 'year', 'month']);
+// F2 (epistolary register design): 'default' is a sentinel meaning "exclude
+// conventional" (personal and NULL/unclassified rows pass). It is accepted
+// as an explicit query value too, because the workbench bootstrap round-trips
+// the parsed filters back through annotations.json/rollups.json requests.
+const REGISTER_MODES = new Set(['default', 'all', 'conventional', 'personal']);
 
 function asPositiveInt(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -1257,6 +1262,7 @@ function parseResearchFilters(rawQuery, { isAdmin = false } = {}) {
     polarity: asEnum(rawQuery.polarity, POLARITIES),
     intensity: asEnum(rawQuery.intensity, INTENSITIES),
     target_kind: asEnum(rawQuery.target_kind, TARGET_KINDS),
+    register: asEnum(rawQuery.register, REGISTER_MODES) || 'default',
     entity_id: asPositiveInt(rawQuery.entity_id),
     authority_id: asPositiveInt(rawQuery.authority_id),
     document_id: asPositiveInt(rawQuery.document_id),
@@ -1348,6 +1354,19 @@ function buildResearchWhere(filters, accessSql) {
   if (filters.target_kind) {
     conditions.push('a.target_kind = ?');
     params.push(filters.target_kind);
+  }
+  // F2 (epistolary register design §A.3.2): conventional register must not
+  // distort entity-level sentiment by default — deference formulas target
+  // the office, not the person. This is the ONE place the exclusion lives;
+  // every research surface inherits it via parseResearchFilters. Absent or
+  // 'default' → exclude conventional (NULL/unclassified rows always pass);
+  // 'all' disables the exclusion; explicit 'conventional'/'personal' select
+  // exactly that value (NULL excluded).
+  if (!filters.register || filters.register === 'default') {
+    conditions.push(`(a.register IS NULL OR a.register != 'conventional')`);
+  } else if (filters.register === 'conventional' || filters.register === 'personal') {
+    conditions.push('a.register = ?');
+    params.push(filters.register);
   }
   if (filters.entity_id) {
     conditions.push(`(a.target_entity_id = ?
