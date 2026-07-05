@@ -664,6 +664,26 @@ MIGRATIONS.push(`
     CHECK (register IN ('conventional','personal'));
 `);
 
+// v77 — D6 (2026-07-04 review): suppression keys were written by a local
+// normalizer that skipped the trailing-punctuation strip, so keys like
+// 'the school house.' never matched the listing's normalizePhraseSql join
+// key and those suppressions silently did nothing. Renormalize existing
+// keys with the canonical SQL expression (this literal SQL mirrors
+// normalizePhraseSql in database/models/sentiment.js — keep them in sync;
+// the ';' in the punctuation set is spelled CHAR(59) because the migration
+// runner splits statements on literal semicolons).
+// Dedupe first: two rows collapsing to the same key would violate the
+// UNIQUE(target_phrase_normalized) constraint; the oldest row wins.
+MIGRATIONS.push(`
+  DELETE FROM sentiment_phrase_suppressions
+   WHERE id NOT IN (
+     SELECT MIN(id) FROM sentiment_phrase_suppressions
+     GROUP BY LOWER(RTRIM(TRIM(REPLACE(REPLACE(REPLACE(target_phrase_normalized, '  ', ' '), '  ', ' '), '  ', ' ')), '.,' || CHAR(59) || ':!?'))
+   );
+  UPDATE sentiment_phrase_suppressions
+     SET target_phrase_normalized = LOWER(RTRIM(TRIM(REPLACE(REPLACE(REPLACE(target_phrase_normalized, '  ', ' '), '  ', ' '), '  ', ' ')), '.,' || CHAR(59) || ':!?'));
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1715,6 +1735,7 @@ module.exports = {
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
   sentimentAsync,
   normalizeSentimentPhrase,
+  normalizeSentimentPhraseSql,
   parseSentimentResearchFilters,
   parseSentimentTimelineBucket,
   SentimentResearchFilterError,

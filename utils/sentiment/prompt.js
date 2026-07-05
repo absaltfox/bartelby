@@ -1,6 +1,11 @@
 'use strict';
 
-const REQUIRED_PLACEHOLDERS = ['{{transcript_content}}', '{{known_entities}}'];
+// document_metadata is required alongside the other two: the S2 temporal
+// contract (emotion_about_* relative-date resolution) is uncomputable
+// without the letter date in the prompt — finding D8 in the 2026-07-04
+// review. Validation runs at settings-save time, so operators with an
+// older template get a clear error rather than silently degraded output.
+const REQUIRED_PLACEHOLDERS = ['{{transcript_content}}', '{{known_entities}}', '{{document_metadata}}'];
 
 function formatKnownEntities(entities) {
   if (!Array.isArray(entities) || entities.length === 0) return '(none)';

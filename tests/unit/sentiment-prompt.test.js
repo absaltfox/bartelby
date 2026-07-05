@@ -41,6 +41,11 @@ describe('sentiment prompt', () => {
     expect(() => validatePromptTemplate(bad)).toThrow(/known_entities/);
   });
 
+  test('validatePromptTemplate rejects template missing {{document_metadata}} (D8)', () => {
+    const bad = VALID_TEMPLATE.replace('{{document_metadata}}', '[metadata here]');
+    expect(() => validatePromptTemplate(bad)).toThrow(/document_metadata/);
+  });
+
   test('validatePromptTemplate rejects template missing JSON instruction', () => {
     const bad = `Document metadata: {{document_metadata}}
 Known entities: {{known_entities}}

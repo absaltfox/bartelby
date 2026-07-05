@@ -114,13 +114,30 @@ async function getScopedPhraseAnnotations(phrase, scope = {}) {
     filters.push('AND polarity = ?');
     params.push(scope.polarity);
   }
+  // D6 (2026-07-04 review): the match key MUST be the shared SQL normalizer.
+  // The previous inline LOWER(RTRIM(TRIM(...))) lacked whitespace collapse,
+  // so annotations with doubled spaces were counted by the listing (which
+  // collapses) but missed here — "re-target N annotations" delivered fewer.
   return await db.allAsync(`
-    SELECT id, transcript_id, document_id, span_start, span_end, evidence_excerpt, target_phrase
+    SELECT id, transcript_id, document_id, span_start, span_end, evidence_excerpt,
+           target_phrase, emotion_phrase_verbatim
     FROM sentiment_annotations
     WHERE target_kind = 'phrase'
-      AND LOWER(RTRIM(TRIM(target_phrase), '.,;:!?')) = ?
+      AND ${db.normalizeSentimentPhraseSql('target_phrase')} = ?
       ${filters.join('\n')}
   `, params);
+}
+
+// D4 (2026-07-04 review): a promotion citation's passage_text must be a
+// literal transcript substring at the claimed span — never the LLM's
+// target phrase, which is a paraphrase ("his clerical duties") that
+// generally appears nowhere in the transcript. The annotation's
+// emotion_phrase_verbatim IS the transcript slice at [span_start, span_end)
+// by the parser's span-resolution invariant, so text and offsets agree.
+// The promoted phrase itself is recorded on the entity's properties
+// (promoted_from_phrase) and in the audit log, not as evidence.
+function citationEvidenceFor(ann) {
+  return ann.emotion_phrase_verbatim || ann.evidence_excerpt || '';
 }
 
 router.get('/', requireAdmin, asyncHandler(async (req, res) => {
@@ -314,7 +331,7 @@ router.post('/promote', express.urlencoded({ extended: false }), requireCuratePh
         document_id: ann.document_id,
         passage_start: ann.span_start != null ? ann.span_start : null,
         passage_end: ann.span_end != null ? ann.span_end : null,
-        passage_text: phrase,
+        passage_text: citationEvidenceFor(ann),
         extraction_method: EXTRACTION_METHODS.MANUAL,
         extraction_model: null,
         confidence: 1.0,
@@ -368,6 +385,12 @@ router.post('/promote-existing', express.urlencoded({ extended: false }), requir
 
   const citationIds = [];
   await db.withTransactionAsync(async () => {
+    // Record the promoted phrase on the entity (not as citation evidence —
+    // see citationEvidenceFor). Mirrors the promoted_from_phrase property
+    // the create-new-entity path sets.
+    await db.entitiesAsync.update(entityId, {
+      properties: { ...(entity.properties || {}), promoted_from_phrase: phrase }
+    });
     for (const ann of annotations) {
       await db.runAsync(`
         UPDATE sentiment_annotations
@@ -383,7 +406,7 @@ router.post('/promote-existing', express.urlencoded({ extended: false }), requir
         document_id: ann.document_id,
         passage_start: ann.span_start != null ? ann.span_start : null,
         passage_end: ann.span_end != null ? ann.span_end : null,
-        passage_text: phrase,
+        passage_text: citationEvidenceFor(ann),
         extraction_method: EXTRACTION_METHODS.MANUAL,
         extraction_model: null,
         confidence: 1.0,

@@ -266,6 +266,16 @@ referent, leave the `emotion_about_*` fields out entirely (NULL).
 Do not emit `emotion_about_phrase_verbatim: "now"` or similar
 filler — the absence of the field IS the "felt now" signal.
 
+**Anchoring and validation (D8/D9, added 2026-07-05):**
+`{{document_metadata}}` now carries `Title` / `Date` / `Author` (date and
+author when known) and is a *required* placeholder — template validation
+rejects prompts without it, since the temporal contract above is
+uncomputable without the letter date. On the parse side,
+`emotion_about_earliest`/`latest` must be ISO-shaped
+(`YYYY` / `YYYY-MM` / `YYYY-MM-DD`) and non-inverted; invalid values null
+out with an `invalid_emotion_about_date` drop counter while the
+annotation itself is kept.
+
 ### Register (F1/F2, added 2026-07-05)
 
 Per [docs/2026-07-05-epistolary-register-design.md](./2026-07-05-epistolary-register-design.md),
