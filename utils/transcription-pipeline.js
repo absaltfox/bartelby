@@ -2,6 +2,35 @@
 
 const { countUnknownWords } = require('./analytics');
 
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function normalizeDateCreated(raw) {
+  if (typeof raw !== 'string') return null;
+  const cleaned = raw.trim().replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
+  // Require an explicit four-digit year: V8's Date parser silently fills in
+  // year 2001 for year-less strings ("March 15") and maps two-digit years to
+  // 20xx ("March 15 47" -> 2047), so anything without a written year cannot
+  // be normalized without inventing one.
+  const yearMatch = cleaned.match(/\b(\d{4})\b/);
+  if (!yearMatch) return null;
+  const writtenYear = parseInt(yearMatch[1], 10);
+  const parsed = new Date(cleaned);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // ISO date-only strings parse as UTC midnight while every other format
+  // parses as local time; read components from the matching frame so the
+  // calendar day never shifts on servers outside UTC.
+  const isIsoInput = ISO_DATE_PATTERN.test(cleaned);
+  const year = isIsoInput ? parsed.getUTCFullYear() : parsed.getFullYear();
+  const month = isIsoInput ? parsed.getUTCMonth() : parsed.getMonth();
+  const day = isIsoInput ? parsed.getUTCDate() : parsed.getDate();
+  if (year !== writtenYear) return null;
+  const result = `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  // An ISO input that does not round-trip had an out-of-range month or day
+  // that the parser rolled over (e.g. 1847-02-30 -> 1847-03-02).
+  if (isIsoInput && result !== cleaned) return null;
+  return result;
+}
+
 function buildTranscriptPageSegments(results) {
   return results.map((result, index) => ({
     pageNumber: index + 1,
@@ -97,17 +126,20 @@ async function persistDocumentTranscription({
       }
     }
 
+    let normalizedDate = null;
     if (merged.date_created) {
-      const cleaned = merged.date_created.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-      const parsed = new Date(cleaned);
-      if (!Number.isNaN(parsed.getTime()) && parsed.getFullYear() > 0) {
-        merged.date_created = parsed.toISOString().split('T')[0];
+      normalizedDate = normalizeDateCreated(merged.date_created);
+      if (normalizedDate) {
+        merged.date_created = normalizedDate;
       }
     }
 
     const updates = { metadata: merged };
-    if (!doc.date_created && merged.date_created) {
-      updates.date_created = merged.date_created;
+    // documents.date_created feeds range filters, MIN/MAX, and ORDER BY, so
+    // only a confidently normalized ISO date may be copied into it; the
+    // as-written form stays available in metadata either way.
+    if (!doc.date_created && normalizedDate) {
+      updates.date_created = normalizedDate;
     }
     if (!doc.description && llmMeta.condition) {
       updates.description = `Condition: ${llmMeta.condition}`;
@@ -302,5 +334,6 @@ async function persistDocumentTranscription({
 module.exports = {
   buildTranscriptPageSegments,
   combineTranscriptionResults,
+  normalizeDateCreated,
   persistDocumentTranscription
 };

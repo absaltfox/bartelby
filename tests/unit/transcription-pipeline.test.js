@@ -1,5 +1,42 @@
 'use strict';
 
+describe('normalizeDateCreated', () => {
+  const { normalizeDateCreated } = require('../../utils/transcription-pipeline');
+
+  it('normalizes fully written dates with a four-digit year', () => {
+    expect(normalizeDateCreated('March 15 1847')).toBe('1847-03-15');
+    expect(normalizeDateCreated('March 15th, 1847')).toBe('1847-03-15');
+    expect(normalizeDateCreated('15 March 1847')).toBe('1847-03-15');
+    expect(normalizeDateCreated('1847-03-15')).toBe('1847-03-15');
+  });
+
+  it('normalizes partial dates that still carry a four-digit year', () => {
+    expect(normalizeDateCreated('March 1847')).toBe('1847-03-01');
+    expect(normalizeDateCreated('1847')).toBe('1847-01-01');
+    // V8's lenient parser skips unrecognized words but keeps month and year.
+    expect(normalizeDateCreated('the fourth day of March, 1847')).toBe('1847-03-01');
+    expect(normalizeDateCreated('circa 1850')).toBe('1850-01-01');
+  });
+
+  it('rejects dates without an explicit four-digit year', () => {
+    // V8 would otherwise fill in year 2001 / map two-digit years to 20xx.
+    expect(normalizeDateCreated('March 15')).toBeNull();
+    expect(normalizeDateCreated('15 March')).toBeNull();
+    expect(normalizeDateCreated('March 15 47')).toBeNull();
+  });
+
+  it('rejects unparseable or non-string values', () => {
+    expect(normalizeDateCreated('1846-1847')).toBeNull();
+    expect(normalizeDateCreated('')).toBeNull();
+    expect(normalizeDateCreated(null)).toBeNull();
+    expect(normalizeDateCreated(1847)).toBeNull();
+  });
+
+  it('rejects ISO dates whose day the parser would roll over', () => {
+    expect(normalizeDateCreated('1847-02-30')).toBeNull();
+  });
+});
+
 describe('persistDocumentTranscription', () => {
   afterEach(() => {
     jest.resetModules();
@@ -94,6 +131,41 @@ describe('persistDocumentTranscription', () => {
       version: 3,
       is_best: false
     }));
+  });
+
+  it('normalizes an extracted date with a written year and copies it to the document', async () => {
+    const { pipeline, documentsUpdate } = loadPipeline([]);
+
+    await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      results: [{
+        ...baseArgs.results[0],
+        metadata: { date_created: 'March 15th, 1847' }
+      }]
+    });
+
+    expect(documentsUpdate).toHaveBeenCalledWith(7, expect.objectContaining({
+      date_created: '1847-03-15',
+      metadata: expect.objectContaining({ date_created: '1847-03-15' })
+    }));
+  });
+
+  it('keeps a year-less date as written and does not populate documents.date_created', async () => {
+    const { pipeline, documentsUpdate } = loadPipeline([]);
+
+    await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      results: [{
+        ...baseArgs.results[0],
+        metadata: { date_created: 'March 15' }
+      }]
+    });
+
+    expect(documentsUpdate).toHaveBeenCalledWith(7, expect.objectContaining({
+      metadata: expect.objectContaining({ date_created: 'March 15' })
+    }));
+    const updates = documentsUpdate.mock.calls[0][1];
+    expect(updates).not.toHaveProperty('date_created');
   });
 
   it('reuses the existing transcript when the same job already materialized the document', async () => {
