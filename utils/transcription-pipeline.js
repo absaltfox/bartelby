@@ -78,6 +78,7 @@ async function persistDocumentTranscription({
 
   const {
     documentsAsync,
+    documentCollectionsAsync,
     transcriptsAsync,
     extractionJobs,
     settingsAsync,
@@ -131,6 +132,31 @@ async function persistDocumentTranscription({
       normalizedDate = normalizeDateCreated(merged.date_created);
       if (normalizedDate) {
         merged.date_created = normalizedDate;
+      }
+    }
+
+    // Validate the normalized date against the containing collections'
+    // curated coverage range. An out-of-range year is far more often an
+    // extraction misread than a genuinely misfiled document, so the value
+    // stays visible in metadata with a review marker but is withheld from
+    // documents.date_created until a curator confirms it.
+    if (normalizedDate) {
+      delete merged._date_created_out_of_range;
+      const range = await documentCollectionsAsync.getDateRangeForDocument(doc.id);
+      if (range) {
+        const year = parseInt(normalizedDate.slice(0, 4), 10);
+        const outOfRange = (range.startYear != null && year < range.startYear)
+          || (range.endYear != null && year > range.endYear);
+        if (outOfRange) {
+          merged._date_created_out_of_range = true;
+          if (logLine) {
+            await logLine(
+              `Extracted date ${normalizedDate} for document ${documentId} falls outside the collection date range `
+                + `(${range.startYear ?? '…'}–${range.endYear ?? '…'}); flagged for review and not applied to the document date`
+            );
+          }
+          normalizedDate = null;
+        }
       }
     }
 

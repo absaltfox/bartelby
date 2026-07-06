@@ -103,7 +103,7 @@ describe('extraction worker cycle', () => {
       },
       authorityGenericTermsAsync: { listActive: jest.fn(async () => []) },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: jest.fn(async () => true), create: jest.fn(async () => {}) },
-      documentCollectionsAsync: { getByDocumentId: jest.fn(async () => []) },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId: jest.fn(async () => []) },
       getAsync: jest.fn(async () => null),
       sentimentAsync: { hasQueuedOrRunningForTranscript: jest.fn(async () => true), createJob: jest.fn(async () => {}) },
       userApiKeysAsync: {
@@ -349,7 +349,7 @@ describe('extraction worker cycle - attempt logging', () => {
       citations: { create: jest.fn(async () => {}) },
       relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
       graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
-      documentCollectionsAsync: { getByDocumentId: jest.fn(async () => []) },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId: jest.fn(async () => []) },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: jest.fn(async () => true), create: jest.fn(async () => {}) }
     }));
 
@@ -411,7 +411,7 @@ describe('extraction worker cycle - attempt logging', () => {
       citations: { create: jest.fn(async () => {}) },
       relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
       graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
-      documentCollectionsAsync: { getByDocumentId },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
     }));
 
@@ -842,7 +842,7 @@ describe('extraction batch polling', () => {
       citations: { create: jest.fn(async () => {}) },
       relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
       graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
-      documentCollectionsAsync: { getByDocumentId },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
     }));
 
@@ -959,7 +959,7 @@ describe('extraction batch polling', () => {
       citations: { create: jest.fn(async () => {}) },
       relationshipTypes: { resolve: jest.fn(async () => 'related_to'), create: jest.fn(async () => {}) },
       graphMaintenance: { resetTranscriptExtraction: jest.fn(async () => ({ deletedCitations: 0, deletedRelationships: 0, deletedEntities: 0 })) },
-      documentCollectionsAsync: { getByDocumentId },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: hasPendingOrRunning, create: authoritySuggestionCreate }
     }));
 

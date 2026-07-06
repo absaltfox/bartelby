@@ -4,6 +4,7 @@ const path = require('path');
 const storage = require('./storage');
 const { mimeTypeFromFilename } = require('./mime-types');
 const {
+  formatDateRangeHint,
   getTranscriptionSystemPrompt,
   parseTranscriptionResponse,
   resolveTranscriptionRuntime
@@ -56,6 +57,35 @@ function getBatchChunkLimits() {
 
 function guessMimeType(imagePath) {
   return mimeTypeFromFilename(imagePath, 'image/png');
+}
+
+function buildPageRequestText(request) {
+  return request.dateRangeHint
+    ? `Please transcribe this document page.\n\n${request.dateRangeHint}`
+    : 'Please transcribe this document page.';
+}
+
+// Attaches each manifest entry's collection date-range hint so the per-page
+// request builders can include it. Resolved per document (not per page) and
+// non-fatally: a hint lookup failure must not block batch submission.
+async function attachDateRangeHints(manifest) {
+  const { documentCollectionsAsync } = require('../database/db');
+  const hintByDocument = new Map();
+  for (const request of manifest) {
+    if (request.documentId == null) continue;
+    if (!hintByDocument.has(request.documentId)) {
+      let hint = null;
+      try {
+        const range = await documentCollectionsAsync.getDateRangeForDocument(request.documentId);
+        hint = formatDateRangeHint(range);
+      } catch (err) {
+        hint = null;
+      }
+      hintByDocument.set(request.documentId, hint);
+    }
+    request.dateRangeHint = hintByDocument.get(request.documentId);
+  }
+  return manifest;
 }
 
 function parseChunkedBatchState(remoteId) {
@@ -158,7 +188,7 @@ async function buildOpenAiRequestEntry(request, runtime, systemPrompt) {
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'Please transcribe this document page.' },
+          { type: 'text', text: buildPageRequestText(request) },
           { type: 'image_url', image_url: { url: dataUrl } }
         ]
       }
@@ -243,7 +273,7 @@ async function buildAnthropicRequestEntry(request, runtime, systemPrompt) {
             },
             {
               type: 'text',
-              text: 'Please transcribe this document page.'
+              text: buildPageRequestText(request)
             }
           ]
         }
@@ -357,7 +387,7 @@ async function buildGeminiRequestEntry(request, runtime, systemPrompt) {
               }
             },
             {
-              text: 'Please transcribe this document page.'
+              text: buildPageRequestText(request)
             }
           ]
         }
@@ -408,7 +438,7 @@ function buildVertexTranscriptionRequestDescriptor(job, request, runtime, system
             }
           },
           {
-            text: 'Please transcribe this document page.'
+            text: buildPageRequestText(request)
           }
         ]
       }
@@ -566,7 +596,7 @@ async function submitVertexTranscriptionBatch(job, runtime, systemPrompt, manife
 }
 
 async function submitTranscriptionBatch(job, runtimeConfig = {}) {
-  const manifest = parseBatchManifest(job);
+  const manifest = await attachDateRangeHints(parseBatchManifest(job));
   if (manifest.length === 0) {
     throw new Error('This batch job has no manifest to submit.');
   }

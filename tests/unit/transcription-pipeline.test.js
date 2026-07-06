@@ -50,6 +50,7 @@ describe('persistDocumentTranscription', () => {
     const existingBySourceJob = opts.existingBySourceJob || null;
 
     jest.doMock('../../database/db', () => ({
+      documentCollectionsAsync: { getDateRangeForDocument: jest.fn(async () => opts.dateRange || null) },
       documentsAsync: {
         getById: jest.fn(async () => ({
           id: 7,
@@ -166,6 +167,57 @@ describe('persistDocumentTranscription', () => {
     }));
     const updates = documentsUpdate.mock.calls[0][1];
     expect(updates).not.toHaveProperty('date_created');
+  });
+
+  it('applies an in-range extracted date normally when the collection declares a range', async () => {
+    const { pipeline, documentsUpdate } = loadPipeline([], { dateRange: { startYear: 1840, endYear: 1885 } });
+
+    await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      results: [{
+        ...baseArgs.results[0],
+        metadata: { date_created: 'March 15 1847' }
+      }]
+    });
+
+    const updates = documentsUpdate.mock.calls[0][1];
+    expect(updates.date_created).toBe('1847-03-15');
+    expect(updates.metadata).not.toHaveProperty('_date_created_out_of_range');
+  });
+
+  it('flags an out-of-range extracted date and withholds it from documents.date_created', async () => {
+    const { pipeline, documentsUpdate } = loadPipeline([], { dateRange: { startYear: 1840, endYear: 1885 } });
+
+    await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      results: [{
+        ...baseArgs.results[0],
+        metadata: { date_created: 'March 15 1901' }
+      }]
+    });
+
+    const updates = documentsUpdate.mock.calls[0][1];
+    expect(updates).not.toHaveProperty('date_created');
+    expect(updates.metadata).toEqual(expect.objectContaining({
+      date_created: '1901-03-15',
+      _date_created_out_of_range: true
+    }));
+  });
+
+  it('treats an open-ended range as one-sided (start year only)', async () => {
+    const { pipeline, documentsUpdate } = loadPipeline([], { dateRange: { startYear: 1840, endYear: null } });
+
+    await pipeline.persistDocumentTranscription({
+      ...baseArgs,
+      results: [{
+        ...baseArgs.results[0],
+        metadata: { date_created: 'March 15 1901' }
+      }]
+    });
+
+    const updates = documentsUpdate.mock.calls[0][1];
+    expect(updates.date_created).toBe('1901-03-15');
+    expect(updates.metadata).not.toHaveProperty('_date_created_out_of_range');
   });
 
   it('reuses the existing transcript when the same job already materialized the document', async () => {

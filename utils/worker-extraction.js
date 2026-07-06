@@ -898,6 +898,11 @@ async function runExtractionWorkerCycle() {
 
     const { providerName, runtimeConfig } = await resolveRuntimeConfig(job, async (msg) => logLine(msg));
     const { runExtraction } = require('./extraction-llm');
+    const { documentCollectionsAsync } = require('../database/db');
+    const { formatDateRangeHint } = require('./llm');
+    const dateRangeHint = formatDateRangeHint(
+      await documentCollectionsAsync.getDateRangeForDocument(job.document_id)
+    );
     const extractionResult = await runExtraction(
       providerName,
       transcript.content,
@@ -905,7 +910,8 @@ async function runExtractionWorkerCycle() {
       runtimeConfig,
       {
         model: job.model || runtimeConfig.utilityModel || runtimeConfig.model || null,
-        temperature: job.temperature != null ? job.temperature : 0.2
+        temperature: job.temperature != null ? job.temperature : 0.2,
+        dateRangeHint
       }
     );
 
