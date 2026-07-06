@@ -50,6 +50,9 @@ describe('transcription worker cycle', () => {
         requeueForRetry,
         markFailed
       },
+      documentCollectionsAsync: {
+        getDateRangeForDocument: jest.fn(async () => null)
+      },
       userApiKeysAsync: {
         markUsed: jest.fn(async () => {})
       }
@@ -57,7 +60,8 @@ describe('transcription worker cycle', () => {
     jest.doMock('../../utils/llm', () => ({
       createProvider: jest.fn(async () => ({
         transcribeDocument
-      }))
+      })),
+      formatDateRangeHint: jest.fn(() => null)
     }));
     jest.doMock('../../utils/transcription-pipeline', () => ({
       persistDocumentTranscription

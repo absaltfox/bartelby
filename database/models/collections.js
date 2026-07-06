@@ -351,6 +351,16 @@ const collectionsAsync = {
     await runAsync('UPDATE collections SET sentiment_enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
+  async setDateRange(id, startYear, endYear) {
+    const start = Number.isInteger(startYear) ? startYear : null;
+    const end = Number.isInteger(endYear) ? endYear : null;
+    if (start != null && end != null && start > end) {
+      throw new Error('Date range start year must not be after the end year');
+    }
+    await runAsync('UPDATE collections SET date_range_start_year = ?, date_range_end_year = ? WHERE id = ?',
+      [start, end, id]);
+  },
+
   async listSentimentPriorityForBackfill() {
     return await allAsync(`
       SELECT
@@ -457,6 +467,24 @@ const documentCollectionsAsync = {
       WHERE dc.document_id IN (${placeholders})
       ORDER BY dc.document_id, c.name
     `, ids);
+  },
+
+  // Returns the union of the curated coverage ranges of every collection the
+  // document belongs to, as { startYear, endYear } (either side may be null),
+  // or null when no containing collection declares a range. Union rather than
+  // intersection: a document in two collections is plausibly datable to
+  // either span, and the range is a disambiguation hint, not a constraint.
+  async getDateRangeForDocument(documentId) {
+    const row = await getAsync(`
+      SELECT MIN(c.date_range_start_year) AS start_year,
+             MAX(c.date_range_end_year) AS end_year
+      FROM collections c
+      INNER JOIN document_collections dc ON dc.collection_id = c.id
+      WHERE dc.document_id = ?
+        AND (c.date_range_start_year IS NOT NULL OR c.date_range_end_year IS NOT NULL)
+    `, [documentId]);
+    if (!row || (row.start_year == null && row.end_year == null)) return null;
+    return { startYear: row.start_year ?? null, endYear: row.end_year ?? null };
   },
 
   // Returns the distinct collection ids that contain the given document.

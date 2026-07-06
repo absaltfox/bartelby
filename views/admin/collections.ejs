@@ -43,6 +43,14 @@
         <textarea id="col-desc" name="description" rows="2" placeholder="Brief description of this collection"></textarea>
       </div>
       <div class="form-group">
+        <label for="col-range-start">Document date range <span class="field-hint-inline">(optional)</span></label>
+        <div class="form-row">
+          <input type="number" id="col-range-start" name="date_range_start_year" min="1" max="9999" placeholder="Start year, e.g. 1840">
+          <input type="number" id="col-range-end" name="date_range_end_year" min="1" max="9999" placeholder="End year, e.g. 1885">
+        </div>
+        <p class="field-hint">Years this collection's documents are known to span. Helps AI transcription and knowledge extraction interpret ambiguous or partial dates, and flags extracted dates that fall outside the range for review.</p>
+      </div>
+      <div class="form-group">
         <label>Visibility</label>
         <label class="radio-label">
           <input type="radio" name="visibility" value="private" checked>
@@ -136,6 +144,14 @@
               <div class="form-group">
                 <label>Description</label>
                 <textarea name="description" rows="3"><%= c.description || '' %></textarea>
+              </div>
+              <div class="form-group">
+                <label>Document date range <span class="field-hint-inline">(optional)</span></label>
+                <div class="form-row">
+                  <input type="number" name="date_range_start_year" min="1" max="9999" placeholder="Start year, e.g. 1840" value="<%= c.date_range_start_year || '' %>">
+                  <input type="number" name="date_range_end_year" min="1" max="9999" placeholder="End year, e.g. 1885" value="<%= c.date_range_end_year || '' %>">
+                </div>
+                <p class="field-hint">Years this collection's documents are known to span. Helps AI transcription and knowledge extraction interpret ambiguous or partial dates, and flags extracted dates that fall outside the range for review.</p>
               </div>
               <div class="form-group">
                 <label>Visibility</label>

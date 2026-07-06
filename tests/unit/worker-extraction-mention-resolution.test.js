@@ -45,7 +45,7 @@ describe('worker-extraction mention resolution', () => {
       citations: { create: async () => 1 },
       authorityGenericTermsAsync: { listActive: async () => [] },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: async () => true, create: async () => 1 },
-      documentCollectionsAsync: { getByDocumentId: async () => [] }
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId: async () => [] }
     }));
 
     jest.doMock('../../utils/extraction-llm', () => ({

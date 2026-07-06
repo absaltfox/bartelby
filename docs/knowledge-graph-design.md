@@ -582,6 +582,16 @@ Knowledge graph extraction starts from a transcript and is queued as a durable
 - The worker resolves the active transcript for the job
 - An LLM prompt extracts entities, dates, and relationships from transcript
   content
+- When a containing collection declares a curated document date range
+  (`collections.date_range_start_year` / `date_range_end_year`), the union of
+  those ranges is included in the prompt as disambiguation-only context for
+  ambiguous or partially legible years. The hint explicitly defers to the
+  system prompt's "Do NOT invent dates" rule: it may bias the reading of an
+  unclear year but never adds or moves a date. The same hint is supplied to
+  transcription-time metadata extraction (single-job and provider-batch
+  paths), and the transcription pipeline flags an extracted `date_created`
+  whose year falls outside the range (`_date_created_out_of_range` in
+  document metadata) instead of copying it into `documents.date_created`
 - Entity aliases are deduplicated within the current transcript only (not
   across documents)
 - Each extracted entity is created fresh — no cross-document entity

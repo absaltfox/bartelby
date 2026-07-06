@@ -24,13 +24,20 @@ const BATCH_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
 async function processSingleJob(job, logLine) {
   const {
     transcriptionJobsAsync,
-    userApiKeysAsync
+    userApiKeysAsync,
+    documentCollectionsAsync
   } = require('../database/db');
-  const { createProvider } = require('./llm');
+  const { createProvider, formatDateRangeHint } = require('./llm');
 
   const { providerName, temperature, runtimeConfig } = await resolveRuntimeConfig(job, logLine);
   const provider = await createProvider(providerName, runtimeConfig);
-  const opts = { temperature };
+
+  const dateRange = await documentCollectionsAsync.getDateRangeForDocument(job.document_id);
+  const dateRangeHint = formatDateRangeHint(dateRange);
+  if (dateRangeHint) {
+    await logLine(`Applying collection date range hint (${dateRange.startYear ?? '…'}–${dateRange.endYear ?? '…'}) to date interpretation`);
+  }
+  const opts = { temperature, dateRangeHint };
 
   const imagePaths = [job.image_path];
   if (job.additional_image_paths) {

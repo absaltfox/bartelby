@@ -684,6 +684,17 @@ MIGRATIONS.push(`
      SET target_phrase_normalized = LOWER(RTRIM(TRIM(REPLACE(REPLACE(REPLACE(target_phrase_normalized, '  ', ' '), '  ', ' '), '  ', ' ')), '.,' || CHAR(59) || ':!?'));
 `);
 
+// v78 — curated collection coverage years. Both nullable: NULL means "no
+// declared coverage" and the date-range hint/validation features stay off
+// for that collection. Distinct from the derived min_year/max_year the
+// landing-page queries compute from documents.date_created — those describe
+// what has been extracted (and inherit its errors); these describe what the
+// archivist knows the collection to span, so they can guide extraction.
+MIGRATIONS.push(`
+  ALTER TABLE collections ADD COLUMN date_range_start_year INTEGER;
+  ALTER TABLE collections ADD COLUMN date_range_end_year INTEGER;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
