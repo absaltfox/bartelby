@@ -275,6 +275,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
         `UPDATE sentiment_extraction_jobs
             SET status = 'queued',
                 kind = 'singleton',
+                reset_existing = 1,
                 batch_remote_id = NULL,
                 batch_submitted_at = NULL,
                 batch_finalization_claimed_at = NULL,
