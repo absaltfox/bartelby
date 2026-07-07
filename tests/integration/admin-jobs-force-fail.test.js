@@ -52,6 +52,22 @@ async function makeRunningBatchTranscriptionJob() {
   return r.lastInsertRowid;
 }
 
+async function makeRunningBatchExtractionJob() {
+  const docId = await db.documentsAsync.create({
+    title: 'Force Fail Extraction Doc', date_created: null, description: null,
+    image_path: '/uploads/force-fail-ex.png', metadata: {}
+  });
+  const txId = await db.transcriptsAsync.create({
+    document_id: docId, content: 'Transcript for extraction force-fail test',
+    transcriber: 'Manual', version: 1, notes: null
+  });
+  const r = await db.runAsync(`
+    INSERT INTO extraction_jobs (transcript_id, document_id, provider, status, job_kind, batch_remote_id, started_at)
+    VALUES (?, ?, 'openai', 'running', 'batch', 'pending-force-fail-ex-1', CURRENT_TIMESTAMP)
+  `, [txId, docId]);
+  return r.lastInsertRowid;
+}
+
 describe('POST /admin/jobs/api/:id/fail', () => {
   it('fails a running batch transcription job', async () => {
     const jobId = await makeRunningBatchTranscriptionJob();
@@ -65,6 +81,23 @@ describe('POST /admin/jobs/api/:id/fail', () => {
     const jobId = await makeRunningBatchTranscriptionJob();
     await db.runAsync("UPDATE transcription_jobs SET status = 'done' WHERE id = ?", [jobId]);
     await adminAgent.post(`/admin/jobs/api/${jobId}/fail`)
+      .set('X-CSRF-Token', csrf).expect(409);
+  });
+});
+
+describe('POST /admin/jobs/api/extraction/:id/fail', () => {
+  it('fails a running batch extraction job', async () => {
+    const jobId = await makeRunningBatchExtractionJob();
+    await adminAgent.post(`/admin/jobs/api/extraction/${jobId}/fail`)
+      .set('X-CSRF-Token', csrf).expect(200);
+    const job = await db.getAsync('SELECT status FROM extraction_jobs WHERE id = ?', [jobId]);
+    expect(job.status).toBe('failed');
+  });
+
+  it('409s for a job that is not a running batch', async () => {
+    const jobId = await makeRunningBatchExtractionJob();
+    await db.runAsync("UPDATE extraction_jobs SET status = 'done' WHERE id = ?", [jobId]);
+    await adminAgent.post(`/admin/jobs/api/extraction/${jobId}/fail`)
       .set('X-CSRF-Token', csrf).expect(409);
   });
 });
