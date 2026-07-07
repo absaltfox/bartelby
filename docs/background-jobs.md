@@ -197,6 +197,11 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
 - **`authority_suggestion_jobs` (`running`)** → marked `failed`
 - **`sentiment_extraction_jobs` (singleton, `running`)** → marked `failed` with `error = 'Server restarted during processing'`
+- **`sentiment_extraction_jobs` (batch, `batch_submitted`, finalization claim stale)** → claim cleared. The
+  claim itself is re-claimable by the same owner, or by any worker after
+  `SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS`, and is released immediately when a
+  result fetch fails — so a transient provider error can no longer wedge a batch
+  until the next restart.
 - **`sentiment_extraction_jobs` (batch, `running`, finalization claimed)** → marked `failed`, claim columns nulled, `error = 'Server restarted during batch finalization'`. Note: `batch_submitted` rows are intentionally untouched — provider still owns them; `pollRunningSentimentBatchesTick` resumes them on next tick.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending-%'`)** → marked `failed` with the correlation id logged in the error message. Indicates a crash during batch submission; the provider may have an orphaned batch. The Phase 1.6a reconciliation tick (see below) recovers these inside the grace window before this backstop fires.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id IS NULL`)** → marked `failed`. Indicates a crash before the pre-stage write; no provider call was made.

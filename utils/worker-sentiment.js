@@ -6,6 +6,12 @@ const { buildPrompt } = require('./sentiment/prompt');
 const { parseAndValidate } = require('./sentiment/parse');
 const provider = require('./sentiment/provider');
 const { embedTexts, EMBED_MODEL_ID } = require('./sentiment/embed');
+const { getFinalizationOwner, parseFinalizationStaleSeconds } = require('./finalization-claims');
+
+const SENTIMENT_FINALIZATION_OWNER = getFinalizationOwner('sentiment-finalization');
+const SENTIMENT_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
+  'SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS'
+);
 
 const SENTIMENT_BATCH_MAX_CLAIM = 50;
 const DEFAULT_AUTO_APPROVE = 0.85;
@@ -258,7 +264,7 @@ async function pollRunningSentimentBatches() {
     `SELECT DISTINCT batch_remote_id FROM sentiment_extraction_jobs
       WHERE status = 'batch_submitted' AND batch_remote_id IS NOT NULL`
   );
-  const claimedBy = `${process.env.HOSTNAME || 'host'}-${process.pid}`;
+  const claimedBy = SENTIMENT_FINALIZATION_OWNER;
 
   for (const { batch_remote_id: remoteId } of remoteIdsRow) {
     let status;
@@ -270,7 +276,9 @@ async function pollRunningSentimentBatches() {
     }
     if (!status || status.status !== 'completed') continue;
 
-    const acquired = await db.sentimentAsync.claimBatchFinalization(remoteId, claimedBy);
+    const acquired = await db.sentimentAsync.claimBatchFinalization(
+      remoteId, claimedBy, SENTIMENT_FINALIZATION_STALE_SECONDS
+    );
     if (!acquired) continue;
 
     // Load jobs before fetching results — Vertex needs them to rebuild
@@ -288,6 +296,9 @@ async function pollRunningSentimentBatches() {
       });
     } catch (err) {
       console.warn(`[worker-sentiment] fetchBatchResults(${remoteId}) failed: ${err.message}`);
+      // Release the claim so the next tick can retry immediately instead of
+      // waiting out the stale window (or a restart). Review finding R3.
+      await db.sentimentAsync.releaseBatchFinalization(remoteId, claimedBy);
       continue;
     }
 
