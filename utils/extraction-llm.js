@@ -183,12 +183,15 @@ function buildExtractionPrompt(transcriptContent, documentMetadata = {}) {
 }
 
 function parseExtractionResponse(text) {
-  const empty = { entities: [], relationships: [], dates: [], raw: text };
-  if (!text || typeof text !== 'string') return empty;
+  // `malformed: true` means the provider response could not be parsed as
+  // JSON at all — callers must fail the job/item rather than treat this as
+  // an empty extraction. Per docs/reviews/2026-07-06-application-reliability-review.md R1.
+  const malformed = { entities: [], relationships: [], dates: [], raw: text, malformed: true };
+  if (!text || typeof text !== 'string') return malformed;
 
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   const match = cleaned.match(/\{[\s\S]*\}/);
-  if (!match) return empty;
+  if (!match) return malformed;
 
   try {
     const parsed = JSON.parse(match[0]);
@@ -196,10 +199,11 @@ function parseExtractionResponse(text) {
       entities: Array.isArray(parsed.entities) ? parsed.entities : [],
       relationships: Array.isArray(parsed.relationships) ? parsed.relationships : [],
       dates: Array.isArray(parsed.dates) ? parsed.dates : [],
-      raw: text
+      raw: text,
+      malformed: false
     };
   } catch {
-    return empty;
+    return malformed;
   }
 }
 

@@ -173,6 +173,17 @@ async function materializeExtractionResult({
   relationshipTypeAliasesAsync,
   graphMaintenance
 }) {
+  if (extractionResult && extractionResult.malformed) {
+    // Refuse to materialize: an unparseable response must not be mistaken
+    // for an empty document. Critically, with resetExisting this would
+    // otherwise delete the transcript's prior citations and mark the job
+    // done — the exact "silent graph wipe" in review finding R1.
+    throw new Error(
+      'LLM extraction response could not be parsed as JSON — refusing to materialize. '
+      + 'Prior graph artifacts for this transcript are preserved.'
+    );
+  }
+
   // Staged reset: collect pre-existing citation IDs BEFORE writing new data so
   // the transcript always has graph coverage. After the write loop succeeds,
   // the old citations are removed. A crash between write and cleanup is safe —
@@ -653,6 +664,14 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
       continue;
     }
 
+    if (itemResult.result && itemResult.result.malformed) {
+      failedDocs += 1;
+      await logLine(`Document ${manifestEntry.documentId} extraction failed: provider returned an unparseable response.`);
+      processedIds.add(itemResult.customId);
+      await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
+      continue;
+    }
+
     const [transcript, doc] = await Promise.all([
       transcriptsAsync.getById(manifestEntry.transcriptId),
       documentsAsync.getById(manifestEntry.documentId)
@@ -957,5 +976,6 @@ async function runExtractionWorkerCycle() {
 module.exports = {
   runExtractionWorkerCycle,
   pollRunningExtractionBatches,
-  autoQueueSentimentForTranscript
+  autoQueueSentimentForTranscript,
+  materializeExtractionResult
 };
