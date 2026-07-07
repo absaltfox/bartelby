@@ -2,7 +2,7 @@
 // and processes one job at a time, with retry for transient errors.
 
 const logger = require('./logger');
-const { BATCH_POLL_MS } = require('./worker-runtime');
+const { BATCH_POLL_MS, isTransientError } = require('./worker-runtime');
 const {
   runTranscriptionWorkerCycle,
   pollRunningTranscriptionBatches
@@ -597,6 +597,13 @@ async function pollRunningGroupingBatches() {
         console.log(`[worker] grouping batch job ${job.id}: complete (${groups.length} groups from ${annotations.length} annotations)`);
 
       } catch (err) {
+        if (isTransientError(err)) {
+          // Same policy as the transcription/extraction pollers: a network
+          // blip must not abandon a provider batch that may be paid and
+          // complete. Retry on the next tick. Review finding R6.
+          console.warn(`[worker] grouping batch poll transient error for job ${job.id}: ${err.message}`);
+          continue;
+        }
         console.error(`[worker] grouping batch poll job ${job.id} error:`, err.message);
         await importJobsAsync.markFailed(job.id, err.message);
       }
@@ -612,6 +619,7 @@ module.exports = {
   startWorker,
   __testables: {
     tickGroupingJobs,
-    tickImportRenderJobs
+    tickImportRenderJobs,
+    pollRunningGroupingBatches
   }
 };
