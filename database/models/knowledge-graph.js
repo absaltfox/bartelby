@@ -262,7 +262,12 @@ const entities = {
     const queryFilter = buildCitationQueryConditions({
       ...opts,
       documentId,
-      approvalStatus: opts.approvalStatus || CITATION_APPROVAL_STATUSES.APPROVED
+      // Explicit null means "no approval filter" (used by the sentiment
+      // worker to include pending citations in the known-entities inventory).
+      // Only an *omitted* option defaults to approved. Review R4 / 07-04 D1.
+      approvalStatus: opts.approvalStatus === undefined
+        ? CITATION_APPROVAL_STATUSES.APPROVED
+        : opts.approvalStatus
     });
     return (await allAsync(`
       SELECT DISTINCT e.*
@@ -1679,7 +1684,12 @@ const relationships = {
     const queryFilter = buildCitationQueryConditions({
       ...opts,
       documentId,
-      approvalStatus: opts.approvalStatus || CITATION_APPROVAL_STATUSES.APPROVED
+      // Explicit null means "no approval filter" (used by the sentiment
+      // worker to include pending citations in the known-entities inventory).
+      // Only an *omitted* option defaults to approved. Review R4 / 07-04 D1.
+      approvalStatus: opts.approvalStatus === undefined
+        ? CITATION_APPROVAL_STATUSES.APPROVED
+        : opts.approvalStatus
     });
     return (await allAsync(`
       SELECT DISTINCT
