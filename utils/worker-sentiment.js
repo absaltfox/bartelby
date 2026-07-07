@@ -261,15 +261,22 @@ async function runSentimentExtractionCycle() {
 async function pollRunningSentimentBatches() {
   const config = await loadConfig();
   const remoteIdsRow = await db.allAsync(
-    `SELECT DISTINCT batch_remote_id FROM sentiment_extraction_jobs
-      WHERE status = 'batch_submitted' AND batch_remote_id IS NOT NULL`
+    `SELECT batch_remote_id, MIN(provider) AS provider
+       FROM sentiment_extraction_jobs
+      WHERE status = 'batch_submitted' AND batch_remote_id IS NOT NULL
+      GROUP BY batch_remote_id`
   );
   const claimedBy = SENTIMENT_FINALIZATION_OWNER;
 
-  for (const { batch_remote_id: remoteId } of remoteIdsRow) {
+  for (const { batch_remote_id: remoteId, provider: rowProvider } of remoteIdsRow) {
+    // Route by the provider recorded on the rows at submission time (Phase
+    // 1.6a stores it exactly for this), not the *current* default — an admin
+    // switching sentiment.provider.default must not strand in-flight batches.
+    // Per 07-04 review D3 / 07-06 review R4.
+    const providerName = rowProvider || config.providerName;
     let status;
     try {
-      status = await provider.getBatchStatus({ provider: config.providerName, batchId: remoteId });
+      status = await provider.getBatchStatus({ provider: providerName, batchId: remoteId });
     } catch (err) {
       console.warn(`[worker-sentiment] getBatchStatus(${remoteId}) failed: ${err.message}`);
       continue;
@@ -290,7 +297,7 @@ async function pollRunningSentimentBatches() {
     let results;
     try {
       results = await provider.fetchBatchResults({
-        provider: config.providerName,
+        provider: providerName,
         batchId: remoteId,
         jobs
       });
@@ -339,7 +346,7 @@ async function pollRunningSentimentBatches() {
             document_id: job.document_id,
             evidence_excerpt: buildExcerpt(transcript.content, ann.span_start, ann.span_end),
             emotion_phrase_id: phrase.id,
-            extracted_by: config.providerName || 'default',
+            extracted_by: providerName || 'default',
             extracted_at: new Date().toISOString()
           });
         }
