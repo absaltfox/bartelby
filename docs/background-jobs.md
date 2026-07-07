@@ -243,6 +243,10 @@ Two layers cover this scenario:
    pending rows are marked `failed` with the correlation id surfaced
    in the error message for manual operator recovery.
 
+Running **batch** transcription/extraction jobs can be manually failed from
+`/admin/jobs` ("Mark failed") as the operator escape hatch for wedged batches;
+the action is audit-logged as `admin.job_force_failed`.
+
 `markBatchPending` sets `provider` on the row at placeholder-write time
 so the reconciliation tick can route to the correct provider API
 without needing to guess.

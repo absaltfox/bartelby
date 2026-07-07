@@ -205,6 +205,29 @@ router.post('/api/extraction/:id/retry', asyncHandler(async (req, res) => {
   res.json({ success: true });
 }));
 
+// API: force-fail a stuck running batch transcription job (escape hatch —
+// see docs/background-jobs.md § Graceful Shutdown and Stale Job Recovery)
+router.post('/api/:id/fail', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const result = await transcriptionJobsAsync.forceFail(jobId);
+  if (!result?.changes) {
+    return res.status(409).json({ error: 'Job is not in a failable state.' });
+  }
+  audit.log('admin.job_force_failed', { ...audit.reqContext(req), jobId, jobType: 'transcription' });
+  res.json({ success: true });
+}));
+
+// API: force-fail a stuck running batch extraction job
+router.post('/api/extraction/:id/fail', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const result = await extractionJobsAsync.forceFail(jobId);
+  if (!result?.changes) {
+    return res.status(409).json({ error: 'Job is not in a failable state.' });
+  }
+  audit.log('admin.job_force_failed', { ...audit.reqContext(req), jobId, jobType: 'extraction' });
+  res.json({ success: true });
+}));
+
 // API: retry failed durable import submission job
 router.post('/api/import/:id/retry', asyncHandler(async (req, res) => {
   const jobId = parseInt(req.params.id);

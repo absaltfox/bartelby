@@ -133,6 +133,9 @@
               // from settings, not stored per-job in an editable form).
               // Authority suggestion has no provider to edit either.
               const canEdit = job.status === 'failed' && !isImport && !isSentiment && !isAuthoritySuggestion;
+              const canForceFail = job.status === 'running'
+                && job.job_kind === 'batch'
+                && (job.job_type === 'transcription' || job.job_type === 'extraction');
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
                 data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">
@@ -267,6 +270,9 @@
                   <% } %>
                   <% if (canRetry) { %>
                     <button type="button" class="btn-secondary btn-sm retry-btn" data-id="<%= job.id %>">Retry</button>
+                  <% } %>
+                  <% if (canForceFail) { %>
+                    <button type="button" class="btn-danger btn-sm force-fail-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Mark failed</button>
                   <% } %>
                   <% if (canDelete) { %>
                     <button type="button" class="btn-danger btn-sm delete-job-btn" data-id="<%= job.id %>" data-type="<%= job.job_type %>">Delete</button>

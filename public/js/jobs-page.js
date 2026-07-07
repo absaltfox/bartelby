@@ -428,6 +428,36 @@
     });
   }
 
+  async function handleForceFailClick(btn, config) {
+    if (!window.confirm('Mark this running batch job as failed? Any provider-side batch will need manual review.')) return;
+    btn.disabled = true;
+    var type = btn.dataset.type;
+    try {
+      var r = await fetch(getJobApiBase(config, type) + btn.dataset.id + '/fail', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': getCsrfToken() }
+      });
+      if (!r.ok) {
+        var body = await r.json().catch(function() { return {}; });
+        showJobActionError(btn, body.error || 'Mark failed failed (' + r.status + ')');
+        btn.disabled = false;
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      btn.disabled = false;
+    }
+  }
+
+  function initForceFailButtons(config) {
+    if (config.mode !== 'admin') return;
+    document.querySelectorAll('.force-fail-btn').forEach(function(btn) {
+      btn.addEventListener('click', async function() {
+        await handleForceFailClick(btn, config);
+      });
+    });
+  }
+
   async function handleDeleteClick(btn, config) {
     if (!window.confirm('Delete this job record?')) return;
     btn.disabled = true;
@@ -680,6 +710,7 @@
 
   initToggleLogs(config);
   initRetryButtons(config);
+  initForceFailButtons(config);
   initDeleteButtons(config);
   initEditButtons(config);
   initEditJobModal(config);
