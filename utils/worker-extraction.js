@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const {
   MAX_RETRIES,
   COOLDOWN_MS,
@@ -593,8 +594,9 @@ async function processExtractionBatchSubmission(job, logLine) {
   // Persist submission intent BEFORE calling the provider. If the process
   // crashes after the provider call but before the real remote ID is written,
   // the 'pending' sentinel signals the batch may already exist remotely.
+  const submissionSentinel = `pending-${crypto.randomUUID()}`;
   await extractionJobs.updateBatchRemote(job.id, {
-    remoteId: 'pending',
+    remoteId: submissionSentinel,
     remoteStatus: 'submitting'
   });
 
@@ -757,7 +759,7 @@ async function pollRunningExtractionBatches() {
   const jobs = await extractionJobs.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
+    if (!job.batch_remote_id || job.batch_remote_id.startsWith('pending')) continue;
     const logLine = makeExtractionLogger(job, extractionJobs);
 
     // Poll the remote provider for batch status.  Transient poll errors
@@ -957,7 +959,7 @@ async function runExtractionWorkerCycle() {
     if (job) {
       const logLine = logLineForJob(job);
       await logLine(`ERROR: ${message}`);
-      if (isTransientError(err) && (job.attempts || 0) < MAX_RETRIES) {
+      if (job.job_kind !== 'batch' && isTransientError(err) && (job.attempts || 0) < MAX_RETRIES) {
         const backoff = Math.pow(2, job.attempts || 1) * 5000;
         await logLine(`Transient error — will retry in ${backoff / 1000}s`);
         await extractionJobs.requeueForRetry(job.id);

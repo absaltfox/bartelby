@@ -367,7 +367,15 @@ async function submitChunkedProviderBatch(job, runtime, manifest, buildEntry, su
 
   const submissions = [];
   for (let i = 0; i < chunks.length; i++) {
-    const submission = await submitChunk(job, runtime, chunks[i].entries, i, chunks.length);
+    let submission;
+    try {
+      submission = await submitChunk(job, runtime, chunks[i].entries, i, chunks.length);
+    } catch (err) {
+      if (submissions.length > 0) {
+        err.message += ` (provider chunks already submitted before this failure: ${submissions.map((s) => s.remoteId).join(', ')})`;
+      }
+      throw err;
+    }
     submissions.push({
       remoteId: submission.remoteId,
       remoteStatus: submission.remoteStatus,

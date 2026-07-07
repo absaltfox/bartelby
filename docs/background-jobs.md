@@ -205,6 +205,7 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`sentiment_extraction_jobs` (batch, `running`, finalization claimed)** → marked `failed`, claim columns nulled, `error = 'Server restarted during batch finalization'`. Note: `batch_submitted` rows are intentionally untouched — provider still owns them; `pollRunningSentimentBatchesTick` resumes them on next tick.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending-%'`)** → marked `failed` with the correlation id logged in the error message. Indicates a crash during batch submission; the provider may have an orphaned batch. The Phase 1.6a reconciliation tick (see below) recovers these inside the grace window before this backstop fires.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id IS NULL`)** → marked `failed`. Indicates a crash before the pre-stage write; no provider call was made.
+- **`transcription_jobs` / `extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending%'`, older than the stale window)** → marked `failed` with the submission sentinel in the error message. Indicates a crash during batch submission; the provider may hold an orphaned batch — recover manually from the provider console. Fresh `pending%` rows are left alone (a live worker may be mid-submission). Batch submission errors are never auto-requeued; retry is admin-triggered from `/admin/jobs`.
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
 `initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip
