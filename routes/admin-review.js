@@ -72,7 +72,8 @@ function graphStores() {
     citations: db.citationsAsync || db.citations || null,
     relationships: db.relationshipsAsync || db.relationships || null,
     entityAliases: db.entityAliasesAsync || db.entityAliases || null,
-    authorities: db.authoritiesAsync || db.authorities || null
+    authorities: db.authoritiesAsync || db.authorities || null,
+    graphMaintenance: db.graphMaintenance || null,
   };
 }
 
@@ -986,15 +987,20 @@ router.post('/review-extractions/bulk/delete', express.json(), requireCurateAll(
   const ids = parseBulkIds(req);
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
-  let count = 0;
+  // Route deletion through the same orphan cleanup the rerun reset uses, so
+  // deleting an entity's last citation doesn't strand an evidence-less
+  // entity in admin listings and suggestion input. Review finding R12.
+  const deletable = [];
   for (const id of ids) {
     const row = await db.getAsync('SELECT approval_status FROM citations WHERE id = ?', [id]);
-    if (row && row.approval_status !== CITATION_APPROVAL_STATUSES.APPROVED) {
-      await db.runAsync('DELETE FROM citations WHERE id = ?', [id]);
-      count++;
-    }
+    if (row && row.approval_status !== CITATION_APPROVAL_STATUSES.APPROVED) deletable.push(id);
   }
-  if (count > 0 && typeof db.saveDatabase === 'function') await db.saveDatabase();
+  let count = 0;
+  const stores = graphStores();
+  if (deletable.length > 0 && stores.graphMaintenance) {
+    const summary = await stores.graphMaintenance.resetCitationsById(deletable);
+    count = summary.deletedCitations;
+  }
   audit.log('admin.citations_bulk_deleted', { ...audit.reqContext(req), ids, count });
   res.json({ success: true, count });
 }));
@@ -1069,12 +1075,18 @@ router.post('/review-extractions/:id/delete', express.urlencoded({ extended: fal
     return reviewErrorResponse(req, res, status, page, reviewKind, 'Invalid extraction citation id.');
   }
 
-  if (!stores.citations || typeof stores.citations.delete !== 'function') {
+  if (!stores.graphMaintenance) {
     return reviewErrorResponse(req, res, status, page, reviewKind, 'Extraction evidence delete is not wired yet.', 503);
   }
 
   try {
-    await stores.citations.delete(id);
+    const row = await db.getAsync('SELECT approval_status FROM citations WHERE id = ?', [id]);
+    if (row && row.approval_status === CITATION_APPROVAL_STATUSES.APPROVED) {
+      return reviewErrorResponse(req, res, status, page, reviewKind, 'Cannot delete an approved citation.', 400);
+    }
+    if (row) {
+      await stores.graphMaintenance.resetCitationsById([id]);
+    }
     return reviewSuccessResponse(req, res, stores, {
       status,
       page,
