@@ -81,3 +81,30 @@ it('bulk delete keeps an entity that still has another citation', async () => {
   const entity = await db.getAsync('SELECT id FROM entities WHERE id = ?', [entityId]);
   expect(entity).toBeTruthy();
 });
+
+it('per-row delete of a pending citation that is the entity\'s only evidence removes the orphaned entity', async () => {
+  const { entityId, citationId } = await makePendingCitedEntity('perrow-orphan');
+  const res = await adminAgent
+    .post(`/admin/knowledge/review-extractions/${citationId}/delete`)
+    .set('X-CSRF-Token', csrf)
+    .set('Accept', 'application/json')
+    .send({ ids: [citationId] });
+  expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  const entity = await db.getAsync('SELECT id FROM entities WHERE id = ?', [entityId]);
+  expect(entity).toBeFalsy();
+});
+
+it('per-row delete of an approved citation is rejected and leaves the citation intact', async () => {
+  const { citationId } = await makePendingCitedEntity('perrow-approved');
+  await db.runAsync('UPDATE citations SET approval_status = ? WHERE id = ?', ['approved', citationId]);
+  const res = await adminAgent
+    .post(`/admin/knowledge/review-extractions/${citationId}/delete`)
+    .set('X-CSRF-Token', csrf)
+    .set('Accept', 'application/json')
+    .send({ ids: [citationId] });
+  expect(res.status).toBe(400);
+  expect(res.body.ok).toBe(false);
+  const citation = await db.getAsync('SELECT id FROM citations WHERE id = ?', [citationId]);
+  expect(citation).toBeTruthy();
+});

@@ -987,6 +987,10 @@ router.post('/review-extractions/bulk/delete', express.json(), requireCurateAll(
   const ids = parseBulkIds(req);
   if (ids.length === 0) return res.status(400).json({ error: 'No ids provided' });
   if (ids.length > BULK_CAP) return res.status(400).json({ error: `Too many ids (cap ${BULK_CAP})` });
+  const stores = graphStores();
+  if (!stores.graphMaintenance) {
+    return res.status(503).json({ error: 'Extraction evidence delete is not wired yet.' });
+  }
   // Route deletion through the same orphan cleanup the rerun reset uses, so
   // deleting an entity's last citation doesn't strand an evidence-less
   // entity in admin listings and suggestion input. Review finding R12.
@@ -996,8 +1000,7 @@ router.post('/review-extractions/bulk/delete', express.json(), requireCurateAll(
     if (row && row.approval_status !== CITATION_APPROVAL_STATUSES.APPROVED) deletable.push(id);
   }
   let count = 0;
-  const stores = graphStores();
-  if (deletable.length > 0 && stores.graphMaintenance) {
+  if (deletable.length > 0) {
     const summary = await stores.graphMaintenance.resetCitationsById(deletable);
     count = summary.deletedCitations;
   }
