@@ -260,57 +260,54 @@ async function suggestMerges(entityType, threshold = 0.8) {
 }
 
 async function mergeEntities(keepId, mergeId) {
-  const { getDb, entities, entityAliases } = require('../database/db');
-  const db = getDb();
-  if (!db) throw new Error('Database is not initialized.');
+  const db = require('../database/db');
+  const { entities, entityAliases } = db;
 
   const keep = await entities.getById(keepId);
   const merge = await entities.getById(mergeId);
   if (!keep || !merge) {
     throw new Error('Entity not found.');
   }
+  if (
+    Number.isInteger(keep.authority_id)
+    && Number.isInteger(merge.authority_id)
+    && keep.authority_id !== merge.authority_id
+  ) {
+    throw new Error('Cannot merge entities that belong to different authorities. Reassign one entity first.');
+  }
 
-  await db.run('BEGIN');
-  try {
-    if (
-      Number.isInteger(keep.authority_id)
-      && Number.isInteger(merge.authority_id)
-      && keep.authority_id !== merge.authority_id
-    ) {
-      throw new Error('Cannot merge entities that belong to different authorities. Reassign one entity first.');
-    }
-
+  // withTransactionAsync is a real transaction on every driver (raw
+  // BEGIN/COMMIT auto-commits per statement on Turso). Per the Curator
+  // Mutation Atomicity section of docs/knowledge-graph-design.md.
+  await db.withTransactionAsync(async () => {
     const aliases = await entityAliases.getByEntityId(mergeId);
     for (const alias of aliases) {
-      await db.run(`
+      await db.runAsync(`
         INSERT OR IGNORE INTO entity_aliases (entity_id, alias, source)
         VALUES (?, ?, ?)
       `, [keepId, alias.alias, alias.source || 'merged']);
     }
-
-    await db.run(`
+    await db.runAsync(`
       INSERT OR IGNORE INTO entity_aliases (entity_id, alias, source)
       VALUES (?, ?, 'merged')
     `, [keepId, merge.canonical_name]);
 
     if (!Number.isInteger(keep.authority_id) && Number.isInteger(merge.authority_id)) {
-      await db.run('UPDATE entities SET authority_id = ? WHERE id = ?', [merge.authority_id, keepId]);
+      await db.runAsync('UPDATE entities SET authority_id = ? WHERE id = ?', [merge.authority_id, keepId]);
     }
 
-    await db.run('UPDATE date_expressions SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);
-    await db.run('UPDATE citations SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);
-    await db.run('UPDATE relationships SET source_entity_id = ? WHERE source_entity_id = ?', [keepId, mergeId]);
-    await db.run('UPDATE relationships SET target_entity_id = ? WHERE target_entity_id = ?', [keepId, mergeId]);
-    await db.run('DELETE FROM entities WHERE id = ?', [mergeId]);
-
-    await db.run('COMMIT');
-  } catch (err) {
-    await db.run('ROLLBACK');
-    throw err;
-  }
-
-  const { saveDatabase } = require('../database/db');
-  await saveDatabase();
+    await db.runAsync('UPDATE date_expressions SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('UPDATE citations SET entity_id = ? WHERE entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('UPDATE relationships SET source_entity_id = ? WHERE source_entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('UPDATE relationships SET target_entity_id = ? WHERE target_entity_id = ?', [keepId, mergeId]);
+    // Sentiment annotations reference entities on three FK columns declared
+    // ON DELETE SET NULL — without these re-points the DELETE below silently
+    // destroys the annotations' referents. Review finding R5.
+    await db.runAsync('UPDATE sentiment_annotations SET target_entity_id = ? WHERE target_entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('UPDATE sentiment_annotations SET expressed_by_entity_id = ? WHERE expressed_by_entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('UPDATE sentiment_annotations SET described_subject_entity_id = ? WHERE described_subject_entity_id = ?', [keepId, mergeId]);
+    await db.runAsync('DELETE FROM entities WHERE id = ?', [mergeId]);
+  });
 }
 
 module.exports = {

@@ -2426,8 +2426,15 @@ const graphMaintenance = {
         WHERE source_entity_id = ? OR target_entity_id = ?
         LIMIT 1
       `, [entityId, entityId]);
+      const hasSentimentReferences = await getAsync(`
+        SELECT 1 FROM sentiment_annotations
+        WHERE target_entity_id = ?
+           OR expressed_by_entity_id = ?
+           OR described_subject_entity_id = ?
+        LIMIT 1
+      `, [entityId, entityId, entityId]);
 
-      if (!hasCitations && !hasRelationships) {
+      if (!hasCitations && !hasRelationships && !hasSentimentReferences) {
         await runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [entityId]);
         await runAsync('DELETE FROM date_expressions WHERE entity_id = ?', [entityId]);
         await runAsync('DELETE FROM entities WHERE id = ?', [entityId]);
