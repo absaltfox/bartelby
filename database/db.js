@@ -796,6 +796,18 @@ async function initializeSchema(options = {}) {
 
   const currentVersion = await db.getSchemaVersion();
 
+  if (currentVersion > MIGRATIONS.length) {
+    // Warn — do not refuse to boot: the documented repair pattern
+    // (docs/db-migrations.md, response A) deliberately leaves user_version
+    // above the array length on locally-patched databases.
+    console.error(
+      `[db] SCHEMA DRIFT: PRAGMA user_version (${currentVersion}) is greater than `
+      + `MIGRATIONS.length (${MIGRATIONS.length}). Any migration appended after a `
+      + `consolidation event will silently skip on this database. `
+      + `See docs/db-migrations.md ("Drift") for repair options.`
+    );
+  }
+
   if (currentVersion < MIGRATIONS.length) {
     for (let i = currentVersion; i < MIGRATIONS.length; i++) {
       const version = i + 1;
