@@ -1076,6 +1076,10 @@ Reruns are intentionally reset-aware.
   referenced anywhere else
 - Alias and date-expression rows are also cleaned up when the owning entity is
   deleted
+- Curator-authored citations (`extraction_method = 'manual'`) are never removed
+  by a rerun. The reset set covers LLM/import-produced citations only, per the
+  "Curator Is the Expert" principle — an automated re-extraction must not
+  destroy curator assertions (which carry `confidence = 1.0`).
 
 This keeps reruns from accumulating duplicate graph evidence while still
 protecting shared entities that are referenced by other transcripts.

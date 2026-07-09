@@ -2372,8 +2372,14 @@ const graphMaintenance = {
    * the new data is safely written.
    */
   async getPreExistingCitationIds(transcriptId) {
+    // Curator-authored evidence (extraction_method = 'manual', per the C5.3
+    // contract) is never part of an LLM rerun's reset set — an LLM re-run
+    // must not outrank curator assertions. Decision recorded in
+    // docs/reviews/2026-07-06-application-reliability-review.md R7.
     const rows = await allAsync(
-      'SELECT id FROM citations WHERE transcript_id = ?',
+      `SELECT id FROM citations
+        WHERE transcript_id = ?
+          AND COALESCE(extraction_method, '') != 'manual'`,
       [transcriptId]
     );
     return rows.map((r) => r.id).filter((v) => Number.isInteger(v));
