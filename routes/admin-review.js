@@ -895,14 +895,17 @@ router.get('/review-extractions/audit-verbatim', requireAdmin, asyncHandler(asyn
     ORDER BY c.created_at DESC
     LIMIT 5000
   `);
+  // buildCitationExcerpt stores excerpts with collapsed whitespace and '...'
+  // affixes; compare on the same normalization so the audit flags real
+  // contamination, not formatting. Review finding R11.
+  const collapse = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   const samples = [];
   let mismatchCount = 0;
   for (const row of rows) {
-    const transcriptText = String(row.transcript_content || '');
-    const passageText = String(row.passage_text || '')
-      .replace(/^\.\.\./, '')
-      .replace(/\.\.\.$/, '')
-      .trim();
+    const transcriptText = collapse(row.transcript_content);
+    const passageText = collapse(
+      String(row.passage_text || '').replace(/^\.\.\./, '').replace(/\.\.\.$/, '')
+    );
     if (!passageText || transcriptText.includes(passageText)) continue;
     mismatchCount += 1;
     if (samples.length < 50) {
