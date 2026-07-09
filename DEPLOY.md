@@ -468,6 +468,24 @@ fly apps restart bartelby
 turso db shell bartelby
 ```
 
+### Foreign keys on Turso
+
+The schema relies on SQLite foreign-key ACTIONS (`ON DELETE SET NULL` on
+sentiment-annotation entity references; `ON DELETE CASCADE` on several job
+tables). Local drivers enable `PRAGMA foreign_keys` per connection, but
+Turso's HTTP protocol is stateless per statement, so enforcement on the
+hosted service must be verified, not assumed:
+
+```bash
+TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... node scripts/verify-turso-fk.js
+```
+
+Run this once per Turso database (and after libsql client upgrades). If it
+prints `FAIL`, entity deletions will leave dangling references in
+production that local development never exhibits — treat that as a blocker
+and open an issue to make the affected cleanup explicit at the app layer.
+Record the result (PASS/FAIL + date) here when run.
+
 ---
 
 ## Rollback
