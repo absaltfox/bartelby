@@ -519,6 +519,7 @@ const transcriptionJobsAsync = {
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL
       WHERE id = ?
+        AND status != 'done'
     `, [error || 'Unknown error', id]);
     await saveDatabase();
   },

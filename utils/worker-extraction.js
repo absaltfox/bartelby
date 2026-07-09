@@ -649,7 +649,9 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
   for (const itemResult of pollResult.itemResults || []) {
     const stillClaimed = await extractionJobs.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
     if (!stillClaimed) {
-      throw new Error(`Lost extraction finalization claim for batch job ${job.id}.`);
+      const claimError = new Error(`Lost extraction finalization claim for batch job ${job.id}.`);
+      claimError.code = 'LOST_FINALIZATION_CLAIM';
+      throw claimError;
     }
 
     if (processedIds.has(itemResult.customId)) {

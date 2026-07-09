@@ -2,6 +2,26 @@
 
 const { countUnknownWords } = require('./analytics');
 
+function normalizeExtractedDate(value) {
+  if (!value || typeof value !== 'string') return null;
+  const cleaned = value.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
+  // ISO date strings (YYYY-MM-DD) are parsed as UTC midnight by the JS engine;
+  // return the cleaned string directly to avoid local-timezone day drift.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+    const probe = new Date(cleaned);
+    if (Number.isNaN(probe.getTime()) || probe.getUTCFullYear() <= 0) return null;
+    return cleaned;
+  }
+  const parsed = new Date(cleaned);
+  if (Number.isNaN(parsed.getTime()) || parsed.getFullYear() <= 0) return null;
+  // Format from local components — toISOString() shifts the calendar day for
+  // local-midnight parses east of UTC. Archival dates must not drift.
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function buildTranscriptPageSegments(results) {
   return results.map((result, index) => ({
     pageNumber: index + 1,
@@ -98,11 +118,8 @@ async function persistDocumentTranscription({
     }
 
     if (merged.date_created) {
-      const cleaned = merged.date_created.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-      const parsed = new Date(cleaned);
-      if (!Number.isNaN(parsed.getTime()) && parsed.getFullYear() > 0) {
-        merged.date_created = parsed.toISOString().split('T')[0];
-      }
+      const normalizedDate = normalizeExtractedDate(merged.date_created);
+      if (normalizedDate) merged.date_created = normalizedDate;
     }
 
     const updates = { metadata: merged };
@@ -302,5 +319,6 @@ async function persistDocumentTranscription({
 module.exports = {
   buildTranscriptPageSegments,
   combineTranscriptionResults,
+  normalizeExtractedDate,
   persistDocumentTranscription
 };

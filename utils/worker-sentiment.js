@@ -133,6 +133,13 @@ async function processSingletonJob(job, config) {
   const enriched = [];
   for (const ann of annotations) {
     const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
+    if (!phrase) {
+      // A degenerate verbatim (e.g. punctuation-only) can miss the phrase
+      // upsert; skip the annotation instead of TypeError-failing the whole
+      // paid job. 07-04 review D14 family / 07-06 review R13.
+      console.warn(`[worker-sentiment] job ${job.id}: no phrase row for verbatim; annotation skipped`);
+      continue;
+    }
     enriched.push({
       ...ann,
       notes: ann.notes ?? null,
@@ -339,6 +346,13 @@ async function pollRunningSentimentBatches() {
         const enriched = [];
         for (const ann of annotations) {
           const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
+          if (!phrase) {
+            // A degenerate verbatim (e.g. punctuation-only) can miss the phrase
+            // upsert; skip the annotation instead of TypeError-failing the whole
+            // paid job. 07-04 review D14 family / 07-06 review R13.
+            console.warn(`[worker-sentiment] job ${job.id}: no phrase row for verbatim; annotation skipped`);
+            continue;
+          }
           enriched.push({
             ...ann,
             notes: ann.notes ?? null,

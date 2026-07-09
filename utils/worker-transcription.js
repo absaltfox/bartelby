@@ -208,7 +208,9 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
 
     const stillClaimed = await transcriptionJobsAsync.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
     if (!stillClaimed) {
-      throw new Error(`Lost finalization claim for batch job ${job.id}.`);
+      const claimError = new Error(`Lost finalization claim for batch job ${job.id}.`);
+      claimError.code = 'LOST_FINALIZATION_CLAIM';
+      throw claimError;
     }
 
     const expectedPages = docManifest.length;
