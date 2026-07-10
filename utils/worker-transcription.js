@@ -388,7 +388,7 @@ async function pollRunningTranscriptionBatches() {
   const jobs = await transcriptionJobsAsync.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id || job.batch_remote_id.startsWith('pending')) continue;
+    if (!job.batch_remote_id || job.batch_remote_id === 'pending' || job.batch_remote_id.startsWith('pending-')) continue;
     const logLine = makeJobLogger(job, transcriptionJobsAsync);
 
     // Poll the remote provider for batch status.  Transient poll errors

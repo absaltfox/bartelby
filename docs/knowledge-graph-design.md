@@ -735,14 +735,11 @@ citation review queue supports three bulk-action endpoints for efficient triage:
   `{ success: true, count: number }`.
 - `POST /admin/knowledge/review-extractions/bulk/reject` — Rejects up to 200
   citations applied per id; the response reports the applied `count`. Same request/response format.
-- `POST /admin/knowledge/review-extractions/bulk/delete` — Deletes up to 200
-  citations (removes evidence) applied per id; the response reports the applied `count`. Refuses if any row is already approved. Same
-  request/response format.
+- `POST /admin/knowledge/review-extractions/bulk/delete` — Deletes up to 200 citations (removes evidence), applied per id; the response reports the applied `count`. Refuses if any row is already approved.
 
 Deleting a citation (bulk or per-row) runs the same orphan cleanup as rerun
 resets: relationships and entities left with no remaining citation evidence
-(and no sentiment-annotation references) are removed with it.
-
+(and no sentiment-annotation references) are removed with it. A mid-batch failure returns an error after any already-applied deletions (per-id application, no rollback).
 
 All bulk endpoints are audit-logged. CRITICAL implementation detail: bulk routes
 must be registered BEFORE the per-row `/:id/{approve,reject,delete}` routes in

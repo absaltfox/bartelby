@@ -379,6 +379,22 @@ async function pollRunningSentimentBatches() {
         await db.sentimentAsync.markFailed(job.id, `Batch finalize failed: ${err.message}`);
       }
     }
+
+    // Mark any jobs still in batch_submitted as failed — the provider returned a
+    // completed batch but omitted their result row. Re-query so only genuinely
+    // unprocessed jobs (not already markDone/markFailed above) are caught.
+    // Guard: only run when results is a non-null array (fetch failures already
+    // released the claim and continued — don't fail jobs on that path).
+    // Per docs/background-jobs.md and no-auto-retry rule: admin retries from /admin/jobs.
+    if (Array.isArray(results)) {
+      const omitted = await db.sentimentAsync.listBatchSubmittedByRemoteId(remoteId);
+      for (const job of omitted) {
+        await db.sentimentAsync.markFailed(
+          job.id,
+          `Provider returned no result row for this job in batch ${remoteId}; marked failed for admin retry.`
+        );
+      }
+    }
   }
 }
 

@@ -47,3 +47,43 @@ it('polls each batch with the provider recorded on its rows', async () => {
   const calledProviders = provider.getBatchStatus.mock.calls.map((c) => `${c[0].provider}:${c[0].batchId}`);
   expect(calledProviders).toEqual(expect.arrayContaining(['openai:batch-openai-1', 'claude:batch-claude-1']));
 });
+
+it('marks jobs failed when provider returns no result row, and routes fetchBatchResults by row provider', async () => {
+  // Items 1 + 2: completed batch with empty results → job marked failed with "no result row"
+  // and fetchBatchResults is called with the provider recorded on the row.
+  provider.getBatchStatus.mockImplementation(async ({ batchId }) => ({
+    status: batchId === 'batch-claude-empty' ? 'completed' : 'running'
+  }));
+  provider.fetchBatchResults.mockClear();
+  provider.fetchBatchResults.mockResolvedValueOnce([]);
+
+  const docId = await db.documentsAsync.create({
+    title: 'R1R2 Doc', date_created: null, description: null,
+    image_path: '/uploads/r1r2.png', metadata: {}
+  });
+  const txId = await db.transcriptsAsync.create({
+    document_id: docId, content: 'test content for omit', transcriber: 'Manual', version: 1, notes: null
+  });
+  const jobId = await db.sentimentAsync.createJob({ document_id: docId, transcript_id: txId });
+  await db.runAsync(
+    `UPDATE sentiment_extraction_jobs
+        SET status='batch_submitted', kind='batch', batch_remote_id='batch-claude-empty', provider='claude'
+      WHERE id = ?`,
+    [jobId]
+  );
+
+  const { pollRunningSentimentBatches } = require('../../utils/worker-sentiment');
+  await pollRunningSentimentBatches();
+
+  // Item 2: fetchBatchResults received the row's provider
+  expect(provider.fetchBatchResults.mock.calls).toHaveLength(1);
+  expect(provider.fetchBatchResults.mock.calls[0][0].provider).toBe('claude');
+
+  // Item 1: job is now failed with "no result row" message
+  const job = await db.getAsync(
+    'SELECT status, error FROM sentiment_extraction_jobs WHERE id = ?',
+    [jobId]
+  );
+  expect(job.status).toBe('failed');
+  expect(job.error).toMatch(/no result row/);
+});

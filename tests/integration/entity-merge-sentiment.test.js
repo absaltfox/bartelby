@@ -54,6 +54,46 @@ describe('entity merge and rerun cleanup vs sentiment annotations', () => {
     expect(ann.target_entity_id).toBe(keepId);
   });
 
+  it('mergeEntities re-points expressed_by_entity_id and described_subject_entity_id to the kept entity', async () => {
+    const keepId = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'Jane Keep', description: null, properties: {}
+    });
+    const mergeId = await db.entitiesAsync.create({
+      entity_type: 'person', canonical_name: 'Jane Merge', description: null, properties: {}
+    });
+
+    // Insert annotation with expressed_by_entity_id pointing at mergeId
+    const rExpr = await db.runAsync(`
+      INSERT INTO sentiment_annotations
+        (transcript_id, document_id, span_start, span_end, polarity, intensity,
+         voice_role, target_kind, emotion_phrase_verbatim, approval_status, expressed_by_entity_id)
+      VALUES (?, ?, 0, 5, 'positive', 'moderate', 'author', 'theme', 'glad', 'pending', ?)
+    `, [txId, docId, mergeId]);
+    const exprAnnId = rExpr.lastInsertRowid;
+
+    // Insert annotation with described_subject_entity_id pointing at mergeId
+    const rSubj = await db.runAsync(`
+      INSERT INTO sentiment_annotations
+        (transcript_id, document_id, span_start, span_end, polarity, intensity,
+         voice_role, target_kind, emotion_phrase_verbatim, approval_status, described_subject_entity_id)
+      VALUES (?, ?, 6, 10, 'negative', 'low', 'author', 'theme', 'sad', 'pending', ?)
+    `, [txId, docId, mergeId]);
+    const subjAnnId = rSubj.lastInsertRowid;
+
+    const { mergeEntities } = require('../../utils/entity-resolution');
+    await mergeEntities(keepId, mergeId);
+
+    const exprAnn = await db.getAsync(
+      'SELECT expressed_by_entity_id FROM sentiment_annotations WHERE id = ?', [exprAnnId]
+    );
+    expect(exprAnn.expressed_by_entity_id).toBe(keepId);
+
+    const subjAnn = await db.getAsync(
+      'SELECT described_subject_entity_id FROM sentiment_annotations WHERE id = ?', [subjAnnId]
+    );
+    expect(subjAnn.described_subject_entity_id).toBe(keepId);
+  });
+
   it('resetCitationsById keeps an entity that sentiment annotations still reference', async () => {
     const entityId = await db.entitiesAsync.create({
       entity_type: 'person', canonical_name: 'Annotated Only', description: null, properties: {}
