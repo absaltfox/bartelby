@@ -486,6 +486,10 @@ production that local development never exhibits — treat that as a blocker
 and open an issue to make the affected cleanup explicit at the app layer.
 Record the result (PASS/FAIL + date) here when run.
 
+**Result: PASS — 2026-07-09.** Run on a production worker machine via
+`fly ssh console` (probe staged to `/tmp`, `NODE_PATH=/app/node_modules`);
+`ON DELETE SET NULL` fired and the probe exited 0.
+
 ---
 
 ## Rollback
