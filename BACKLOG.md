@@ -18,6 +18,21 @@ When an item ships, delete it here and cite this file in the PR body.
   the same redirect-with-error pattern as the sentiment prompt-template
   validation. Motivated by the 2026-07-11 prod misconfiguration.
 
+- [ ] **Stop the `#collection-<id>` hash from opening the Access panel on
+  unrelated flows.** `bindCollectionPanels` in
+  `public/js/confirm-actions.js` opens `access-<id>` for any
+  `#collection-<id>` page load — correct for the access grant/revoke
+  redirects (`routes/admin-collections.js`), wrong for the Re-extract
+  `returnTo` (`views/admin/collections.ejs`, which should land on the
+  queued-confirmation flash at the top instead) and for the set-preview
+  redirect (which should reopen the *Preview* panel, not Access).
+  Differentiate fragments by intent — `#access-<id>` / `#preview-<id>`
+  open their panel + scroll, `#collection-<id>` scrolls only — per
+  [docs/ui-template-standards.md](./docs/ui-template-standards.md)
+  (template-loaded page JS), with route tests on the redirect targets.
+  Motivated by the 2026-07-11 report of the User Access panel appearing
+  after a collection re-extract.
+
 ## Owed features
 
 - [ ] **Admin-triggered sentiment re-run surface.** Follow-up owed from
