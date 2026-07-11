@@ -2,24 +2,33 @@
 
 const { countUnknownWords } = require('./analytics');
 
-function normalizeExtractedDate(value) {
-  if (!value || typeof value !== 'string') return null;
-  const cleaned = value.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-  // ISO date strings (YYYY-MM-DD) are parsed as UTC midnight by the JS engine;
-  // return the cleaned string directly to avoid local-timezone day drift.
-  if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
-    const probe = new Date(cleaned);
-    if (Number.isNaN(probe.getTime()) || probe.getUTCFullYear() <= 0) return null;
-    return cleaned;
-  }
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function normalizeDateCreated(raw) {
+  if (typeof raw !== 'string') return null;
+  const cleaned = raw.trim().replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
+  // Require an explicit four-digit year: V8's Date parser silently fills in
+  // year 2001 for year-less strings ("March 15") and maps two-digit years to
+  // 20xx ("March 15 47" -> 2047), so anything without a written year cannot
+  // be normalized without inventing one.
+  const yearMatch = cleaned.match(/\b(\d{4})\b/);
+  if (!yearMatch) return null;
+  const writtenYear = parseInt(yearMatch[1], 10);
   const parsed = new Date(cleaned);
-  if (Number.isNaN(parsed.getTime()) || parsed.getFullYear() <= 0) return null;
-  // Format from local components — toISOString() shifts the calendar day for
-  // local-midnight parses east of UTC. Archival dates must not drift.
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, '0');
-  const d = String(parsed.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  if (Number.isNaN(parsed.getTime())) return null;
+  // ISO date-only strings parse as UTC midnight while every other format
+  // parses as local time; read components from the matching frame so the
+  // calendar day never shifts on servers outside UTC.
+  const isIsoInput = ISO_DATE_PATTERN.test(cleaned);
+  const year = isIsoInput ? parsed.getUTCFullYear() : parsed.getFullYear();
+  const month = isIsoInput ? parsed.getUTCMonth() : parsed.getMonth();
+  const day = isIsoInput ? parsed.getUTCDate() : parsed.getDate();
+  if (year !== writtenYear) return null;
+  const result = `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  // An ISO input that does not round-trip had an out-of-range month or day
+  // that the parser rolled over (e.g. 1847-02-30 -> 1847-03-02).
+  if (isIsoInput && result !== cleaned) return null;
+  return result;
 }
 
 function buildTranscriptPageSegments(results) {
@@ -69,6 +78,7 @@ async function persistDocumentTranscription({
 
   const {
     documentsAsync,
+    documentCollectionsAsync,
     transcriptsAsync,
     extractionJobs,
     settingsAsync,
@@ -117,14 +127,45 @@ async function persistDocumentTranscription({
       }
     }
 
+    let normalizedDate = null;
     if (merged.date_created) {
-      const normalizedDate = normalizeExtractedDate(merged.date_created);
-      if (normalizedDate) merged.date_created = normalizedDate;
+      normalizedDate = normalizeDateCreated(merged.date_created);
+      if (normalizedDate) {
+        merged.date_created = normalizedDate;
+      }
+    }
+
+    // Validate the normalized date against the containing collections'
+    // curated coverage range. An out-of-range year is far more often an
+    // extraction misread than a genuinely misfiled document, so the value
+    // stays visible in metadata with a review marker but is withheld from
+    // documents.date_created until a curator confirms it.
+    if (normalizedDate) {
+      delete merged._date_created_out_of_range;
+      const range = await documentCollectionsAsync.getDateRangeForDocument(doc.id);
+      if (range) {
+        const year = parseInt(normalizedDate.slice(0, 4), 10);
+        const outOfRange = (range.startYear != null && year < range.startYear)
+          || (range.endYear != null && year > range.endYear);
+        if (outOfRange) {
+          merged._date_created_out_of_range = true;
+          if (logLine) {
+            await logLine(
+              `Extracted date ${normalizedDate} for document ${documentId} falls outside the collection date range `
+                + `(${range.startYear ?? '…'}–${range.endYear ?? '…'}); flagged for review and not applied to the document date`
+            );
+          }
+          normalizedDate = null;
+        }
+      }
     }
 
     const updates = { metadata: merged };
-    if (!doc.date_created && merged.date_created) {
-      updates.date_created = merged.date_created;
+    // documents.date_created feeds range filters, MIN/MAX, and ORDER BY, so
+    // only a confidently normalized ISO date may be copied into it; the
+    // as-written form stays available in metadata either way.
+    if (!doc.date_created && normalizedDate) {
+      updates.date_created = normalizedDate;
     }
     if (!doc.description && llmMeta.condition) {
       updates.description = `Condition: ${llmMeta.condition}`;
@@ -319,6 +360,6 @@ async function persistDocumentTranscription({
 module.exports = {
   buildTranscriptPageSegments,
   combineTranscriptionResults,
-  normalizeExtractedDate,
+  normalizeDateCreated,
   persistDocumentTranscription
 };

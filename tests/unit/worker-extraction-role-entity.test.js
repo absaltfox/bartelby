@@ -36,7 +36,7 @@ describe('worker-extraction role entity type (E1.1)', () => {
       citations: { create: async () => 1 },
       authorityGenericTermsAsync: { listActive: async () => [] },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: async () => true, create: async () => 1 },
-      documentCollectionsAsync: { getByDocumentId: async () => [] }
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId: async () => [] }
     }));
     jest.doMock('../../utils/extraction-llm', () => ({
       runExtraction: async () => ({

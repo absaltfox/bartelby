@@ -1,11 +1,14 @@
 <%
-  // Shared sentiment chip set. Renders the four typed chips for an annotation:
-  // label (curator vocabulary), polarity, intensity, voice role.
+  // Shared sentiment chip set. Renders the typed chips for an annotation:
+  // label (curator vocabulary), polarity, intensity, voice role, and a quiet
+  // register chip when the annotation is marked conventional (F1 of
+  // docs/2026-07-05-epistolary-register-design.md — no chip for 'personal'
+  // or NULL/unclassified).
   // Per docs/sentiment-design.md non-negotiables: voice role is first-class,
   // Plutchik is never surfaced.
   //
   // Locals:
-  //   annotation { label_name, polarity, intensity, voice_role }
+  //   annotation { label_name, polarity, intensity, voice_role, register }
   //   showLabel  (optional, default true)  — set false in contexts that already show the label
   //   compact    (optional, default false) — reduced size for inline use
   var ann = typeof annotation !== 'undefined' && annotation ? annotation : {};
@@ -32,4 +35,8 @@
   <span class="s-chip s-chip--polarity s-chip--polarity-<%= polarity %>"><%= polarity %></span>
   <span class="s-chip s-chip--intensity s-chip--intensity-<%= intensity %>"><%= intensity %></span>
   <span class="s-chip s-chip--voice s-chip--voice-<%= voiceRole %>" title="<%= voiceTitle %>"><%= voiceLabel %></span>
+  <% if (ann.register === 'conventional') { %>
+    <span class="s-chip s-chip--register s-chip--register-conventional"
+          title="Formulaic epistolary performance (prescribed opening, deference marker, closing, or stock formula) — register describes the form, not sincerity">conventional</span>
+  <% } %>
 </span>

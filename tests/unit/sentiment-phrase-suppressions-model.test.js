@@ -23,6 +23,21 @@ describe('sentimentPhraseSuppressions model — S3', () => {
     expect(m().normalize('the   school   house')).toBe('the school house');
   });
 
+  it('normalize strips trailing punctuation, matching the shared phrase normalizer (D6)', () => {
+    // Before D6 the model owned a fork without the punctuation strip:
+    // suppressing a display phrase like 'the school house.' wrote a key the
+    // listing's normalizePhraseSql join never produced — a silent no-op.
+    expect(m().normalize('The School House.')).toBe('the school house');
+    expect(m().normalize('my position!?')).toBe('my position');
+    expect(m().normalize('The School House.')).toBe(db.normalizeSentimentPhrase('The School House.'));
+  });
+
+  it('add with trailing punctuation is found by isSuppressed on the clean form (D6)', async () => {
+    await m().add({ phrase: 'the west corridor.', userId: null });
+    expect(await m().isSuppressed('the west corridor')).toBe(true);
+    expect(await m().isSuppressed('The West Corridor.')).toBe(true);
+  });
+
   it('add inserts using normalized form and preserves display', async () => {
     await m().add({ phrase: '  The School House ', notes: 'too generic', userId: null });
     const row = await db.getAsync(`SELECT * FROM sentiment_phrase_suppressions WHERE target_phrase_normalized = 'the school house'`);

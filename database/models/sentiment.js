@@ -270,12 +270,31 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
     // batch correlation + per-job paradata so the worker rebuilds the request
     // cleanly. Mirrors transcriptionJobsAsync.retry / extractionJobsAsync.retry
     // so the admin /admin/jobs Retry button works across all job types.
+    //
+    // Non-negotiable #5 (staged reset): a retry of a job whose transcript
+    // already has annotations must run with reset_existing = 1, or the rerun
+    // appends duplicates (double-counted phrases, polluted review queue).
+    // Keying on "annotations exist for this transcript" covers both the
+    // done-retry case and a job that wrote annotations then failed at
+    // markDone — finding D2 in
+    // docs/reviews/2026-07-04-sentiment-emotion-analysis-review.md.
     async retry(id) {
+      const job = await getAsync(
+        `SELECT transcript_id FROM sentiment_extraction_jobs
+          WHERE id = ? AND status IN ('failed', 'done')`,
+        [id]
+      );
+      const hasAnnotations = job
+        ? Boolean(await getAsync(
+            `SELECT 1 AS hit FROM sentiment_annotations WHERE transcript_id = ? LIMIT 1`,
+            [job.transcript_id]
+          ))
+        : false;
       const result = await runAsync(
         `UPDATE sentiment_extraction_jobs
             SET status = 'queued',
                 kind = 'singleton',
-                reset_existing = 1,
+                reset_existing = CASE WHEN ? THEN 1 ELSE reset_existing END,
                 batch_remote_id = NULL,
                 batch_submitted_at = NULL,
                 batch_finalization_claimed_at = NULL,
@@ -293,7 +312,7 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
                 system_prompt = NULL,
                 extraction_notes = NULL
           WHERE id = ? AND status IN ('failed', 'done')`,
-        [id]
+        [hasAnnotations ? 1 : 0, id]
       );
       await saveDatabase();
       return result;
@@ -665,8 +684,9 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
              approval_status, auto_approved, reviewed_at,
              extracted_by, extraction_job_id, extracted_at,
              emotion_about_phrase_verbatim, emotion_about_earliest,
-             emotion_about_latest, emotion_about_precision, emotion_about_qualifier
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             emotion_about_latest, emotion_about_precision, emotion_about_qualifier,
+             register
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             a.transcript_id, a.document_id, a.span_start, a.span_end, a.evidence_excerpt,
             a.polarity, a.intensity, a.confidence, a.voice_role, a.target_kind,
@@ -683,7 +703,8 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
             a.emotion_about_earliest ?? null,
             a.emotion_about_latest ?? null,
             a.emotion_about_precision ?? null,
-            a.emotion_about_qualifier ?? null
+            a.emotion_about_qualifier ?? null,
+            a.register ?? null
           ]
         );
         written++;
@@ -1213,6 +1234,11 @@ const INTENSITIES   = new Set(['low', 'moderate', 'strong']);
 const TARGET_KINDS  = new Set(['entity', 'phrase', 'theme']);
 const STATUSES      = new Set(['approved', 'pending']);
 const TIMELINE_BUCKETS = new Set(['decade', 'year', 'month']);
+// F2 (epistolary register design): 'default' is a sentinel meaning "exclude
+// conventional" (personal and NULL/unclassified rows pass). It is accepted
+// as an explicit query value too, because the workbench bootstrap round-trips
+// the parsed filters back through annotations.json/rollups.json requests.
+const REGISTER_MODES = new Set(['default', 'all', 'conventional', 'personal']);
 
 function asPositiveInt(value) {
   if (value === undefined || value === null || value === '') return null;
@@ -1261,6 +1287,7 @@ function parseResearchFilters(rawQuery, { isAdmin = false } = {}) {
     polarity: asEnum(rawQuery.polarity, POLARITIES),
     intensity: asEnum(rawQuery.intensity, INTENSITIES),
     target_kind: asEnum(rawQuery.target_kind, TARGET_KINDS),
+    register: asEnum(rawQuery.register, REGISTER_MODES) || 'default',
     entity_id: asPositiveInt(rawQuery.entity_id),
     authority_id: asPositiveInt(rawQuery.authority_id),
     document_id: asPositiveInt(rawQuery.document_id),
@@ -1290,6 +1317,7 @@ const RESEARCH_BASE_SELECT = `
     a.notes, a.approval_status, a.extracted_at,
     a.emotion_about_phrase_verbatim, a.emotion_about_earliest,
     a.emotion_about_latest, a.emotion_about_precision, a.emotion_about_qualifier,
+    a.register,
     COALESCE(a.emotion_about_earliest, d.date_created) AS research_date,
     d.title AS document_title,
     d.date_created AS document_date,
@@ -1351,6 +1379,19 @@ function buildResearchWhere(filters, accessSql) {
   if (filters.target_kind) {
     conditions.push('a.target_kind = ?');
     params.push(filters.target_kind);
+  }
+  // F2 (epistolary register design §A.3.2): conventional register must not
+  // distort entity-level sentiment by default — deference formulas target
+  // the office, not the person. This is the ONE place the exclusion lives;
+  // every research surface inherits it via parseResearchFilters. Absent or
+  // 'default' → exclude conventional (NULL/unclassified rows always pass);
+  // 'all' disables the exclusion; explicit 'conventional'/'personal' select
+  // exactly that value (NULL excluded).
+  if (!filters.register || filters.register === 'default') {
+    conditions.push(`(a.register IS NULL OR a.register != 'conventional')`);
+  } else if (filters.register === 'conventional' || filters.register === 'personal') {
+    conditions.push('a.register = ?');
+    params.push(filters.register);
   }
   if (filters.entity_id) {
     conditions.push(`(a.target_entity_id = ?

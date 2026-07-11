@@ -5,7 +5,8 @@ const {
   buildExtractionPrompt,
   parseExtractionResponse
 } = require('./extraction-llm');
-const { settingsAsync, transcriptsAsync, documentsAsync } = require('../database/db');
+const { settingsAsync, transcriptsAsync, documentsAsync, documentCollectionsAsync } = require('../database/db');
+const { formatDateRangeHint } = require('./llm');
 const {
   assertVertexBatchConfig,
   buildGsUri,
@@ -131,10 +132,18 @@ async function loadManifestRequest(request) {
   if (typeof docMetadata === 'string') {
     try { docMetadata = JSON.parse(docMetadata); } catch (err) { docMetadata = {}; }
   }
+  let dateRangeHint = null;
+  try {
+    dateRangeHint = formatDateRangeHint(
+      await documentCollectionsAsync.getDateRangeForDocument(request.documentId)
+    );
+  } catch (err) {
+    dateRangeHint = null;
+  }
   return {
     transcript,
     document,
-    prompt: buildExtractionPrompt(transcript.content, docMetadata || {})
+    prompt: buildExtractionPrompt(transcript.content, docMetadata || {}, dateRangeHint)
   };
 }
 

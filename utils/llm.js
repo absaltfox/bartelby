@@ -69,13 +69,33 @@ function getSystemPrompt(cfg = {}) {
   return (typeof prompt === 'string' && prompt.trim()) ? prompt : DEFAULT_SYSTEM_PROMPT;
 }
 
-function buildMessages(imageBuffer, mimeType) {
+// Renders a collection coverage range ({ startYear, endYear }, either side
+// nullable) as a disambiguation-only instruction. Phrased to bias the reading
+// of ambiguous glyphs without licensing the model to invent or move dates —
+// out-of-range documents legitimately exist (misfiled items), so the range
+// must never override what is actually written.
+function formatDateRangeHint(range) {
+  if (!range || (range.startYear == null && range.endYear == null)) return null;
+  const span = range.startYear != null && range.endYear != null
+    ? `${range.startYear}–${range.endYear}`
+    : range.startYear != null
+      ? `${range.startYear} or later`
+      : `${range.endYear} or earlier`;
+  return `Context: this document belongs to a collection whose documents are known to date from ${span}. `
+    + 'If a written year is ambiguous or partially legible, prefer the reading consistent with that span. '
+    + 'Never invent a date that is not written in the document, and never alter a clearly written date to fit the span.';
+}
+
+function buildMessages(imageBuffer, mimeType, dateRangeHint = null) {
+  const text = dateRangeHint
+    ? `Please transcribe this document.\n\n${dateRangeHint}`
+    : 'Please transcribe this document.';
   return [
     {
       role: 'user',
       content: [
         { type: 'image', image: imageBuffer, mimeType },
-        { type: 'text', text: 'Please transcribe this document.' }
+        { type: 'text', text }
       ]
     }
   ];
@@ -194,14 +214,14 @@ async function resolveTranscriptionRuntime(providerName, runtimeConfig = {}, opt
   };
 }
 
-async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType, cfg = {}) {
+async function runTranscription(modelInstance, providerName, modelName, temperature, imageBuffer, mimeType, cfg = {}, dateRangeHint = null) {
   const startMs = Date.now();
   const systemPrompt = getSystemPrompt(cfg);
   const { text, usage } = await generateText({
     model: modelInstance,
     system: systemPrompt,
     temperature: temperature != null ? temperature : undefined,
-    messages: buildMessages(imageBuffer, mimeType)
+    messages: buildMessages(imageBuffer, mimeType, dateRangeHint)
   });
   const durationMs = Date.now() - startMs;
   const parsed = parseResponse(text);
@@ -228,7 +248,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.openai_model || 'gpt-4o';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOpenAI({ apiKey });
-      return runTranscription(client(model), 'openai', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'openai', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   },
 
@@ -240,7 +260,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.anthropic_model || 'claude-3-5-sonnet-20241022';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createAnthropic({ apiKey });
-      return runTranscription(client(model), 'claude', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'claude', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   },
 
@@ -252,7 +272,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.google_model || 'gemini-1.5-pro-latest';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createGoogleGenerativeAI({ apiKey });
-      return runTranscription(client(model), 'gemini', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'gemini', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   },
 
@@ -264,7 +284,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.vertex_model || 'gemini-2.5-flash';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createVertex({ apiKey });
-      return runTranscription(client(model), 'vertex', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'vertex', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   },
 
@@ -277,7 +297,7 @@ const PROVIDERS = {
       const model = opts.model || runtimeConfig.model || cfg.ollama_model || 'llava';
       const temperature = opts.temperature != null ? opts.temperature : null;
       const client = createOllama({ baseURL });
-      return runTranscription(client(model), 'ollama', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'ollama', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   },
 
@@ -291,7 +311,7 @@ const PROVIDERS = {
       const temperature = opts.temperature != null ? opts.temperature : null;
       // LM Studio is OpenAI-compatible; no API key required for local use
       const client = createOpenAI({ baseURL, apiKey: 'lmstudio' });
-      return runTranscription(client(model), 'lmstudio', model, temperature, imageBuffer, mimeType, cfg);
+      return runTranscription(client(model), 'lmstudio', model, temperature, imageBuffer, mimeType, cfg, opts.dateRangeHint || null);
     }
   }
 };
@@ -698,6 +718,7 @@ module.exports = {
   providerNeedsApiKey,
   getUtilityModelInstance,
   parseTranscriptionResponse: parseResponse,
+  formatDateRangeHint,
   getTranscriptionSystemPrompt,
   resolveTranscriptionRuntime,
   generateDocumentTitle,

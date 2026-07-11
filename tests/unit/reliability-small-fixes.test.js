@@ -20,14 +20,14 @@ describe('typed lost-finalization-claim error', () => {
 });
 
 describe('date_created normalization is timezone-safe', () => {
-  const { normalizeExtractedDate } = require('../../utils/transcription-pipeline');
+  const { normalizeDateCreated } = require('../../utils/transcription-pipeline');
 
   it('formats from local components, never shifting a day', () => {
-    expect(normalizeExtractedDate('March 4th, 1873')).toBe('1873-03-04');
-    expect(normalizeExtractedDate('1873-03-04')).toBe('1873-03-04');
+    expect(normalizeDateCreated('March 4th, 1873')).toBe('1873-03-04');
+    expect(normalizeDateCreated('1873-03-04')).toBe('1873-03-04');
   });
 
   it('returns null for unparseable input', () => {
-    expect(normalizeExtractedDate('last spring')).toBe(null);
+    expect(normalizeDateCreated('last spring')).toBe(null);
   });
 });

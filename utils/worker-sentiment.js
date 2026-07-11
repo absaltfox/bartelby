@@ -25,6 +25,28 @@ function buildExcerpt(content, start, end) {
   return c.slice(a, b);
 }
 
+// The S2 temporal contract keys everything on comparison with the letter
+// date ("emit emotion_about_* only when the referent is distinct from the
+// document date"), so the date must actually be in the prompt — finding D8
+// in docs/reviews/2026-07-04-sentiment-emotion-analysis-review.md. Author
+// is included where known so voice attribution has an anchor too.
+function buildDocumentMetadata(document) {
+  if (!document) return '';
+  const lines = [`Title: ${document.title || ''}`];
+  const date = document.date_created ? String(document.date_created).trim() : '';
+  if (date) lines.push(`Date: ${date}`);
+  if (document.metadata) {
+    try {
+      const meta = typeof document.metadata === 'string'
+        ? JSON.parse(document.metadata)
+        : document.metadata;
+      const author = meta && typeof meta.author === 'string' ? meta.author.trim() : '';
+      if (author) lines.push(`Author: ${author}`);
+    } catch (_) { /* malformed metadata JSON — omit author */ }
+  }
+  return lines.join('\n');
+}
+
 async function loadConfig() {
   const [
     promptTemplate, autoApprove, reviewFloor, batchMin, providerName
@@ -105,7 +127,7 @@ async function processSingletonJob(job, config) {
   try {
     prompt = buildPrompt({
       template: config.promptTemplate,
-      documentMetadata: document ? `Title: ${document.title || ''}` : '',
+      documentMetadata: buildDocumentMetadata(document),
       knownEntities,
       transcriptContent: transcript.content
     });
@@ -197,11 +219,11 @@ async function runSentimentExtractionCycle() {
     for (const job of claimed) {
       try {
         const transcript = await db.getAsync(`SELECT id, content FROM transcripts WHERE id = ?`, [job.transcript_id]);
-        const document = await db.getAsync(`SELECT id, title FROM documents WHERE id = ?`, [job.document_id]);
+        const document = await db.getAsync(`SELECT id, title, date_created, metadata FROM documents WHERE id = ?`, [job.document_id]);
         const knownEntities = await loadKnownEntities(job.document_id);
         const prompt = buildPrompt({
           template: config.promptTemplate,
-          documentMetadata: document ? `Title: ${document.title || ''}` : '',
+          documentMetadata: buildDocumentMetadata(document),
           knownEntities,
           transcriptContent: transcript ? transcript.content : ''
         });
@@ -402,5 +424,7 @@ module.exports = {
   runSentimentExtractionCycle,
   pollRunningSentimentBatches,
   processSingletonJob,
+  loadKnownEntities,
+  buildDocumentMetadata,
   SENTIMENT_BATCH_MAX_CLAIM
 };

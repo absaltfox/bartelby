@@ -37,7 +37,7 @@ describe('worker-extraction voice write-through', () => {
       citations: { create: async () => 1 },
       authorityGenericTermsAsync: { listActive: async () => [] },
       authoritySuggestionJobsAsync: { hasPendingOrRunningForCollection: async () => true, create: async () => 1 },
-      documentCollectionsAsync: { getByDocumentId: async () => [] },
+      documentCollectionsAsync: { getDateRangeForDocument: async () => null, getByDocumentId: async () => [] },
       graphMaintenance: { getPreExistingCitationIds: async () => [], resetCitationsById: async () => ({}) }
     }));
     jest.doMock('../../utils/extraction-llm', () => ({

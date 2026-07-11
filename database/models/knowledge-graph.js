@@ -259,12 +259,16 @@ const entities = {
   },
 
   async getByDocumentId(documentId, opts = {}) {
+    // approvalStatus semantics: undefined → default to approved-only;
+    // explicit null → no approval filter (all statuses). The sentiment
+    // worker's loadKnownEntities passes null so the LLM's entity inventory
+    // includes pending citations (sentiment runs right after graph
+    // extraction, before curation). A `||` coercion here would swallow the
+    // null and starve entity targeting corpus-wide — finding D1 in
+    // docs/reviews/2026-07-04-sentiment-emotion-analysis-review.md.
     const queryFilter = buildCitationQueryConditions({
       ...opts,
       documentId,
-      // Explicit null means "no approval filter" (used by the sentiment
-      // worker to include pending citations in the known-entities inventory).
-      // Only an *omitted* option defaults to approved. Review R4 / 07-04 D1.
       approvalStatus: opts.approvalStatus === undefined
         ? CITATION_APPROVAL_STATUSES.APPROVED
         : opts.approvalStatus

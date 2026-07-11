@@ -72,6 +72,15 @@
       textContent: voiceRole.replace('_', ' '),
       title: voiceTitle
     }));
+    // Quiet register chip, only for conventional — mirrors sentiment-chips.ejs
+    // (no chip for 'personal' or NULL/unclassified).
+    if (row.register === 'conventional') {
+      span.appendChild(el('span', {
+        class: 's-chip s-chip--register s-chip--register-conventional',
+        textContent: 'conventional',
+        title: 'Formulaic epistolary performance (prescribed opening, deference marker, closing, or stock formula) — register describes the form, not sincerity'
+      }));
+    }
     return span;
   }
 

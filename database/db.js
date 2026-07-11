@@ -653,6 +653,48 @@ MIGRATIONS.push(`
     ON sentiment_annotations(described_subject_entity_id);
 `);
 
+// v76 — F1 of docs/2026-07-05-epistolary-register-design.md: epistolary
+// register on sentiment annotations. 'conventional' = formulaic epistolary
+// performance (openings, deference markers, closings, stock condolence);
+// 'personal' = freshly composed emotional expression. NULL = unclassified —
+// all pre-existing rows stay visibly unclassified rather than silently
+// labeled (E5.2 precedent in the historian-lens review); no backfill.
+MIGRATIONS.push(`
+  ALTER TABLE sentiment_annotations ADD COLUMN register TEXT
+    CHECK (register IN ('conventional','personal'));
+`);
+
+// v77 — D6 (2026-07-04 review): suppression keys were written by a local
+// normalizer that skipped the trailing-punctuation strip, so keys like
+// 'the school house.' never matched the listing's normalizePhraseSql join
+// key and those suppressions silently did nothing. Renormalize existing
+// keys with the canonical SQL expression (this literal SQL mirrors
+// normalizePhraseSql in database/models/sentiment.js — keep them in sync;
+// the ';' in the punctuation set is spelled CHAR(59) because the migration
+// runner splits statements on literal semicolons).
+// Dedupe first: two rows collapsing to the same key would violate the
+// UNIQUE(target_phrase_normalized) constraint; the oldest row wins.
+MIGRATIONS.push(`
+  DELETE FROM sentiment_phrase_suppressions
+   WHERE id NOT IN (
+     SELECT MIN(id) FROM sentiment_phrase_suppressions
+     GROUP BY LOWER(RTRIM(TRIM(REPLACE(REPLACE(REPLACE(target_phrase_normalized, '  ', ' '), '  ', ' '), '  ', ' ')), '.,' || CHAR(59) || ':!?'))
+   );
+  UPDATE sentiment_phrase_suppressions
+     SET target_phrase_normalized = LOWER(RTRIM(TRIM(REPLACE(REPLACE(REPLACE(target_phrase_normalized, '  ', ' '), '  ', ' '), '  ', ' ')), '.,' || CHAR(59) || ':!?'));
+`);
+
+// v78 — curated collection coverage years. Both nullable: NULL means "no
+// declared coverage" and the date-range hint/validation features stay off
+// for that collection. Distinct from the derived min_year/max_year the
+// landing-page queries compute from documents.date_created — those describe
+// what has been extracted (and inherit its errors); these describe what the
+// archivist knows the collection to span, so they can guide extraction.
+MIGRATIONS.push(`
+  ALTER TABLE collections ADD COLUMN date_range_start_year INTEGER;
+  ALTER TABLE collections ADD COLUMN date_range_end_year INTEGER;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1772,6 +1814,7 @@ module.exports = {
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
   sentimentAsync,
   normalizeSentimentPhrase,
+  normalizeSentimentPhraseSql,
   parseSentimentResearchFilters,
   parseSentimentTimelineBucket,
   SentimentResearchFilterError,

@@ -166,7 +166,7 @@ Return this exact shape:
   ]
 }`;
 
-function buildExtractionPrompt(transcriptContent, documentMetadata = {}) {
+function buildExtractionPrompt(transcriptContent, documentMetadata = {}, dateRangeHint = null) {
   const meta = [];
   if (documentMetadata.title) meta.push(`Title: ${documentMetadata.title}`);
   if (documentMetadata.date_created) meta.push(`Date: ${documentMetadata.date_created}`);
@@ -177,6 +177,11 @@ function buildExtractionPrompt(transcriptContent, documentMetadata = {}) {
   let prompt = '';
   if (meta.length > 0) {
     prompt += `Document metadata:\n${meta.join('\n')}\n\n`;
+  }
+  // Disambiguation context only — the system prompt's "Do NOT invent dates"
+  // rule stays authoritative over this hint.
+  if (dateRangeHint) {
+    prompt += `${dateRangeHint}\n\n`;
   }
   prompt += `Transcript:\n${transcriptContent}`;
   return prompt;
@@ -218,7 +223,7 @@ async function runExtraction(providerName, transcriptContent, documentMetadata =
     model: modelInstance,
     system: EXTRACTION_SYSTEM_PROMPT,
     temperature: opts.temperature != null ? opts.temperature : 0.2,
-    prompt: buildExtractionPrompt(transcriptContent, documentMetadata)
+    prompt: buildExtractionPrompt(transcriptContent, documentMetadata, opts.dateRangeHint || null)
   });
 
   const parsed = parseExtractionResponse(text);
