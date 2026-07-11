@@ -399,11 +399,19 @@ fly scale vm shared-cpu-2x
 
 ### Known open advisories
 
-`npm audit --omit=dev` currently reports **3 high, 0 critical**. None of
-them are practically exploitable in the current production
-configuration; each has a documented mitigation. Reviewers checking the
-audit output before a release should expect this baseline and not treat
-it as a release blocker.
+`npm audit --omit=dev` currently reports **4 high, 0 critical** (plus
+3 low). None of them are practically exploitable in the current
+production configuration; each has a documented mitigation. Reviewers
+checking the audit output before a release should expect this baseline
+and not treat it as a release blocker.
+
+- **`nodemailer` (high, GHSA-p6gq-j5cr-w38f — `raw` option bypasses
+  disableFileAccess/disableUrlAccess).** Reachable only when the
+  message-level `raw` option is passed to `sendMail`. The only call
+  site, [`utils/email.js`](./utils/email.js), sends a fixed
+  `{from, to, subject, text}` shape with no caller-controlled message
+  options, so the vulnerable path never runs. The fix is a breaking
+  major (9.x); upgrade tracked as a follow-up.
 
 - **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
   Reachable only through the dev-only `renderWithPdfjs` fallback in
