@@ -39,6 +39,7 @@ describe('sentiment end-to-end (singleton + review queue)', () => {
     await db.runAsync(`INSERT INTO documents (id, title) VALUES (1, 'Doc')`);
     await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (1, 1, 'weariness in the school today')`);
     await db.runAsync(`INSERT INTO settings (key, value) VALUES ('sentiment.prompt.default', 'JSON annotations: {{transcript_content}} entities: {{known_entities}} meta: {{document_metadata}}') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
+    await db.runAsync(`INSERT INTO settings (key, value) VALUES ('sentiment.provider.default', 'claude') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
 
     ({ runSentimentExtractionCycle } = require('../../utils/worker-sentiment'));
   });

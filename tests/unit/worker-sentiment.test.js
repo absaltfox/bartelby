@@ -44,6 +44,7 @@ describe('worker-sentiment singleton path', () => {
     await db.runAsync(`INSERT INTO documents (id, title) VALUES (1, 'Doc')`);
     await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (1, 1, 'weariness was the order of the day at the school')`);
     await db.runAsync(`INSERT INTO settings (key, value) VALUES ('sentiment.prompt.default', 'JSON annotations: {{transcript_content}} entities: {{known_entities}} meta: {{document_metadata}}') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
+    await db.runAsync(`INSERT INTO settings (key, value) VALUES ('sentiment.provider.default', 'claude') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
 
     ({ runSentimentExtractionCycle } = require('../../utils/worker-sentiment'));
   });
@@ -141,6 +142,26 @@ describe('worker-sentiment singleton path', () => {
     expect(r1.model_name).toBe('claude-3-5-haiku-latest');
     expect(r1.submitted_prompt).toBeTruthy();
     expect(r1.prompt_template_hash).toBeTruthy();  // SHA-256 of template
+  });
+
+  test('batch: unconfigured sentiment.provider.default fails jobs with actionable message before pre-staging', async () => {
+    const provider = require('../../utils/sentiment/provider');
+    // Mirror the seeded-empty prod default (database/db.js sentiment settings seed).
+    await db.runAsync(`UPDATE settings SET value = '' WHERE key = 'sentiment.provider.default'`);
+
+    await db.runAsync(`INSERT INTO transcripts (id, document_id, content) VALUES (2, 1, 'weariness too')`);
+    const j1 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 1 });
+    const j2 = await db.sentimentAsync.createJob({ document_id: 1, transcript_id: 2 });
+
+    await runSentimentExtractionCycle();
+
+    const r1 = await db.sentimentAsync.getJobById(j1);
+    const r2 = await db.sentimentAsync.getJobById(j2);
+    expect(r1.status).toBe('failed');
+    expect(r2.status).toBe('failed');
+    expect(r1.error).toMatch(/sentiment\.provider\.default/);
+    expect(r1.batch_remote_id).toBeNull();      // never pre-staged
+    expect(provider.submitBatch).not.toHaveBeenCalled();
   });
 
   test('batch: provider call failure marks all correlation rows as failed and clears placeholder', async () => {

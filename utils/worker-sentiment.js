@@ -13,6 +13,13 @@ const SENTIMENT_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
   'SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS'
 );
 
+// Kept textually in sync with the callSingleton guard in
+// utils/sentiment/provider.js — that module is wholesale-mocked in worker
+// tests, so the worker cannot import the string from it.
+const MISSING_PROVIDER_MESSAGE =
+  'Sentiment provider is not configured. Set sentiment.provider.default in '
+  + 'Admin → Settings → Sentiment to one of: openai, claude, gemini, vertex, ollama, lmstudio.';
+
 const SENTIMENT_BATCH_MAX_CLAIM = 50;
 const DEFAULT_AUTO_APPROVE = 0.85;
 const DEFAULT_REVIEW_FLOOR = 0.65;
@@ -198,6 +205,17 @@ async function runSentimentExtractionCycle() {
 
     const claimed = await db.sentimentAsync.claimUpToBatch(SENTIMENT_BATCH_MAX_CLAIM);
     if (claimed.length === 0) return;
+
+    // The singleton path throws this same guidance from callSingleton, but the
+    // batch path would otherwise pre-stage pending-* placeholder rows and then
+    // surface an opaque "unsupported provider 'null'" from the submit layer.
+    // Fail every claimed job here, before any prompt build or pre-staging.
+    if (!config.providerName) {
+      for (const job of claimed) {
+        await db.sentimentAsync.markFailed(job.id, MISSING_PROVIDER_MESSAGE);
+      }
+      return;
+    }
 
     if (claimed.length < config.batchMinJobs) {
       for (const job of claimed) {
