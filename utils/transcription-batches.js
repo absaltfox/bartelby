@@ -505,7 +505,15 @@ async function submitChunkedProviderBatch(job, runtime, systemPrompt, manifest, 
 
   const submissions = [];
   for (let i = 0; i < chunks.length; i++) {
-    const submission = await submitChunk(job, runtime, systemPrompt, chunks[i].entries, i, chunks.length);
+    let submission;
+    try {
+      submission = await submitChunk(job, runtime, systemPrompt, chunks[i].entries, i, chunks.length);
+    } catch (err) {
+      if (submissions.length > 0) {
+        err.message += ` (provider chunks already submitted before this failure: ${submissions.map((s) => s.remoteId).join(', ')})`;
+      }
+      throw err;
+    }
     submissions.push({
       remoteId: submission.remoteId,
       remoteStatus: submission.remoteStatus,
@@ -546,30 +554,38 @@ async function submitVertexTranscriptionBatch(job, runtime, systemPrompt, manife
   const submissions = [];
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const partPaths = buildVertexBatchPartPaths(vertexConfig, {
-      family: 'transcription',
-      jobId: job.id,
-      attempt: (job.attempts || 0) + 1,
-      chunkIndex: i,
-      totalChunks: chunks.length
-    });
+    let batch;
+    try {
+      const partPaths = buildVertexBatchPartPaths(vertexConfig, {
+        family: 'transcription',
+        jobId: job.id,
+        attempt: (job.attempts || 0) + 1,
+        chunkIndex: i,
+        totalChunks: chunks.length
+      });
 
-    for (const entry of chunk.entries) {
-      const imageBuffer = await storage.readUploadByUrl(entry.imagePath);
-      await uploadBufferToGcs(vertexConfig, entry.assetObjectName, imageBuffer, entry.mimeType);
+      for (const entry of chunk.entries) {
+        const imageBuffer = await storage.readUploadByUrl(entry.imagePath);
+        await uploadBufferToGcs(vertexConfig, entry.assetObjectName, imageBuffer, entry.mimeType);
+      }
+
+      const jsonl = `${chunk.entries.map((entry) => JSON.stringify(entry.payload)).join('\n')}\n`;
+      await uploadTextToGcs(vertexConfig, partPaths.inputObjectName, jsonl, 'application/jsonl');
+
+      batch = await createVertexBatchJob(vertexConfig, {
+        displayName: chunks.length > 1
+          ? `${job.batch_display_name || `bartelby-batch-${job.id}`}-${partPaths.partLabel}`
+          : (job.batch_display_name || `bartelby-batch-${job.id}`),
+        model: runtime.model,
+        inputUri: buildGsUri(vertexConfig.bucket, partPaths.inputObjectName),
+        outputPrefix: partPaths.outputPrefix
+      });
+    } catch (err) {
+      if (submissions.length > 0) {
+        err.message += ` (provider chunks already submitted before this failure: ${submissions.map((s) => s.remoteId).join(', ')})`;
+      }
+      throw err;
     }
-
-    const jsonl = `${chunk.entries.map((entry) => JSON.stringify(entry.payload)).join('\n')}\n`;
-    await uploadTextToGcs(vertexConfig, partPaths.inputObjectName, jsonl, 'application/jsonl');
-
-    const batch = await createVertexBatchJob(vertexConfig, {
-      displayName: chunks.length > 1
-        ? `${job.batch_display_name || `bartelby-batch-${job.id}`}-${partPaths.partLabel}`
-        : (job.batch_display_name || `bartelby-batch-${job.id}`),
-      model: runtime.model,
-      inputUri: buildGsUri(vertexConfig.bucket, partPaths.inputObjectName),
-      outputPrefix: partPaths.outputPrefix
-    });
 
     submissions.push({
       remoteId: batch.name,

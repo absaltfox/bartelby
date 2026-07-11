@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const {
   MAX_RETRIES,
   COOLDOWN_MS,
@@ -173,6 +174,17 @@ async function materializeExtractionResult({
   relationshipTypeAliasesAsync,
   graphMaintenance
 }) {
+  if (extractionResult && extractionResult.malformed) {
+    // Refuse to materialize: an unparseable response must not be mistaken
+    // for an empty document. Critically, with resetExisting this would
+    // otherwise delete the transcript's prior citations and mark the job
+    // done — the exact "silent graph wipe" in review finding R1.
+    throw new Error(
+      'LLM extraction response could not be parsed as JSON — refusing to materialize. '
+      + 'Prior graph artifacts for this transcript are preserved.'
+    );
+  }
+
   // Staged reset: collect pre-existing citation IDs BEFORE writing new data so
   // the transcript always has graph coverage. After the write loop succeeds,
   // the old citations are removed. A crash between write and cleanup is safe —
@@ -582,8 +594,9 @@ async function processExtractionBatchSubmission(job, logLine) {
   // Persist submission intent BEFORE calling the provider. If the process
   // crashes after the provider call but before the real remote ID is written,
   // the 'pending' sentinel signals the batch may already exist remotely.
+  const submissionSentinel = `pending-${crypto.randomUUID()}`;
   await extractionJobs.updateBatchRemote(job.id, {
-    remoteId: 'pending',
+    remoteId: submissionSentinel,
     remoteStatus: 'submitting'
   });
 
@@ -636,7 +649,9 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
   for (const itemResult of pollResult.itemResults || []) {
     const stillClaimed = await extractionJobs.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
     if (!stillClaimed) {
-      throw new Error(`Lost extraction finalization claim for batch job ${job.id}.`);
+      const claimError = new Error(`Lost extraction finalization claim for batch job ${job.id}.`);
+      claimError.code = 'LOST_FINALIZATION_CLAIM';
+      throw claimError;
     }
 
     if (processedIds.has(itemResult.customId)) {
@@ -648,6 +663,14 @@ async function finalizeExtractionBatchJob(job, pollResult, logLine, finalization
     if (!itemResult.ok) {
       failedDocs += 1;
       await logLine(`Document ${manifestEntry.documentId} extraction failed: ${itemResult.error || 'Unknown batch item error'}`);
+      processedIds.add(itemResult.customId);
+      await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
+      continue;
+    }
+
+    if (itemResult.result && itemResult.result.malformed) {
+      failedDocs += 1;
+      await logLine(`Document ${manifestEntry.documentId} extraction failed: provider returned an unparseable response.`);
       processedIds.add(itemResult.customId);
       await extractionJobs.savePartialResults(job.id, Array.from(processedIds));
       continue;
@@ -738,7 +761,7 @@ async function pollRunningExtractionBatches() {
   const jobs = await extractionJobs.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
+    if (!job.batch_remote_id || job.batch_remote_id === 'pending' || job.batch_remote_id.startsWith('pending-')) continue;
     const logLine = makeExtractionLogger(job, extractionJobs);
 
     // Poll the remote provider for batch status.  Transient poll errors
@@ -944,7 +967,7 @@ async function runExtractionWorkerCycle() {
     if (job) {
       const logLine = logLineForJob(job);
       await logLine(`ERROR: ${message}`);
-      if (isTransientError(err) && (job.attempts || 0) < MAX_RETRIES) {
+      if (job.job_kind !== 'batch' && isTransientError(err) && (job.attempts || 0) < MAX_RETRIES) {
         const backoff = Math.pow(2, job.attempts || 1) * 5000;
         await logLine(`Transient error — will retry in ${backoff / 1000}s`);
         await extractionJobs.requeueForRetry(job.id);
@@ -963,5 +986,6 @@ async function runExtractionWorkerCycle() {
 module.exports = {
   runExtractionWorkerCycle,
   pollRunningExtractionBatches,
-  autoQueueSentimentForTranscript
+  autoQueueSentimentForTranscript,
+  materializeExtractionResult
 };

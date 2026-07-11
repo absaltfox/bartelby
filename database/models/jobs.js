@@ -519,6 +519,7 @@ const transcriptionJobsAsync = {
           batch_finalization_claimed_at = NULL,
           batch_finalization_claimed_by = NULL
       WHERE id = ?
+        AND status != 'done'
     `, [error || 'Unknown error', id]);
     await saveDatabase();
   },
@@ -875,6 +876,27 @@ const transcriptionJobsAsync = {
       WHERE id = ? AND status = 'failed'
     `, [id]);
     await saveDatabase();
+  },
+
+  // Admin escape hatch: a batch job stuck in `running` (e.g. stranded on the
+  // submission sentinel, or a wedged finalization) has no other exit — retry
+  // and delete both gate on failed/done. Restricted to batch jobs: non-batch
+  // running jobs are actively held by a worker cycle.
+  // Per docs/reviews/2026-07-06-application-reliability-review.md R2.
+  async forceFail(id, reason = 'Manually marked failed by admin') {
+    const result = await runAsyncWithoutSave(`
+      UPDATE transcription_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+        AND status = 'running'
+        AND job_kind = 'batch'
+    `, [reason, id]);
+    await saveDatabase();
+    return result;
   },
 
   async updateProvider(id, { provider, model }) {
@@ -1887,6 +1909,27 @@ const extractionJobs = {
           partial_results = NULL
       WHERE id = ? AND status = 'failed'
     `, [id]);
+    await saveDatabase();
+    return result;
+  },
+
+  // Admin escape hatch: a batch job stuck in `running` (e.g. stranded on the
+  // submission sentinel, or a wedged finalization) has no other exit — retry
+  // and delete both gate on failed/done. Restricted to batch jobs: non-batch
+  // running jobs are actively held by a worker cycle.
+  // Per docs/reviews/2026-07-06-application-reliability-review.md R2.
+  async forceFail(id, reason = 'Manually marked failed by admin') {
+    const result = await runAsyncWithoutSave(`
+      UPDATE extraction_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          batch_finalization_claimed_at = NULL,
+          batch_finalization_claimed_by = NULL
+      WHERE id = ?
+        AND status = 'running'
+        AND job_kind = 'batch'
+    `, [reason, id]);
     await saveDatabase();
     return result;
   },

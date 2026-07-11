@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_BATCH_FINALIZATION_STALE_SECONDS } = require('../../utils/finalization-claims');
+
 function normalizePhrase(text) {
   return String(text || '')
     .toLowerCase()
@@ -143,18 +145,41 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       );
     },
 
-    async claimBatchFinalization(batch_remote_id, claimedBy) {
+    async claimBatchFinalization(batch_remote_id, claimedBy, staleSeconds = DEFAULT_BATCH_FINALIZATION_STALE_SECONDS) {
+      // Re-claimable by the same owner, or by anyone after the stale window —
+      // mirrors transcriptionJobsAsync.claimBatchFinalization so a crashed or
+      // failed finalizer cannot wedge the batch until the next server restart.
+      // Per docs/reviews/2026-07-06-application-reliability-review.md R3.
+      const ttlSeconds = Number.isInteger(staleSeconds) && staleSeconds > 0
+        ? staleSeconds
+        : DEFAULT_BATCH_FINALIZATION_STALE_SECONDS;
       const r = await runAsync(
         `UPDATE sentiment_extraction_jobs
             SET batch_finalization_claimed_at = CURRENT_TIMESTAMP,
                 batch_finalization_claimed_by = ?
           WHERE batch_remote_id = ?
             AND status = 'batch_submitted'
-            AND batch_finalization_claimed_at IS NULL`,
-        [claimedBy, batch_remote_id]
+            AND (
+              batch_finalization_claimed_at IS NULL
+              OR batch_finalization_claimed_at < datetime('now', ?)
+              OR batch_finalization_claimed_by = ?
+            )`,
+        [claimedBy, batch_remote_id, `-${ttlSeconds} seconds`, claimedBy]
       );
       await saveDatabase();
       return r.changes > 0;
+    },
+
+    async releaseBatchFinalization(batch_remote_id, claimedBy) {
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET batch_finalization_claimed_at = NULL,
+                batch_finalization_claimed_by = NULL
+          WHERE batch_remote_id = ?
+            AND batch_finalization_claimed_by = ?`,
+        [batch_remote_id, claimedBy]
+      );
+      await saveDatabase();
     },
 
     async markBatchPending(jobIds, correlationId, { submitted_prompt = null, provider = null } = {}) {

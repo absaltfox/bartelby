@@ -1688,7 +1688,12 @@ const relationships = {
     const queryFilter = buildCitationQueryConditions({
       ...opts,
       documentId,
-      approvalStatus: opts.approvalStatus || CITATION_APPROVAL_STATUSES.APPROVED
+      // Explicit null means "no approval filter" (used by the sentiment
+      // worker to include pending citations in the known-entities inventory).
+      // Only an *omitted* option defaults to approved. Review R4 / 07-04 D1.
+      approvalStatus: opts.approvalStatus === undefined
+        ? CITATION_APPROVAL_STATUSES.APPROVED
+        : opts.approvalStatus
     });
     return (await allAsync(`
       SELECT DISTINCT
@@ -2371,8 +2376,14 @@ const graphMaintenance = {
    * the new data is safely written.
    */
   async getPreExistingCitationIds(transcriptId) {
+    // Curator-authored evidence (extraction_method = 'manual', per the C5.3
+    // contract) is never part of an LLM rerun's reset set — an LLM re-run
+    // must not outrank curator assertions. Decision recorded in
+    // docs/reviews/2026-07-06-application-reliability-review.md R7.
     const rows = await allAsync(
-      'SELECT id FROM citations WHERE transcript_id = ?',
+      `SELECT id FROM citations
+        WHERE transcript_id = ?
+          AND COALESCE(extraction_method, '') != 'manual'`,
       [transcriptId]
     );
     return rows.map((r) => r.id).filter((v) => Number.isInteger(v));
@@ -2425,8 +2436,15 @@ const graphMaintenance = {
         WHERE source_entity_id = ? OR target_entity_id = ?
         LIMIT 1
       `, [entityId, entityId]);
+      const hasSentimentReferences = await getAsync(`
+        SELECT 1 FROM sentiment_annotations
+        WHERE target_entity_id = ?
+           OR expressed_by_entity_id = ?
+           OR described_subject_entity_id = ?
+        LIMIT 1
+      `, [entityId, entityId, entityId]);
 
-      if (!hasCitations && !hasRelationships) {
+      if (!hasCitations && !hasRelationships && !hasSentimentReferences) {
         await runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [entityId]);
         await runAsync('DELETE FROM date_expressions WHERE entity_id = ?', [entityId]);
         await runAsync('DELETE FROM entities WHERE id = ?', [entityId]);

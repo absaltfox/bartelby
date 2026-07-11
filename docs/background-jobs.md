@@ -197,9 +197,15 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
 - **`authority_suggestion_jobs` (`running`)** → marked `failed`
 - **`sentiment_extraction_jobs` (singleton, `running`)** → marked `failed` with `error = 'Server restarted during processing'`
+- **`sentiment_extraction_jobs` (batch, `batch_submitted`, finalization claim stale)** → claim cleared. The
+  claim itself is re-claimable by the same owner, or by any worker after
+  `SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS`, and is released immediately when a
+  result fetch fails — so a transient provider error can no longer wedge a batch
+  until the next restart.
 - **`sentiment_extraction_jobs` (batch, `running`, finalization claimed)** → marked `failed`, claim columns nulled, `error = 'Server restarted during batch finalization'`. Note: `batch_submitted` rows are intentionally untouched — provider still owns them; `pollRunningSentimentBatchesTick` resumes them on next tick.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending-%'`)** → marked `failed` with the correlation id logged in the error message. Indicates a crash during batch submission; the provider may have an orphaned batch. The Phase 1.6a reconciliation tick (see below) recovers these inside the grace window before this backstop fires.
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id IS NULL`)** → marked `failed`. Indicates a crash before the pre-stage write; no provider call was made.
+- **`transcription_jobs` / `extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending%'`, older than the stale window)** → marked `failed` with the submission sentinel in the error message. Indicates a crash during batch submission; the provider may hold an orphaned batch — recover manually from the provider console. Fresh `pending%` rows are left alone (a live worker may be mid-submission). Batch submission errors are never auto-requeued; retry is admin-triggered from `/admin/jobs`.
 - **Fly Machine import jobs** with expired heartbeats → re-queued
 
 `initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip
@@ -236,6 +242,10 @@ Two layers cover this scenario:
    `SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS` (default 30 min),
    pending rows are marked `failed` with the correlation id surfaced
    in the error message for manual operator recovery.
+
+Running **batch** transcription/extraction jobs can be manually failed from
+`/admin/jobs` ("Mark failed") as the operator escape hatch for wedged batches;
+the action is audit-logged as `admin.job_force_failed`.
 
 `markBatchPending` sets `provider` on the row at placeholder-write time
 so the reconciliation tick can route to the correct provider API

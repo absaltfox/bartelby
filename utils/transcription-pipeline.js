@@ -16,13 +16,16 @@ function normalizeDateCreated(raw) {
   const writtenYear = parseInt(yearMatch[1], 10);
   const parsed = new Date(cleaned);
   if (Number.isNaN(parsed.getTime())) return null;
-  // ISO date-only strings parse as UTC midnight while every other format
+  // ISO-style strings — full dates, but also bare years ("1847") and
+  // year-months ("1847-03") — parse as UTC midnight while every other format
   // parses as local time; read components from the matching frame so the
-  // calendar day never shifts on servers outside UTC.
+  // calendar day never shifts on servers outside UTC. West of UTC, reading
+  // local components from a UTC-parsed "1847" yields 1846-12-31.
   const isIsoInput = ISO_DATE_PATTERN.test(cleaned);
-  const year = isIsoInput ? parsed.getUTCFullYear() : parsed.getFullYear();
-  const month = isIsoInput ? parsed.getUTCMonth() : parsed.getMonth();
-  const day = isIsoInput ? parsed.getUTCDate() : parsed.getDate();
+  const isUtcParsed = isIsoInput || /^\d{4}(-\d{2})?$/.test(cleaned);
+  const year = isUtcParsed ? parsed.getUTCFullYear() : parsed.getFullYear();
+  const month = isUtcParsed ? parsed.getUTCMonth() : parsed.getMonth();
+  const day = isUtcParsed ? parsed.getUTCDate() : parsed.getDate();
   if (year !== writtenYear) return null;
   const result = `${String(year).padStart(4, '0')}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   // An ISO input that does not round-trip had an out-of-range month or day

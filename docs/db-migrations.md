@@ -25,6 +25,12 @@ const MIGRATIONS = [
 ];
 ```
 
+Migrations v1–v50 live in `database/migrations.js`; later migrations are
+appended to the same array via `MIGRATIONS.push(...)` blocks in
+`database/db.js` (search for `// v<N> —` comments there). **Append new
+migrations at the end of `database/db.js`'s push blocks**, never in
+`migrations.js` and never mid-array.
+
 `initializeSchema()` in `database/db.js` compares the DB's
 `PRAGMA user_version` against `MIGRATIONS.length` and applies any
 migrations the DB has not yet seen:
@@ -64,6 +70,10 @@ never ran on that DB, and any page that queried the table 500'd.
 This is a class of bug, not a one-off. Any migration added after
 a consolidation event will silently skip on every already-migrated
 environment.
+
+Since 2026-07, `initializeSchema()` logs a `SCHEMA DRIFT` error at startup
+whenever `user_version` exceeds `MIGRATIONS.length`, so this class of bug is
+detected at boot rather than at first 500.
 
 ## Three responses to drift
 

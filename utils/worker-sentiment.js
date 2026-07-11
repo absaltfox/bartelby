@@ -6,6 +6,12 @@ const { buildPrompt } = require('./sentiment/prompt');
 const { parseAndValidate } = require('./sentiment/parse');
 const provider = require('./sentiment/provider');
 const { embedTexts, EMBED_MODEL_ID } = require('./sentiment/embed');
+const { getFinalizationOwner, parseFinalizationStaleSeconds } = require('./finalization-claims');
+
+const SENTIMENT_FINALIZATION_OWNER = getFinalizationOwner('sentiment-finalization');
+const SENTIMENT_FINALIZATION_STALE_SECONDS = parseFinalizationStaleSeconds(
+  'SENTIMENT_BATCH_FINALIZATION_STALE_SECONDS'
+);
 
 const SENTIMENT_BATCH_MAX_CLAIM = 50;
 const DEFAULT_AUTO_APPROVE = 0.85;
@@ -149,6 +155,13 @@ async function processSingletonJob(job, config) {
   const enriched = [];
   for (const ann of annotations) {
     const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
+    if (!phrase) {
+      // A degenerate verbatim (e.g. punctuation-only) can miss the phrase
+      // upsert; skip the annotation instead of TypeError-failing the whole
+      // paid job. 07-04 review D14 family / 07-06 review R13.
+      console.warn(`[worker-sentiment] job ${job.id}: no phrase row for verbatim; annotation skipped`);
+      continue;
+    }
     enriched.push({
       ...ann,
       notes: ann.notes ?? null,
@@ -277,22 +290,31 @@ async function runSentimentExtractionCycle() {
 async function pollRunningSentimentBatches() {
   const config = await loadConfig();
   const remoteIdsRow = await db.allAsync(
-    `SELECT DISTINCT batch_remote_id FROM sentiment_extraction_jobs
-      WHERE status = 'batch_submitted' AND batch_remote_id IS NOT NULL`
+    `SELECT batch_remote_id, MIN(provider) AS provider
+       FROM sentiment_extraction_jobs
+      WHERE status = 'batch_submitted' AND batch_remote_id IS NOT NULL
+      GROUP BY batch_remote_id`
   );
-  const claimedBy = `${process.env.HOSTNAME || 'host'}-${process.pid}`;
+  const claimedBy = SENTIMENT_FINALIZATION_OWNER;
 
-  for (const { batch_remote_id: remoteId } of remoteIdsRow) {
+  for (const { batch_remote_id: remoteId, provider: rowProvider } of remoteIdsRow) {
+    // Route by the provider recorded on the rows at submission time (Phase
+    // 1.6a stores it exactly for this), not the *current* default — an admin
+    // switching sentiment.provider.default must not strand in-flight batches.
+    // Per 07-04 review D3 / 07-06 review R4.
+    const providerName = rowProvider || config.providerName;
     let status;
     try {
-      status = await provider.getBatchStatus({ provider: config.providerName, batchId: remoteId });
+      status = await provider.getBatchStatus({ provider: providerName, batchId: remoteId });
     } catch (err) {
       console.warn(`[worker-sentiment] getBatchStatus(${remoteId}) failed: ${err.message}`);
       continue;
     }
     if (!status || status.status !== 'completed') continue;
 
-    const acquired = await db.sentimentAsync.claimBatchFinalization(remoteId, claimedBy);
+    const acquired = await db.sentimentAsync.claimBatchFinalization(
+      remoteId, claimedBy, SENTIMENT_FINALIZATION_STALE_SECONDS
+    );
     if (!acquired) continue;
 
     // Load jobs before fetching results — Vertex needs them to rebuild
@@ -304,12 +326,15 @@ async function pollRunningSentimentBatches() {
     let results;
     try {
       results = await provider.fetchBatchResults({
-        provider: config.providerName,
+        provider: providerName,
         batchId: remoteId,
         jobs
       });
     } catch (err) {
       console.warn(`[worker-sentiment] fetchBatchResults(${remoteId}) failed: ${err.message}`);
+      // Release the claim so the next tick can retry immediately instead of
+      // waiting out the stale window (or a restart). Review finding R3.
+      await db.sentimentAsync.releaseBatchFinalization(remoteId, claimedBy);
       continue;
     }
 
@@ -343,6 +368,13 @@ async function pollRunningSentimentBatches() {
         const enriched = [];
         for (const ann of annotations) {
           const phrase = phraseMap.get(ann.emotion_phrase_verbatim);
+          if (!phrase) {
+            // A degenerate verbatim (e.g. punctuation-only) can miss the phrase
+            // upsert; skip the annotation instead of TypeError-failing the whole
+            // paid job. 07-04 review D14 family / 07-06 review R13.
+            console.warn(`[worker-sentiment] job ${job.id}: no phrase row for verbatim; annotation skipped`);
+            continue;
+          }
           enriched.push({
             ...ann,
             notes: ann.notes ?? null,
@@ -350,7 +382,7 @@ async function pollRunningSentimentBatches() {
             document_id: job.document_id,
             evidence_excerpt: buildExcerpt(transcript.content, ann.span_start, ann.span_end),
             emotion_phrase_id: phrase.id,
-            extracted_by: config.providerName || 'default',
+            extracted_by: providerName || 'default',
             extracted_at: new Date().toISOString()
           });
         }
@@ -367,6 +399,22 @@ async function pollRunningSentimentBatches() {
         });
       } catch (err) {
         await db.sentimentAsync.markFailed(job.id, `Batch finalize failed: ${err.message}`);
+      }
+    }
+
+    // Mark any jobs still in batch_submitted as failed — the provider returned a
+    // completed batch but omitted their result row. Re-query so only genuinely
+    // unprocessed jobs (not already markDone/markFailed above) are caught.
+    // Guard: only run when results is a non-null array (fetch failures already
+    // released the claim and continued — don't fail jobs on that path).
+    // Per docs/background-jobs.md and no-auto-retry rule: admin retries from /admin/jobs.
+    if (Array.isArray(results)) {
+      const omitted = await db.sentimentAsync.listBatchSubmittedByRemoteId(remoteId);
+      for (const job of omitted) {
+        await db.sentimentAsync.markFailed(
+          job.id,
+          `Provider returned no result row for this job in batch ${remoteId}; marked failed for admin retry.`
+        );
       }
     }
   }

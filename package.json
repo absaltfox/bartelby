@@ -14,7 +14,7 @@
     "backfill:exact-authority-suggestions": "node scripts/backfill-exact-authority-suggestions.js",
     "migrate:turso": "node scripts/migrate-to-turso.js",
     "migrate:s3": "node scripts/migrate-uploads-to-s3.js",
-    "test": "npm run test:hygiene && jest",
+    "test": "npm run test:hygiene && npm run test:unit && npm run test:integration",
     "test:hygiene": "node scripts/check-repo-hygiene.js",
     "test:curator-ui": "jest tests/integration/curator-ui-contracts.test.js --runInBand",
     "test:ux": "playwright test",

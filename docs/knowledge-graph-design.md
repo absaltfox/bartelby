@@ -741,13 +741,15 @@ curation goals (U2).
 citation review queue supports three bulk-action endpoints for efficient triage:
 
 - `POST /admin/knowledge/review-extractions/bulk/approve` — Approves up to 200
-  citations in a single transaction. Request body: `{ ids: number[] }`. Response:
+  citations applied per id; the response reports the applied `count`. Request body: `{ ids: number[] }`. Response:
   `{ success: true, count: number }`.
 - `POST /admin/knowledge/review-extractions/bulk/reject` — Rejects up to 200
-  citations in a single transaction. Same request/response format.
-- `POST /admin/knowledge/review-extractions/bulk/delete` — Deletes up to 200
-  citations (removes evidence). Refuses if any row is already approved. Same
-  request/response format.
+  citations applied per id; the response reports the applied `count`. Same request/response format.
+- `POST /admin/knowledge/review-extractions/bulk/delete` — Deletes up to 200 citations (removes evidence), applied per id; the response reports the applied `count`. Refuses if any row is already approved.
+
+Deleting a citation (bulk or per-row) runs the same orphan cleanup as rerun
+resets: relationships and entities left with no remaining citation evidence
+(and no sentiment-annotation references) are removed with it. A mid-batch failure returns an error after any already-applied deletions (per-id application, no rollback).
 
 All bulk endpoints are audit-logged. CRITICAL implementation detail: bulk routes
 must be registered BEFORE the per-row `/:id/{approve,reject,delete}` routes in
@@ -1086,6 +1088,10 @@ Reruns are intentionally reset-aware.
   referenced anywhere else
 - Alias and date-expression rows are also cleaned up when the owning entity is
   deleted
+- Curator-authored citations (`extraction_method = 'manual'`) are never removed
+  by a rerun. The reset set covers LLM/import-produced citations only, per the
+  "Curator Is the Expert" principle — an automated re-extraction must not
+  destroy curator assertions (which carry `confidence = 1.0`).
 
 This keeps reruns from accumulating duplicate graph evidence while still
 protecting shared entities that are referenced by other transcripts.

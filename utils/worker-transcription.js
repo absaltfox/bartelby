@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const storage = require('./storage');
 const { mimeTypeFromFilename } = require('./mime-types');
 const {
@@ -122,8 +123,9 @@ async function processBatchSubmission(job, logLine) {
   // crashes after the provider call but before the real remote ID is written,
   // the 'pending' sentinel signals that the batch may already exist remotely
   // and must be reconciled rather than re-submitted blindly.
+  const submissionSentinel = `pending-${crypto.randomUUID()}`;
   await transcriptionJobsAsync.updateBatchRemote(job.id, {
-    remoteId: 'pending',
+    remoteId: submissionSentinel,
     remoteStatus: 'submitting'
   });
 
@@ -213,7 +215,9 @@ async function finalizeBatchJob(job, pollResult, logLine, finalizationOwner) {
 
     const stillClaimed = await transcriptionJobsAsync.heartbeatBatchFinalizationClaim(job.id, finalizationOwner);
     if (!stillClaimed) {
-      throw new Error(`Lost finalization claim for batch job ${job.id}.`);
+      const claimError = new Error(`Lost finalization claim for batch job ${job.id}.`);
+      claimError.code = 'LOST_FINALIZATION_CLAIM';
+      throw claimError;
     }
 
     const expectedPages = docManifest.length;
@@ -373,7 +377,7 @@ async function runTranscriptionWorkerCycle() {
     const msg = err.message || String(err);
     await logLine(`ERROR: ${msg}`);
 
-    if (isTransientError(err) && (job.attempts + 1) < MAX_RETRIES) {
+    if (job.job_kind !== 'batch' && isTransientError(err) && (job.attempts + 1) < MAX_RETRIES) {
       const backoff = Math.pow(2, job.attempts + 1) * 5000;
       await logLine(`Transient error — will retry in ${backoff / 1000}s (attempt ${job.attempts + 1}/${MAX_RETRIES})`);
       await transcriptionJobsAsync.requeueForRetry(job.id);
@@ -391,7 +395,7 @@ async function pollRunningTranscriptionBatches() {
   const jobs = await transcriptionJobsAsync.getRunningBatches();
 
   for (const job of jobs) {
-    if (!job.batch_remote_id || job.batch_remote_id === 'pending') continue;
+    if (!job.batch_remote_id || job.batch_remote_id === 'pending' || job.batch_remote_id.startsWith('pending-')) continue;
     const logLine = makeJobLogger(job, transcriptionJobsAsync);
 
     // Poll the remote provider for batch status.  Transient poll errors

@@ -838,6 +838,18 @@ async function initializeSchema(options = {}) {
 
   const currentVersion = await db.getSchemaVersion();
 
+  if (currentVersion > MIGRATIONS.length) {
+    // Warn — do not refuse to boot: the documented repair pattern
+    // (docs/db-migrations.md, response A) deliberately leaves user_version
+    // above the array length on locally-patched databases.
+    console.error(
+      `[db] SCHEMA DRIFT: PRAGMA user_version (${currentVersion}) is greater than `
+      + `MIGRATIONS.length (${MIGRATIONS.length}). Any migration appended after a `
+      + `consolidation event will silently skip on this database. `
+      + `See docs/db-migrations.md ("Drift") for repair options.`
+    );
+  }
+
   if (currentVersion < MIGRATIONS.length) {
     for (let i = currentVersion; i < MIGRATIONS.length; i++) {
       const version = i + 1;
@@ -1038,6 +1050,35 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Leaving ${staleCompletedTxBatchCount} completed transcription batch job(s) in running state for finalization resume`);
   }
 
+  // Batch jobs stranded on the 'pending%' submission sentinel: the process
+  // died between the sentinel write and the real remote-id write. The poller
+  // skips these and no reconciliation exists for transcription/extraction, so
+  // without this sweep they wedge in `running` forever. Only rows older than
+  // the stale window are failed — a live worker may be mid-submission.
+  // Per docs/reviews/2026-07-06-application-reliability-review.md R2.
+  const staleTxBatchPending = await get(`
+    SELECT COUNT(*) as count
+    FROM transcription_jobs
+    WHERE status = 'running'
+      AND job_kind = 'batch'
+      AND batch_remote_id LIKE 'pending%'
+      AND COALESCE(started_at, created_at) < datetime('now', ?)
+  `, [`-${transcriptionBatchFinalizationStaleSeconds} seconds`]);
+  const staleTxBatchPendingCount = staleTxBatchPending?.count || 0;
+  if (staleTxBatchPendingCount > 0) {
+    await db.run(`
+      UPDATE transcription_jobs
+      SET status = 'failed',
+          error = 'Server restarted during batch submission (provider may have an orphaned batch). Sentinel: ' || batch_remote_id,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+        AND job_kind = 'batch'
+        AND batch_remote_id LIKE 'pending%'
+        AND COALESCE(started_at, created_at) < datetime('now', ?)
+    `, [`-${transcriptionBatchFinalizationStaleSeconds} seconds`]);
+    console.log(`[db] Marked ${staleTxBatchPendingCount} stale transcription batch-pending job(s) as failed.`);
+  }
+
   const staleExtractions = await getAsync(`
     SELECT COUNT(*) as count
     FROM extraction_jobs
@@ -1100,6 +1141,31 @@ async function initializeSchema(options = {}) {
   const staleCompletedBatchCount = staleCompletedBatches?.count || 0;
   if (staleCompletedBatchCount > 0) {
     console.log(`[db] Leaving ${staleCompletedBatchCount} completed extraction batch job(s) in running state for finalization resume`);
+  }
+
+  // Extraction batch jobs stranded on the 'pending%' submission sentinel.
+  // Per docs/reviews/2026-07-06-application-reliability-review.md R2.
+  const staleExtractionBatchPending = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM extraction_jobs
+    WHERE status = 'running'
+      AND job_kind = 'batch'
+      AND batch_remote_id LIKE 'pending%'
+      AND COALESCE(started_at, created_at) < datetime('now', ?)
+  `, [`-${extractionBatchFinalizationStaleSeconds} seconds`]);
+  const staleExtractionBatchPendingCount = staleExtractionBatchPending?.count || 0;
+  if (staleExtractionBatchPendingCount > 0) {
+    await db.run(`
+      UPDATE extraction_jobs
+      SET status = 'failed',
+          error = 'Server restarted during batch submission (provider may have an orphaned batch). Sentinel: ' || batch_remote_id,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+        AND job_kind = 'batch'
+        AND batch_remote_id LIKE 'pending%'
+        AND COALESCE(started_at, created_at) < datetime('now', ?)
+    `, [`-${extractionBatchFinalizationStaleSeconds} seconds`]);
+    console.log(`[db] Marked ${staleExtractionBatchPendingCount} stale extraction batch-pending job(s) as failed.`);
   }
 
   const staleAuthorityResolutionJobs = await getAsync(`
@@ -1276,6 +1342,8 @@ async function initializeSchema(options = {}) {
     || staleCompletedTxBatchCount > 0
     || staleExtractionBatchFinalizationClaimCount > 0
     || staleCompletedBatchCount > 0
+    || staleTxBatchPendingCount > 0
+    || staleExtractionBatchPendingCount > 0
     || staleAuthorityResolutionCount > 0
     || staleAuthoritySuggestionCount > 0
     || staleSentimentSingletonCount > 0

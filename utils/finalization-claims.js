@@ -25,6 +25,7 @@ function getFinalizationOwner(scope) {
 }
 
 function isLostFinalizationClaimError(error) {
+  if (error && error.code === 'LOST_FINALIZATION_CLAIM') return true;
   const message = error && error.message ? error.message : String(error || '');
   return /Lost(?: extraction)? finalization claim for batch job \d+\./.test(message);
 }
