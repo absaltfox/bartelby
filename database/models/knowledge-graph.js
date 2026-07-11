@@ -1982,7 +1982,29 @@ const citations = {
     }
     params.push(limit, offset);
     const orderBy = buildCitationOrderBy(opts.sort);
+    // Two-phase page assembly (2026-07-11 perf investigation): pick the page
+    // of citation ids with only the joins the WHERE/ORDER BY need, then run
+    // the heavy enrichment joins — including the three nearest-support
+    // correlated subqueries — against just those ids. Sorting the full
+    // filtered set through the enrichment joins evaluated the subqueries for
+    // every matching row (~3×N per page load). Both phases share the same
+    // ORDER BY, which must stay deterministic (id tiebreaker) so the outer
+    // re-sort reproduces the page order exactly.
     return await allAsync(`
+      WITH page_ids AS (
+        SELECT c.id
+        FROM citations c
+        LEFT JOIN relationships r ON r.id = c.relationship_id
+        LEFT JOIN relationship_types rt ON rt.name = r.relationship_type
+        WHERE (${access.clause})
+          AND (${collection.clause})
+          AND (${kindFilter.clause})
+          ${statusClause}
+          ${sourceClause}
+        ${orderBy}
+        LIMIT ?
+        OFFSET ?
+      )
       SELECT
         c.*,
         e.canonical_name AS entity_name,
@@ -2034,14 +2056,8 @@ const citations = {
         ${buildNearestSupportCitationSubquery('c4', 'r.target_entity_id')}
       )
       LEFT JOIN documents d ON d.id = c.document_id
-      WHERE (${access.clause})
-        AND (${collection.clause})
-        AND (${kindFilter.clause})
-        ${statusClause}
-        ${sourceClause}
+      WHERE c.id IN (SELECT id FROM page_ids)
       ${orderBy}
-      LIMIT ?
-      OFFSET ?
     `, params);
   },
 
@@ -3055,6 +3071,9 @@ function buildNearestSupportCitationSubquery(candidateAlias, entityExpression) {
       `;
 }
 
+// Every variant ends in the c.id DESC tiebreaker: citations.list() assembles
+// pages in two phases sharing this ORDER BY, so ties must sort identically
+// in both or LIMIT/OFFSET pages stop partitioning the result set.
 function buildCitationOrderBy(sort) {
   const normalized = String(sort || 'newest').toLowerCase();
   if (normalized === 'rare-type-first') {
@@ -3065,14 +3084,15 @@ function buildCitationOrderBy(sort) {
           WHEN 'medium' THEN 1
           ELSE 2
         END ASC,
-        c.created_at DESC
+        c.created_at DESC,
+        c.id DESC
     `;
   }
   if (normalized === 'low-confidence-first') {
-    return 'ORDER BY COALESCE(c.confidence, 0) ASC, c.created_at DESC';
+    return 'ORDER BY COALESCE(c.confidence, 0) ASC, c.created_at DESC, c.id DESC';
   }
   // newest (default)
-  return 'ORDER BY c.created_at DESC';
+  return 'ORDER BY c.created_at DESC, c.id DESC';
 }
 
 function buildCitationQueryConditions(opts = {}, alias = 'c') {

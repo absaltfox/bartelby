@@ -695,6 +695,27 @@ MIGRATIONS.push(`
   ALTER TABLE collections ADD COLUMN date_range_end_year INTEGER;
 `);
 
+// v79 — admin list-surface indexes from the 2026-07-11 performance
+// investigation (Jobs page and Entity Evidence Review; see
+// tests/unit/admin-list-query-plans.test.js for the plan guards).
+// - sentiment_extraction_jobs(created_at DESC): the Jobs page "all" filter
+//   orders by created_at with no status predicate, which the existing
+//   (status, created_at) composite cannot serve.
+// - authority_link_suggestions(created_at, confidence): covering index for
+//   the per-job confidence-window aggregates on the Jobs page; without it
+//   each of the 3 correlated subqueries per row full-scans the table.
+// - citations(approval_status, created_at DESC): lets the review-queue list
+//   stream in display order and stop at the page LIMIT instead of
+//   materializing every matching citation.
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_sentiment_jobs_created
+    ON sentiment_extraction_jobs(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_created_confidence
+    ON authority_link_suggestions(created_at, confidence);
+  CREATE INDEX IF NOT EXISTS idx_citations_approval_created
+    ON citations(approval_status, created_at DESC);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

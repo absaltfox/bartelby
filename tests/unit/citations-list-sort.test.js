@@ -64,6 +64,42 @@ describe('citations.list sort options (U1.1)', () => {
     expect(ids.indexOf(lowId)).toBeLessThan(ids.indexOf(highId));
   });
 
+  it('paginates deterministically under sort-key ties (id DESC tiebreaker)', async () => {
+    // 12 citations sharing one created_at and one relationship type: every
+    // sort key ties, so only an explicit tiebreaker makes LIMIT/OFFSET pages
+    // a clean partition.
+    const ids = [];
+    for (let i = 0; i < 12; i++) {
+      const eA = await db.entitiesAsync.create({ entity_type: 'person', canonical_name: `T-${i}-${Math.random()}`, description: null, properties: {} });
+      const eB = await db.entitiesAsync.create({ entity_type: 'person', canonical_name: `U-${i}-${Math.random()}`, description: null, properties: {} });
+      const relInsert = await db.runAsync(`
+        INSERT INTO relationships (source_entity_id, target_entity_id, relationship_type, created_at)
+        VALUES (?, ?, 'mentioned_in', '2001-06-15 12:00:00')
+      `, [eA, eB]);
+      const citInsert = await db.runAsync(`
+        INSERT INTO citations (entity_id, relationship_id, transcript_id, document_id, passage_start, passage_end, passage_text, extraction_method, approval_status, confidence, created_at)
+        VALUES (NULL, ?, 1, 1, 0, 1, '.', 'llm_auto', 'pending', 0.8, '2001-06-15 12:00:00')
+      `, [relInsert.lastInsertRowid]);
+      ids.push(citInsert.lastInsertRowid);
+    }
+
+    for (const sort of ['rare-type-first', 'newest', 'low-confidence-first']) {
+      const all = (await db.citationsAsync.list('pending', 500, 0, { sort }))
+        .map((r) => r.id).filter((id) => ids.includes(id));
+      const paged = [];
+      for (let offset = 0; paged.length < all.length; offset += 5) {
+        const page = (await db.citationsAsync.list('pending', 5, offset, { sort }))
+          .map((r) => r.id).filter((id) => ids.includes(id));
+        paged.push(...page);
+        if (offset > 500) break;
+      }
+      // Pages must partition the tied set: no duplicates, nothing dropped,
+      // and tied rows must appear in id DESC order.
+      expect([...paged].sort((a, b) => a - b)).toEqual([...ids].sort((a, b) => a - b));
+      expect(all).toEqual([...ids].sort((a, b) => b - a));
+    }
+  });
+
   it('default sort (no option) preserves existing behavior (newest first)', async () => {
     const oldId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 200, confidence: 0.8 });
     const newId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.8 });
