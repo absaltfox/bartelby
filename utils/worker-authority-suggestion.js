@@ -116,6 +116,7 @@ async function runAuthoritySuggestionWorkerCycle() {
     await logLine(`Authority suggestion job #${job.id} started. Scope: ${job.collection_id != null ? `collection #${job.collection_id}` : 'full corpus'}.`);
 
     let entityCount = 0, candidateCount = 0, suggestionCount = 0, autoApprovedCount = 0, skippedGenericCount = 0;
+    const assignedInThisRun = new Map(); // entityId → authorityId, prevents O(N²) DB writes per name cluster
 
     try {
       const entities = await loadEntitiesInScope(job.collection_id, db);
@@ -174,12 +175,21 @@ async function runAuthoritySuggestionWorkerCycle() {
         const authorityId = await ensureAuthority(pair.entityA, db);
 
         if (decision.action === 'auto_approve_exact' || decision.action === 'auto_approve_embedding') {
-          // Auto-approve: assign authority directly to both entities
-          await db.entitiesAsync.assignAuthority(pair.entityA.id, authorityId);
-          await db.entitiesAsync.assignAuthority(pair.entityB.id, authorityId);
-          await db.saveDatabase();
-          autoApprovedCount++;
-          await logLine(`Auto-approved (${decision.action === 'auto_approve_exact' ? 'exact name' : 'embedding'}): entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);
+          // Auto-approve: assign authority to both entities, skipping any already assigned
+          // in this run to avoid O(N²) DB writes for large same-name clusters.
+          const alreadyA = assignedInThisRun.get(pair.entityA.id) === authorityId;
+          const alreadyB = assignedInThisRun.get(pair.entityB.id) === authorityId;
+          if (!alreadyA) {
+            await db.entitiesAsync.assignAuthority(pair.entityA.id, authorityId);
+            assignedInThisRun.set(pair.entityA.id, authorityId);
+          }
+          if (!alreadyB) {
+            await db.entitiesAsync.assignAuthority(pair.entityB.id, authorityId);
+            assignedInThisRun.set(pair.entityB.id, authorityId);
+            await db.saveDatabase();
+            autoApprovedCount++;
+            await logLine(`Auto-approved (${decision.action === 'auto_approve_exact' ? 'exact name' : 'embedding'}): entity #${pair.entityB.id} → authority #${authorityId} (similarity ${similarity.toFixed(3)})`);
+          }
         } else {
           // Pending suggestion
           const suggestionId = await authorityLinkSuggestionsAsync.createIfMissing({

@@ -72,3 +72,39 @@ describe('authoritySuggestionJobsAsync.retry', () => {
     expect(result.status).toBe('not_found');
   });
 });
+
+describe('authoritySuggestionJobsAsync.forceFail', () => {
+  it('marks a running job failed and returns changes=1', async () => {
+    const id = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
+    await db.runAsync(`UPDATE authority_suggestion_jobs SET status = 'running' WHERE id = ?`, [id]);
+
+    const result = await db.authoritySuggestionJobsAsync.forceFail(id);
+    expect(result.changes).toBe(1);
+
+    const job = await db.authoritySuggestionJobsAsync.getById(id);
+    expect(job.status).toBe('failed');
+    expect(job.error).toMatch(/admin/i);
+    expect(job.completed_at).toBeTruthy();
+  });
+
+  it('does nothing to a queued job and returns changes=0', async () => {
+    const id = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
+
+    const result = await db.authoritySuggestionJobsAsync.forceFail(id);
+    expect(result.changes).toBe(0);
+
+    const job = await db.authoritySuggestionJobsAsync.getById(id);
+    expect(job.status).toBe('queued');
+  });
+
+  it('does nothing to a done job and returns changes=0', async () => {
+    const id = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
+    await db.authoritySuggestionJobsAsync.markDone(id, {});
+
+    const result = await db.authoritySuggestionJobsAsync.forceFail(id);
+    expect(result.changes).toBe(0);
+
+    const job = await db.authoritySuggestionJobsAsync.getById(id);
+    expect(job.status).toBe('done');
+  });
+});

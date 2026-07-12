@@ -92,6 +92,35 @@ describe('admin-jobs authority_suggestion routes', () => {
       .expect(409);
   });
 
+  it('POST /api/authority-suggestion/:id/fail marks a running job failed', async () => {
+    const id = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
+    await db.runAsync(`UPDATE authority_suggestion_jobs SET status = 'running' WHERE id = ?`, [id]);
+
+    const res = await adminAgent
+      .post(`/admin/jobs/api/authority-suggestion/${id}/fail`)
+      .set('x-csrf-token', csrf)
+      .expect(200);
+    expect(res.body.success).toBe(true);
+
+    const job = await db.authoritySuggestionJobsAsync.getById(id);
+    expect(job.status).toBe('failed');
+  });
+
+  it('POST /fail on a non-running job returns 409', async () => {
+    const id = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
+    await adminAgent
+      .post(`/admin/jobs/api/authority-suggestion/${id}/fail`)
+      .set('x-csrf-token', csrf)
+      .expect(409);
+  });
+
+  it('POST /fail on a missing job returns 404', async () => {
+    await adminAgent
+      .post('/admin/jobs/api/authority-suggestion/999999/fail')
+      .set('x-csrf-token', csrf)
+      .expect(404);
+  });
+
   it('DELETE removes a failed authority_suggestion job; refuses active ones', async () => {
     const failedId = await db.authoritySuggestionJobsAsync.create({ collection_id: null });
     await db.authoritySuggestionJobsAsync.markFailed(failedId, 'boom');
