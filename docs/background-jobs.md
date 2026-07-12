@@ -33,6 +33,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Knowledge graph extraction | `extraction_jobs` | `utils/worker-extraction.js` |
 | Authority resolution backfill | `authority_resolution_jobs` | `utils/worker-authority-resolution.js` |
 | Authority suggestion (cluster pipeline) | `authority_suggestion_jobs` | `utils/worker-authority-suggestion.js` |
+| Title & summary backfill | `title_backfill_jobs` | `utils/worker-title-backfill.js` |
 | Sentiment extraction | `sentiment_extraction_jobs` | `utils/worker-sentiment.js` |
 | Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
@@ -65,6 +66,7 @@ is running with background work enabled. In practice that means
 | `tickExtractionJobs` | 5 s | `extractionBusy` boolean |
 | `tickAuthorityResolutionJobs` | 5 s | `authorityResolutionBusy` boolean |
 | `tickAuthoritySuggestionJobs` | `BATCH_POLL_MS` | `authoritySuggestionBusy` boolean |
+| `tickTitleBackfillJobs` | 5 s | `titleBackfillBusy` boolean |
 | `tickSentimentExtractionJobs` | 5 s | `sentimentExtractionBusy` boolean |
 | `pollRunningBatches` (transcription) | `BATCH_POLL_MS` | `batchPollBusy` boolean |
 | `pollRunningGroupingBatches` | `BATCH_POLL_MS` | `groupingBatchPollBusy` boolean |
@@ -196,6 +198,7 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`extraction_jobs` (`running`, not a batch)** → marked `failed`
 - **`authority_resolution_jobs` (`running`)** → marked `failed`
 - **`authority_suggestion_jobs` (`running`)** → marked `failed`
+- **`title_backfill_jobs` (`running`)** → marked `failed`
 - **`sentiment_extraction_jobs` (singleton, `running`)** → marked `failed` with `error = 'Server restarted during processing'`
 - **`sentiment_extraction_jobs` (batch, `batch_submitted`, finalization claim stale)** → claim cleared. The
   claim itself is re-claimable by the same owner, or by any worker after
@@ -273,6 +276,22 @@ endpoint, preserving "One Canonical Backend Path per Workflow"
 
 Per the standing project rule, no automatic retries are scheduled —
 all retries are admin-triggered.
+
+## Title & summary backfill (added 2026-07-11)
+
+Triggered per-collection from the admin collection card ("Backfill
+titles", next to "Backfill sentiment"). One `title_backfill_jobs` row per
+run; the worker iterates the collection's best transcripts and calls the
+shared `regenerateDocumentMetadata` helper in
+`utils/transcription-pipeline.js` — the same logic transcription
+finalization uses, so a title is regenerated only when the current one is
+generic and a summary only when `description` is empty. Re-runs are
+therefore idempotent and skip already-fixed documents without LLM calls.
+Provider comes from the `default_provider` setting; the job fails fast
+with the setting name when it is unset. Per-document failures are counted
+and summarized in `error` (the per-document detail is in the job log);
+retry creates a new queued row, preserving the failed row as the audit
+trail. See docs/superpowers/specs/2026-07-11-title-backfill-design.md.
 
 ---
 
