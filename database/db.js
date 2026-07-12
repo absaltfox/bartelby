@@ -1252,6 +1252,23 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleAuthoritySuggestionCount} stale authority suggestion job(s) as failed`);
   }
 
+  const staleTitleBackfillJobs = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM title_backfill_jobs
+    WHERE status = 'running'
+  `);
+  const staleTitleBackfillCount = staleTitleBackfillJobs?.count || 0;
+  if (staleTitleBackfillCount > 0) {
+    await db.run(`
+      UPDATE title_backfill_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleTitleBackfillCount} stale title backfill job(s) as failed`);
+  }
+
   // Sentiment singleton jobs in 'running' lost their executor on restart;
   // mark them failed. Batch rows in 'batch_submitted' are intentionally
   // left untouched — the provider still owns the work and
