@@ -63,6 +63,9 @@
     <a href="<%= filterHref(filter, 'authority_suggestion') %>" class="filter-tab filter-tab-type <%= typeFilter === 'authority_suggestion' ? 'active' : '' %>">
       Authority Suggestion <span class="filter-count"><%= typeCounts.authority_suggestion %></span>
     </a>
+    <a href="<%= filterHref(filter, 'title_backfill') %>" class="filter-tab filter-tab-type <%= typeFilter === 'title_backfill' ? 'active' : '' %>">
+      Title Backfill <span class="filter-count"><%= typeCounts.title_backfill %></span>
+    </a>
   </div>
 
   <% if (pendingReconcileCount > 0) { %>
@@ -123,16 +126,17 @@
               const isSentiment = job.job_type === 'sentiment';
               const isBatch = !isImport && !isSentiment && job.job_kind === 'batch';
               const isAuthoritySuggestion = job.job_type === 'authority_suggestion';
+              const isTitleBackfill = job.job_type === 'title_backfill';
               const canDelete = job.status === 'done' || job.status === 'failed';
               const canRetry = job.status === 'failed' && (
-                isAuthoritySuggestion
+                (isAuthoritySuggestion || isTitleBackfill)
                   ? true
                   : (!isImport || isImportSubmit)
               );
               // Sentiment has no provider-edit flow (model is resolved per-cycle
               // from settings, not stored per-job in an editable form).
-              // Authority suggestion has no provider to edit either.
-              const canEdit = job.status === 'failed' && !isImport && !isSentiment && !isAuthoritySuggestion;
+              // Authority suggestion and title backfill have no provider to edit either.
+              const canEdit = job.status === 'failed' && !isImport && !isSentiment && !isAuthoritySuggestion && !isTitleBackfill;
               const canForceFail = job.status === 'running'
                 && job.job_kind === 'batch'
                 && (job.job_type === 'transcription' || job.job_type === 'extraction');
@@ -151,6 +155,7 @@
                     : job.job_type === 'extraction' ? 'Extraction'
                     : isSentiment ? 'Sentiment'
                     : isAuthoritySuggestion ? 'Authority Suggestion'
+                    : isTitleBackfill ? 'Title Backfill'
                     : 'Transcription' %>
                 </span>
               </td>
@@ -225,6 +230,18 @@
                         <% } %>
                       </small>
                     <% } %>
+                  <% } %>
+                <% } else if (isTitleBackfill) { %>
+                  <span><%= job.subject_label || ('Collection #' + job.collection_id) %></span>
+                  <% if (job.status === 'failed' && job.error) { %>
+                    <div class="job-error job-error--inline" data-job-error="true"><%= job.error %></div>
+                  <% } %>
+                  <% if (job.docs_total) { %>
+                    <small class="muted">
+                      <%= job.docs_processed || 0 %>/<%= job.docs_total %> docs •
+                      <%= job.titles_updated || 0 %> titles •
+                      <%= job.summaries_updated || 0 %> summaries<% if (job.docs_failed) { %> • <%= job.docs_failed %> failed<% } %>
+                    </small>
                   <% } %>
                 <% } else if (job.document_title) { %>
                   <a href="/documents/<%= job.document_id %>"><%= job.document_title %></a>
@@ -355,7 +372,8 @@
     extraction: jobsApiBase + '/extraction/',
     import: jobsApiBase + '/import/',
     sentiment: jobsApiBase + '/sentiment/',
-    authority_suggestion: jobsApiBase + '/authority-suggestion/'
+    authority_suggestion: jobsApiBase + '/authority-suggestion/',
+    title_backfill: jobsApiBase + '/title-backfill/'
   },
   pollUrl: jobsApiBase + '/all',
   activePollUrl: jobsApiBase + '/all',

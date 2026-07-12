@@ -38,7 +38,7 @@ function matchesStatusFilter(status, statusFilter) {
   return status === normalized;
 }
 
-function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment', 'authority_suggestion']) {
+function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment', 'authority_suggestion', 'title_backfill']) {
   const normalized = String(typeFilter || 'all').toLowerCase();
   return allowed.includes(normalized) ? normalized : 'all';
 }
@@ -1385,6 +1385,18 @@ const adminJobsAsync = {
     return await authoritySuggestionJobs.getSummaries(opts);
   },
 
+  async getTitleBackfillCounts(statusFilter = 'all') {
+    const counts = await titleBackfillJobs.getCounts();
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    if (normalized === 'all') return counts;
+    if (normalized === 'running') return counts.running;
+    return counts[normalized] || 0;
+  },
+
+  async getTitleBackfillSummaries(opts = {}) {
+    return await titleBackfillJobs.getSummaries(opts);
+  },
+
   async getTranscriptionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
     const normalizedStatus = normalizeStatusFilter(statusFilter);
     const params = [];
@@ -1544,12 +1556,13 @@ const adminJobsAsync = {
     const normalizedType = normalizeTypeFilter(typeFilter);
     const normalizedStatus = normalizeStatusFilter(statusFilter);
 
-    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts] = await Promise.all([
+    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts, titleBackfillCounts] = await Promise.all([
       this.getTranscriptionCounts(),
       this.getImportCounts(),
       this.getExtractionCounts(),
       this.getSentimentCounts(),
-      this.getAuthoritySuggestionCounts()
+      this.getAuthoritySuggestionCounts(),
+      this.getTitleBackfillCounts()
     ]);
 
     // Status tab counts: scoped to typeFilter (shows the breakdown for the selected type)
@@ -1559,7 +1572,8 @@ const adminJobsAsync = {
     else if (normalizedType === 'extraction') statusCounts = extractionCounts;
     else if (normalizedType === 'sentiment') statusCounts = sentimentCounts;
     else if (normalizedType === 'authority_suggestion') statusCounts = authoritySuggestionCounts;
-    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts);
+    else if (normalizedType === 'title_backfill') statusCounts = titleBackfillCounts;
+    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts, titleBackfillCounts);
 
     // Type tab counts: scoped to statusFilter (shows how many of each type match the current status)
     const getCount = (countMap) => {
@@ -1575,7 +1589,8 @@ const adminJobsAsync = {
         transcription: getCount(transcriptionCounts),
         extraction: getCount(extractionCounts),
         sentiment: getCount(sentimentCounts),
-        authority_suggestion: getCount(authoritySuggestionCounts)
+        authority_suggestion: getCount(authoritySuggestionCounts),
+        title_backfill: getCount(titleBackfillCounts)
       }
     };
   },
@@ -1589,14 +1604,16 @@ const adminJobsAsync = {
     if (normalizedType === 'extraction') return await this.getExtractionCounts(normalizedStatus);
     if (normalizedType === 'sentiment') return await this.getSentimentCounts(normalizedStatus);
     if (normalizedType === 'authority_suggestion') return await this.getAuthoritySuggestionCounts(normalizedStatus);
-    const [transcriptionCount, importCount, extractionCount, sentimentCount, authoritySuggestionCount] = await Promise.all([
+    if (normalizedType === 'title_backfill') return await this.getTitleBackfillCounts(normalizedStatus);
+    const [transcriptionCount, importCount, extractionCount, sentimentCount, authoritySuggestionCount, titleBackfillCount] = await Promise.all([
       this.getTranscriptionCounts(normalizedStatus),
       this.getImportCounts(normalizedStatus),
       this.getExtractionCounts(normalizedStatus),
       this.getSentimentCounts(normalizedStatus),
-      this.getAuthoritySuggestionCounts(normalizedStatus)
+      this.getAuthoritySuggestionCounts(normalizedStatus),
+      this.getTitleBackfillCounts(normalizedStatus)
     ]);
-    return transcriptionCount + importCount + extractionCount + sentimentCount + authoritySuggestionCount;
+    return transcriptionCount + importCount + extractionCount + sentimentCount + authoritySuggestionCount + titleBackfillCount;
   },
 
   // Paginated combined job list
@@ -1620,6 +1637,9 @@ const adminJobsAsync = {
         : [],
       normalizedType === 'all' || normalizedType === 'authority_suggestion'
         ? this.getAuthoritySuggestionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'title_backfill'
+        ? this.getTitleBackfillSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
         : []
     ]);
 
@@ -1631,14 +1651,15 @@ const adminJobsAsync = {
 
   // Active jobs only (for AJAX polling — avoids historical scans)
   async getActive() {
-    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs, authoritySuggestionJobsActive] = await Promise.all([
+    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs, authoritySuggestionJobsActive, titleBackfillJobsActive] = await Promise.all([
       this.getTranscriptionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getImportSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getSentimentSummaries({ statusFilter: 'running', limit: 1000 }),
-      this.getAuthoritySuggestionSummaries({ statusFilter: 'running', limit: 1000 })
+      this.getAuthoritySuggestionSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getTitleBackfillSummaries({ statusFilter: 'running', limit: 1000 })
     ]);
-    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs, ...authoritySuggestionJobsActive].sort(sortJobsByCreatedAtDesc);
+    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs, ...authoritySuggestionJobsActive, ...titleBackfillJobsActive].sort(sortJobsByCreatedAtDesc);
   }
 };
 

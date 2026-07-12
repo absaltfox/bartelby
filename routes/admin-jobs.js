@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { requireAdmin } = require('../middleware/auth');
-const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, sentimentAsync, adminJobsAsync, authoritySuggestionJobsAsync } = require('../database/db');
+const { transcriptionJobsAsync, importJobsAsync, extractionJobsAsync, sentimentAsync, adminJobsAsync, authoritySuggestionJobsAsync, titleBackfillJobsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
 const audit = require('../utils/audit-log');
 const { listConfiguredProviders } = require('../utils/llm');
@@ -21,6 +21,7 @@ async function getJobByType(type, id) {
   if (type === 'extraction') return await extractionJobsAsync.getById(id);
   if (type === 'sentiment') return await sentimentAsync.getJobById(id);
   if (type === 'authority_suggestion') return await authoritySuggestionJobsAsync.getById(id);
+  if (type === 'title_backfill') return await titleBackfillJobsAsync.getById(id);
   return await transcriptionJobsAsync.getById(id);
 }
 
@@ -98,6 +99,8 @@ router.post('/api/bulk/retry', express.json(), asyncHandler(async (req, res) => 
         await sentimentAsync.retry(parseInt(id));
       } else if (type === 'authority_suggestion') {
         await authoritySuggestionJobsAsync.retry(parseInt(id));
+      } else if (type === 'title_backfill') {
+        await titleBackfillJobsAsync.retry(parseInt(id));
       } else {
         await transcriptionJobsAsync.retry(parseInt(id));
       }
@@ -131,6 +134,8 @@ router.post('/api/bulk/delete', express.json(), asyncHandler(async (req, res) =>
         await sentimentAsync.delete(numericId);
       } else if (type === 'authority_suggestion') {
         await authoritySuggestionJobsAsync.delete(numericId);
+      } else if (type === 'title_backfill') {
+        await titleBackfillJobsAsync.delete(numericId);
       } else {
         await transcriptionJobsAsync.delete(numericId);
       }
@@ -410,6 +415,45 @@ router.post('/api/authority-suggestion/:id/retry', asyncHandler(async (req, res)
     newJobId: result.newJobId
   });
   res.json({ success: true, newJobId: result.newJobId });
+}));
+
+// API: title_backfill job routes — same retry semantics as
+// authority_suggestion (new queued row, failed row preserved as audit trail;
+// idempotent per collection). Per docs/background-jobs.md failure visibility.
+router.get('/api/title-backfill/:id', asyncHandler(async (req, res) => {
+  const job = await titleBackfillJobsAsync.getById(parseInt(req.params.id));
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json(job);
+}));
+
+router.post('/api/title-backfill/:id/retry', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const result = await titleBackfillJobsAsync.retry(jobId);
+  if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+  if (result.status === 'not_failed') return res.status(409).json({ error: 'Job is not in a retryable state.' });
+  if (result.status === 'already_queued') {
+    return res.json({ success: true, newJobId: result.existingJobId, alreadyQueued: true });
+  }
+  audit.log('admin.job_retried', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'title_backfill',
+    newJobId: result.newJobId
+  });
+  res.json({ success: true, newJobId: result.newJobId });
+}));
+
+router.delete('/api/title-backfill/:id', express.json(), asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const job = await titleBackfillJobsAsync.getById(jobId);
+  assertJobDeletable(job, 'title_backfill');
+  await titleBackfillJobsAsync.delete(jobId);
+  audit.log('admin.job_deleted', {
+    ...audit.reqContext(req),
+    jobId,
+    jobType: 'title_backfill'
+  });
+  res.json({ success: true });
 }));
 
 // API: delete authority_suggestion job record
