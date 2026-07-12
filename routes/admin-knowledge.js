@@ -10,10 +10,12 @@ const {
   authoritiesAsync,
   authorityLinkSuggestionsAsync,
   authorityResolutionJobsAsync,
+  titleBackfillJobsAsync,
   allAsync
 } = require('../database/db');
 const { queueDocumentRerun, queueCollectionRerun } = require('../utils/knowledge-rerun');
 const { asyncHandler } = require('../utils/async-handler');
+const audit = require('../utils/audit-log');
 
 router.use(requireAdmin);
 
@@ -248,6 +250,36 @@ router.post('/collections/reextract', express.urlencoded({ extended: false }), a
       error: err.message
     }));
   }
+}));
+
+// POST /admin/knowledge/titles/backfill/collection/:id
+// Per docs/development-principles.md "Corpus mutations require admin trigger":
+// explicit admin click queues one title_backfill_jobs row; the worker tick
+// picks it up. De-duped per collection. NOTE: redirect intentionally has no
+// #collection- fragment — that hash auto-opens the Access panel (see
+// BACKLOG.md "Stop the #collection-<id> hash…").
+router.post('/titles/backfill/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(collectionId)) {
+    return res.redirect('/admin/collections?error=' + encodeURIComponent('Invalid collection id.'));
+  }
+  const collection = await collectionsAsync.getById(collectionId);
+  if (!collection) {
+    return res.redirect('/admin/collections?error=' + encodeURIComponent('Collection not found.'));
+  }
+  if (await titleBackfillJobsAsync.hasPendingOrRunningForCollection(collectionId)) {
+    return res.redirect('/admin/collections?error=' + encodeURIComponent('A title backfill is already queued or running for this collection.'));
+  }
+  const jobId = await titleBackfillJobsAsync.create({
+    collection_id: collectionId,
+    requested_by_user_id: req.user ? req.user.id : null
+  });
+  audit.log('admin.title_backfill_queued', {
+    ...audit.reqContext(req),
+    collectionId,
+    jobId
+  });
+  return res.redirect(`/admin/collections?saved=1&queuedCollectionName=${encodeURIComponent(collection.name)}&queuedMode=title-backfill`);
 }));
 
 module.exports = router;

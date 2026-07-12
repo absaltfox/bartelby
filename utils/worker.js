@@ -24,6 +24,7 @@ let importBusy = false;
 let extractionBusy = false;
 let authorityResolutionBusy = false;
 let authoritySuggestionBusy = false;
+let titleBackfillBusy = false;
 let sentimentExtractionBusy = false;
 let sentimentBatchPollBusy = false;
 let sentimentReconciliationBusy = false;
@@ -39,6 +40,7 @@ function startWorker() {
   setInterval(tickExtractionJobs, 5000);
   setInterval(tickAuthorityResolutionJobs, 5000);
   setInterval(tickAuthoritySuggestionJobs, BATCH_POLL_MS);
+  setInterval(tickTitleBackfillJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningGroupingBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
@@ -163,6 +165,19 @@ async function tickAuthoritySuggestionJobs() {
     console.error('[worker] authority suggestion worker cycle failed:', err.message);
   } finally {
     authoritySuggestionBusy = false;
+  }
+}
+
+async function tickTitleBackfillJobs() {
+  if (titleBackfillBusy) return;
+  titleBackfillBusy = true;
+  try {
+    const { runTitleBackfillCycle } = require('./worker-title-backfill');
+    await runTitleBackfillCycle();
+  } catch (err) {
+    console.error('[worker] title backfill cycle failed:', err.message);
+  } finally {
+    titleBackfillBusy = false;
   }
 }
 

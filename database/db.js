@@ -716,6 +716,35 @@ MIGRATIONS.push(`
     ON citations(approval_status, created_at DESC);
 `);
 
+// v80 — title & summary backfill job family. Per
+// docs/superpowers/specs/2026-07-11-title-backfill-design.md: one row per
+// collection run; counters give the Jobs page live progress; failures are
+// per-document and summarized in `error` (docs/background-jobs.md failure
+// visibility rule).
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS title_backfill_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    provider TEXT,
+    requested_by_user_id INTEGER,
+    docs_total INTEGER NOT NULL DEFAULT 0,
+    docs_processed INTEGER NOT NULL DEFAULT 0,
+    titles_updated INTEGER NOT NULL DEFAULT 0,
+    summaries_updated INTEGER NOT NULL DEFAULT 0,
+    docs_failed INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME,
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_title_backfill_jobs_status
+    ON title_backfill_jobs(status);
+  CREATE INDEX IF NOT EXISTS idx_title_backfill_jobs_collection
+    ON title_backfill_jobs(collection_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1223,6 +1252,23 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleAuthoritySuggestionCount} stale authority suggestion job(s) as failed`);
   }
 
+  const staleTitleBackfillJobs = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM title_backfill_jobs
+    WHERE status = 'running'
+  `);
+  const staleTitleBackfillCount = staleTitleBackfillJobs?.count || 0;
+  if (staleTitleBackfillCount > 0) {
+    await db.run(`
+      UPDATE title_backfill_jobs
+      SET status = 'failed',
+          error = 'Server restarted during processing',
+          completed_at = CURRENT_TIMESTAMP
+      WHERE status = 'running'
+    `);
+    console.log(`[db] Marked ${staleTitleBackfillCount} stale title backfill job(s) as failed`);
+  }
+
   // Sentiment singleton jobs in 'running' lost their executor on restart;
   // mark them failed. Batch rows in 'batch_submitted' are intentionally
   // left untouched — the provider still owns the work and
@@ -1688,7 +1734,7 @@ function parseJsonValue(value, fallback) {
 const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
+const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
 const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, authorityGenericTerms, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
@@ -1833,6 +1879,7 @@ module.exports = {
   authorityResolutionJobsAsync,
   authoritySuggestionJobs,
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
+  titleBackfillJobsAsync: titleBackfillJobs,
   sentimentAsync,
   normalizeSentimentPhrase,
   normalizeSentimentPhraseSql,

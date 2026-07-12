@@ -87,7 +87,6 @@ async function persistDocumentTranscription({
     settingsAsync,
     userApiKeysAsync
   } = require('../database/db');
-  const { generateDocumentTitle, generateDocumentSummary } = require('./llm');
 
   const combined = combineTranscriptionResults(results);
   const llmMeta = combined.metadata || {};
@@ -175,53 +174,22 @@ async function persistDocumentTranscription({
     }
 
     if (combined.transcription) {
-      const currentTitle = (doc.title || '').trim();
-      const uploadFilename = existing?._upload_filename || '';
-      const uploadStem = uploadFilename
-        ? uploadFilename.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim()
-        : '';
-      const looksGeneric = !currentTitle
-        || /^(untitled|document|page\s*\d*|pdf)/i.test(currentTitle)
-        || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle)
-        || (uploadStem && currentTitle === uploadStem);
-
-      if (looksGeneric) {
-        const extractedTitle = (llmMeta.title || '').trim() || null;
-        if (extractedTitle) {
-          updates.title = extractedTitle;
-          if (logLine) await logLine(`Using extracted title for document ${documentId}: "${extractedTitle}"`);
-        } else {
-          try {
-            const { title: generated, usage: titleUsage } = await generateDocumentTitle(providerName, combined.transcription, runtimeConfig);
-            if (titleUsage) {
-              combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (titleUsage.inputTokens || 0);
-              combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (titleUsage.outputTokens || 0);
-            }
-            if (generated) {
-              updates.title = generated;
-              if (logLine) await logLine(`Generated title for document ${documentId}: "${generated}"`);
-            }
-          } catch (err) {
-            if (logLine) await logLine(`Title generation failed for document ${documentId} (non-fatal): ${err.message}`);
-          }
-        }
-      }
-
-      if (!doc.description) {
-        try {
-          const { summary: generated, usage: sumUsage } = await generateDocumentSummary(providerName, combined.transcription, runtimeConfig);
-          if (sumUsage) {
-            combined.utilityInputTokens = (combined.utilityInputTokens || 0) + (sumUsage.inputTokens || 0);
-            combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + (sumUsage.outputTokens || 0);
-          }
-          if (generated) {
-            updates.description = generated;
-            if (logLine) await logLine(`Generated summary for document ${documentId}: "${generated}"`);
-          }
-        } catch (err) {
-          if (logLine) await logLine(`Summary generation failed for document ${documentId} (non-fatal): ${err.message}`);
-        }
-      }
+      const metaResult = await regenerateDocumentMetadata({
+        doc,
+        transcription: combined.transcription,
+        providerName,
+        runtimeConfig,
+        extractedTitle: llmMeta.title || null,
+        uploadFilename: existing?._upload_filename || '',
+        logLine
+      });
+      if (metaResult.updates.title) updates.title = metaResult.updates.title;
+      // NOTE: assigned unconditionally to preserve pre-existing behavior — a
+      // staged `Condition: …` description is overwritten by the generated
+      // summary exactly as before this extraction.
+      if (metaResult.updates.description) updates.description = metaResult.updates.description;
+      combined.utilityInputTokens = (combined.utilityInputTokens || 0) + metaResult.usage.inputTokens;
+      combined.utilityOutputTokens = (combined.utilityOutputTokens || 0) + metaResult.usage.outputTokens;
     }
 
     await documentsAsync.update(doc.id, updates);
@@ -360,9 +328,77 @@ async function persistDocumentTranscription({
   };
 }
 
+// Shared by persistDocumentTranscription and utils/worker-title-backfill.js —
+// One Canonical Backend Path (docs/development-principles.md). Title is only
+// regenerated when the current one is generic; summary only when description
+// is empty, so re-runs are idempotent and skip fixed documents without LLM
+// calls. `require('./llm')` stays lazy so tests can mock the module.
+async function regenerateDocumentMetadata({
+  doc, transcription, providerName, runtimeConfig = {},
+  extractedTitle = null, uploadFilename = '', logLine = null
+}) {
+  const { generateDocumentTitle, generateDocumentSummary } = require('./llm');
+  const updates = {};
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  let titleFailed = false;
+  let summaryFailed = false;
+
+  const currentTitle = (doc.title || '').trim();
+  const uploadStem = uploadFilename
+    ? uploadFilename.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').trim()
+    : '';
+  const looksGeneric = !currentTitle
+    || /^(untitled|document|page\s*\d*|pdf)/i.test(currentTitle)
+    || /^[a-zA-Z0-9_-]+\.(pdf|png|jpg|jpeg|tiff|gif|webp)$/i.test(currentTitle)
+    || (uploadStem && currentTitle === uploadStem);
+
+  if (looksGeneric) {
+    const cleanExtracted = (extractedTitle || '').trim() || null;
+    if (cleanExtracted) {
+      updates.title = cleanExtracted;
+      if (logLine) await logLine(`Using extracted title for document ${doc.id}: "${cleanExtracted}"`);
+    } else {
+      try {
+        const { title: generated, usage: titleUsage } = await generateDocumentTitle(providerName, transcription, runtimeConfig);
+        if (titleUsage) {
+          usage.inputTokens += titleUsage.inputTokens || 0;
+          usage.outputTokens += titleUsage.outputTokens || 0;
+        }
+        if (generated) {
+          updates.title = generated;
+          if (logLine) await logLine(`Generated title for document ${doc.id}: "${generated}"`);
+        }
+      } catch (err) {
+        titleFailed = true;
+        if (logLine) await logLine(`Title generation failed for document ${doc.id} (non-fatal): ${err.message}`);
+      }
+    }
+  }
+
+  if (!doc.description) {
+    try {
+      const { summary: generated, usage: sumUsage } = await generateDocumentSummary(providerName, transcription, runtimeConfig);
+      if (sumUsage) {
+        usage.inputTokens += sumUsage.inputTokens || 0;
+        usage.outputTokens += sumUsage.outputTokens || 0;
+      }
+      if (generated) {
+        updates.description = generated;
+        if (logLine) await logLine(`Generated summary for document ${doc.id}: "${generated}"`);
+      }
+    } catch (err) {
+      summaryFailed = true;
+      if (logLine) await logLine(`Summary generation failed for document ${doc.id} (non-fatal): ${err.message}`);
+    }
+  }
+
+  return { updates, usage, titleFailed, summaryFailed };
+}
+
 module.exports = {
   buildTranscriptPageSegments,
   combineTranscriptionResults,
   normalizeDateCreated,
-  persistDocumentTranscription
+  persistDocumentTranscription,
+  regenerateDocumentMetadata
 };

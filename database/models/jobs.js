@@ -38,7 +38,7 @@ function matchesStatusFilter(status, statusFilter) {
   return status === normalized;
 }
 
-function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment', 'authority_suggestion']) {
+function normalizeTypeFilter(typeFilter = 'all', allowed = ['all', 'transcription', 'import', 'extraction', 'sentiment', 'authority_suggestion', 'title_backfill']) {
   const normalized = String(typeFilter || 'all').toLowerCase();
   return allowed.includes(normalized) ? normalized : 'all';
 }
@@ -1385,6 +1385,18 @@ const adminJobsAsync = {
     return await authoritySuggestionJobs.getSummaries(opts);
   },
 
+  async getTitleBackfillCounts(statusFilter = 'all') {
+    const counts = await titleBackfillJobs.getCounts();
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    if (normalized === 'all') return counts;
+    if (normalized === 'running') return counts.running;
+    return counts[normalized] || 0;
+  },
+
+  async getTitleBackfillSummaries(opts = {}) {
+    return await titleBackfillJobs.getSummaries(opts);
+  },
+
   async getTranscriptionSummaries({ statusFilter = 'all', limit = DEFAULT_PAGE_SIZE } = {}) {
     const normalizedStatus = normalizeStatusFilter(statusFilter);
     const params = [];
@@ -1544,12 +1556,13 @@ const adminJobsAsync = {
     const normalizedType = normalizeTypeFilter(typeFilter);
     const normalizedStatus = normalizeStatusFilter(statusFilter);
 
-    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts] = await Promise.all([
+    const [transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts, titleBackfillCounts] = await Promise.all([
       this.getTranscriptionCounts(),
       this.getImportCounts(),
       this.getExtractionCounts(),
       this.getSentimentCounts(),
-      this.getAuthoritySuggestionCounts()
+      this.getAuthoritySuggestionCounts(),
+      this.getTitleBackfillCounts()
     ]);
 
     // Status tab counts: scoped to typeFilter (shows the breakdown for the selected type)
@@ -1559,7 +1572,8 @@ const adminJobsAsync = {
     else if (normalizedType === 'extraction') statusCounts = extractionCounts;
     else if (normalizedType === 'sentiment') statusCounts = sentimentCounts;
     else if (normalizedType === 'authority_suggestion') statusCounts = authoritySuggestionCounts;
-    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts);
+    else if (normalizedType === 'title_backfill') statusCounts = titleBackfillCounts;
+    else statusCounts = mergeCountMaps(transcriptionCounts, importCounts, extractionCounts, sentimentCounts, authoritySuggestionCounts, titleBackfillCounts);
 
     // Type tab counts: scoped to statusFilter (shows how many of each type match the current status)
     const getCount = (countMap) => {
@@ -1575,7 +1589,8 @@ const adminJobsAsync = {
         transcription: getCount(transcriptionCounts),
         extraction: getCount(extractionCounts),
         sentiment: getCount(sentimentCounts),
-        authority_suggestion: getCount(authoritySuggestionCounts)
+        authority_suggestion: getCount(authoritySuggestionCounts),
+        title_backfill: getCount(titleBackfillCounts)
       }
     };
   },
@@ -1589,14 +1604,16 @@ const adminJobsAsync = {
     if (normalizedType === 'extraction') return await this.getExtractionCounts(normalizedStatus);
     if (normalizedType === 'sentiment') return await this.getSentimentCounts(normalizedStatus);
     if (normalizedType === 'authority_suggestion') return await this.getAuthoritySuggestionCounts(normalizedStatus);
-    const [transcriptionCount, importCount, extractionCount, sentimentCount, authoritySuggestionCount] = await Promise.all([
+    if (normalizedType === 'title_backfill') return await this.getTitleBackfillCounts(normalizedStatus);
+    const [transcriptionCount, importCount, extractionCount, sentimentCount, authoritySuggestionCount, titleBackfillCount] = await Promise.all([
       this.getTranscriptionCounts(normalizedStatus),
       this.getImportCounts(normalizedStatus),
       this.getExtractionCounts(normalizedStatus),
       this.getSentimentCounts(normalizedStatus),
-      this.getAuthoritySuggestionCounts(normalizedStatus)
+      this.getAuthoritySuggestionCounts(normalizedStatus),
+      this.getTitleBackfillCounts(normalizedStatus)
     ]);
-    return transcriptionCount + importCount + extractionCount + sentimentCount + authoritySuggestionCount;
+    return transcriptionCount + importCount + extractionCount + sentimentCount + authoritySuggestionCount + titleBackfillCount;
   },
 
   // Paginated combined job list
@@ -1620,6 +1637,9 @@ const adminJobsAsync = {
         : [],
       normalizedType === 'all' || normalizedType === 'authority_suggestion'
         ? this.getAuthoritySuggestionSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
+        : [],
+      normalizedType === 'all' || normalizedType === 'title_backfill'
+        ? this.getTitleBackfillSummaries({ statusFilter: normalizedStatus, limit: fetchLimit })
         : []
     ]);
 
@@ -1631,14 +1651,15 @@ const adminJobsAsync = {
 
   // Active jobs only (for AJAX polling — avoids historical scans)
   async getActive() {
-    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs, authoritySuggestionJobsActive] = await Promise.all([
+    const [transcriptionJobs, importJobs, extractionJobs, sentimentJobs, authoritySuggestionJobsActive, titleBackfillJobsActive] = await Promise.all([
       this.getTranscriptionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getImportSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getExtractionSummaries({ statusFilter: 'running', limit: 1000 }),
       this.getSentimentSummaries({ statusFilter: 'running', limit: 1000 }),
-      this.getAuthoritySuggestionSummaries({ statusFilter: 'running', limit: 1000 })
+      this.getAuthoritySuggestionSummaries({ statusFilter: 'running', limit: 1000 }),
+      this.getTitleBackfillSummaries({ statusFilter: 'running', limit: 1000 })
     ]);
-    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs, ...authoritySuggestionJobsActive].sort(sortJobsByCreatedAtDesc);
+    return [...transcriptionJobs, ...importJobs, ...extractionJobs, ...sentimentJobs, ...authoritySuggestionJobsActive, ...titleBackfillJobsActive].sort(sortJobsByCreatedAtDesc);
   }
 };
 
@@ -2459,6 +2480,171 @@ const authoritySuggestionJobs = {
   }
 };
 
+const titleBackfillJobs = {
+  async create({ collection_id, requested_by_user_id = null } = {}) {
+    const result = await runAsync(`
+      INSERT INTO title_backfill_jobs (collection_id, requested_by_user_id, status)
+      VALUES (?, ?, 'queued')
+    `, [Number(collection_id), requested_by_user_id != null ? Number(requested_by_user_id) : null]);
+    await saveDatabase();
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    const row = await getAsync('SELECT * FROM title_backfill_jobs WHERE id = ?', [id]);
+    return await hydrateJobLog(row, 'title_backfill');
+  },
+
+  async hasPendingOrRunningForCollection(collectionId) {
+    const row = await getAsync(`
+      SELECT id FROM title_backfill_jobs
+      WHERE collection_id = ? AND status IN ('queued', 'running')
+      LIMIT 1
+    `, [Number(collectionId)]);
+    return !!row;
+  },
+
+  async claimNextQueued() {
+    return await withExclusiveLock(async () => {
+      const job = await getAsync(`
+        SELECT * FROM title_backfill_jobs
+        WHERE status = 'queued'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `);
+      if (!job) return null;
+      const result = await runAsyncWithoutSave(`
+        UPDATE title_backfill_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    });
+  },
+
+  async updateProgress(id, { docs_total, docs_processed, titles_updated, summaries_updated, docs_failed } = {}) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET docs_total = COALESCE(?, docs_total),
+          docs_processed = COALESCE(?, docs_processed),
+          titles_updated = COALESCE(?, titles_updated),
+          summaries_updated = COALESCE(?, summaries_updated),
+          docs_failed = COALESCE(?, docs_failed)
+      WHERE id = ?
+    `, [
+      Number.isInteger(docs_total) ? docs_total : null,
+      Number.isInteger(docs_processed) ? docs_processed : null,
+      Number.isInteger(titles_updated) ? titles_updated : null,
+      Number.isInteger(summaries_updated) ? summaries_updated : null,
+      Number.isInteger(docs_failed) ? docs_failed : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async setProvider(id, provider) {
+    await runAsync('UPDATE title_backfill_jobs SET provider = ? WHERE id = ?', [provider || null, id]);
+    await saveDatabase();
+  },
+
+  async appendLog(id, text) {
+    await appendJobLogEntry('title_backfill', id, text);
+  },
+
+  async markDone(id) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET status = 'done', completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [id]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  // Retry creates a NEW queued row (failed row preserved as audit trail),
+  // mirroring authority_suggestion retry semantics per docs/background-jobs.md
+  // "Authority suggestion failure visibility & retry".
+  async retry(id) {
+    const job = await getAsync('SELECT * FROM title_backfill_jobs WHERE id = ?', [id]);
+    if (!job) return { status: 'not_found' };
+    if (job.status !== 'failed') return { status: 'not_failed' };
+    const existing = await getAsync(`
+      SELECT id FROM title_backfill_jobs
+      WHERE collection_id = ? AND status IN ('queued', 'running')
+      LIMIT 1
+    `, [job.collection_id]);
+    if (existing) return { status: 'already_queued', existingJobId: existing.id };
+    const newJobId = await this.create({
+      collection_id: job.collection_id,
+      requested_by_user_id: job.requested_by_user_id
+    });
+    return { status: 'created', newJobId };
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM title_backfill_jobs WHERE id = ?', [id]);
+  },
+
+  async getCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM title_backfill_jobs
+      GROUP BY status
+    `);
+    return rows.reduce((acc, row) => {
+      const n = Number(row.count || 0);
+      acc.total += n;
+      if (row.status === 'queued') acc.queued += n;
+      else if (row.status === 'running' || row.status === 'processing') acc.running += n;
+      else if (row.status === 'done') acc.done += n;
+      else if (row.status === 'failed') acc.failed += n;
+      return acc;
+    }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+  },
+
+  async getSummaries({ statusFilter = 'all', limit = 50 } = {}) {
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    const params = [];
+    let statusClause = '';
+    if (normalized === 'running') {
+      statusClause = "WHERE j.status IN ('running', 'processing')";
+    } else if (['queued', 'done', 'failed'].includes(normalized)) {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalized);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id, j.created_at, j.status, j.started_at, j.completed_at, j.error,
+        j.collection_id, j.provider,
+        j.docs_total, j.docs_processed, j.titles_updated, j.summaries_updated, j.docs_failed,
+        c.name AS collection_name
+      FROM title_backfill_jobs j
+      LEFT JOIN collections c ON c.id = j.collection_id
+      ${statusClause}
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => ({
+      ...row,
+      job_type: 'title_backfill',
+      subject_label: row.collection_name || `Collection #${row.collection_id}`
+    }));
+  }
+};
+
   return {
     transcriptionJobs,
     transcriptionJobsAsync,
@@ -2468,6 +2654,7 @@ const authoritySuggestionJobs = {
     extractionJobs,
     authorityResolutionJobs,
     authorityResolutionJobsAsync: authorityResolutionJobs,
-    authoritySuggestionJobs
+    authoritySuggestionJobs,
+    titleBackfillJobs
   };
 };
