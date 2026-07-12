@@ -2441,6 +2441,19 @@ const authoritySuggestionJobs = {
     return await runAsync('DELETE FROM authority_suggestion_jobs WHERE id = ?', [id]);
   },
 
+  async forceFail(id, reason = 'Manually marked failed by admin') {
+    const result = await runAsyncWithoutSave(`
+      UPDATE authority_suggestion_jobs
+      SET status = 'failed',
+          error = ?,
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'running'
+    `, [reason, id]);
+    await saveDatabase();
+    return result;
+  },
+
   async retry(id) {
     const failed = await getAsync(
       'SELECT * FROM authority_suggestion_jobs WHERE id = ?',

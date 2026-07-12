@@ -396,6 +396,20 @@ router.get('/api/authority-suggestion/:id', asyncHandler(async (req, res) => {
   res.json(job);
 }));
 
+// API: force-fail a stuck running authority_suggestion job (operator escape hatch;
+// no provider-side batch to worry about — per docs/background-jobs.md).
+router.post('/api/authority-suggestion/:id/fail', asyncHandler(async (req, res) => {
+  const jobId = parseInt(req.params.id);
+  const job = await authoritySuggestionJobsAsync.getById(jobId);
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  const result = await authoritySuggestionJobsAsync.forceFail(jobId);
+  if (!result?.changes) {
+    return res.status(409).json({ error: 'Job is not in a failable state.' });
+  }
+  audit.log('admin.job_force_failed', { ...audit.reqContext(req), jobId, jobType: 'authority_suggestion' });
+  res.json({ success: true });
+}));
+
 // API: retry failed authority_suggestion job — creates a NEW queued row,
 // preserves the failed row for audit. Per
 // docs/reviews/2026-05-31-entity-extraction-historian-lens.md A1.2 and the

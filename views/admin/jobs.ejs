@@ -138,8 +138,10 @@
               // Authority suggestion and title backfill have no provider to edit either.
               const canEdit = job.status === 'failed' && !isImport && !isSentiment && !isAuthoritySuggestion && !isTitleBackfill;
               const canForceFail = job.status === 'running'
-                && job.job_kind === 'batch'
-                && (job.job_type === 'transcription' || job.job_type === 'extraction');
+                && (
+                  (job.job_kind === 'batch' && (job.job_type === 'transcription' || job.job_type === 'extraction'))
+                  || job.job_type === 'authority_suggestion'
+                );
             %>
             <tr class="job-row" data-id="<%= job.id %>" data-status="<%= job.status %>" data-type="<%= job.job_type %>"
                 data-can-delete="<%= canDelete %>" data-can-retry="<%= canRetry %>">

@@ -429,7 +429,11 @@
   }
 
   async function handleForceFailClick(btn, config) {
-    if (!window.confirm('Mark this running batch job as failed? Any provider-side batch will need manual review.')) return;
+    var isBatchJob = btn.dataset.type === 'transcription' || btn.dataset.type === 'extraction';
+    var confirmMsg = isBatchJob
+      ? 'Mark this running batch job as failed? Any provider-side batch will need manual review.'
+      : 'Mark this running job as failed?';
+    if (!window.confirm(confirmMsg)) return;
     btn.disabled = true;
     var type = btn.dataset.type;
     try {
