@@ -2459,6 +2459,171 @@ const authoritySuggestionJobs = {
   }
 };
 
+const titleBackfillJobs = {
+  async create({ collection_id, requested_by_user_id = null } = {}) {
+    const result = await runAsync(`
+      INSERT INTO title_backfill_jobs (collection_id, requested_by_user_id, status)
+      VALUES (?, ?, 'queued')
+    `, [Number(collection_id), requested_by_user_id != null ? Number(requested_by_user_id) : null]);
+    await saveDatabase();
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    const row = await getAsync('SELECT * FROM title_backfill_jobs WHERE id = ?', [id]);
+    return await hydrateJobLog(row, 'title_backfill');
+  },
+
+  async hasPendingOrRunningForCollection(collectionId) {
+    const row = await getAsync(`
+      SELECT id FROM title_backfill_jobs
+      WHERE collection_id = ? AND status IN ('queued', 'running')
+      LIMIT 1
+    `, [Number(collectionId)]);
+    return !!row;
+  },
+
+  async claimNextQueued() {
+    return await withExclusiveLock(async () => {
+      const job = await getAsync(`
+        SELECT * FROM title_backfill_jobs
+        WHERE status = 'queued'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `);
+      if (!job) return null;
+      const result = await runAsyncWithoutSave(`
+        UPDATE title_backfill_jobs
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [job.id]);
+      if (!result || !result.changes) return null;
+      return await this.getById(job.id);
+    });
+  },
+
+  async updateProgress(id, { docs_total, docs_processed, titles_updated, summaries_updated, docs_failed } = {}) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET docs_total = COALESCE(?, docs_total),
+          docs_processed = COALESCE(?, docs_processed),
+          titles_updated = COALESCE(?, titles_updated),
+          summaries_updated = COALESCE(?, summaries_updated),
+          docs_failed = COALESCE(?, docs_failed)
+      WHERE id = ?
+    `, [
+      Number.isInteger(docs_total) ? docs_total : null,
+      Number.isInteger(docs_processed) ? docs_processed : null,
+      Number.isInteger(titles_updated) ? titles_updated : null,
+      Number.isInteger(summaries_updated) ? summaries_updated : null,
+      Number.isInteger(docs_failed) ? docs_failed : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async setProvider(id, provider) {
+    await runAsync('UPDATE title_backfill_jobs SET provider = ? WHERE id = ?', [provider || null, id]);
+    await saveDatabase();
+  },
+
+  async appendLog(id, text) {
+    await appendJobLogEntry('title_backfill', id, text);
+  },
+
+  async markDone(id) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET status = 'done', completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [id]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await runAsyncWithoutSave(`
+      UPDATE title_backfill_jobs
+      SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  // Retry creates a NEW queued row (failed row preserved as audit trail),
+  // mirroring authority_suggestion retry semantics per docs/background-jobs.md
+  // "Authority suggestion failure visibility & retry".
+  async retry(id) {
+    const job = await getAsync('SELECT * FROM title_backfill_jobs WHERE id = ?', [id]);
+    if (!job) return { status: 'not_found' };
+    if (job.status !== 'failed') return { status: 'not_failed' };
+    const existing = await getAsync(`
+      SELECT id FROM title_backfill_jobs
+      WHERE collection_id = ? AND status IN ('queued', 'running')
+      LIMIT 1
+    `, [job.collection_id]);
+    if (existing) return { status: 'already_queued', existingJobId: existing.id };
+    const newJobId = await this.create({
+      collection_id: job.collection_id,
+      requested_by_user_id: job.requested_by_user_id
+    });
+    return { status: 'created', newJobId };
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM title_backfill_jobs WHERE id = ?', [id]);
+  },
+
+  async getCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM title_backfill_jobs
+      GROUP BY status
+    `);
+    return rows.reduce((acc, row) => {
+      const n = Number(row.count || 0);
+      acc.total += n;
+      if (row.status === 'queued') acc.queued += n;
+      else if (row.status === 'running' || row.status === 'processing') acc.running += n;
+      else if (row.status === 'done') acc.done += n;
+      else if (row.status === 'failed') acc.failed += n;
+      return acc;
+    }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+  },
+
+  async getSummaries({ statusFilter = 'all', limit = 50 } = {}) {
+    const normalized = String(statusFilter || 'all').toLowerCase();
+    const params = [];
+    let statusClause = '';
+    if (normalized === 'running') {
+      statusClause = "WHERE j.status IN ('running', 'processing')";
+    } else if (['queued', 'done', 'failed'].includes(normalized)) {
+      statusClause = 'WHERE j.status = ?';
+      params.push(normalized);
+    }
+    params.push(limit);
+    const rows = await allAsync(`
+      SELECT
+        j.id, j.created_at, j.status, j.started_at, j.completed_at, j.error,
+        j.collection_id, j.provider,
+        j.docs_total, j.docs_processed, j.titles_updated, j.summaries_updated, j.docs_failed,
+        c.name AS collection_name
+      FROM title_backfill_jobs j
+      LEFT JOIN collections c ON c.id = j.collection_id
+      ${statusClause}
+      ORDER BY j.created_at DESC, j.id DESC
+      LIMIT ?
+    `, params);
+    return rows.map((row) => ({
+      ...row,
+      job_type: 'title_backfill',
+      subject_label: row.collection_name || `Collection #${row.collection_id}`
+    }));
+  }
+};
+
   return {
     transcriptionJobs,
     transcriptionJobsAsync,
@@ -2468,6 +2633,7 @@ const authoritySuggestionJobs = {
     extractionJobs,
     authorityResolutionJobs,
     authorityResolutionJobsAsync: authorityResolutionJobs,
-    authoritySuggestionJobs
+    authoritySuggestionJobs,
+    titleBackfillJobs
   };
 };
