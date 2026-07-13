@@ -81,6 +81,109 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       );
     },
 
+    async getCollectionRerunPreview(collectionId) {
+      // Best transcripts in this collection (reused as a subquery below).
+      const bestTxn = `
+        SELECT t.id AS tid FROM transcripts t
+          INNER JOIN document_collections dc ON dc.document_id = t.document_id
+         WHERE dc.collection_id = ? AND t.is_best = 1`;
+
+      const count = async (sql) => {
+        const row = await getAsync(sql, [collectionId]);
+        return (row && row.n) || 0;
+      };
+
+      const resetCount = await count(
+        `SELECT COUNT(*) AS n FROM (${bestTxn}
+           AND EXISTS (SELECT 1 FROM sentiment_extraction_jobs s
+                        WHERE s.transcript_id = t.id AND s.status = 'done')
+           AND NOT EXISTS (SELECT 1 FROM sentiment_extraction_jobs s2
+                        WHERE s2.transcript_id = t.id
+                          AND s2.status IN ('queued','running','batch_submitted')))`
+      );
+      const queueCount = await count(
+        `SELECT COUNT(*) AS n FROM (${bestTxn}
+           AND NOT EXISTS (SELECT 1 FROM sentiment_extraction_jobs s
+                        WHERE s.transcript_id = t.id))`
+      );
+      const inFlightSkipped = await count(
+        `SELECT COUNT(*) AS n FROM (${bestTxn}
+           AND EXISTS (SELECT 1 FROM sentiment_extraction_jobs s
+                        WHERE s.transcript_id = t.id
+                          AND s.status IN ('queued','running','batch_submitted')))`
+      );
+      const annotationsTotal = await count(
+        `SELECT COUNT(*) AS n FROM sentiment_annotations a
+          WHERE a.transcript_id IN (${bestTxn})`
+      );
+      const annotationsApproved = await count(
+        `SELECT COUNT(*) AS n FROM sentiment_annotations a
+          WHERE a.approval_status = 'approved' AND a.transcript_id IN (${bestTxn})`
+      );
+
+      return { resetCount, queueCount, inFlightSkipped, annotationsTotal, annotationsApproved };
+    },
+
+    // Reset all `done` sentiment jobs for the collection's best transcripts
+    // (queued + reset_existing=1, cleared paradata — same SET clause as retry())
+    // and queue best transcripts that have NO job row at all. Failed and
+    // in-flight jobs are left untouched. Transaction-agnostic: the caller wraps
+    // this in withTransactionAsync for atomicity + persistence.
+    async rerunCollectionSentiment(collectionId) {
+      const scope = `transcript_id IN (
+        SELECT t.id FROM transcripts t
+          INNER JOIN document_collections dc ON dc.document_id = t.document_id
+         WHERE dc.collection_id = ? AND t.is_best = 1)`;
+
+      // Count reset targets and in-flight (skipped) jobs BEFORE mutating —
+      // portable (avoids driver-specific "rows affected" reporting) and
+      // unambiguous (after the reset, done jobs become 'queued' and could not
+      // be told apart from pre-existing queued ones).
+      const resetRow = await getAsync(
+        `SELECT COUNT(*) AS n FROM sentiment_extraction_jobs
+          WHERE status = 'done' AND ${scope}`, [collectionId]
+      );
+      const inFlightRow = await getAsync(
+        `SELECT COUNT(*) AS n FROM sentiment_extraction_jobs
+          WHERE status IN ('queued','running','batch_submitted') AND ${scope}`, [collectionId]
+      );
+
+      await runAsync(
+        `UPDATE sentiment_extraction_jobs
+            SET status = 'queued', kind = 'singleton', reset_existing = 1,
+                batch_remote_id = NULL, batch_submitted_at = NULL,
+                batch_finalization_claimed_at = NULL, batch_finalization_claimed_by = NULL,
+                started_at = NULL, completed_at = NULL, error = NULL, validation_drops = NULL,
+                input_tokens = NULL, output_tokens = NULL, submitted_prompt = NULL,
+                model_name = NULL, prompt_template_hash = NULL, temperature = NULL,
+                system_prompt = NULL, extraction_notes = NULL
+          WHERE status = 'done' AND ${scope}`, [collectionId]
+      );
+
+      const newTxns = await allAsync(
+        `SELECT t.id AS transcript_id, t.document_id
+           FROM transcripts t
+           INNER JOIN document_collections dc ON dc.document_id = t.document_id
+          WHERE dc.collection_id = ? AND t.is_best = 1
+            AND NOT EXISTS (SELECT 1 FROM sentiment_extraction_jobs s WHERE s.transcript_id = t.id)
+          ORDER BY t.id ASC`, [collectionId]
+      );
+      for (const row of newTxns) {
+        await runAsync(
+          `INSERT INTO sentiment_extraction_jobs
+             (document_id, transcript_id, reset_existing, provider, status, kind, created_at)
+           VALUES (?, ?, 0, NULL, 'queued', 'singleton', CURRENT_TIMESTAMP)`,
+          [row.document_id, row.transcript_id]
+        );
+      }
+
+      return {
+        reset: (resetRow && resetRow.n) || 0,
+        queued: newTxns.length,
+        skippedInFlight: (inFlightRow && inFlightRow.n) || 0
+      };
+    },
+
     async claimNextQueued() {
       const row = await getAsync(
         `SELECT id FROM sentiment_extraction_jobs
