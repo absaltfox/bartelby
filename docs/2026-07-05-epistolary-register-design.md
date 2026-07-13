@@ -841,6 +841,208 @@ data:
 
 ---
 
+# Amendment A1 (2026-07-12) — Formulaicity as a computed continuous property
+
+**Status:** Design amendment, not yet started. Supersedes parts of F1, F2,
+Phase 2a assumptions, and folds F6's "retroactive classification" sketch
+into a concrete phase.
+**Origin:** Design discussion 2026-07-12 refining the register model.
+**Governing docs:** [sentiment-design.md](./sentiment-design.md),
+[development-principles.md](./development-principles.md)
+("Curator Is the Expert", "Be Conservative With Derived Interpretation",
+"Keep Evidence Traceable"),
+[background-jobs.md](./background-jobs.md) (worker tick / clustering).
+
+## A1.1 The conceptual change
+
+The original design (F1) models register as a **binary categorical field,
+`register ∈ {conventional, personal}`, emitted by the LLM at extraction
+time.** That is the weakest link, for a reason the historical-pragmatics
+literature already supplies (Part A.2, Wray / Biber): **formulaicity is a
+corpus-level property — recurrence across many distinct writers in
+predictable slots — and is therefore invisible one letter at a time.**
+Asking the extraction model to judge, per document, whether "your obedient
+servant" is conventional is asking it to guess a dispersion statistic it
+cannot observe. It will approximate from training-text priors, which is
+exactly the pastiche-risk failure mode (A.4, Source 4).
+
+The amendment reframes the signal:
+
+> **Formulaicity is a property of an annotation, scored on a continuous
+> scale, and *computed* from the ratified formula gazetteer — not a
+> category judged by the extraction model.**
+
+Every emotional act stays in the record. Each carries a computed
+`formulaicity_score` (0.0–1.0) and, when it matches, a link to the formula
+family it instances. "Your obedient servant" scores high; "resign in favor
+of a professional bill Sticker" scores ~0. Both are extracted; the
+researcher facets on the score. This preserves the description/derivation
+split the subsystem already keeps for register: the extractor *describes*
+emotional acts; formulaicity is *derived* downstream against corpus
+evidence.
+
+Two theoretical commitments carry over unchanged from A.3 and are the
+reason this is a refinement, not a reversal: **markedness is an attribute,
+never a gate** (we never filter the corpus down to deviations — that would
+smuggle in a Romantic "authentic feeling erupts through convention" model
+the history of emotions defines itself against), and **conventional acts
+must not contaminate entity-level rollups** (still true; the mechanism
+changes from a category filter to a score threshold).
+
+## A1.2 What is retained from the original design (do NOT regress)
+
+The 2026-07-12 discussion weighed a corpus-only alternative. Two properties
+of the original design are **kept** because the alternative would lose them:
+
+- **Four-source lexicon with per-source corroboration (F4/F5).** The
+  gazetteer is not corpus-mining alone. Period letter-writing manuals, the
+  Colonial Despatches / scholarly inventories, and LLM proposals remain
+  first-class sources with provenance records (§A.4.1). Attested practice
+  is not the same as the prescriptive baseline Stearns & Stearns's
+  emotionology method requires.
+- **Per-collection community boundaries (§A.5, Rosenwein).** Formulaicity
+  is computed *within* a collection, not across the whole store. Mining,
+  the gazetteer, and the score all key on `collection_id`. A
+  corpus-relative denominator must name its community.
+
+Curator authority is likewise unchanged: nothing moves from `candidate` to
+`ratified`, and no gazetteer entry scores any annotation, without curator
+action.
+
+## A1.3 What changes, phase by phase
+
+### F1 (revised) — register field is the interim bootstrap, not the mature signal
+
+The shipped `register` column (migration v76) stays as an **interim
+signal** usable before any gazetteer exists. It is explicitly *not* the
+long-term source of truth. Once the computed score is live (F7 below),
+`register` is either derived as a coarse bucket of `formulaicity_score` or
+retired; do not build new surfaces that depend on the LLM-emitted value.
+No backfill either direction — pre-existing rows stay as they are, per the
+E5.2 forward-only precedent.
+
+### New schema — annotation-level score and family link
+
+Migration (v-next), on `sentiment_annotations`:
+
+```sql
+ALTER TABLE sentiment_annotations ADD COLUMN formulaicity_score REAL;
+  -- 0.0–1.0, NULL = not yet scored. Computed against the ratified
+  -- gazetteer for the annotation's collection; never LLM-judged.
+ALTER TABLE sentiment_annotations ADD COLUMN formula_family_id INTEGER
+  REFERENCES epistolary_formula_lexicon(id) ON DELETE SET NULL;
+  -- the family this act instances, when matched; a LINK, never a
+  -- replacement for emotion_phrase_verbatim (Keep Evidence Traceable).
+```
+
+The score lives on the **annotation**, not on the phrase string in the
+abstract: the same words can be rote in one letter and pointed in another,
+and the surrounding context (sole emotional act in a bare note, vs. one of
+several) is what distinguishes them. Store the score per annotation; keep
+the family id as a link.
+
+### F2 (revised) — default exclusion becomes a score threshold
+
+`buildResearchWhere` (`database/models/sentiment.js`) currently excludes
+`register = 'conventional'` by default. Once `formulaicity_score` exists,
+the default-mode condition becomes a **threshold** (e.g.
+`formulaicity_score IS NULL OR formulaicity_score < :tau`, default τ from a
+setting), with the same opt-in ladder (`all` disables the threshold;
+explicit high/low bands select directly). The exclusion stays in ONE place
+per "One Canonical Backend Path per Workflow". While `formulaicity_score`
+is NULL (pre-F7), fall back to the existing `register` condition so no
+surface regresses during the transition.
+
+### Phase 2a clustering (revised) — scope the input to low-formulaicity phrases
+
+**This corrects an assumption in §A.5.** The original text expected formula
+phrases to "cluster tightly in the existing embed→UMAP→HDBSCAN pipeline"
+and be labeled as clusters. Feeding a few hundred near-identical "obedient
+servant" annotations into the pipeline risks a gravity well that warps the
+UMAP manifold and degrades clustering of the *interesting* low-formulaicity
+phrases (varieties of complaint, supplication, reproach). Change the phrase
+selection in `utils/worker-sentiment-clustering.js` to **exclude
+high-formulaicity phrases from the clustering input** (threshold-gated).
+High-formulaicity phrases need no clustering — they are already grouped by
+`formula_family_id` by construction.
+
+**Guardrail:** this is an empirical claim. Before committing the exclusion,
+run one clustering pass with and one without the high-formulaicity phrases
+on the same collection and record the difference in the PR description. If
+the gravity well does not materially affect the other clusters, keep the
+phrases in and drop this change — do not carry a complication the data
+does not justify.
+
+### F3/F4 (extended) — family clustering for the gazetteer
+
+F3 mining already computes dispersion (distinct-author, distinct-document
+counts) and does subsumption pruning. Add an explicit **family grouping**
+step so variant surface forms of one formula ("I have the honour to be,
+Sir, your most obedient servant" / "I am, Sir, your obedient servant")
+resolve to a single family: normalized edit distance is sufficient — no
+embeddings required for this — and the LLM's role is to *name and organize*
+the resulting families (F5), which the curator ratifies. This is the
+`variant_of_id` relation in the F4 schema, populated by an algorithm plus
+curator confirmation rather than by hand alone.
+
+### F7 (new) — document-level matching pass + the scoring join
+
+This replaces the F6 "retroactive classification" sketch with a concrete,
+two-part phase. It runs **only over ratified gazetteer entries** and
+mutates annotations **only through an admin-triggered job** (corpus-mutation
+trigger rule), never on a timer or deploy.
+
+1. **Document-level deterministic matching (register block).** A separate
+   pass from emotion extraction: for each document, match the ratified
+   gazetteer (with fuzzy tolerance for spelling / transcription variance)
+   and record which families are present, in what variant and order, and —
+   the payload — **which expected-for-the-cohort families are absent.**
+   Absence-where-expected is markedness computed against the corpus, and
+   needs no separate detector. Lands in the document-level register block,
+   is cheap, reproducible, and re-runnable when the gazetteer versions.
+2. **The scoring join.** For every emotional-act annotation, score against
+   the gazetteer: exact / near match to a family → high, tagged with
+   `formula_family_id`; a family form with an intensifier stacked on
+   ("most obedient humble") → medium, marked *elaborated*; no match → low
+   (the novel expression). Write `formulaicity_score` and, when matched,
+   `formula_family_id`. Scoring is **computed, not judged**, and re-running
+   after the gazetteer changes is idempotent per document (reset-and-recompute,
+   not additive — the D2 discipline).
+
+The extraction prompt requirement follows F1's amended posture: **stop
+excluding formal register** so the conventional acts are in the record to
+be scored. The prompt does not ask the model for formulaicity or deviation
+— "departure" primes a model to return only eruptions (A.4 Source 4
+failure mode). The model extracts emotional acts; the corpus scores them.
+
+## A1.4 The payoff this unlocks
+
+With conventional acts retained, scored, and faceted by writer role and
+decade, the ratio of conventional to marked emotional acts becomes a
+**query, not a special study**: an empirical map of which feelings could be
+expressed, by whom, to power — Rosenwein's emotional community with teeth.
+That finding requires the conventional acts *in* the dataset, which is why
+markedness is an attribute and never a gate.
+
+## A1.5 Acceptance criteria and guardrails (amendment-level)
+
+- `formulaicity_score` / `formula_family_id` round-trip on
+  `sentiment_annotations`; NULL means "not yet scored", never "personal".
+- Research default excludes high-formulaicity by threshold; `all` includes;
+  the admin review queue is never score-filtered (curators review
+  everything).
+- Phase 2a clustering input is threshold-gated *only if* the A/B pass
+  justifies it; the comparison is recorded in the PR.
+- The scoring pass and the document-matching pass are admin-triggered,
+  reset-and-recompute (non-additive), and touch only ratified-gazetteer
+  matches.
+- No regression to the four-source lexicon or per-collection boundaries;
+  no new surface depends on the LLM-emitted `register` value.
+- No secret, hostname, or private reference added to this doc
+  (public-repo hygiene).
+
+---
+
 ## Appendix — Source list for Part A
 
 - Bannet, Eve Tavor. *Empire of Letters: Letter Manuals and

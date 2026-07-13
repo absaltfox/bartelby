@@ -932,6 +932,25 @@ async function initializeSchema(options = {}) {
     await saveDatabase();
   }
 
+  // Seed the default sentiment prompt where the operator has not configured
+  // one. The v67 migration seeds this key as '' (empty), because migrations
+  // are split on ';' and the prompt template contains no safe SQL literal
+  // form — so the real default is populated here, with the value BOUND as a
+  // query parameter (no escaping) rather than interpolated. Fill-if-empty
+  // only: a customized prompt is never clobbered (operators own their prompt
+  // text — docs/2026-07-05-epistolary-register-design.md, F1 guardrail).
+  try {
+    const { DEFAULT_SENTIMENT_PROMPT } = require('../utils/sentiment/default-prompt');
+    await db.run(
+      `UPDATE settings SET value = ?
+         WHERE key = 'sentiment.prompt.default'
+           AND (value IS NULL OR value = '')`,
+      [DEFAULT_SENTIMENT_PROMPT]
+    );
+  } catch (e) {
+    console.error('[db] failed to seed default sentiment prompt:', e.message);
+  }
+
   // Attempt to set up FTS5 virtual tables and sync triggers (idempotent).
   // Skipped silently on SQLite builds without fts5 (e.g. default sql.js).
   await ensureFts5();
