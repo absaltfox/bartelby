@@ -101,10 +101,6 @@ When an item ships, delete it here and cite this file in the PR body.
 
 ## Owed features
 
-- [ ] **Admin-triggered sentiment re-run surface.** Follow-up owed from
-  the reliability review (PR #41). Must be an explicit admin action —
-  never automated on pipeline-healthy or fix-deployed signals.
-
 ## Dependency upgrades
 
 - [ ] **`pdfjs-dist` past 3.11.174** (GHSA-wgrm-67xf-hhpq). Requires
