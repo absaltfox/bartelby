@@ -1,0 +1,18 @@
+<!-- Reusable confirmation modal. Trigger with a [data-confirm-modal] element
+     inside a <form method="POST">; see public/js/confirm-actions.js
+     bindConfirmModal(). Generalizes the bespoke delete-user-modal. -->
+<div class="tag-modal-overlay is-hidden" id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+  <div class="tag-modal">
+    <div class="tag-modal-header">
+      <h3 id="confirm-modal-title">Confirm</h3>
+      <button type="button" class="tag-modal-close" id="confirm-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="tag-modal-body tag-modal-body--pad">
+      <p id="confirm-modal-body" class="mb-4"></p>
+    </div>
+    <div class="tag-modal-footer">
+      <button type="button" class="btn-secondary btn-sm" id="confirm-modal-cancel">Cancel</button>
+      <button type="button" class="btn-danger btn-sm" id="confirm-modal-confirm">Confirm</button>
+    </div>
+  </div>
+</div>
