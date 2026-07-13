@@ -309,6 +309,14 @@ the research workbench discloses the active default.
 Invalid `register` values from the LLM null out with an
 `invalid_register` drop counter; the annotation is kept.
 
+**Planned direction (not yet shipped):** Amendment A1
+(2026-07-12) in
+[docs/2026-07-05-epistolary-register-design.md](./2026-07-05-epistolary-register-design.md)
+supersedes this binary, LLM-judged `register` with a *computed continuous*
+`formulaicity_score` derived from the ratified formula gazetteer. The
+`register` column above is the interim bootstrap; do not build new surfaces
+that depend on the LLM-emitted value.
+
 ## Phase 1 vs later phases
 
 - **Phase 1 (shipped):** schema (migration v67), extraction worker (singleton + batch paths both functional), phrase upsert + embedding, review queue (HTML + JSON cursor + per-row + bulk).
