@@ -96,4 +96,19 @@ describe('collection sentiment re-run routes', () => {
     const res = await anon.get(`/admin/knowledge/sentiment/rerun/collection/1/confirm.json`);
     expect([302, 401, 403]).toContain(res.status);
   });
+
+  it('GET confirm.json with non-numeric id returns 400 with error string', async () => {
+    const res = await adminAgent.get('/admin/knowledge/sentiment/rerun/collection/notanid/confirm.json');
+    expect(res.status).toBe(400);
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error.length).toBeGreaterThan(0);
+  });
+
+  it('POST re-run with non-numeric id redirects with error= in location', async () => {
+    const res = await adminAgent
+      .post('/admin/knowledge/sentiment/rerun/collection/notanid')
+      .type('form').send({ _csrf: csrfToken });
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('error=');
+  });
 });

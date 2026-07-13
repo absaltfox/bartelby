@@ -141,7 +141,10 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
       // be told apart from pre-existing queued ones).
       const resetRow = await getAsync(
         `SELECT COUNT(*) AS n FROM sentiment_extraction_jobs
-          WHERE status = 'done' AND ${scope}`, [collectionId]
+          WHERE status = 'done' AND ${scope}
+            AND transcript_id NOT IN (
+              SELECT transcript_id FROM sentiment_extraction_jobs
+               WHERE status IN ('queued','running','batch_submitted'))`, [collectionId]
       );
       const inFlightRow = await getAsync(
         `SELECT COUNT(*) AS n FROM sentiment_extraction_jobs
@@ -157,7 +160,10 @@ module.exports = function buildSentimentModel(db, runAsync, getAsync, allAsync, 
                 input_tokens = NULL, output_tokens = NULL, submitted_prompt = NULL,
                 model_name = NULL, prompt_template_hash = NULL, temperature = NULL,
                 system_prompt = NULL, extraction_notes = NULL
-          WHERE status = 'done' AND ${scope}`, [collectionId]
+          WHERE status = 'done' AND ${scope}
+            AND transcript_id NOT IN (
+              SELECT transcript_id FROM sentiment_extraction_jobs
+               WHERE status IN ('queued','running','batch_submitted'))`, [collectionId]
       );
 
       const newTxns = await allAsync(

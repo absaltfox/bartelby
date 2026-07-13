@@ -92,4 +92,27 @@ describe('sentiment collection re-run model', () => {
     expect(failedRows[0].id).toBe(failedJobId);
     expect(failedRows[0].status).toBe('failed');
   });
+
+  it('does not reset a done job when the same transcript also has an in-flight job', async () => {
+    const collectionId = await db.collectionsAsync.create({ name: 'C2', createdBy: null });
+
+    // One transcript with BOTH a done job and a running job.
+    const t = await addTranscript(collectionId, 'dual');
+    const doneJobId = await addJob(t.docId, t.transcriptId, 'done');
+    await addJob(t.docId, t.transcriptId, 'running');
+
+    // Preview must classify this as in-flight → skipped (resetCount 0, inFlightSkipped 1).
+    const preview = await db.sentimentAsync.getCollectionRerunPreview(collectionId);
+    expect(preview.resetCount).toBe(0);
+    expect(preview.inFlightSkipped).toBe(1);
+    expect(preview.queueCount).toBe(0);
+
+    // Mutation must not touch the done job.
+    const result = await db.sentimentAsync.rerunCollectionSentiment(collectionId);
+    expect(result.reset).toBe(0);
+    expect(result.skippedInFlight).toBe(1);
+
+    const doneJob = await db.getAsync(`SELECT status FROM sentiment_extraction_jobs WHERE id = ?`, [doneJobId]);
+    expect(doneJob.status).toBe('done');
+  });
 });
