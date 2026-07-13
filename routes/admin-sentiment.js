@@ -560,4 +560,57 @@ router.post('/backfill/collection/:id', express.urlencoded({ extended: false }),
   return res.redirect(`/admin/collections?saved=1&queuedCollectionName=sentiment&queuedCount=${queued}&queuedMode=sentiment-backfill#collection-${collectionId}`);
 }));
 
+// GET preview counts as JSON for the reusable confirm modal.
+// Read-only; admin-gated by the router-level requireAdmin.
+router.get('/rerun/collection/:id/confirm.json', asyncHandler(async (req, res) => {
+  const collectionId = asInt(req.params.id);
+  if (collectionId === null) return res.status(400).json({ error: 'Invalid collection id.' });
+
+  const p = await db.sentimentAsync.getCollectionRerunPreview(collectionId);
+  const danger = p.annotationsTotal > 0;
+
+  let message;
+  if (p.resetCount + p.queueCount === 0) {
+    message = 'Nothing to re-run: this collection has no processed or un-processed best transcripts.'
+      + (p.inFlightSkipped ? ` ${p.inFlightSkipped} transcript(s) with in-flight jobs will be skipped.` : '');
+  } else {
+    const parts = [];
+    parts.push(
+      `Re-running will re-extract ${p.resetCount} already-processed transcript(s), replacing ${p.annotationsTotal} existing annotation(s)`
+      + (p.annotationsApproved ? ` (${p.annotationsApproved} curator-approved will be discarded)` : '')
+      + '.'
+    );
+    if (p.queueCount) parts.push(`${p.queueCount} never-extracted transcript(s) will be queued.`);
+    if (p.inFlightSkipped) parts.push(`${p.inFlightSkipped} transcript(s) with in-flight jobs will be skipped.`);
+    message = parts.join(' ');
+  }
+
+  return res.json({ ...p, danger, message });
+}));
+
+// POST: execute the reset re-run (admin-triggered corpus mutation).
+router.post('/rerun/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const collectionId = asInt(req.params.id);
+  if (collectionId === null) {
+    return res.redirect('/admin/collections?error=' + encodeURIComponent('Invalid collection id.'));
+  }
+
+  const result = await db.withTransactionAsync(() =>
+    db.sentimentAsync.rerunCollectionSentiment(collectionId)
+  );
+
+  audit.log('admin.sentiment_rerun_queued', {
+    ...audit.reqContext(req),
+    collectionId,
+    reset: result.reset,
+    queued: result.queued,
+    skippedInFlight: result.skippedInFlight
+  });
+
+  const queuedCount = result.reset + result.queued;
+  return res.redirect(
+    `/admin/collections?saved=1&queuedCollectionName=sentiment&queuedMode=sentiment-rerun&queuedCount=${queuedCount}#collection-${collectionId}`
+  );
+}));
+
 module.exports = router;

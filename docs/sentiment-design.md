@@ -356,3 +356,17 @@ that depend on the LLM-emitted value.
   `sentiment_emotion_phrases.embedding` — this differs from
   `document_embeddings` which uses JSON text; chosen for space efficiency
   since the row volume is higher.
+
+### Collection re-run (reset)
+
+`POST /admin/knowledge/sentiment/rerun/collection/:id` (admin-only,
+audit-logged as `admin.sentiment_rerun_queued`) re-processes a whole
+collection: it flips every `done` sentiment job for the collection's best
+transcripts back to `queued` with `reset_existing = 1` (staged replace,
+non-negotiable #5) and queues best transcripts that have **no** sentiment job
+at all. Failed and in-flight jobs are left untouched. A reusable confirmation
+modal (`views/partials/confirm-modal.ejs`, driven by
+`GET …/rerun/collection/:id/confirm.json`) shows how many transcripts and
+annotations — including curator-approved ones — will be superseded before the
+admin confirms. This is the "Admin-triggered sentiment re-run surface" owed
+from the PR #41 reliability review.

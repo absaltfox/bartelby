@@ -137,7 +137,71 @@
     });
   }
 
+  function bindConfirmModal() {
+    var modal = document.getElementById('confirm-modal');
+    if (!modal) return;
+
+    var titleEl = document.getElementById('confirm-modal-title');
+    var bodyEl = document.getElementById('confirm-modal-body');
+    var confirmBtn = document.getElementById('confirm-modal-confirm');
+    var cancelBtn = document.getElementById('confirm-modal-cancel');
+    var closeBtn = document.getElementById('confirm-modal-close');
+    var activeForm = null;
+
+    function close() {
+      modal.classList.add('is-hidden');
+      activeForm = null;
+    }
+
+    function setConfirmDanger(isDanger) {
+      confirmBtn.className = 'btn-sm ' + (isDanger ? 'btn-danger' : 'btn-secondary');
+    }
+
+    function open(trigger) {
+      activeForm = trigger.closest('form');
+      if (!activeForm) return;
+      titleEl.textContent = trigger.getAttribute('data-confirm-title') || 'Confirm';
+      confirmBtn.textContent = trigger.getAttribute('data-confirm-label') || 'Confirm';
+      confirmBtn.disabled = false;
+      setConfirmDanger(trigger.getAttribute('data-confirm-danger') === '1');
+
+      var previewUrl = trigger.getAttribute('data-confirm-preview-url');
+      if (previewUrl) {
+        bodyEl.textContent = 'Loading…';
+        modal.classList.remove('is-hidden');
+        fetch(previewUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+          .then(function(r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+          .then(function(json) {
+            bodyEl.textContent = json.message || '';
+            if (typeof json.danger === 'boolean') setConfirmDanger(json.danger);
+          })
+          .catch(function() {
+            bodyEl.textContent = 'Could not load details. You can still proceed, or cancel.';
+          });
+      } else {
+        bodyEl.textContent = trigger.getAttribute('data-confirm-body') || 'Are you sure?';
+        modal.classList.remove('is-hidden');
+      }
+    }
+
+    document.addEventListener('click', function(event) {
+      var trigger = event.target.closest('[data-confirm-modal]');
+      if (!trigger) return;
+      event.preventDefault();
+      open(trigger);
+    });
+
+    confirmBtn.addEventListener('click', function() { if (activeForm) activeForm.submit(); });
+    cancelBtn.addEventListener('click', close);
+    closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', function(event) { if (event.target === modal) close(); });
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape' && !modal.classList.contains('is-hidden')) close();
+    });
+  }
+
   bindCollectionPanels();
   bindAccessAllToggle();
   bindDeleteUserModal();
+  bindConfirmModal();
 })();
