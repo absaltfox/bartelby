@@ -65,6 +65,19 @@ def main():
     ids = [p["id"] for p in phrases]
     X = np.array([p["embedding"] for p in phrases], dtype=np.float32)
 
+    # Guard against 0-feature input: if embedding BLOBs failed to decode
+    # upstream the matrix is (N, 0), and UMAP would raise an opaque
+    # "Found array with 0 feature(s)" trace. Fail with a clear, actionable
+    # message instead. (The Node reader now decodes Turso ArrayBuffers and
+    # drops empty rows, so this is defense in depth.)
+    if X.ndim < 2 or X.shape[1] == 0:
+        sys.stderr.write(
+            "clustering aborted: embeddings decoded to 0 features "
+            f"(shape={X.shape}). The embedding BLOBs likely failed to decode "
+            "before reaching this script.\n"
+        )
+        sys.exit(2)
+
     # Dim reduction — UMAP from 384 → params.umap_n_components
     reducer = UMAP(
         n_components=params["umap_n_components"],
