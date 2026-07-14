@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const db = require('../database/db');
 const { resolvePythonBin } = require('./python-runtime');
+const { blobToFloat32Array } = require('./sentiment/blob-embedding');
 
 const TIMEOUT_SEC_DEFAULT = 600;
 const SIGKILL_GRACE_MS = 5000;
@@ -44,12 +45,20 @@ async function processQueuedClusteringRun() {
     const phraseRows = await db.allAsync(
       `SELECT id, embedding FROM sentiment_emotion_phrases WHERE embedding IS NOT NULL`
     );
-    const phrases = phraseRows.map((r) => ({
-      id: r.id,
-      embedding: Array.from(
-        new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)
-      )
-    }));
+    // Decode via blobToFloat32Array: the Turso driver returns BLOBs as raw
+    // ArrayBuffers (not Node Buffers), which the old inline decode collapsed to
+    // length 0, feeding UMAP a (N, 0) matrix. Defense in depth: drop any row
+    // that still decodes to length 0 so one bad embedding cannot fail the run.
+    const phrases = [];
+    let skippedEmpty = 0;
+    for (const r of phraseRows) {
+      const embedding = Array.from(blobToFloat32Array(r.embedding));
+      if (embedding.length === 0) { skippedEmpty += 1; continue; }
+      phrases.push({ id: r.id, embedding });
+    }
+    if (skippedEmpty > 0) {
+      console.warn(`[sentiment-clustering] run ${run.id}: skipped ${skippedEmpty} phrase(s) with empty/undecodable embedding`);
+    }
 
     // Spawn Python, exchange JSON
     const result = await runClusteringSubprocess({ phrases, params });

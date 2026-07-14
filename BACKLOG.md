@@ -33,37 +33,6 @@ When an item ships, delete it here and cite this file in the PR body.
   Motivated by the 2026-07-11 report of the User Access panel appearing
   after a collection re-extract.
 
-- [ ] **Sentiment clustering fails on Fly: BLOB embeddings decode to
-  zero-length under Turso.** The clustering worker reads phrase
-  embeddings with
-  `new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)`
-  (`utils/worker-sentiment-clustering.js:50`), which assumes a Node
-  `Buffer`. On Fly the Turso driver (`database/drivers/turso.js` →
-  `@libsql/client`) returns BLOB columns as raw `ArrayBuffer`, whose
-  `.buffer`/`.byteOffset` are `undefined`, so the decode collapses to a
-  length-0 array for **every** row. Python then receives 6737 phrases
-  with empty embeddings and UMAP throws
-  `ValueError: Found array with 0 feature(s) (shape=(6737, 0))`. The
-  vectors in Turso are intact — this is a read-side decode bug, not
-  missing data, so **no re-embedding/backfill is needed**. It stays
-  hidden locally because better-sqlite3/sql.js return real `Buffer`s,
-  and line 50 is the only production JS that reads an embedding BLOB
-  back (every other consumer is Python); the existing worker unit test
-  mocks the DB with `Buffer`s so it can't catch it. Fix per
-  [docs/background-jobs.md](./docs/background-jobs.md) (worker
-  correctness) and the clustering spec
-  (`docs/superpowers/specs/2026-05-23-sentiment-phase-2a-clustering-design.md`):
-  add a `blobToFloat32Array()` helper that branches on
-  `instanceof ArrayBuffer` vs. a `Buffer`/typed-array view (all three
-  drivers hit this path); as defense in depth, skip any embedding that
-  still decodes to length 0 so one bad row can't fail the whole run, and
-  have `scripts/sentiment_cluster.py` raise a clear 0-feature message
-  instead of a raw sklearn trace. Add a regression test that feeds the
-  decode an `ArrayBuffer` (simulating Turso) and asserts non-zero
-  features — it fails today. After shipping, re-queue the run from the
-  admin UI (admin-triggered, never automatic). Motivated by the
-  2026-07-12 prod clustering-job failure on Fly.
-
 - [ ] **Document Sentiment tab: "Load more" button always visible,
   including when the list is exhausted.** The button
   (`views/partials/document-sentiment-tab.ejs`) and its wrapper are
