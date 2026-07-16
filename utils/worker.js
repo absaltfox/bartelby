@@ -11,6 +11,7 @@ const {
   runExtractionWorkerCycle,
   pollRunningExtractionBatches
 } = require('./worker-extraction');
+const { runIiifSyncCycle } = require('./worker-iiif');
 const { runAuthorityResolutionWorkerCycle } = require('./worker-authority-resolution');
 const { runAuthoritySuggestionWorkerCycle } = require('./worker-authority-suggestion');
 // runScheduledAnalytics holds its own module-level concurrency lock;
@@ -29,6 +30,7 @@ let sentimentExtractionBusy = false;
 let sentimentBatchPollBusy = false;
 let sentimentReconciliationBusy = false;
 let sentimentClusteringBusy = false;
+let iiifSyncBusy = false;
 
 const IMPORT_TIMEOUT_MINUTES = 200; // must exceed the 180-min pdftoppm timeout on ephemeral machines
 
@@ -41,6 +43,7 @@ function startWorker() {
   setInterval(tickAuthorityResolutionJobs, 5000);
   setInterval(tickAuthoritySuggestionJobs, BATCH_POLL_MS);
   setInterval(tickTitleBackfillJobs, 5000);
+  setInterval(tickIiifSyncJobs, 5000);
   setInterval(pollRunningBatches, BATCH_POLL_MS);
   setInterval(pollRunningGroupingBatches, BATCH_POLL_MS);
   setInterval(pollRunningExtractionBatchesTick, BATCH_POLL_MS);
@@ -55,8 +58,9 @@ function startWorker() {
   setInterval(checkStaleImportJobs, 60000);
   setInterval(async () => {
     try {
-      const { importJobsAsync } = require('../database/db');
+      const { importJobsAsync, iiifSourcesAsync } = require('../database/db');
       await importJobsAsync.requeueStaleJobs();
+      await iiifSourcesAsync.requeueStaleJobs();
     } catch (err) {
       // Non-fatal
     }
@@ -153,6 +157,18 @@ async function tickExtractionJobs() {
     console.error('[worker] extraction worker cycle failed:', err.message);
   } finally {
     extractionBusy = false;
+  }
+}
+
+async function tickIiifSyncJobs() {
+  if (iiifSyncBusy) return;
+  iiifSyncBusy = true;
+  try {
+    await runIiifSyncCycle();
+  } catch (err) {
+    console.error('[worker] IIIF sync cycle failed:', err.message);
+  } finally {
+    iiifSyncBusy = false;
   }
 }
 

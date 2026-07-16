@@ -1348,6 +1348,31 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleTitleBackfillCount} stale title backfill job(s) as failed`);
   }
 
+  // IIIF sync sources left 'running' by an unclean shutdown are REQUEUED, not
+  // failed: the iiif_imported_manifests ledger makes a re-crawl idempotent, so
+  // resuming is safe and preferable to a manual admin retry. Only the
+  // single-process path (machine_id IS NULL) is swept here; a future Fly-machine
+  // crawl (machine_id set) is recovered by the heartbeat sweeper
+  // (iiifSourcesAsync.requeueStaleJobs). Per docs/background-jobs.md
+  // § Graceful Shutdown and Stale Job Recovery.
+  const staleIiifSources = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM iiif_sources
+    WHERE status = 'running' AND machine_id IS NULL
+  `);
+  const staleIiifCount = staleIiifSources?.count || 0;
+  if (staleIiifCount > 0) {
+    await db.run(`
+      UPDATE iiif_sources
+      SET status = 'queued',
+          started_at = NULL,
+          completed_at = NULL,
+          last_heartbeat_at = NULL
+      WHERE status = 'running' AND machine_id IS NULL
+    `);
+    console.log(`[db] Requeued ${staleIiifCount} stale IIIF sync source(s)`);
+  }
+
   // Sentiment singleton jobs in 'running' lost their executor on restart;
   // mark them failed. Batch rows in 'batch_submitted' are intentionally
   // left untouched — the provider still owns the work and

@@ -35,6 +35,7 @@ shutdown) by marking them `failed` or re-queuing them as appropriate.
 | Authority suggestion (cluster pipeline) | `authority_suggestion_jobs` | `utils/worker-authority-suggestion.js` |
 | Title & summary backfill | `title_backfill_jobs` | `utils/worker-title-backfill.js` |
 | Sentiment extraction | `sentiment_extraction_jobs` | `utils/worker-sentiment.js` |
+| IIIF ingestion (remote-reference crawl) | `iiif_sources` | `utils/worker-iiif.js` |
 | Collection analytics | `worker_leases` + module-level flag in `utils/analytics.js` | `utils/worker.js` scheduled interval |
 
 > **Note:** Analytics do not use a DB-backed job record for the outer sweep;
@@ -68,6 +69,7 @@ is running with background work enabled. In practice that means
 | `tickAuthoritySuggestionJobs` | `BATCH_POLL_MS` | `authoritySuggestionBusy` boolean |
 | `tickTitleBackfillJobs` | 5 s | `titleBackfillBusy` boolean |
 | `tickSentimentExtractionJobs` | 5 s | `sentimentExtractionBusy` boolean |
+| `tickIiifSyncJobs` | 5 s | `iiifSyncBusy` boolean |
 | `pollRunningBatches` (transcription) | `BATCH_POLL_MS` | `batchPollBusy` boolean |
 | `pollRunningGroupingBatches` | `BATCH_POLL_MS` | `groupingBatchPollBusy` boolean |
 | `pollRunningExtractionBatchesTick` | `BATCH_POLL_MS` | `extractionBatchPollBusy` boolean |
@@ -210,6 +212,11 @@ On the next startup, `initializeSchema()` identifies stale jobs:
 - **`sentiment_extraction_jobs` (batch, `running`, `batch_remote_id IS NULL`)** → marked `failed`. Indicates a crash before the pre-stage write; no provider call was made.
 - **`transcription_jobs` / `extraction_jobs` (batch, `running`, `batch_remote_id LIKE 'pending%'`, older than the stale window)** → marked `failed` with the submission sentinel in the error message. Indicates a crash during batch submission; the provider may hold an orphaned batch — recover manually from the provider console. Fresh `pending%` rows are left alone (a live worker may be mid-submission). Batch submission errors are never auto-requeued; retry is admin-triggered from `/admin/jobs`.
 - **Fly Machine import jobs** with expired heartbeats → re-queued
+- **`iiif_sources` (`running`, `machine_id IS NULL`)** → **re-queued** (not
+  failed): the `iiif_imported_manifests` ledger makes the re-crawl idempotent,
+  so resuming from `cursor` is safe and preferable to a manual admin retry. A
+  future Fly-machine crawl (`machine_id` set) is instead recovered by the
+  heartbeat sweeper (`iiifSourcesAsync.requeueStaleJobs`).
 
 `initializeSchema(options)` accepts `{ runStaleJobRecovery: false }` to skip
 the recovery sweeps above and only run migrations + FTS5 setup. Ephemeral
