@@ -1,8 +1,42 @@
 'use strict';
 
 const {
-  enumerateManifestRefs, itemIdToManifestUrl, parseItemsPage, firstText
+  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, cleanFullText, parseItemsPage, firstText
 } = require('../../utils/iiif/sources/ubc-oc');
+
+describe('ubc-oc: buildItemImageUrl (verified working pattern, not the manifest service)', () => {
+  it('derives the working per-page Image API URL (single .NNNN, not the broken .0000.NNNN)', () => {
+    // Verified live: royalfisk 1.0040134 pages .0000/.0001/.0002 all resolve.
+    expect(buildItemImageUrl('royalfisk', '1.0040134', 0, '2000,')).toBe(
+      'https://iiif.library.ubc.ca/image/cdm.royalfisk.1-0040134.0000/full/2000,/0/default.jpg'
+    );
+    expect(buildItemImageUrl('royalfisk', '1.0040134', 2, '2000,')).toBe(
+      'https://iiif.library.ubc.ca/image/cdm.royalfisk.1-0040134.0002/full/2000,/0/default.jpg'
+    );
+  });
+  it('zero-pads the canvas index to 4 digits', () => {
+    expect(buildItemImageUrl('c', '1.5', 12, 'full')).toContain('.1-5.0012/full/full/0/default.jpg');
+  });
+});
+
+describe('ubc-oc: cleanFullText', () => {
+  it('converts <br> to newlines and strips tags, keeping [sic] and sup contents', () => {
+    const raw = 'Victoria V.I. 23. 1862<br>\nDear Sir <br>Rice 6&frac12; to 8<sup>c </sup><br>';
+    const out = cleanFullText(raw);
+    expect(out).toContain('Victoria V.I. 23. 1862');
+    expect(out).toMatch(/Dear Sir\s*\nRice/);
+    expect(out).toContain('8c'); // <sup> stripped, content kept
+    expect(out).not.toContain('<br>');
+    expect(out).not.toContain('<sup>');
+  });
+  it('decodes common entities and trims', () => {
+    expect(cleanFullText('A &amp; B &nbsp;')).toBe('A & B');
+  });
+  it('returns null for empty/nullish input', () => {
+    expect(cleanFullText(null)).toBeNull();
+    expect(cleanFullText('   ')).toBeNull();
+  });
+});
 
 describe('ubc-oc: itemIdToManifestUrl (dot→dash transform)', () => {
   it('maps a UBC item id to the per-item IIIF manifest URL', () => {

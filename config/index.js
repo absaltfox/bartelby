@@ -89,6 +89,11 @@ const config = {
     // UBC Open Collections enumeration (Research/Search API). The api key is a
     // secret passed as a `?api_key=` query param; may also be set per-source.
     ubcSearchBase: process.env.UBC_OC_SEARCH_BASE || 'https://oc-index.library.ubc.ca',
+    // IIIF presentation + image host. NOTE: UBC manifests declare per-canvas
+    // image services with a spurious extra `.0000` segment that 404s; the
+    // working Image API id is derived as cdm.{coll}.{itemDashed}.{page:04d}
+    // (see utils/iiif/sources/ubc-oc.js buildItemImageUrl).
+    ubcImageBase: process.env.UBC_OC_IMAGE_BASE || 'https://iiif.library.ubc.ca',
     ubcApiKey: process.env.UBC_OC_API_KEY || ''
   }
 };

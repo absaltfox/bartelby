@@ -15,12 +15,42 @@ const { fetchWithTimeout } = require('../../http-client');
 // pinned in UBC's public docs, so `parseItemsPage` is defensive across likely
 // shapes; confirm against a live response (needs a registered api_key).
 
-const IIIF_PRESENTATION_BASE = 'https://iiif.library.ubc.ca/presentation';
+const IIIF_HOST = 'https://iiif.library.ubc.ca';
+const IIIF_PRESENTATION_BASE = `${IIIF_HOST}/presentation`;
 const DEFAULT_PAGE_SIZE = 100;
 
 function itemIdToManifestUrl(collection, itemId, presentationBase = IIIF_PRESENTATION_BASE) {
   const dashed = String(itemId).replace(/\./g, '-');
   return `${String(presentationBase).replace(/\/+$/, '')}/cdm.${collection}.${dashed}.0000/manifest`;
+}
+
+// Build a working IIIF Image API URL for a given page of a UBC item.
+//
+// UBC's manifests DECLARE per-canvas image services with an extra `.0000`
+// segment (e.g. cdm.royalfisk.1-0040134.0000.0000) that 404s. The service that
+// actually resolves is cdm.{coll}.{itemDashed}.{canvasIndex:04d}, verified live
+// against royalfisk (pages .0000/.0001/.0002 all return valid info.json). So we
+// DERIVE the image id from the item id + canvas order rather than trusting the
+// manifest's declared service['@id'] (which utils/iiif/parser.js buildImageUrl
+// uses for generic, spec-compliant sources).
+function buildItemImageUrl(collection, itemId, canvasIndex, size = 'full', imageBase = IIIF_HOST) {
+  const dashed = String(itemId).replace(/\./g, '-');
+  const page = String(canvasIndex).padStart(4, '0');
+  return `${String(imageBase).replace(/\/+$/, '')}/image/cdm.${collection}.${dashed}.${page}/full/${size}/0/default.jpg`;
+}
+
+// UBC FullText is lightly marked-up HTML (<br>, <sup>, [sic], entities).
+// Normalize to plain text suitable for a transcript body.
+function cleanFullText(html) {
+  if (html == null) return null;
+  let s = String(html);
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+  s = s.replace(/<\/p>/gi, '\n\n');
+  s = s.replace(/<[^>]+>/g, '');            // strip remaining tags (keeps <sup> contents)
+  s = s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ');
+  s = s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return s || null;
 }
 
 function firstText(v) {
@@ -100,4 +130,6 @@ async function* enumerateManifestRefs(source, deps = {}) {
   }
 }
 
-module.exports = { enumerateManifestRefs, itemIdToManifestUrl, parseItemsPage, firstText };
+module.exports = {
+  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, cleanFullText, parseItemsPage, firstText
+};
