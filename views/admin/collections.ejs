@@ -14,6 +14,15 @@
   <% if (error) { %>
     <div class="alert alert-error"><%= error %></div>
   <% } %>
+  <% if (queuedMode === 'iiif-transcribe') { %>
+    <div class="alert alert-success">
+      <% if (queuedCount > 0) { %>
+        Queued transcription for <strong><%= queuedCount %></strong> IIIF document<%= queuedCount !== 1 ? 's' : '' %>.
+      <% } else { %>
+        No IIIF documents needed transcription &mdash; all already have a machine transcript or an active job.
+      <% } %>
+    </div>
+  <% } %>
   <% if (queuedCollectionName) { %>
     <div class="alert alert-success">
       <% if (queuedMode === 'batch') { %>
@@ -138,6 +147,7 @@
                 <button type="submit" class="btn-secondary btn-sm">Backfill titles</button>
               </form>
               <a href="/manage/collections/<%= c.id %>/knowledge" class="btn-secondary btn-sm">Knowledge &rarr;</a>
+              <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="iiif-<%= c.id %>" data-collection-id="<%= c.id %>">IIIF source<% if (c.iiifSources && c.iiifSources.length) { %> (<%= c.iiifSources.length %>)<% } %></button>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="edit-<%= c.id %>" data-collection-id="<%= c.id %>">Edit</button>
               <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="preview-<%= c.id %>" data-collection-id="<%= c.id %>">Preview Image</button>
               <% if (!c.is_public && !c.is_world_public) { %>
@@ -149,6 +159,72 @@
                 <button type="submit" class="btn-danger btn-sm">Delete</button>
               </form>
             </div>
+          </div>
+
+          <!-- IIIF source panel -->
+          <div id="iiif-<%= c.id %>" class="collection-edit-form is-hidden">
+            <% var iiifImported = (c.iiifSources || []).reduce(function (n, s) { return n + (s.manifests_imported || 0); }, 0); %>
+            <% if (c.iiifSources && c.iiifSources.length) { %>
+              <h4>Connected sources</h4>
+              <ul class="iiif-source-list">
+                <% c.iiifSources.forEach(function (s) { %>
+                  <li class="iiif-source-item">
+                    <div class="iiif-source-head">
+                      <strong><%= s.label || s.collection_identifier || ('Source #' + s.id) %></strong>
+                      <span class="iiif-source-status iiif-source-status-<%= s.status %>"><%= s.status %></span>
+                      <span class="muted"><%= s.manifests_imported %> of <%= s.manifests_total %> imported</span>
+                    </div>
+                    <% if (s.error) { %><p class="field-hint iiif-source-error">Error: <%= s.error %></p><% } %>
+                    <% if (s.status === 'done' || s.status === 'failed') { %>
+                      <form method="POST" action="/admin/collections/<%= c.id %>/iiif/<%= s.id %>/resync" class="inline-form"
+                            data-confirm-message="Re-sync &quot;<%= s.label || s.collection_identifier %>&quot;? Already-imported items are skipped (no duplicates).">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button type="submit" class="btn-secondary btn-sm">Re-sync</button>
+                      </form>
+                    <% } %>
+                  </li>
+                <% }); %>
+              </ul>
+              <% if (iiifImported > 0) { %>
+                <form method="POST" action="/admin/collections/<%= c.id %>/iiif/transcribe" class="inline-form"
+                      data-confirm-message="Queue AI transcription for IIIF documents in &quot;<%= c.name %>&quot; that don't already have a machine transcript?">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button type="submit" class="btn-secondary btn-sm">Transcribe imported documents</button>
+                </form>
+                <p class="field-hint">Imported documents keep the library's own transcription; this queues an AI transcript alongside it for comparison. Uses the system default provider and batches when supported.</p>
+              <% } %>
+            <% } else { %>
+              <p class="field-hint">No IIIF source connected. Connect a UBC Open Collections collection to import its letters as remote references (images stay hosted by the library).</p>
+            <% } %>
+
+            <h4>Connect a UBC Open Collections source</h4>
+            <form method="POST" action="/admin/collections/<%= c.id %>/iiif/connect">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="form-group">
+                <label for="iiif-ident-<%= c.id %>">UBC collection identifier *</label>
+                <input type="text" id="iiif-ident-<%= c.id %>" name="collection_identifier" required placeholder="e.g. royalfisk">
+                <p class="field-hint">The collection's nickname in UBC Open Collections (the <code>collection_identifier</code>).</p>
+              </div>
+              <div class="form-group">
+                <label for="iiif-label-<%= c.id %>">Label <span class="field-hint-inline">(optional)</span></label>
+                <input type="text" id="iiif-label-<%= c.id %>" name="label" placeholder="Display name for this source">
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="iiif-size-<%= c.id %>">Image size <span class="field-hint-inline">(optional)</span></label>
+                  <input type="text" id="iiif-size-<%= c.id %>" name="image_size" placeholder="2000,">
+                </div>
+                <div class="form-group">
+                  <label for="iiif-key-<%= c.id %>">API key <span class="field-hint-inline">(optional)</span></label>
+                  <input type="password" id="iiif-key-<%= c.id %>" name="api_key" autocomplete="off" placeholder="<%= '' %>">
+                  <p class="field-hint">Overrides the server's UBC API key for this source. Stored securely; never displayed.</p>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn-primary btn-sm">Connect &amp; queue sync</button>
+                <button type="button" class="btn-secondary btn-sm js-collection-toggle" data-target="iiif-<%= c.id %>" data-collection-id="<%= c.id %>">Cancel</button>
+              </div>
+            </form>
           </div>
 
           <!-- Edit form -->
