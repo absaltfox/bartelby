@@ -2,6 +2,7 @@
 
 const path = require('path');
 const storage = require('./storage');
+const { resolveImageBuffer } = require('./image-reference');
 const { mimeTypeFromFilename } = require('./mime-types');
 const {
   formatDateRangeHint,
@@ -177,8 +178,11 @@ function parseBatchManifest(job) {
 }
 
 async function buildOpenAiRequestEntry(request, runtime, systemPrompt) {
-  const mimeType = request.mimeType || guessMimeType(request.imagePath);
-  const imageBuffer = await storage.readUploadByUrl(request.imagePath);
+  // resolveImageBuffer handles both local /uploads refs (delegated to storage,
+  // behavior unchanged) and remote IIIF URLs (fetched transiently). The remote
+  // Content-Type is authoritative when the manifest entry has no explicit mime.
+  const { buffer: imageBuffer, mimeType: resolvedMime } = await resolveImageBuffer(request.imagePath);
+  const mimeType = request.mimeType || resolvedMime || guessMimeType(request.imagePath);
   const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
   const body = {
     model: runtime.model,
@@ -251,8 +255,11 @@ async function submitOpenAiBatchChunk(job, runtime, systemPrompt, chunkEntries, 
 }
 
 async function buildAnthropicRequestEntry(request, runtime, systemPrompt) {
-  const mimeType = request.mimeType || guessMimeType(request.imagePath);
-  const imageBuffer = await storage.readUploadByUrl(request.imagePath);
+  // resolveImageBuffer handles both local /uploads refs (delegated to storage,
+  // behavior unchanged) and remote IIIF URLs (fetched transiently). The remote
+  // Content-Type is authoritative when the manifest entry has no explicit mime.
+  const { buffer: imageBuffer, mimeType: resolvedMime } = await resolveImageBuffer(request.imagePath);
+  const mimeType = request.mimeType || resolvedMime || guessMimeType(request.imagePath);
   const payload = {
     custom_id: request.customId,
     params: {
@@ -362,8 +369,11 @@ async function uploadGeminiFile(apiKey, imageBuffer, mimeType, displayName) {
 }
 
 async function buildGeminiRequestEntry(request, runtime, systemPrompt) {
-  const mimeType = request.mimeType || guessMimeType(request.imagePath);
-  const imageBuffer = await storage.readUploadByUrl(request.imagePath);
+  // resolveImageBuffer handles both local /uploads refs (delegated to storage,
+  // behavior unchanged) and remote IIIF URLs (fetched transiently). The remote
+  // Content-Type is authoritative when the manifest entry has no explicit mime.
+  const { buffer: imageBuffer, mimeType: resolvedMime } = await resolveImageBuffer(request.imagePath);
+  const mimeType = request.mimeType || resolvedMime || guessMimeType(request.imagePath);
   const uploaded = await uploadGeminiFile(
     runtime.apiKey,
     imageBuffer,
@@ -565,7 +575,8 @@ async function submitVertexTranscriptionBatch(job, runtime, systemPrompt, manife
       });
 
       for (const entry of chunk.entries) {
-        const imageBuffer = await storage.readUploadByUrl(entry.imagePath);
+        // Local /uploads or remote IIIF; entry.mimeType is fixed at manifest build.
+        const { buffer: imageBuffer } = await resolveImageBuffer(entry.imagePath);
         await uploadBufferToGcs(vertexConfig, entry.assetObjectName, imageBuffer, entry.mimeType);
       }
 
