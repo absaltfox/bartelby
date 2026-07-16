@@ -33,10 +33,14 @@ function itemIdToManifestUrl(collection, itemId, presentationBase = IIIF_PRESENT
 // DERIVE the image id from the item id + canvas order rather than trusting the
 // manifest's declared service['@id'] (which utils/iiif/parser.js buildImageUrl
 // uses for generic, spec-compliant sources).
-function buildItemImageUrl(collection, itemId, canvasIndex, size = 'full', imageBase = IIIF_HOST) {
+function buildItemImageServiceBase(collection, itemId, canvasIndex, imageBase = IIIF_HOST) {
   const dashed = String(itemId).replace(/\./g, '-');
   const page = String(canvasIndex).padStart(4, '0');
-  return `${String(imageBase).replace(/\/+$/, '')}/image/cdm.${collection}.${dashed}.${page}/full/${size}/0/default.jpg`;
+  return `${String(imageBase).replace(/\/+$/, '')}/image/cdm.${collection}.${dashed}.${page}`;
+}
+
+function buildItemImageUrl(collection, itemId, canvasIndex, size = 'full', imageBase = IIIF_HOST) {
+  return `${buildItemImageServiceBase(collection, itemId, canvasIndex, imageBase)}/full/${size}/0/default.jpg`;
 }
 
 // UBC FullText is lightly marked-up HTML (<br>, <sup>, [sic], entities).
@@ -99,6 +103,35 @@ async function fetchItemsPage(source, offset, limit) {
   return resp.json();
 }
 
+// UBC's high-quality human FullText lives in the item-DETAIL endpoint
+// (GET /collections/{id}/items/{itemId}?api_key=), NOT the list page — the list
+// FullText is typically absent (confirmed live against royalfisk). The sync
+// worker calls this per item to obtain the transcript body. `deps.fetchDetail`
+// is injectable for testing.
+async function fetchItemDetail(source, itemId, deps = {}) {
+  if (deps.fetchDetail) return await deps.fetchDetail(source, itemId);
+  const base = source.search_base_url || config.iiif.ubcSearchBase;
+  const apiKey = source.api_key || config.iiif.ubcApiKey;
+  const url = new URL(`${String(base).replace(/\/+$/, '')}/collections/${encodeURIComponent(source.collection_identifier)}/items/${encodeURIComponent(itemId)}`);
+  if (apiKey) url.searchParams.set('api_key', apiKey); // list/detail call only — never on stored URLs
+  const resp = await fetchWithTimeout(url.toString(), {
+    timeoutMs: config.iiif.requestTimeoutMs,
+    headers: { Accept: 'application/json' }
+  });
+  if (!resp.ok) {
+    throw new Error(`UBC_OC_DETAIL_FAILED: ${resp.status} for item ${itemId}`);
+  }
+  return resp.json();
+}
+
+// Returns cleaned plain-text FullText for an item, or null when absent.
+async function fetchItemFullText(source, itemId, deps = {}) {
+  const detail = await fetchItemDetail(source, itemId, deps);
+  const record = detail && (detail.data || detail.item || detail) || {};
+  const raw = firstText(record.FullText) || firstText(record.full_text) || null;
+  return cleanFullText(raw);
+}
+
 // Async generator: yields { manifestUrl, itemId, title, fullText, metadata, offset }.
 // `deps.fetchPage(source, offset, limit)` is injectable for testing.
 async function* enumerateManifestRefs(source, deps = {}) {
@@ -131,5 +164,6 @@ async function* enumerateManifestRefs(source, deps = {}) {
 }
 
 module.exports = {
-  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, cleanFullText, parseItemsPage, firstText
+  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, buildItemImageServiceBase,
+  cleanFullText, parseItemsPage, firstText, fetchItemDetail, fetchItemFullText
 };

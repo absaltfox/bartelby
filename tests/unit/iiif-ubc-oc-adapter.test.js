@@ -1,8 +1,36 @@
 'use strict';
 
 const {
-  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, cleanFullText, parseItemsPage, firstText
+  enumerateManifestRefs, itemIdToManifestUrl, buildItemImageUrl, buildItemImageServiceBase,
+  cleanFullText, parseItemsPage, firstText, fetchItemFullText
 } = require('../../utils/iiif/sources/ubc-oc');
+
+describe('ubc-oc: buildItemImageServiceBase', () => {
+  it('returns the derived image-service base (no /full suffix) for URL rebuild', () => {
+    expect(buildItemImageServiceBase('royalfisk', '1.0040134', 2)).toBe(
+      'https://iiif.library.ubc.ca/image/cdm.royalfisk.1-0040134.0002'
+    );
+  });
+});
+
+describe('ubc-oc: fetchItemFullText (item-detail endpoint)', () => {
+  it('extracts and cleans FullText from the injected detail record', async () => {
+    const fetchDetail = jest.fn(async () => ({
+      data: { FullText: 'Dear Sir,<br>I write in <sup>2</sup> haste.&nbsp;[sic]' }
+    }));
+    const text = await fetchItemFullText(
+      { collection_identifier: 'royalfisk' }, '1.0040134', { fetchDetail }
+    );
+    expect(fetchDetail).toHaveBeenCalledWith(expect.anything(), '1.0040134');
+    expect(text).toBe('Dear Sir,\nI write in 2 haste. [sic]');
+  });
+
+  it('returns null when the detail record has no FullText', async () => {
+    const fetchDetail = jest.fn(async () => ({ data: { Title: 'Untranscribed' } }));
+    const text = await fetchItemFullText({ collection_identifier: 'x' }, '1.1', { fetchDetail });
+    expect(text).toBeNull();
+  });
+});
 
 describe('ubc-oc: buildItemImageUrl (verified working pattern, not the manifest service)', () => {
   it('derives the working per-page Image API URL (single .NNNN, not the broken .0000.NNNN)', () => {
