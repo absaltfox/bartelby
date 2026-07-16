@@ -2658,6 +2658,237 @@ const titleBackfillJobs = {
   }
 };
 
+// IIIF ingestion source model (feat/iiif-ingestion, Phase 1c). Mirrors
+// importJobsAsync's claim/heartbeat/stale/log shape (docs/background-jobs.md
+// "Adding a New Worker Task"). Kept in jobs.js — not a standalone model file —
+// so it reuses the shared withExclusiveLock (a single module-level BEGIN
+// EXCLUSIVE queue; a duplicate queue in another file would collide) and the
+// job_log_entries helpers. Corpus mutations stay admin-triggered: rows are
+// only created by the admin connect/resync routes (Phase 1e).
+const iiifSourcesAsync = {
+  async create({
+    collection_id,
+    source_type,
+    source_url = null,
+    search_base_url = null,
+    collection_identifier = null,
+    query_json = null,
+    api_key = null,
+    label = null,
+    image_size = null,
+    created_by = null
+  }) {
+    const result = await runAsync(`
+      INSERT INTO iiif_sources (
+        collection_id, source_type, source_url, search_base_url,
+        collection_identifier, query_json, api_key, label, image_size,
+        status, created_by
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+    `, [
+      Number(collection_id),
+      source_type,
+      source_url,
+      search_base_url,
+      collection_identifier,
+      query_json && typeof query_json !== 'string' ? JSON.stringify(query_json) : query_json,
+      api_key,
+      label,
+      image_size,
+      created_by != null ? Number(created_by) : null
+    ]);
+    return result.lastInsertRowid;
+  },
+
+  async getById(id) {
+    const row = await getAsync('SELECT * FROM iiif_sources WHERE id = ?', [id]);
+    return await hydrateJobLog(row, 'iiif');
+  },
+
+  async getByCollectionId(collectionId) {
+    return await allAsync(
+      'SELECT * FROM iiif_sources WHERE collection_id = ? ORDER BY created_at DESC, id DESC',
+      [Number(collectionId)]
+    );
+  },
+
+  async claimNextQueued() {
+    const job = await withExclusiveLock(async () => {
+      const j = await getAsync(`
+        SELECT * FROM iiif_sources
+        WHERE status = 'queued'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `);
+      if (!j) return null;
+      const result = await runAsyncWithoutSave(`
+        UPDATE iiif_sources
+        SET status = 'running',
+            started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+            last_heartbeat_at = CURRENT_TIMESTAMP,
+            completed_at = NULL,
+            error = NULL
+        WHERE id = ? AND status = 'queued'
+      `, [j.id]);
+      if (!result || !result.changes) return null;
+      return j;
+    });
+    if (!job) return null;
+    await saveDatabase();
+    return await this.getById(job.id);
+  },
+
+  async updateProgress(id, { manifests_total, manifests_imported, cursor } = {}) {
+    await runAsyncWithoutSave(`
+      UPDATE iiif_sources
+      SET manifests_total = COALESCE(?, manifests_total),
+          manifests_imported = COALESCE(?, manifests_imported),
+          cursor = CASE WHEN ? = 1 THEN ? ELSE cursor END,
+          last_heartbeat_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      Number.isInteger(manifests_total) ? manifests_total : null,
+      Number.isInteger(manifests_imported) ? manifests_imported : null,
+      cursor !== undefined ? 1 : 0,
+      cursor !== undefined ? (cursor === null ? null : String(cursor)) : null,
+      id
+    ]);
+    await saveDatabase();
+  },
+
+  async updateHeartbeat(id) {
+    await runAsyncWithoutSave(
+      'UPDATE iiif_sources SET last_heartbeat_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [id]
+    );
+    await saveDatabase();
+  },
+
+  async appendLog(id, text) {
+    await appendJobLogEntry('iiif', id, text);
+  },
+
+  async markDone(id) {
+    await runAsyncWithoutSave(`
+      UPDATE iiif_sources
+      SET status = 'done',
+          completed_at = CURRENT_TIMESTAMP,
+          last_synced_at = CURRENT_TIMESTAMP,
+          error = NULL
+      WHERE id = ?
+    `, [id]);
+    await saveDatabase();
+  },
+
+  async markFailed(id, error) {
+    await runAsyncWithoutSave(`
+      UPDATE iiif_sources
+      SET status = 'failed', error = ?, completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [error || 'Unknown error', id]);
+    await saveDatabase();
+  },
+
+  // Transient failure (5xx / timeout / 429) — return to the queue so the next
+  // tick re-claims and resumes from `cursor`. Per the standing project rule
+  // no automatic retry backoff is scheduled here; the sync simply resumes.
+  async requeueForRetry(id, error = null) {
+    await runAsyncWithoutSave(`
+      UPDATE iiif_sources
+      SET status = 'queued',
+          error = ?,
+          last_heartbeat_at = NULL,
+          machine_id = NULL
+      WHERE id = ?
+    `, [error || null, id]);
+    await saveDatabase();
+  },
+
+  // Admin-triggered resync of an existing source. Preserves the import ledger
+  // (idempotent re-crawl) but resets the crawl cursor so enumeration restarts.
+  async resync(id) {
+    const result = await runAsyncWithoutSave(`
+      UPDATE iiif_sources
+      SET status = 'queued',
+          error = NULL,
+          cursor = NULL,
+          started_at = NULL,
+          completed_at = NULL,
+          last_heartbeat_at = NULL,
+          machine_id = NULL
+      WHERE id = ? AND status IN ('done', 'failed')
+    `, [id]);
+    await saveDatabase();
+    return result?.changes || 0;
+  },
+
+  // Heartbeat-based stale sweep (mirrors importJobsAsync.requeueStaleJobs).
+  // Guarded on machine_id IS NOT NULL for a future Fly-machine crawl path; the
+  // single-process worker leaves machine_id NULL and is recovered instead by
+  // initializeSchema() startup recovery (running + machine_id IS NULL). The
+  // ledger makes any re-crawl idempotent, so requeue is always safe.
+  async requeueStaleJobs() {
+    const thresholdMs = parseInt(process.env.WORKER_HEARTBEAT_TIMEOUT_MS, 10) || 300000;
+    const thresholdSeconds = Math.floor(thresholdMs / 1000);
+    const result = await runAsync(`
+      UPDATE iiif_sources
+      SET status = 'queued',
+          last_heartbeat_at = NULL,
+          machine_id = NULL
+      WHERE status = 'running'
+        AND machine_id IS NOT NULL
+        AND last_heartbeat_at IS NOT NULL
+        AND last_heartbeat_at < datetime('now', '-${thresholdSeconds} seconds')
+    `);
+    const count = result?.changes || 0;
+    if (count > 0) {
+      console.log(`[db] Requeued ${count} stale IIIF source(s) with stale heartbeat`);
+    }
+    return count;
+  },
+
+  async delete(id) {
+    return await runAsync('DELETE FROM iiif_sources WHERE id = ?', [id]);
+  },
+
+  async getCounts() {
+    const rows = await allAsync(`
+      SELECT status, COUNT(*) AS count
+      FROM iiif_sources
+      GROUP BY status
+    `);
+    return rows.reduce((acc, row) => {
+      const n = Number(row.count || 0);
+      acc.total += n;
+      if (row.status === 'queued') acc.queued += n;
+      else if (row.status === 'running' || row.status === 'processing') acc.running += n;
+      else if (row.status === 'done') acc.done += n;
+      else if (row.status === 'failed') acc.failed += n;
+      return acc;
+    }, { total: 0, queued: 0, running: 0, done: 0, failed: 0 });
+  },
+
+  // Idempotency ledger (iiif_imported_manifests). manifestImported gates the
+  // per-manifest crawl so a re-sync creates zero duplicate documents;
+  // recordImportedManifest writes the ledger row (INSERT OR IGNORE so a
+  // concurrent/retried write is a no-op, and the ledger survives doc deletion).
+  async manifestImported(sourceId, manifestId) {
+    const row = await getAsync(`
+      SELECT id FROM iiif_imported_manifests
+      WHERE source_id = ? AND manifest_id = ?
+      LIMIT 1
+    `, [Number(sourceId), manifestId]);
+    return !!row;
+  },
+
+  async recordImportedManifest(sourceId, manifestId, documentId) {
+    await runAsync(`
+      INSERT OR IGNORE INTO iiif_imported_manifests (source_id, manifest_id, document_id)
+      VALUES (?, ?, ?)
+    `, [Number(sourceId), manifestId, documentId != null ? Number(documentId) : null]);
+  }
+};
+
   return {
     transcriptionJobs,
     transcriptionJobsAsync,
@@ -2668,6 +2899,7 @@ const titleBackfillJobs = {
     authorityResolutionJobs,
     authorityResolutionJobsAsync: authorityResolutionJobs,
     authoritySuggestionJobs,
-    titleBackfillJobs
+    titleBackfillJobs,
+    iiifSourcesAsync
   };
 };
