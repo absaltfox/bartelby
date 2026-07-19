@@ -68,6 +68,32 @@ When an item ships, delete it here and cite this file in the PR body.
   report of a persistent "Load more" button on the document Sentiment
   tab.
 
+- [ ] **Transcript annotations no longer work on the Document page.**
+  Selecting text in the transcript body no longer opens the annotation
+  form, so annotations can't be created (delete/highlight of existing
+  ones presumably affected too). Reproduced on
+  `https://bartelby.ca/documents/804?back=%2Fcollections%2F2`: the
+  transcript text highlights on selection but the
+  `#annotation-form-container` never appears and the "ANNOTATIONS (0)"
+  panel stays on "No annotations yet." — a **silent** failure (no console
+  error). Confirmed intact: the `annotation-section` markup and
+  `#annotation-form-container` still render
+  (`views/partials/document-transcript-panel.ejs`), `public/js/app.js`
+  (which owns `initAnnotations()` → the transcript `mouseup` →
+  `showAnnotationForm`, form submit to `/api/annotations`, delete, and
+  `highlightAnnotations`) still loads via `partials/footer.ejs`, and the
+  API (`routes/annotations.js`) is present. Suspected regression from the
+  transcript-panel refactor that added
+  `public/js/document-selection-prefill.js` (the CREATE Entity /
+  Relationship "choose evidence" selection flow): two consumers now bind
+  transcript text-selection, and the annotation path appears to have been
+  orphaned or shadowed. Fix: re-establish that selecting transcript text
+  opens the annotation form alongside the entity-prefill flow, per
+  [docs/ui-template-standards.md](./docs/ui-template-standards.md)
+  (template-loaded page JS), with a DOM/repro test asserting the form
+  shows after a selection. Motivated by the 2026-07-18 report that
+  annotation functionality no longer works on the Document page.
+
 ## Owed features
 
 ## Dependency upgrades
