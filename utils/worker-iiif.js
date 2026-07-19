@@ -49,9 +49,11 @@ async function runIiifSyncCycle(deps = {}) {
 
     const size = source.image_size || config.iiif.transcriptionImageSize;
     let imported = source.manifests_imported || 0;
+    let seen = 0; // manifests encountered this crawl → manifests_total (denominator)
     let lastHeartbeat = Date.now();
 
     for await (const ref of adapter.enumerateManifestRefs(source, adapterDeps)) {
+      seen += 1;
       if (Date.now() - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
         await iiifSourcesAsync.updateHeartbeat(source.id);
         lastHeartbeat = Date.now();
@@ -98,7 +100,13 @@ async function runIiifSyncCycle(deps = {}) {
         iiif_collection_identifier: source.collection_identifier,
         iiif_item_id: ref.itemId,
         iiif_image_service: imageServiceBase,
-        iiif_rights: manifest.rights || null,
+        // UBC (and many DC-based sources) expose the formal rights statement in
+        // metadata[] under a "Rights" label, not the top-level v2 license/rights
+        // field — fall back to it. The human-readable permission line is the
+        // top-level `attribution`.
+        iiif_rights: manifest.rights
+          || (manifest.metadata && (manifest.metadata.Rights || manifest.metadata['Rights URI']))
+          || null,
         iiif_attribution: manifest.attribution || null,
         iiif_canvas_count: canvasCount
       };
@@ -130,6 +138,7 @@ async function runIiifSyncCycle(deps = {}) {
       imported += 1;
       await iiifSourcesAsync.updateProgress(source.id, {
         manifests_imported: imported,
+        manifests_total: seen,
         cursor: ref.offset != null ? String(ref.offset) : undefined
       });
       await log(`Imported ${ref.itemId} → document ${docId} (${canvasCount} page(s)${fullText ? ', +FullText' : ''})`);
@@ -137,8 +146,11 @@ async function runIiifSyncCycle(deps = {}) {
       if (config.iiif.crawlDelayMs) await sleep(config.iiif.crawlDelayMs);
     }
 
+    // Record the total seen even when this run imported nothing new (a re-sync
+    // that skips everything via the ledger), so the UI denominator is correct.
+    await iiifSourcesAsync.updateProgress(source.id, { manifests_total: seen });
     await iiifSourcesAsync.markDone(source.id);
-    await log(`IIIF sync complete: ${imported} manifest(s) imported`);
+    await log(`IIIF sync complete: ${imported} of ${seen} manifest(s) imported`);
   } catch (err) {
     if (!source) {
       console.error('[worker-iiif] cycle error before claim:', err.message);
