@@ -1,8 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const storage = require('./storage');
-const { mimeTypeFromFilename } = require('./mime-types');
+const { resolveImageBuffer } = require('./image-reference');
 const {
   MAX_RETRIES,
   COOLDOWN_MS,
@@ -62,8 +61,10 @@ async function processSingleJob(job, logLine) {
 
     const relPath = imagePaths[i];
     await logLine(`Transcribing page ${i + 1} of ${imagePaths.length}: ${relPath}`);
-    const imageBuffer = await storage.readUploadByUrl(relPath);
-    const mimeType = mimeTypeFromFilename(relPath, 'image/png');
+    // resolveImageBuffer handles both local /uploads/ refs and remote IIIF
+    // image URLs (fetched transiently, never persisted). Behavior for local
+    // refs is unchanged (buffer via storage, mime from filename).
+    const { buffer: imageBuffer, mimeType } = await resolveImageBuffer(relPath);
 
     let result;
     for (let attempt = 0; attempt < 3; attempt++) {

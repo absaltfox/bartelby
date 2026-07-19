@@ -9237,6 +9237,42 @@ main { flex: 1; padding: 32px 0; }
   letter-spacing: 0.04em;
 }
 
+/* IIIF source panel (admin collections). Reuses the badge token vocabulary
+   for the per-source status pill. */
+.iiif-source-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+.iiif-source-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.iiif-source-item:last-child { border-bottom: none; }
+.iiif-source-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.iiif-source-status {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 1px 7px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--parchment-alt);
+  color: var(--ink-muted);
+  border: 1px solid var(--border);
+}
+.iiif-source-status-done { background: var(--green-bg); color: var(--green); border-color: #a7d9be; }
+.iiif-source-status-running,
+.iiif-source-status-queued { background: var(--accent-light); color: var(--accent); border-color: var(--accent-mid); }
+.iiif-source-status-failed { background: var(--red-bg); color: var(--red); border-color: #e6b3ab; }
+.iiif-source-error { color: var(--red); }
+
 /* ── Collection row title ── */
 .collection-row-title {
   display: flex;

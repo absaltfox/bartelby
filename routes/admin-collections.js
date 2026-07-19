@@ -2,8 +2,9 @@
 
 const express = require('express');
 const router = express.Router();
-const { collectionsAsync, usersAsync, userCollectionAccessAsync } = require('../database/db');
+const { collectionsAsync, usersAsync, userCollectionAccessAsync, iiifSourcesAsync, settingsAsync } = require('../database/db');
 const { requireAdmin } = require('../middleware/auth');
+const { enqueueIiifCollectionTranscription } = require('../utils/iiif-bulk-transcription');
 const { normalizeCollectionAssets, normalizeDocumentAssets, normalizeCollectionAssetsForDelivery, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const audit = require('../utils/audit-log');
 const { asyncHandler } = require('../utils/async-handler');
@@ -35,7 +36,22 @@ router.get('/', asyncHandler(async (req, res) => {
   const adminList = await collectionsAsync.getAdminListView();
   const allCollections = await Promise.all(adminList.map(async (c) => ({
     ...(await normalizeCollectionAssetsForDelivery(c)),
-    documents: await Promise.all((c.documents || []).map(normalizeDocumentAssetsForDelivery))
+    documents: await Promise.all((c.documents || []).map(normalizeDocumentAssetsForDelivery)),
+    // IIIF sources connected to this collection. The api_key is a secret and is
+    // NEVER passed to the template — only whether one is stored.
+    iiifSources: (await iiifSourcesAsync.getByCollectionId(c.id)).map((s) => ({
+      id: s.id,
+      source_type: s.source_type,
+      label: s.label,
+      collection_identifier: s.collection_identifier,
+      status: s.status,
+      error: s.error,
+      manifests_total: s.manifests_total,
+      manifests_imported: s.manifests_imported,
+      image_size: s.image_size,
+      last_synced_at: s.last_synced_at,
+      has_api_key: !!s.api_key
+    }))
   })));
 
   const activeUsers = (await usersAsync.getAll()).filter((u) =>
@@ -166,6 +182,116 @@ router.post('/:id/delete', asyncHandler(async (req, res) => {
     collectionId
   });
   res.redirect('/admin/collections');
+}));
+
+// ── IIIF ingestion (feat/iiif-ingestion, Phase 1e) ─────────────────────────
+// Admin connects a collection to a remote IIIF source; the sync worker crawls
+// it into pure-reference documents. Corpus mutation stays admin-triggered
+// (docs/development-principles.md; project rule: no auto-run). MVP is UBC Open
+// Collections only — the generic IIIF-Collection adapter is Phase 2.
+
+// Connect a UBC Open Collections source (creates a queued iiif_source).
+router.post('/:id/iiif/connect', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  const collectionIdentifier = (req.body.collection_identifier || '').trim();
+  const apiKey = (req.body.api_key || '').trim() || null;
+  const imageSize = (req.body.image_size || '').trim() || null;
+  const label = (req.body.label || '').trim() || null;
+
+  if (isNaN(collectionId)) return res.redirect('/admin/collections?error=Invalid+collection');
+  if (!collectionIdentifier) {
+    return res.redirect('/admin/collections?error=A+UBC+collection+identifier+is+required#collection-' + collectionId);
+  }
+
+  try {
+    const sourceId = await iiifSourcesAsync.create({
+      collection_id: collectionId,
+      source_type: 'ubc_oc',
+      collection_identifier: collectionIdentifier,
+      api_key: apiKey,
+      image_size: imageSize,
+      label,
+      created_by: req.user.id
+    });
+    audit.log('admin.iiif_source_connected', {
+      ...audit.reqContext(req),
+      collectionId,
+      sourceId,
+      sourceType: 'ubc_oc',
+      collectionIdentifier
+      // api_key intentionally omitted from the audit log (secret)
+    });
+    res.redirect('/admin/collections?saved=1#collection-' + collectionId);
+  } catch (err) {
+    res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
+  }
+}));
+
+// Re-sync an existing source (re-queues; the ledger keeps the re-crawl idempotent).
+router.post('/:id/iiif/:sourceId/resync', asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  const sourceId = parseInt(req.params.sourceId, 10);
+  const source = await iiifSourcesAsync.getById(sourceId);
+  if (!source || source.collection_id !== collectionId) {
+    return res.redirect('/admin/collections?error=IIIF+source+not+found#collection-' + collectionId);
+  }
+  const changed = await iiifSourcesAsync.resync(sourceId);
+  if (changed) {
+    audit.log('admin.iiif_source_resynced', { ...audit.reqContext(req), collectionId, sourceId });
+  }
+  res.redirect('/admin/collections?saved=1#collection-' + collectionId);
+}));
+
+// JSON progress poll (mirrors import-job progress polling).
+router.get('/:id/iiif/:sourceId/status', asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  const sourceId = parseInt(req.params.sourceId, 10);
+  const source = await iiifSourcesAsync.getById(sourceId);
+  if (!source || source.collection_id !== collectionId) {
+    return res.status(404).json({ error: 'IIIF source not found' });
+  }
+  res.json({
+    id: source.id,
+    status: source.status,
+    manifests_total: source.manifests_total,
+    manifests_imported: source.manifests_imported,
+    error: source.error,
+    last_synced_at: source.last_synced_at
+  });
+}));
+
+// Enqueue LLM transcription for this collection's IIIF documents that lack one.
+// Uses the system default_provider and auto-batches (like the title-backfill
+// bulk action). The sync worker already wrote UBC FullText as the is_best
+// transcript; this queues the machine pass so a curator can compare.
+router.post('/:id/iiif/transcribe', asyncHandler(async (req, res) => {
+  const collectionId = parseInt(req.params.id, 10);
+  if (isNaN(collectionId)) return res.redirect('/admin/collections?error=Invalid+collection');
+
+  const defaultProvider = await settingsAsync.get('default_provider');
+  if (!defaultProvider) {
+    return res.redirect('/admin/collections?error=Set+a+default+provider+before+transcribing#collection-' + collectionId);
+  }
+
+  try {
+    const result = await enqueueIiifCollectionTranscription({
+      collectionId,
+      provider: defaultProvider,
+      initiatedBy: req.user.username,
+      requestedByUserId: req.user.id,
+      allowBatch: true
+    });
+    audit.log('admin.iiif_transcription_enqueued', {
+      ...audit.reqContext(req),
+      collectionId,
+      mode: result.mode,
+      documentCount: result.documentCount
+    });
+    res.redirect('/admin/collections?saved=1&queuedMode=iiif-transcribe&queuedCount='
+      + result.documentCount + '#collection-' + collectionId);
+  } catch (err) {
+    res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
+  }
 }));
 
 module.exports = router;

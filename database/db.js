@@ -745,6 +745,66 @@ MIGRATIONS.push(`
     ON title_backfill_jobs(collection_id);
 `);
 
+// v81 — IIIF ingestion job family (feat/iiif-ingestion, Phase 1c). Per
+// docs/background-jobs.md "Adding a New Worker Task": a job-shaped table with
+// queued|running|done|failed status, started/completed timestamps, plus
+// heartbeat/machine_id for stale recovery. Per docs/db-migrations.md this is
+// appended (never mid-array) and uses idempotent CREATE … IF NOT EXISTS.
+//
+// iiif_sources — one row per admin-connected IIIF source (a UBC Open
+//   Collections search or a generic IIIF Collection URL). The worker crawls it
+//   into one document per manifest. Enumeration params are nullable because
+//   they differ by source_type: ubc_oc uses search_base_url +
+//   collection_identifier + query_json; iiif_collection uses source_url.
+//   `cursor` persists paginated-crawl resume state (ES search_after / offset)
+//   so a restart resumes without re-fetching. `api_key` is a secret and must
+//   never be logged or leaked into stored image URLs.
+// iiif_imported_manifests — idempotency ledger keyed UNIQUE(source_id,
+//   manifest_id) so a re-sync creates zero duplicates and the ledger survives
+//   document deletion.
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS iiif_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    source_url TEXT,
+    search_base_url TEXT,
+    collection_identifier TEXT,
+    query_json TEXT,
+    api_key TEXT,
+    label TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    error TEXT,
+    image_size TEXT,
+    manifests_total INTEGER NOT NULL DEFAULT 0,
+    manifests_imported INTEGER NOT NULL DEFAULT 0,
+    cursor TEXT,
+    last_synced_at DATETIME,
+    machine_id TEXT,
+    last_heartbeat_at DATETIME,
+    created_by INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    started_at DATETIME,
+    completed_at DATETIME,
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_iiif_sources_status
+    ON iiif_sources(status);
+  CREATE INDEX IF NOT EXISTS idx_iiif_sources_collection
+    ON iiif_sources(collection_id);
+  CREATE TABLE IF NOT EXISTS iiif_imported_manifests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    manifest_id TEXT NOT NULL,
+    document_id INTEGER,
+    imported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, manifest_id),
+    FOREIGN KEY (source_id) REFERENCES iiif_sources(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_iiif_imported_manifests_source
+    ON iiif_imported_manifests(source_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1288,6 +1348,31 @@ async function initializeSchema(options = {}) {
     console.log(`[db] Marked ${staleTitleBackfillCount} stale title backfill job(s) as failed`);
   }
 
+  // IIIF sync sources left 'running' by an unclean shutdown are REQUEUED, not
+  // failed: the iiif_imported_manifests ledger makes a re-crawl idempotent, so
+  // resuming is safe and preferable to a manual admin retry. Only the
+  // single-process path (machine_id IS NULL) is swept here; a future Fly-machine
+  // crawl (machine_id set) is recovered by the heartbeat sweeper
+  // (iiifSourcesAsync.requeueStaleJobs). Per docs/background-jobs.md
+  // § Graceful Shutdown and Stale Job Recovery.
+  const staleIiifSources = await getAsync(`
+    SELECT COUNT(*) as count
+    FROM iiif_sources
+    WHERE status = 'running' AND machine_id IS NULL
+  `);
+  const staleIiifCount = staleIiifSources?.count || 0;
+  if (staleIiifCount > 0) {
+    await db.run(`
+      UPDATE iiif_sources
+      SET status = 'queued',
+          started_at = NULL,
+          completed_at = NULL,
+          last_heartbeat_at = NULL
+      WHERE status = 'running' AND machine_id IS NULL
+    `);
+    console.log(`[db] Requeued ${staleIiifCount} stale IIIF sync source(s)`);
+  }
+
   // Sentiment singleton jobs in 'running' lost their executor on restart;
   // mark them failed. Batch rows in 'batch_submitted' are intentionally
   // left untouched — the provider still owns the work and
@@ -1753,7 +1838,7 @@ function parseJsonValue(value, fallback) {
 const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
+const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs, iiifSourcesAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
 const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, authorityGenericTerms, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
@@ -1899,6 +1984,7 @@ module.exports = {
   authoritySuggestionJobs,
   authoritySuggestionJobsAsync: authoritySuggestionJobs,
   titleBackfillJobsAsync: titleBackfillJobs,
+  iiifSourcesAsync,
   sentimentAsync,
   normalizeSentimentPhrase,
   normalizeSentimentPhraseSql,
