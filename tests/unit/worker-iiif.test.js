@@ -43,6 +43,13 @@ async function fakeFetchJson(url) {
     '@context': 'http://iiif.io/api/presentation/2/context.json',
     '@id': url,
     label: url.includes('/A/') ? 'Manifest A' : 'Manifest B',
+    // UBC exposes formal rights in metadata[] under label "Rights"; the human-
+    // readable permission line is the top-level v2 `attribution`.
+    attribution: 'Images provided for research and reference use only.',
+    metadata: [
+      { label: 'Rights', value: 'Research and reference use only; permission required to publish.' },
+      { label: 'Creator', value: 'J.A. McCrea' }
+    ],
     sequences: [{
       canvases: Array.from({ length: canvasCount }, (_, i) => ({
         '@id': `${url}/canvas/${i}`,
@@ -81,6 +88,9 @@ describe('runIiifSyncCycle', () => {
     const source = await db.iiifSourcesAsync.getById(sourceId);
     expect(source.status).toBe('done');
     expect(source.manifests_imported).toBe(2);
+    // Finding 1: manifests_total reflects the number of manifests seen during
+    // the crawl (so the admin UI shows "2 of 2", not "2 of 0").
+    expect(source.manifests_total).toBe(2);
 
     const docs = await db.allAsync(`SELECT * FROM documents ORDER BY id ASC`);
     expect(docs.length).toBe(2);
@@ -94,6 +104,10 @@ describe('runIiifSyncCycle', () => {
     expect(metaA.iiif_canvas_count).toBe(2);
     // second canvas → additional_pages
     expect(metaA.additional_pages).toEqual(['https://iiif.test/image/cdm.royalfisk.1-0001.0001/full/2000,/0/default.jpg']);
+    // Finding 2: rights captured from manifest metadata[] "Rights"; attribution
+    // from the top-level v2 field.
+    expect(metaA.iiif_rights).toBe('Research and reference use only; permission required to publish.');
+    expect(metaA.iiif_attribution).toBe('Images provided for research and reference use only.');
 
     const metaB = JSON.parse(docs[1].metadata);
     expect(metaB.iiif_canvas_count).toBe(1);
@@ -135,6 +149,9 @@ describe('runIiifSyncCycle', () => {
     expect(docs[0].n).toBe(2); // still 2 — no duplicates
     const src = await db.iiifSourcesAsync.getById(sourceId);
     expect(src.status).toBe('done');
+    // Even though the re-sync imports 0 NEW manifests, it still records the
+    // total seen (2) — the final progress update covers the no-new-import path.
+    expect(src.manifests_total).toBe(2);
   });
 
   it('requeues (not fails) the source on a transient fetch error', async () => {
