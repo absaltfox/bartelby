@@ -94,6 +94,39 @@ When an item ships, delete it here and cite this file in the PR body.
   shows after a selection. Motivated by the 2026-07-18 report that
   annotation functionality no longer works on the Document page.
 
+- [ ] **Unauthenticated public Document view: wrong tab/field
+  visibility.** On a world-public document viewed while logged out, four
+  things are wrong. The route already passes `currentUser: req.user ||
+  null` (`routes/documents.js:388,423`) and the transcript panel already
+  gates the annotation form on it (`views/partials/document-transcript-panel.ejs:184`),
+  so the fix is to apply that same `currentUser` predicate (or a dedicated
+  "viewer can see internals" flag) consistently:
+  1. **Graph tab should be visible to the public but isn't.** Ensure the
+     `knowledge` tab button (`views/partials/document-header.ejs:61`) and
+     its content (`tab-knowledge` → `views/partials/document-knowledge-tab.ejs`,
+     driven by `public/js/graph-explorer.js`) render and populate for
+     unauthenticated viewers.
+  2. **History tab should be hidden from the public but isn't.** Both the
+     tab button (`views/partials/document-header.ejs:65`) and its content
+     (`views/document.ejs:44` → `partials/document-history-tab`) render
+     unconditionally; gate both on `currentUser`.
+  3. **Document tab leaks the transcript creator.** `Transcriber:`
+     (`views/partials/document-transcript-panel.ejs:20`, and the version
+     list at `:9` "by <transcriber>") is shown to everyone; hide it from
+     the public.
+  4. **Document tab leaks cost and credentials.** The "Transcription Run
+     Details" block (`views/partials/document-transcript-panel.ejs:48-77`)
+     is gated only on the presence of provider/model/initiated_by, not on
+     auth, so it exposes **Est. cost** (`:61-63`) and **Credentials**
+     (`:77`, "Personal/System API key") — and Initiated by (`:52`) — to
+     unauthenticated viewers. Hide cost and credentials (and the creator
+     fields) from the public.
+  Per [docs/ui-template-standards.md](./docs/ui-template-standards.md)
+  (auth-conditional template rendering), with tests asserting an
+  unauthenticated render omits the History tab, transcriber, cost, and
+  credentials while still including the Graph tab. Motivated by the
+  2026-07-18 review of the unauthenticated public Document view.
+
 ## Owed features
 
 ## Dependency upgrades
