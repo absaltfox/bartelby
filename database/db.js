@@ -805,6 +805,34 @@ MIGRATIONS.push(`
     ON iiif_imported_manifests(source_id);
 `);
 
+// v82 — Documentary-act relationship reframe. The authored/received/sent_*/
+// mentioned_in/references/responds_to/co_filed_with/concerns family was seeded
+// against a `document` node that extraction never creates (no `document` entity
+// type; the document endpoint was meant to be implicit via the citation, per
+// docs/reviews/2026-05-31-entity-extraction-historian-lens.md:812). That forced
+// the LLM to bind these edges to content entities, producing false edges like
+// "R. Law authored Bill on Education". We split by intent:
+//   - keep + reframe to target a named work (artifact): authored, references,
+//     responds_to, mentioned_in
+//   - retire (deprecate) document-provenance edges that describe THIS document
+//     (captured as document metadata instead): received, sent_from, sent_to,
+//     concerns, co_filed_with
+// UPDATE-only and idempotent. Base seed rows are left immutable per
+// docs/db-migrations.md; this migration corrects both fresh and existing DBs.
+// Per docs/knowledge-graph-design.md (Relationship Vocabulary) and
+// docs/development-principles.md (Keep Evidence Traceable).
+MIGRATIONS.push(`
+  UPDATE relationship_types SET source_type = NULL,       target_type = 'artifact' WHERE name = 'authored';
+  UPDATE relationship_types SET source_type = NULL,       target_type = 'artifact' WHERE name = 'references';
+  UPDATE relationship_types SET source_type = 'artifact', target_type = 'artifact' WHERE name = 'responds_to';
+  UPDATE relationship_types SET source_type = NULL,       target_type = 'artifact' WHERE name = 'mentioned_in';
+
+  UPDATE relationship_types
+     SET deprecated_at = CURRENT_TIMESTAMP
+   WHERE name IN ('received', 'sent_from', 'sent_to', 'concerns', 'co_filed_with')
+     AND deprecated_at IS NULL;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
