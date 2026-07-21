@@ -6,7 +6,7 @@ describe('worker-extraction relationship-type alias coercion', () => {
     jest.clearAllMocks();
   });
 
-  function buildMocks({ entities, relationships, aliasResolveReturns, relationshipTypesResolveReturns = {} }) {
+  function buildMocks({ entities, relationships, aliasResolveReturns, relationshipTypesResolveReturns = {}, relationshipTypeRows = [] }) {
     const logLine = jest.fn(async () => {});
     const createdRelationships = [];
     const relationshipsCreate = jest.fn(async (rel) => {
@@ -42,7 +42,11 @@ describe('worker-extraction relationship-type alias coercion', () => {
       entityAliases: { createIfMissing: async () => {} },
       dateExpressions: { createIfMissing: async () => 1 },
       relationships: { create: relationshipsCreate, findExisting: async () => null },
-      relationshipTypes: { resolve: jest.fn(async (type) => relationshipTypesResolveReturns[type] ?? null), create: async () => {} },
+      relationshipTypes: {
+        resolve: jest.fn(async (type) => relationshipTypesResolveReturns[type] ?? null),
+        getAll: jest.fn(async () => relationshipTypeRows),
+        create: async () => {}
+      },
       relationshipTypeAliasesAsync: {
         resolve: jest.fn(async (aliasType) => aliasResolveReturns[aliasType] ?? null)
       },
@@ -104,14 +108,15 @@ describe('worker-extraction relationship-type alias coercion', () => {
   it('preserves canonical relationship types (e.g., "authored") via relationship_types fallback (post-fix)', async () => {
     const { createdRelationships } = buildMocks({
       entities: [
-        { mention: 'A', normalized: 'A', entity_type: 'person', span_start: 0, span_end: 1, confidence: 0.9, genericity: 'specific' },
-        { mention: 'B', normalized: 'B', entity_type: 'place', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
+        { mention: 'A', normalized: 'A', type: 'person', span_start: 0, span_end: 1, confidence: 0.9, genericity: 'specific' },
+        { mention: 'B', normalized: 'B', type: 'artifact', span_start: 2, span_end: 3, confidence: 0.9, genericity: 'specific' }
       ],
       relationships: [
         { source_mention: 'A', target_mention: 'B', type: 'authored', evidence_text: 'A met B', confidence: 0.9 }
       ],
       aliasResolveReturns: {},  // no alias mapping
-      relationshipTypesResolveReturns: { 'authored': 'authored' }  // stage 2 fallback returns canonical
+      relationshipTypesResolveReturns: { 'authored': 'authored' },  // stage 2 fallback returns canonical
+      relationshipTypeRows: [{ name: 'authored', source_type: null, target_type: 'artifact' }]
     });
     const { runExtractionWorkerCycle } = require('../../utils/worker-extraction');
     await runExtractionWorkerCycle();
