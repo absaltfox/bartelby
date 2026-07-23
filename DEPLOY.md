@@ -390,7 +390,13 @@ fly scale vm shared-cpu-2x
 ### Pre-deploy checks
 
 - Run `npm test` (which invokes `npm run test:hygiene` first) and confirm a
-  clean pass before promoting a build.
+  clean pass before promoting a build. `test:unit` runs Jest with
+  `--maxWorkers=50%`; do not remove this cap. At Jest's default parallelism
+  (cores − 1) the async-heavy suites (supertest/argon2) starve on developer
+  machines and blow the 30s `testTimeout`, producing a *reshuffling* set of
+  bare-timeout failures that look like regressions but are pure contention. If
+  you see that pattern, re-run the suspect suites with `--runInBand` — they
+  pass in ~1s — before suspecting the code.
 - Run `npm audit --omit=dev` and triage any new high/critical advisory
   before release. A production-only audit gate inside `test:hygiene` is
   planned but blocked on the pdfjs-dist upgrade, which clears the

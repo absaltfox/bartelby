@@ -18,7 +18,7 @@
     "test:hygiene": "node scripts/check-repo-hygiene.js",
     "test:curator-ui": "jest tests/integration/curator-ui-contracts.test.js --runInBand",
     "test:ux": "playwright test",
-    "test:unit": "jest tests/unit",
+    "test:unit": "jest tests/unit --maxWorkers=50%",
     "test:integration": "jest tests/integration --runInBand"
   },
   "jest": {
