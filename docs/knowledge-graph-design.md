@@ -221,6 +221,31 @@ existing relationships and entities) is planned as a deferred future workstream
 (E2.2); currently, curation focuses on forward consistency and fallback
 provenance tracking via `properties.original_relationship_type`.
 
+### Documentary-Act Relationships (E2.4, added 2026-07-20)
+
+The `authored / references / responds_to / mentioned_in` family connects a
+person/organization or a work to **another named work** (an `artifact`), not to
+the document currently being transcribed. Their controlled `target_type` is
+`artifact`. This corrects an earlier design in which the family was seeded
+against a `document` endpoint that extraction never materializes (there is no
+`document` entity type), which caused the LLM to bind these edges to unrelated
+content entities — e.g. `R. Law authored Bill on Education`, evidenced by a
+sentence in which R. Law merely *requests a copy* of the Bill.
+
+Provenance of the current document itself — who authored/sent/received it and
+where it was sent from/to — is **document metadata, not a graph edge**. The
+`received / sent_from / sent_to / concerns / co_filed_with` types are therefore
+deprecated (migration v82) and removed from the extraction prompt vocabulary.
+
+**Write-time type guard.** LLM-extracted relationships are validated against the
+controlled `relationship_types.source_type` / `target_type` at write time in
+`utils/worker-extraction.js` (parity with the manual C2 authoring path in
+`routes/admin-relationships.js`). An edge whose resolved canonical type does not
+match the actual source/target entity types is coerced to `related_to`, with the
+rejected canonical preserved in `properties.original_relationship_type` for
+curator review. The guard only fires when both the controlled constraint and the
+entity type are known.
+
 ### Vocabulary Management Surface (C4)
 
 Curators manage the controlled `relationship_types` vocabulary and its

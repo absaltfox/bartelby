@@ -202,6 +202,7 @@ async function materializeExtractionResult({
     normalizeForMatching
   } = require('./entity-resolution');
   const mentionToEntityId = new Map();
+  const entityIdToType = new Map();
   const collidedKeys = new Set();
   let entityCount = 0;
   let relationshipCount = 0;
@@ -271,6 +272,8 @@ async function materializeExtractionResult({
           });
         }
       }
+
+      if (entityId) entityIdToType.set(entityId, entityType);
 
       seedMentionLookup({
         mention,
@@ -367,6 +370,24 @@ async function materializeExtractionResult({
     }
   }
 
+  // Load controlled source/target type constraints once for the write-time
+  // guard below. Optional: if the model lacks getAll (older mocks/instances),
+  // the guard no-ops. Per docs/knowledge-graph-design.md (documentary-act reframe).
+  const relTypeConstraints = new Map();
+  if (relationshipTypes && typeof relationshipTypes.getAll === 'function') {
+    try {
+      const allRelTypes = await relationshipTypes.getAll();
+      for (const rt of allRelTypes || []) {
+        relTypeConstraints.set(rt.name, {
+          source_type: rt.source_type || null,
+          target_type: rt.target_type || null
+        });
+      }
+    } catch (err) {
+      await logLine(`WARN: could not load relationship-type constraints; skipping write-time type guard (${err.message})`);
+    }
+  }
+
   for (const rel of extractionResult.relationships) {
     try {
       const sourceId = resolveMentionToEntity(rel.source_mention || '', mentionToEntityId, { collidedKeys });
@@ -445,6 +466,32 @@ async function materializeExtractionResult({
           await logLine(`INFO: relationship type "${llmRelType}" not in alias table or canonical vocabulary; coerced to related_to (original preserved in properties.original_relationship_type)`);
         }
         relType = 'related_to';
+      }
+
+      // Write-time source/target type guard for LLM edges — parity with the
+      // manual C2 authoring path (routes/admin-relationships.js). A canonical
+      // type whose controlled source_type/target_type does not match the actual
+      // extracted entity types is coerced to related_to, preserving the rejected
+      // canonical in properties for curator review. This catches the documentary-
+      // act family binding to the wrong entity type (e.g. authored -> topic).
+      // Per docs/development-principles.md (Keep Evidence Traceable).
+      if (relType && relType !== 'related_to') {
+        const constraint = relTypeConstraints.get(relType);
+        if (constraint) {
+          const srcType = entityIdToType.get(sourceId);
+          const tgtType = entityIdToType.get(targetId);
+          const srcMismatch = constraint.source_type && srcType && srcType !== constraint.source_type;
+          const tgtMismatch = constraint.target_type && tgtType && tgtType !== constraint.target_type;
+          if (srcMismatch || tgtMismatch) {
+            await logLine(
+              `INFO: relationship "${relType}" (${srcType || '?'} -> ${tgtType || '?'}) violates controlled source/target types `
+                + `(${constraint.source_type || 'any'} -> ${constraint.target_type || 'any'}); `
+                + `coerced to related_to (original preserved in properties.original_relationship_type)`
+            );
+            originalRelTypeForProperties = relType;
+            relType = 'related_to';
+          }
+        }
       }
 
       const relProperties = {};

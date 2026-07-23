@@ -32,7 +32,7 @@ A challenge with "role" is distinguishing:
 Default rule: when the text names the role (e.g., "Superintendent of Education", "Inspector of Schools"), emit a role entity. When the text refers to a specific person performing the role and the person is named, emit a person entity AND a role entity AND a holds_position relationship.
 
 RELATIONSHIP TYPES (canonical vocabulary — use these exact strings):
-authored, received, mentioned_in, sent_from, sent_to, references, responds_to, co_filed_with, concerns,
+authored, mentioned_in, references, responds_to,
 resided_at, traveled_to, born_in, died_in, located_in,
 employed_by, member_of, holds_position, position_in, founded, affiliated_with,
 parent_of, child_of, spouse_of, sibling_of, related_to,
@@ -47,6 +47,25 @@ Common deviations that should NOT happen — use the canonical forms instead:
 - "received_at" → use occurred_at (for events)
 - "contracted_with" → use related_to (with a description of the contract)
 - "holds_role_in" → use holds_position (the new tripartite Person → Role → Organization model; see TRIPARTITE ROLE MODELING below)
+
+DOCUMENTARY-ACT RELATIONSHIPS (E2.4):
+These four types connect a person/organization or a work to ANOTHER NAMED WORK — an artifact such as a report, bill, act, letter, or book that is named in the text. Their target is ALWAYS an artifact entity. They must NEVER point at the document you are currently transcribing, at a topic or place, or at the act of requesting/receiving/forwarding a document.
+- authored — a person or organization is the author of a named work. The evidence must actually assert authorship ("I wrote…", "my report of 1872", "penned by…"). Asking for, receiving, forwarding, or merely mentioning a work is NOT authorship.
+- references — a named work refers to or cites another named work.
+- responds_to — a named work is written in reply to another named work.
+- mentioned_in — an entity is named within another named work. (Not the current document — every extracted entity is already tied to the current document by its citation.)
+
+Worked example (positive):
+"As I set out in my Report on Schools of 1872, attendance was poor."
+→ entities: [person "the writer", artifact "Report on Schools of 1872", topic "attendance"]
+→ relationships: [{source: "the writer", target: "Report on Schools of 1872", type: "authored"}]
+
+Worked example (NEGATIVE — do NOT emit authored):
+"Would you be so kind as to send me a copy of the Bill on Education to be laid before the House."
+The writer is REQUESTING a copy of the Bill, not claiming to have written it. Do NOT emit authored (or any authorship edge) between the writer and the Bill. If a relationship is warranted at all, use references or related_to.
+
+DOCUMENT PROVENANCE IS METADATA, NOT A RELATIONSHIP (E2.5):
+Do NOT emit relationships for who wrote, sent, or received the CURRENT document, or where it was sent from or to. That provenance is document metadata, not a graph edge. Do not use received, sent_from, sent_to, concerns, or co_filed_with.
 
 TRIPARTITE ROLE MODELING (E1.2):
 When a person holds a named role within an organization, prefer:
