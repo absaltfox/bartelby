@@ -127,6 +127,28 @@ When an item ships, delete it here and cite this file in the PR body.
   credentials while still including the Graph tab. Motivated by the
   2026-07-18 review of the unauthenticated public Document view.
 
+- [ ] **Monitor for false `authored` edges after the documentary-act
+  reframe (PR #53).** PR #53 reframed `authored` to target a named work
+  (`artifact`) and added a write-time source/target **type** guard, but a
+  residual gap remains: an `authored` edge whose types are valid yet whose
+  evidence does not assert authorship (e.g. `R. Law → authored → Bill on
+  Education`, where the passage is a *request* for a copy) still passes the
+  type guard and can auto-approve. We **deliberately did not** add a bespoke
+  evidence gate for this — post-reframe, `authored` is an ordinary
+  person→object relation no different from `owns` / `traveled_to` /
+  `references`, all of which we trust the LLM to produce under normal citation
+  + curator review; a special-cased, language-bound cue check would be
+  inconsistent, parochial, and premature (see
+  `docs/superpowers/specs/2026-07-22-authored-evidence-review-gate-design.md`
+  for the full decision). **Action:** watch the citation review queue
+  (`/admin/knowledge/review-extractions?filter=relationship`) for false
+  `authored` edges once #53 is live. **Only if** they prove disproportionately
+  common relative to other person→object relations, design a remedy from the
+  observed failures (the plausible driver is signature-authorship bleeding onto
+  a mentioned work) — not a speculative cue list. Per
+  [docs/development-principles.md](./docs/development-principles.md) (Keep the
+  Graph Conservative; Curator Is the Expert).
+
 ## Owed features
 
 ## Dependency upgrades
