@@ -96,7 +96,7 @@ function showAnnotationForm(selection, selectedText, transcriptId) {
   positionEnd.value = globalEnd;
 
   // Show form
-  formContainer.style.display = 'block';
+  formContainer.classList.remove('is-hidden');
   formContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   // Focus on annotation content
@@ -107,7 +107,7 @@ function showAnnotationForm(selection, selectedText, transcriptId) {
 function hideAnnotationForm() {
   const formContainer = document.getElementById('annotation-form-container');
   if (formContainer) {
-    formContainer.style.display = 'none';
+    formContainer.classList.add('is-hidden');
   }
   window.getSelection().removeAllRanges();
 }

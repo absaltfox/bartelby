@@ -62,5 +62,7 @@
   <% if (hasSentiment) { %>
     <button type="button" class="doc-tab" data-tab="sentiment">Sentiment</button>
   <% } %>
-  <button type="button" class="doc-tab" data-tab="history">History</button>
+  <% if (currentUser) { %>
+    <button type="button" class="doc-tab" data-tab="history">History</button>
+  <% } %>
 </div>

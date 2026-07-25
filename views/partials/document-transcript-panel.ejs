@@ -6,7 +6,7 @@
       <select id="transcript-select" data-back-href="<%= backHref %>">
         <% transcripts.forEach(t => { %>
           <option value="<%= t.id %>" <%= selectedTranscript && selectedTranscript.id === t.id ? 'selected' : '' %>>
-            v<%= t.version %> by <%= t.transcriber || 'Unknown' %><%= t.is_best ? ' ★' : '' %>
+            v<%= t.version %><% if (currentUser) { %> by <%= t.transcriber || 'Unknown' %><% } %><%= t.is_best ? ' ★' : '' %>
           </option>
         <% }) %>
       </select>
@@ -16,9 +16,11 @@
 
 <% if (selectedTranscript) { %>
   <div class="transcript-info">
-    <span class="transcript-info-transcriber">
-      <strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %>
-    </span>
+    <% if (currentUser) { %>
+      <span class="transcript-info-transcriber">
+        <strong>Transcriber:</strong> <%= selectedTranscript.transcriber || 'Unknown' %>
+      </span>
+    <% } %>
     <% if (selectedTranscript.is_best) { %>
       <span class="badge-best">★ Best</span>
     <% } %>
@@ -49,7 +51,7 @@
     <details class="paradata-panel">
       <summary>Transcription Run Details</summary>
       <dl class="metadata-list paradata-list">
-        <% if (selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
+        <% if (currentUser && selectedTranscript.initiated_by) { %><dt>Initiated by</dt><dd><%= selectedTranscript.initiated_by %></dd><% } %>
         <% if (selectedTranscript.provider) { %><dt>Provider</dt><dd><%= selectedTranscript.provider %></dd><% } %>
         <% if (selectedTranscript.model) { %><dt>Model</dt><dd><code><%= selectedTranscript.model %></code></dd><% } %>
         <% if (selectedTranscript.temperature != null) { %><dt>Temperature</dt><dd><%= selectedTranscript.temperature %></dd><% } %>
@@ -58,7 +60,7 @@
           <dt>Tokens</dt>
           <dd><%= (selectedTranscript.input_tokens || 0).toLocaleString() %> in / <%= (selectedTranscript.output_tokens || 0).toLocaleString() %> out</dd>
         <% } %>
-        <% if (selectedTranscript.cost_usd != null) { %>
+        <% if (currentUser && selectedTranscript.cost_usd != null) { %>
           <dt>Est. cost</dt>
           <dd>$<%= selectedTranscript.cost_usd < 0.01 ? selectedTranscript.cost_usd.toFixed(4) : selectedTranscript.cost_usd.toFixed(2) %> <span class="field-hint-inline">(estimated)</span></dd>
         <% } %>
@@ -74,7 +76,7 @@
           <dt>Uncertainty markers</dt>
           <dd><%= _markerCount %> <span class="field-hint-inline">(<code>[…]</code> patterns in transcript<% if (selectedTranscript.prompt && !_usesDefaultTaxonomy) { %> — custom prompt, taxonomy may differ<% } else if (!selectedTranscript.prompt) { %> — prompt not recorded<% } %>)</span></dd>
         <% } %>
-        <% if (selectedTranscript.provider_key_scope) { %><dt>Credentials</dt><dd><%= selectedTranscript.provider_key_scope === 'user' ? 'Personal API key' : 'System API key' %></dd><% } %>
+        <% if (currentUser && selectedTranscript.provider_key_scope) { %><dt>Credentials</dt><dd><%= selectedTranscript.provider_key_scope === 'user' ? 'Personal API key' : 'System API key' %></dd><% } %>
         <dt>Recorded</dt><dd><%= new Date(selectedTranscript.created_at).toLocaleString() %></dd>
       </dl>
       <% if (selectedTranscript.prompt) { %>
