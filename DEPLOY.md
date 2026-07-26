@@ -405,19 +405,13 @@ fly scale vm shared-cpu-2x
 
 ### Known open advisories
 
-`npm audit --omit=dev` currently reports **4 high, 0 critical** (plus
-3 low). None of them are practically exploitable in the current
-production configuration; each has a documented mitigation. Reviewers
-checking the audit output before a release should expect this baseline
-and not treat it as a release blocker.
-
-- **`nodemailer` (high, GHSA-p6gq-j5cr-w38f — `raw` option bypasses
-  disableFileAccess/disableUrlAccess).** Reachable only when the
-  message-level `raw` option is passed to `sendMail`. The only call
-  site, [`utils/email.js`](./utils/email.js), sends a fixed
-  `{from, to, subject, text}` shape with no caller-controlled message
-  options, so the vulnerable path never runs. The fix is a breaking
-  major (9.x); upgrade tracked as a follow-up.
+The application-reachable advisories from `npm audit --omit=dev` are
+enumerated below; none is practically exploitable in the current
+production configuration, and each has a documented mitigation.
+`npm audit` may additionally report newly-published upstream advisories
+(e.g. in the `sharp`/`libvips` and `node-tar` chains) that post-date this
+list and are pending separate triage; a non-zero count is expected and is
+not, by itself, a release blocker.
 
 - **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
   Reachable only through the dev-only `renderWithPdfjs` fallback in
@@ -451,6 +445,11 @@ Pre-merge work on this baseline:
 - Closed `fast-xml-builder` (high) through the AWS SDK XML builder chain and
   `ip-address` (moderate) through `express-rate-limit` via non-breaking
   `npm audit fix`.
+- Closed `nodemailer` (high, GHSA-p6gq-j5cr-w38f — `raw` option bypasses
+  disableFileAccess/disableUrlAccess) by upgrading to the 9.x major. The
+  only call site, [`utils/email.js`](./utils/email.js), sends a fixed
+  `{from, to, subject, text}` shape and uses the unchanged
+  `createTransport`/`sendMail` API, so the upgrade is transparent.
 - Removed the unused legacy `utils/pdf.js` helper so the only remaining
   `pdfjs-dist` rendering fallback is the hardened, development-only path in
   `utils/pdf-worker.js`.
