@@ -100,6 +100,20 @@ describe('Sentiment default provider validation (issue #55)', () => {
     expect(stored).toBe('openai');
   });
 
+  it('stores a padded but valid provider value trimmed (API/curl path)', async () => {
+    // The <select> emits exact values, but the POST routes accept arbitrary
+    // bodies. A padded " openai " must not persist verbatim — that would fail
+    // at job runtime with "is not configured". settingsAsync.set trims every
+    // string value at its single setter funnel (database/models/settings.js),
+    // so this asserts that end-to-end guarantee holds for this key.
+    const res = await postSettings('  openai  ');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(/\/admin\/llm-settings\?saved=1/);
+
+    const stored = await db.settingsAsync.get('sentiment.provider.default');
+    expect(stored).toBe('openai');
+  });
+
   it('accepts a blank value (inherit the global default)', async () => {
     const res = await postSettings('');
     expect(res.status).toBe(302);
