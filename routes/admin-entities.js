@@ -129,17 +129,16 @@ async function enrichEntityRows(rows) {
 
   const entityIds = rows.map(e => e.id);
 
-  const [allCitations, allAliases] = await Promise.all([
-    citations && citations.getByEntityIds ? citations.getByEntityIds(entityIds) : [],
+  const [citationCounts, allAliases] = await Promise.all([
+    citations && citations.getCountsByEntityIds ? citations.getCountsByEntityIds(entityIds) : [],
     entityAliases && entityAliases.getByEntityIds ? entityAliases.getByEntityIds(entityIds) : []
   ]);
 
-  const citationsByEntity = new Map();
+  const citationCountByEntity = new Map();
   const aliasesByEntity = new Map();
 
-  for (const c of (allCitations || [])) {
-    if (!citationsByEntity.has(c.entity_id)) citationsByEntity.set(c.entity_id, []);
-    citationsByEntity.get(c.entity_id).push(c);
+  for (const row of (citationCounts || [])) {
+    citationCountByEntity.set(row.entity_id, Number(row.count) || 0);
   }
   for (const a of (allAliases || [])) {
     if (!aliasesByEntity.has(a.entity_id)) aliasesByEntity.set(a.entity_id, []);
@@ -149,7 +148,7 @@ async function enrichEntityRows(rows) {
   return rows.map(entity => ({
     ...entity,
     properties: parseJsonMaybe(entity.properties),
-    citation_count: (citationsByEntity.get(entity.id) || []).length,
+    citation_count: citationCountByEntity.get(entity.id) || 0,
     alias_count: (aliasesByEntity.get(entity.id) || []).length
   }));
 }

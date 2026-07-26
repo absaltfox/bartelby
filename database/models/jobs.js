@@ -2409,24 +2409,16 @@ const authoritySuggestionJobs = {
         j.suggestion_count,
         j.auto_approved_count,
         c.name AS collection_name,
-        (
-          SELECT MIN(als.confidence) FROM authority_link_suggestions als
-          WHERE als.created_at >= COALESCE(j.started_at, j.created_at)
-            AND als.created_at <= COALESCE(j.completed_at, datetime('now'))
-        ) AS confidence_min,
-        (
-          SELECT MAX(als.confidence) FROM authority_link_suggestions als
-          WHERE als.created_at >= COALESCE(j.started_at, j.created_at)
-            AND als.created_at <= COALESCE(j.completed_at, datetime('now'))
-        ) AS confidence_max,
-        (
-          SELECT COUNT(DISTINCT als.confidence) FROM authority_link_suggestions als
-          WHERE als.created_at >= COALESCE(j.started_at, j.created_at)
-            AND als.created_at <= COALESCE(j.completed_at, datetime('now'))
-        ) AS confidence_distinct_count
+        MIN(als.confidence) AS confidence_min,
+        MAX(als.confidence) AS confidence_max,
+        COUNT(DISTINCT als.confidence) AS confidence_distinct_count
       FROM authority_suggestion_jobs j
       LEFT JOIN collections c ON c.id = j.collection_id
+      LEFT JOIN authority_link_suggestions als
+        ON als.created_at >= COALESCE(j.started_at, j.created_at)
+        AND als.created_at <= COALESCE(j.completed_at, datetime('now'))
       ${statusClause}
+      GROUP BY j.id
       ORDER BY j.created_at DESC
       LIMIT ?
     `, params);

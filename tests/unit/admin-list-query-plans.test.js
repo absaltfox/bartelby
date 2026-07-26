@@ -35,11 +35,26 @@ describe('admin list surfaces use covering indexes (v79)', () => {
   });
 
   it('jobs page: authority suggestion confidence window scans an index, not the table', async () => {
+    // Mirrors the LEFT JOIN + GROUP BY authoritySuggestionJobs.getSummaries
+    // runs (database/models/jobs.js) — the per-job confidence window join
+    // against authority_link_suggestions must stay index-served after the
+    // #63 rewrite from 3 correlated subqueries into one grouped join.
     const plan = await planFor(`
-      SELECT MIN(als.confidence) FROM authority_link_suggestions als
-      WHERE als.created_at >= '2026-01-01' AND als.created_at <= '2026-01-02'
+      SELECT
+        j.id,
+        MIN(als.confidence) AS confidence_min,
+        MAX(als.confidence) AS confidence_max,
+        COUNT(DISTINCT als.confidence) AS confidence_distinct_count
+      FROM authority_suggestion_jobs j
+      LEFT JOIN authority_link_suggestions als
+        ON als.created_at >= COALESCE(j.started_at, j.created_at)
+        AND als.created_at <= COALESCE(j.completed_at, datetime('now'))
+      GROUP BY j.id
+      ORDER BY j.created_at DESC
+      LIMIT 50
     `);
     expect(plan).toContain('idx_authority_link_suggestions_created_confidence');
+    expect(plan).not.toContain('SCAN als');
   });
 
   it('review queue: pending citations ORDER BY created_at is index-served', async () => {
