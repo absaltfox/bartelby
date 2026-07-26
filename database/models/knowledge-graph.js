@@ -2271,6 +2271,17 @@ const citations = {
     return rows;
   },
 
+  async getCountsByEntityIds(entityIds) {
+    if (!entityIds.length) return [];
+    const placeholders = entityIds.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT entity_id, COUNT(*) AS count
+      FROM citations
+      WHERE entity_id IN (${placeholders})
+      GROUP BY entity_id
+    `, entityIds);
+  },
+
   async getByRelationshipIds(relationshipIds, opts = {}) {
     if (!relationshipIds.length) return [];
     const placeholders = relationshipIds.map(() => '?').join(',');
