@@ -207,6 +207,20 @@ async function saveLlmSettings(req, res) {
         return res.redirect('/admin/llm-settings?error=' + encodeURIComponent('Sentiment prompt: ' + err.message));
       }
     }
+    // Validate the sentiment default provider before persisting: it must be
+    // blank (inherit the global default) or one of the supported provider
+    // names. A model name (e.g. "gemini-3.1-flash-lite") otherwise saves
+    // silently and only fails at job runtime with "Sentiment provider is not
+    // configured". Same redirect-with-error pattern as the prompt above.
+    const sentimentProvider = req.body['sentiment.provider.default'];
+    if (sentimentProvider !== undefined && sentimentProvider.trim() !== '') {
+      const supportedProviders = require('../utils/llm').listProviders();
+      if (!supportedProviders.includes(sentimentProvider.trim())) {
+        return res.redirect('/admin/llm-settings?error=' + encodeURIComponent(
+          `Sentiment provider: '${sentimentProvider}' is not a supported provider. Choose one of: ${supportedProviders.join(', ')}.`
+        ));
+      }
+    }
     // Non-secret fields: always save (even if empty)
     const plainFields = [
       'default_provider',

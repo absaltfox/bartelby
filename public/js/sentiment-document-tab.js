@@ -21,6 +21,17 @@
   var nextCursor = null;
   var pageSize = 25;
 
+  // Toggle the pagination wrapper (and the button) via the shared `is-hidden`
+  // convention. The bare `hidden` attribute is a no-op here because the author
+  // stylesheet sets `display` on both `.s-doc-tab-pagination` (flex) and
+  // `.btn-secondary` (inline-flex), which beats the UA `[hidden]` rule; only
+  // `.is-hidden { display: none !important }` reliably hides them. Hide the
+  // wrapper too, not just the button, so no empty margin is left behind.
+  function setPaginationVisible(visible) {
+    if (paginationWrap) paginationWrap.classList.toggle('is-hidden', !visible);
+    if (loadMoreBtn) loadMoreBtn.classList.toggle('is-hidden', !visible);
+  }
+
   function setStatus(text) {
     listContainer.innerHTML = '';
     listContainer.appendChild(
@@ -84,10 +95,7 @@
         ol.appendChild(li);
       });
       nextCursor = data.next_cursor || null;
-      if (data.has_more && paginationWrap && loadMoreBtn) {
-        paginationWrap.hidden = false;
-        loadMoreBtn.hidden = false;
-      }
+      setPaginationVisible(!!data.has_more);
       listContainer.removeAttribute('aria-busy');
     }).catch(function (err) {
       loaded = false; // allow retry by re-clicking tab
@@ -109,7 +117,7 @@
         });
       }
       nextCursor = data.next_cursor || null;
-      if (!data.has_more) loadMoreBtn.hidden = true;
+      if (!data.has_more) setPaginationVisible(false);
       loadMoreBtn.disabled = false;
       loadMoreBtn.textContent = 'Load more';
     }).catch(function (err) {

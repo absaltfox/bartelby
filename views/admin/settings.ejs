@@ -317,9 +317,14 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
         </div>
         <div class="form-group">
           <label for="sentiment_provider_default">Default provider</label>
-          <input type="text" id="sentiment_provider_default"
-                 name="sentiment.provider.default"
-                 value="<%= cfg['sentiment.provider.default'] || '' %>">
+          <select id="sentiment_provider_default" name="sentiment.provider.default">
+            <option value="" <%= cfg['sentiment.provider.default'] ? '' : 'selected' %>>Inherit global default</option>
+            <% providers.forEach(p => { %>
+              <option value="<%= p %>" <%= cfg['sentiment.provider.default'] === p ? 'selected' : '' %>>
+                <%= p.charAt(0).toUpperCase() + p.slice(1) %>
+              </option>
+            <% }) %>
+          </select>
           <p class="field-hint">Leave blank to inherit the global default provider above.</p>
         </div>
       </div>
