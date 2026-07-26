@@ -407,11 +407,21 @@ fly scale vm shared-cpu-2x
 
 The application-reachable advisories from `npm audit --omit=dev` are
 enumerated below; none is practically exploitable in the current
-production configuration, and each has a documented mitigation.
-`npm audit` may additionally report newly-published upstream advisories
-(e.g. in the `sharp`/`libvips` and `node-tar` chains) that post-date this
-list and are pending separate triage; a non-zero count is expected and is
-not, by itself, a release blocker.
+production configuration, and each has a documented mitigation. Two
+newly-published upstream advisories post-date this list:
+
+- **`node-tar` (critical, GHSA-r292-9mhp-454m — uncontrolled recursion /
+  stack-overflow DoS on a crafted tar).** This is a further advisory in
+  the same install-time `canvas → @mapbox/node-pre-gyp → tar` chain
+  already covered under the `tar` entry below — reached only when npm
+  extracts pinned dependency tarballs at install, never at runtime — so
+  the same mitigation applies and it clears with the `pdfjs-dist`/`canvas`
+  upgrade.
+- **`sharp`/`libvips` (high, CVE-2026-33327/33328/35590/35591).** Runtime
+  image-processing library; pending separate triage.
+
+A non-zero `npm audit` count is therefore expected and is not, by itself,
+a release blocker.
 
 - **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
   Reachable only through the dev-only `renderWithPdfjs` fallback in
