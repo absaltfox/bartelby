@@ -143,7 +143,7 @@ router.post('/:id/access/grant', express.urlencoded({ extended: false }), asyncH
       role
     });
   }
-  res.redirect('/admin/collections?saved=1#collection-' + collectionId);
+  res.redirect('/admin/collections?saved=1#access-' + collectionId);
 }));
 
 // Revoke access from a user
@@ -153,7 +153,7 @@ router.post('/:id/access/revoke/:userId', asyncHandler(async (req, res) => {
   if (!isNaN(userId) && !isNaN(collectionId)) {
     await userCollectionAccessAsync.revoke(userId, collectionId);
   }
-  res.redirect('/admin/collections#collection-' + collectionId);
+  res.redirect('/admin/collections#access-' + collectionId);
 }));
 
 // Set preview image
@@ -167,9 +167,9 @@ router.post('/:id/preview', express.urlencoded({ extended: false }), asyncHandle
       collectionId,
       previewDocumentId: documentId
     });
-    res.redirect('/admin/collections?saved=1#collection-' + collectionId);
+    res.redirect('/admin/collections?saved=1#preview-' + collectionId);
   } catch (err) {
-    res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#collection-' + collectionId);
+    res.redirect('/admin/collections?error=' + encodeURIComponent(err.message) + '#preview-' + collectionId);
   }
 }));
 

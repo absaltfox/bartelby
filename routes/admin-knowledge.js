@@ -256,8 +256,9 @@ router.post('/collections/reextract', express.urlencoded({ extended: false }), a
 // Per docs/development-principles.md "Corpus mutations require admin trigger":
 // explicit admin click queues one title_backfill_jobs row; the worker tick
 // picks it up. De-duped per collection. NOTE: redirect intentionally has no
-// #collection- fragment — that hash auto-opens the Access panel (see
-// BACKLOG.md "Stop the #collection-<id> hash…").
+// #collection- fragment so it lands on the queued-confirmation flash at the
+// top of the page instead of scrolling down to the collection row (see
+// backlog issue #56).
 router.post('/titles/backfill/collection/:id', express.urlencoded({ extended: false }), asyncHandler(async (req, res) => {
   const collectionId = parseInt(req.params.id, 10);
   if (!Number.isInteger(collectionId)) {
