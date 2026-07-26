@@ -122,7 +122,10 @@
               <form method="POST" action="/admin/knowledge/collections/reextract" class="inline-form">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="collection_id" value="<%= c.id %>">
-                <input type="hidden" name="returnTo" value="/admin/collections#collection-<%= c.id %>">
+                <%# No #collection- fragment: the re-extract queued-confirmation
+                    flash renders at the top of the page, so land there rather
+                    than scrolling down to the row (see backlog issue #56). %>
+                <input type="hidden" name="returnTo" value="/admin/collections">
                 <button type="submit" class="btn-secondary btn-sm">Re-extract</button>
               </form>
               <% if (c.sentiment_enabled) { %>

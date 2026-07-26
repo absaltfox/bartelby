@@ -405,19 +405,23 @@ fly scale vm shared-cpu-2x
 
 ### Known open advisories
 
-`npm audit --omit=dev` currently reports **4 high, 0 critical** (plus
-3 low). None of them are practically exploitable in the current
-production configuration; each has a documented mitigation. Reviewers
-checking the audit output before a release should expect this baseline
-and not treat it as a release blocker.
+The application-reachable advisories from `npm audit --omit=dev` are
+enumerated below; none is practically exploitable in the current
+production configuration, and each has a documented mitigation. Two
+newly-published upstream advisories post-date this list:
 
-- **`nodemailer` (high, GHSA-p6gq-j5cr-w38f — `raw` option bypasses
-  disableFileAccess/disableUrlAccess).** Reachable only when the
-  message-level `raw` option is passed to `sendMail`. The only call
-  site, [`utils/email.js`](./utils/email.js), sends a fixed
-  `{from, to, subject, text}` shape with no caller-controlled message
-  options, so the vulnerable path never runs. The fix is a breaking
-  major (9.x); upgrade tracked as a follow-up.
+- **`node-tar` (critical, GHSA-r292-9mhp-454m — uncontrolled recursion /
+  stack-overflow DoS on a crafted tar).** This is a further advisory in
+  the same install-time `canvas → @mapbox/node-pre-gyp → tar` chain
+  already covered under the `tar` entry below — reached only when npm
+  extracts pinned dependency tarballs at install, never at runtime — so
+  the same mitigation applies and it clears with the `pdfjs-dist`/`canvas`
+  upgrade.
+- **`sharp`/`libvips` (high, CVE-2026-33327/33328/35590/35591).** Runtime
+  image-processing library; pending separate triage.
+
+A non-zero `npm audit` count is therefore expected and is not, by itself,
+a release blocker.
 
 - **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
   Reachable only through the dev-only `renderWithPdfjs` fallback in
@@ -451,6 +455,11 @@ Pre-merge work on this baseline:
 - Closed `fast-xml-builder` (high) through the AWS SDK XML builder chain and
   `ip-address` (moderate) through `express-rate-limit` via non-breaking
   `npm audit fix`.
+- Closed `nodemailer` (high, GHSA-p6gq-j5cr-w38f — `raw` option bypasses
+  disableFileAccess/disableUrlAccess) by upgrading to the 9.x major. The
+  only call site, [`utils/email.js`](./utils/email.js), sends a fixed
+  `{from, to, subject, text}` shape and uses the unchanged
+  `createTransport`/`sendMail` API, so the upgrade is transparent.
 - Removed the unused legacy `utils/pdf.js` helper so the only remaining
   `pdfjs-dist` rendering fallback is the hardened, development-only path in
   `utils/pdf-worker.js`.

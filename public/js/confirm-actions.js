@@ -61,13 +61,28 @@
       });
     });
 
-    var hash = window.location.hash;
-    var match = hash && hash.match(/^#collection-(\d+)$/);
-    if (match) {
-      var id = match[1];
-      var panel = document.getElementById('access-' + id);
-      var row = document.getElementById('collection-' + id);
-      if (panel) panel.classList.remove('is-hidden');
+    // Differentiate hash intents so a redirect only opens the panel it means to:
+    //   #access-<id>     → open the Access panel and scroll to it
+    //   #preview-<id>    → open the Preview panel and scroll to it
+    //   #collection-<id> → scroll to the collection row only (open no panel)
+    // Previously any #collection-<id> opened the Access panel, which was wrong
+    // for the Preview redirect and for queued-confirmation flows that want the
+    // flash at the top of the page.
+    var hash = window.location.hash || '';
+    var panelMatch = hash.match(/^#(access|preview)-(\d+)$/);
+    var rowMatch = hash.match(/^#collection-(\d+)$/);
+    if (panelMatch) {
+      var kind = panelMatch[1];
+      var panel = document.getElementById(kind + '-' + panelMatch[2]);
+      if (panel) {
+        panel.classList.remove('is-hidden');
+        if (kind === 'preview') loadPreviewImages(panel);
+        if (typeof panel.scrollIntoView === 'function') {
+          panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    } else if (rowMatch) {
+      var row = document.getElementById('collection-' + rowMatch[1]);
       if (row && typeof row.scrollIntoView === 'function') {
         row.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
