@@ -50,6 +50,23 @@ async function canAccessEntity(graphAccess, entityId, req) {
   return await graphAccess.canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId);
 }
 
+// Batched companion to canAccessEntity. Keeps the same collectionId scoping
+// the single-entity wrapper applies — the current graph client never sends
+// one, but the endpoint is public and a future caller may.
+async function filterAccessibleEntities(graphAccess, entities, req) {
+  if (!graphAccess || typeof graphAccess.filterAccessibleEntityIds !== 'function') return entities;
+  const collectionId = parseCollectionId(req.query.collectionId);
+  const { userId, isAdmin, accessAll } = accessOpts(req);
+  const allowedIds = await graphAccess.filterAccessibleEntityIds(
+    entities.map((entity) => entity.id),
+    userId,
+    isAdmin,
+    accessAll,
+    collectionId
+  );
+  return entities.filter((entity) => allowedIds.has(entity.id));
+}
+
 async function canManageDocumentKnowledge(req, documentId) {
   if (!req.user) return false;
   if (req.user.role === 'admin') return true;
@@ -513,12 +530,7 @@ router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
   const docEntities = typeof stores.entities.getByDocumentId === 'function'
     ? await stores.entities.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];
-  const accessible = [];
-  for (const entity of docEntities) {
-    if (await canAccessEntity(stores.graphAccess, entity.id, req)) {
-      accessible.push(entity);
-    }
-  }
+  const accessible = await filterAccessibleEntities(stores.graphAccess, docEntities, req);
   const docRelationships = stores.relationships && typeof stores.relationships.getByDocumentId === 'function'
     ? await stores.relationships.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];

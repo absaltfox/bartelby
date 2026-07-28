@@ -2689,6 +2689,30 @@ const graphAccess = {
     return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
   },
 
+  /**
+   * Batched form of `canAccessEntity`. Returns the subset of `entityIds` the
+   * viewer may see, using the identical predicate — a citation on the entity
+   * itself in an accessible document, narrowed by `collectionId` when one is
+   * supplied. Replaces per-entity round-trips on the document graph endpoint
+   * without moving the access boundary, per
+   * docs/development-principles.md (Respect Permissions by Default).
+   */
+  async filterAccessibleEntityIds(entityIds, userId, isAdmin, accessAll, collectionId = null) {
+    const ids = Array.from(new Set(
+      (entityIds || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+    ));
+    if (!ids.length) return new Set();
+    const placeholders = ids.map(() => '?').join(',');
+    const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
+    const rows = await allAsync(`
+      SELECT DISTINCT c.entity_id AS entity_id
+      FROM citations c
+      WHERE c.entity_id IN (${placeholders})
+        AND (${access.clause})
+    `, [...ids, ...access.params]);
+    return new Set(rows.map((row) => Number(row.entity_id)));
+  },
+
   async canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId = null) {
     const access = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
     const row = await getAsync(`

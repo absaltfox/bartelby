@@ -19,6 +19,21 @@
   var comparisonShowAll = false;
   var pendingBanner = document.getElementById('transcription-pending-banner');
 
+  // Panels whose behaviour ships in a bundle we do not want on every document
+  // page view. The panel carries its own script URL in `data-deferred-script`;
+  // the bundle self-initializes on load, so injecting it is all that is needed.
+  var deferredScriptsLoaded = {};
+  function loadDeferredScriptFor(tabName) {
+    var panel = document.getElementById('tab-' + tabName);
+    var src = panel && panel.dataset ? panel.dataset.deferredScript : '';
+    if (!src || deferredScriptsLoaded[src]) return;
+    deferredScriptsLoaded[src] = true;
+    var script = document.createElement('script');
+    script.src = src;
+    script.async = false;
+    document.body.appendChild(script);
+  }
+
   function isHistoryTabActive() {
     var activeTab = document.querySelector('.doc-tab.active');
     return !!(activeTab && activeTab.dataset.tab === 'history');
@@ -235,6 +250,7 @@
         panel.classList.add('active');
       }
       updateModeToggleVisibility(target);
+      loadDeferredScriptFor(target);
       if (target === 'history' && !historyLoaded) {
         loadHistory();
       }
