@@ -658,10 +658,34 @@ Examples:
 - modal open/close primitives
 - shared filter dropdown behavior
 - shared jobs polling behavior
+- poll scheduling and backoff (`public/js/poll-scheduler.js`)
 - mode-aware jobs table row refreshes using named cell hooks
 - filter sidebar autosubmit/normalization flow
 
 Do not keep these as inline `<script>` blocks inside partials.
+
+### Polling
+
+Page JS must not call `setInterval` or a self-rescheduling `setTimeout`
+directly for polling. Use `window.PollScheduler`
+(`public/js/poll-scheduler.js`, loaded from `partials/footer.ejs` so it is
+available on every page):
+
+- `PollScheduler.schedule(fn, delayMs)` — one-shot, for self-rescheduling
+  polls;
+- `PollScheduler.every(fn, intervalMs)` — repeating, and unlike `setInterval`
+  it waits for each tick to settle so slow requests cannot stack;
+- `PollScheduler.createBackoff(baseMs, maxMs)` — for error paths, which must
+  back off rather than retry at a flat interval forever.
+
+Both scheduling helpers refuse to fire while
+`document.visibilityState === 'hidden'` and run immediately when the tab
+returns to the foreground, so a backgrounded tab issues no requests and a
+returning one shows fresh data at once. Every poll tick pays the full
+per-request middleware cost, so this is not a micro-optimization.
+
+Handles returned by these helpers are cancelled with `.cancel()`, not
+`clearInterval`/`clearTimeout`.
 
 ## Page-Specific Behavior
 

@@ -6,6 +6,7 @@ const { requireAuth, requireAuthApi, optionalAuth, buildAccessOpts } = require('
 const db = require('../database/db');
 const { documentsAsync, userCollectionAccessAsync, citationsAsync } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
+const { mapWithDbConcurrency } = require('../utils/concurrency');
 
 const GRAPH_RESULT_LIMIT_MAX = 100;
 const RELATED_DOCUMENT_LIMIT_MAX = 100;
@@ -263,12 +264,18 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
     : { neighbors: [], total: 0, limit: neighborLimit, offset: neighborOffset, hasMore: false, nextOffset: null };
   const neighbors = Array.isArray(neighborResult) ? neighborResult : neighborResult.neighbors || [];
 
-  const accessChecks = await Promise.all(
-    neighbors.map(async (neighbor) => ({
-      neighbor,
-      allowed: await canAccessEntity(stores.graphAccess, neighbor.id, req)
-    }))
-  );
+  // Bounded rather than an unbounded Promise.all over the page: the limit is
+  // caller-supplied up to 200, and fly.toml admits `soft_limit` concurrent
+  // requests per machine on top of that, so the unbounded form could put
+  // thousands of libsql calls in flight at saturation. The durable fix is to
+  // push this predicate into the getNeighbors SQL — tracked in #74, which
+  // also fixes the pagination arithmetic this filter breaks. Until then the
+  // check stays: removing it would leak entities whose own citations live in
+  // an inaccessible collection.
+  const accessChecks = await mapWithDbConcurrency(neighbors, async (neighbor) => ({
+    neighbor,
+    allowed: await canAccessEntity(stores.graphAccess, neighbor.id, req)
+  }));
   let accessible = accessChecks.filter((c) => c.allowed).map((c) => c.neighbor);
   if (relType) {
     accessible = accessible.filter((n) => safeRelationshipTypes(n).includes(relType));

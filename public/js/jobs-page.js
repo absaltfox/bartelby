@@ -334,7 +334,7 @@
 
   function stopLogPolling(jobId) {
     if (logPollTimers[jobId]) {
-      clearInterval(logPollTimers[jobId]);
+      logPollTimers[jobId].cancel();
       delete logPollTimers[jobId];
     }
   }
@@ -364,7 +364,8 @@
 
   function ensureLogPolling(jobId, type, config) {
     stopLogPolling(jobId);
-    logPollTimers[jobId] = window.setInterval(async function() {
+    // Visibility-aware: no log requests fire while the tab is backgrounded.
+    logPollTimers[jobId] = window.PollScheduler.every(async function() {
       var logRow = document.getElementById('log-row-' + jobId);
       if (!logRow || logRow.classList.contains('is-hidden')) {
         stopLogPolling(jobId);
@@ -622,10 +623,15 @@
     if (config.typeFilter && config.typeFilter !== 'all') pollParams.push('type=' + config.typeFilter);
     var pollUrlWithFilters = pollUrl + (pollParams.length ? '?' + pollParams.join('&') : '');
 
+    // The error path used to retry at a flat 15s forever; back off instead so
+    // a persistent outage does not keep a tab hammering the endpoint.
+    var errorBackoff = window.PollScheduler.createBackoff(15000, 120000);
+
     function pollJobs() {
       fetch(pollUrlWithFilters)
         .then(function(r) { return r.json(); })
         .then(function(data) {
+          errorBackoff.reset();
           updateFilterTabCounts({
             all: data.counts.total,
             queued: data.counts.queued,
@@ -659,15 +665,15 @@
           });
 
           if ((data.jobs || []).some(function(job) { return isActiveStatus(job.status); })) {
-            window.setTimeout(pollJobs, 5000);
+            window.PollScheduler.schedule(pollJobs, 5000);
           }
         })
         .catch(function() {
-          window.setTimeout(pollJobs, 15000);
+          window.PollScheduler.schedule(pollJobs, errorBackoff.next());
         });
     }
 
-    window.setTimeout(pollJobs, 5000);
+    window.PollScheduler.schedule(pollJobs, 5000);
   }
 
   document.querySelectorAll('.import-progress-bar[data-progress]').forEach(function(bar) {

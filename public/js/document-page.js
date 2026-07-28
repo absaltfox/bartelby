@@ -210,7 +210,9 @@
     var jobsHref = pendingBanner.dataset.jobsHref;
     if (!jobStatusUrl) return;
 
-    var interval = window.setInterval(async function() {
+    // This poll already clears itself on done/failed; the scheduler adds the
+    // visibility gate so a backgrounded document tab stops asking.
+    var poll = window.PollScheduler.every(async function() {
       try {
         var res = await fetch(jobStatusUrl, {
           headers: { Accept: 'application/json' }
@@ -218,10 +220,10 @@
         if (!res.ok) return;
         var job = await res.json();
         if (job.status === 'done') {
-          window.clearInterval(interval);
+          poll.cancel();
           window.location.reload();
         } else if (job.status === 'failed') {
-          window.clearInterval(interval);
+          poll.cancel();
           pendingBanner.innerHTML = '<span class="transcription-pending-banner-error">&#9888; Transcription failed.</span>' +
             (jobsHref ? ' <a href="' + escapeHtml(jobsHref) + '">View details</a>' : '');
         }
