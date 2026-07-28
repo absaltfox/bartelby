@@ -174,6 +174,16 @@ proxying and background storage operations do not build a large queue inside
 lower the web concurrency or scale out, then raise `S3_MAX_SOCKETS` only if the
 VM has enough CPU and memory headroom.
 
+`SETTINGS_CACHE_TTL_MS` (default `30000`) bounds the in-process cache of public
+application settings. That table is read by the page-shell middleware on every
+HTML request and on every `/uploads/*` thumbnail, so on remote Turso it is a
+network round-trip per page view. Admin settings writes go through a single
+setter that invalidates the cache immediately, so an edit is visible on the
+next render regardless of the TTL — the TTL only bounds staleness if a *second*
+`web` machine performs the write (`min_machines_running = 1` with
+`auto_start_machines = true` means that is possible under load). Set it to `0`
+to disable the cache and read the table on every request.
+
 `S3_PRESIGNED_GET_TTL_SECONDS` is disabled by default. Set it to a short value
 such as `300` to render already-authorized collection thumbnails and document
 preview images as short-lived S3-compatible signed URLs. This keeps the
