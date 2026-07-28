@@ -86,6 +86,36 @@ describe('response compression', () => {
     expect(res.headers['content-encoding']).toBe('gzip');
   });
 
+  test('the CSRF token in a compressed page differs per response (BREACH)', async () => {
+    // Compression + a stable secret in the body + reflected input is the
+    // BREACH precondition, and the page shell reflects `?q=` on every page.
+    // The token is masked per response so there is no constant string for a
+    // compression-ratio guess to correlate against.
+    const agent = request.agent(app);
+
+    const first = await agent.get('/login').set('Accept-Encoding', 'gzip');
+    const second = await agent.get('/login').set('Accept-Encoding', 'gzip');
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+
+    const tokenOf = (html) => (html.match(/name="csrf-token" content="([^"]+)"/) || [])[1];
+    const firstToken = tokenOf(first.text);
+    const secondToken = tokenOf(second.text);
+
+    expect(firstToken).toBeTruthy();
+    expect(secondToken).toBeTruthy();
+    expect(secondToken).not.toBe(firstToken);
+
+    // Same session throughout: both still authorize a POST.
+    const { unmaskCsrfToken } = require('../../middleware/csrf');
+    expect(unmaskCsrfToken(firstToken)).toBe(unmaskCsrfToken(secondToken));
+
+    // And the form field is masked too, not just the meta tag.
+    const formToken = (first.text.match(/name="_csrf"\s+value="([^"]+)"/) || [])[1];
+    expect(formToken).toBeTruthy();
+    expect(unmaskCsrfToken(formToken)).toBe(unmaskCsrfToken(firstToken));
+  });
+
   test('leaves responses alone when the client does not accept gzip', async () => {
     const res = await request(app)
       .get('/css/style.css')

@@ -1064,6 +1064,16 @@ Every mutating HTML form must include a CSRF token. GET forms should not.
 
 AJAX-based actions must use the shared CSRF meta token pattern consistently.
 
+Treat the token as **opaque, and never cache or reuse it across responses**.
+`ensureCsrfToken` (`middleware/csrf.js`) emits a freshly masked value on every
+render — the session secret itself is never sent — so that a stable secret
+does not sit inside a compressed response alongside the shell's reflected
+`?q=` value, which together would be the BREACH precondition. Two renders of
+the same session legitimately produce different token strings; both validate.
+Read it from the rendered `_csrf` field or the `<meta name="csrf-token">` tag
+at the moment you need it, and do not assert equality between tokens from
+different responses.
+
 ## Shared Typeahead
 
 Entity, authority, transcript, and similar lookup fields should use the shared
