@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
+const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
@@ -334,6 +335,14 @@ app.use('/login/mfa', mfaLimiter);
 app.use(normalizeRequestCharsetAlias);
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// Response compression. Registered ahead of express.static so both the
+// static assets and every rendered HTML response are covered; the default
+// `threshold` (1kb) is kept so small JSON replies are not needlessly
+// compressed, and the default filter leaves already-compressed image bytes
+// (the /uploads proxy below) alone. Pure Node, so behaviour is identical
+// across local, Docker, and Fly per CONTRIBUTING.md (Portability).
+app.use(compression());
 
 // When using S3 storage, serve /uploads/* by proxying from S3.
 // Auth is deferred until after Passport is initialized (see below).
