@@ -163,12 +163,3 @@ When an item ships, delete it here and cite this file in the PR body.
   [DEPLOY.md](./DEPLOY.md) § Known open advisories.
 
 ## Nice to have
-
-- [ ] **Jobs page: collapse the 3 authority-suggestion confidence-window
-  subqueries into one grouped join.** The v79 covering index already
-  took the page from ~650 ms to ~2 ms; the rewrite is a further ~3×
-  on that query (`database/models/jobs.js` `getSummaries`).
-- [ ] **`enrichEntityRows` should COUNT in SQL.** The admin entities
-  list (`routes/admin-entities.js`) fetches full citation rows for the
-  50 listed entities just to count them in JS; fine at current scale,
-  degrades for entities with thousands of citations.
