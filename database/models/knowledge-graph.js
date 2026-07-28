@@ -1592,6 +1592,18 @@ const dateExpressions = {
     `, [entityId]);
   },
 
+  /** Batch companion to `getByEntityId`, for filtering a page of graph nodes. */
+  async getByEntityIds(entityIds) {
+    const ids = [...new Set((entityIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    return await allAsync(`
+      SELECT * FROM date_expressions
+      WHERE entity_id IN (${placeholders})
+      ORDER BY earliest, latest, label
+    `, ids);
+  },
+
   async findInRange(from, to) {
     return await allAsync(`
       SELECT de.*, e.canonical_name, e.entity_type
@@ -2771,6 +2783,17 @@ const graphAccess = {
     }
 
     const visibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'c', 'c.document_id');
+    // Entity-level visibility, pushed into SQL so it applies *before* the
+    // page is cut. This is the same predicate `graphAccess.canAccessEntity`
+    // evaluates, and it is NOT redundant with `visibility` above: relationship
+    // citations are written with `entity_id: null`
+    // (utils/worker-extraction.js), so `visibility` constrains the
+    // relationship-evidence document while this constrains the neighbour's
+    // own evidence. An entity whose own citations live only in a private
+    // collection, but which appears in a relationship cited in a public
+    // document, must stay hidden — per docs/development-principles.md
+    // (Respect Permissions by Default).
+    const entityVisibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'ec', 'ec.document_id');
     const centerPlaceholders = centerEntityIds.map(() => '?').join(',');
     const rows = await allAsync(`
       SELECT
@@ -2807,6 +2830,12 @@ const graphAccess = {
       )
         AND other.entity_type != 'date'
         AND (${visibility.clause})
+        AND EXISTS (
+          SELECT 1
+          FROM citations ec
+          WHERE ec.entity_id = other.id
+            AND (${entityVisibility.clause})
+        )
       ORDER BY other.canonical_name, r.id, c.id
     `, [
       ...centerEntityIds,
@@ -2815,7 +2844,8 @@ const graphAccess = {
       ...centerEntityIds,
       ...centerEntityIds,
       ...centerEntityIds,
-      ...visibility.params
+      ...visibility.params,
+      ...entityVisibility.params
     ]);
 
     const grouped = new Map();
@@ -2879,8 +2909,19 @@ const graphAccess = {
       return String(a.canonical_name || '').localeCompare(String(b.canonical_name || ''));
     });
 
-    const total = allNeighbors.length;
-    const neighbors = allNeighbors.slice(offset, offset + limit);
+    // Relationship-type filtering happens here, on the aggregated nodes and
+    // before the page is cut, so `total` / `hasMore` / `nextOffset` describe
+    // the same set as `neighbors`. It stays post-aggregation (rather than
+    // becoming a row predicate in the SQL above) so a matched node still
+    // reports its full relationship-type list, member set, and counts — the
+    // filter selects which neighbours are shown, it does not redefine them.
+    const requestedRelType = String(opts.relType || '').trim();
+    const filteredNeighbors = requestedRelType
+      ? allNeighbors.filter((neighbor) => neighbor.relationship_types.includes(requestedRelType))
+      : allNeighbors;
+
+    const total = filteredNeighbors.length;
+    const neighbors = filteredNeighbors.slice(offset, offset + limit);
     const nextOffset = offset + neighbors.length;
     return {
       neighbors,
