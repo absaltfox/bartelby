@@ -1096,6 +1096,27 @@ const transcriptsAsync = {
     `, [documentId]);
   },
 
+  /**
+   * Version-selector projection: everything needed to list a document's
+   * transcript versions and pick one, and nothing else. `getByDocumentId`
+   * returns `content`, `prompt`, and `notes` for *every* version, so a
+   * document with several transcription runs moves hundreds of KB over the
+   * Turso wire per page view to render a `<select>`. Callers that need a
+   * version's body fetch it with `getById` once the selection is known.
+   *
+   * Added alongside `getByDocumentId` rather than narrowing it: the
+   * transcription pipeline and the knowledge-rerun helper both rely on the
+   * full rows.
+   */
+  async listByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT id, document_id, version, transcriber, is_best, created_at
+      FROM transcripts
+      WHERE document_id = ?
+      ORDER BY is_best DESC, version DESC
+    `, [documentId]);
+  },
+
   async getById(id) {
     return await getAsync('SELECT * FROM transcripts WHERE id = ?', [id]);
   },
