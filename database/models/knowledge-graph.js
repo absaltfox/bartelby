@@ -499,6 +499,18 @@ const authorities = {
     return hydrateAuthority(await getAsync('SELECT * FROM authorities WHERE id = ?', [id]));
   },
 
+  async getByIds(ids = []) {
+    const normalized = Array.from(new Set(
+      (ids || []).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+    ));
+    if (!normalized.length) return [];
+    const placeholders = normalized.map(() => '?').join(',');
+    return (await allAsync(
+      `SELECT * FROM authorities WHERE id IN (${placeholders})`,
+      normalized
+    )).map(hydrateAuthority);
+  },
+
   async getAll(limit = 50, offset = 0) {
     return (await allAsync(`
       SELECT *
@@ -2581,6 +2593,22 @@ const relationshipTypes = {
   }
 };
 
+// A graph node is one authority (collapsing all of its member entities) or
+// one un-linked entity. Expressing that key in SQL lets the entity-list and
+// search queries GROUP BY it, so `LIMIT` counts *nodes* — the collapse now
+// happens before the limit rather than after projection in JavaScript.
+const GRAPH_NODE_KEY_SQL =
+  `CASE WHEN e.authority_id IS NOT NULL THEN 'authority:' || e.authority_id ELSE 'entity:' || e.id END`;
+
+// Selected alongside `e.*` by the node-group queries. `MIN(e.id)` is the only
+// aggregate in those statements, so SQLite resolves the bare `e.*` columns
+// from the row that produced it — deterministic, and for a bare-entity group
+// there is only ever one row anyway.
+const GRAPH_NODE_GROUP_COLUMNS = `
+    ${GRAPH_NODE_KEY_SQL} AS graph_node_key,
+    COALESCE(a.canonical_name, e.canonical_name) AS graph_node_sort_name,
+    MIN(e.id) AS graph_node_min_entity_id`;
+
 const graphAccess = {
   async searchEntities(query, userId, isAdmin, accessAll, limit = 50, collectionId = null) {
     const sanitized = String(query || '').replace(/['"]/g, '').trim();
@@ -2589,8 +2617,10 @@ const graphAccess = {
     if (isFts5Available()) {
       const ftsQuery = sanitized.split(/\s+/).filter(Boolean).map(t => `"${t}"*`).join(' ');
       try {
-        const rows = (await allAsync(`
-          SELECT DISTINCT e.*
+        const rows = await allAsync(`
+          SELECT
+            e.*,
+            ${GRAPH_NODE_GROUP_COLUMNS}
           FROM entities e
           LEFT JOIN authorities a ON a.id = e.authority_id
           INNER JOIN citations c ON c.entity_id = e.id
@@ -2603,17 +2633,20 @@ const graphAccess = {
               JOIN entity_aliases_fts af ON af.rowid = ea.id
               WHERE entity_aliases_fts MATCH ?
             ) OR a.canonical_name LIKE ?)
-          ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
+          GROUP BY graph_node_key
+          ORDER BY graph_node_sort_name, graph_node_min_entity_id
           LIMIT ?
-        `, [...access.params, ftsQuery, ftsQuery, `%${sanitized}%`, limit * 5])).map(hydrateEntity);
+        `, [...access.params, ftsQuery, ftsQuery, `%${sanitized}%`, limit]);
         return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
       } catch (err) {
         // fall through to LIKE
       }
     }
     const pattern = `%${sanitized}%`;
-    const rows = (await allAsync(`
-      SELECT DISTINCT e.*
+    const rows = await allAsync(`
+      SELECT
+        e.*,
+        ${GRAPH_NODE_GROUP_COLUMNS}
       FROM entities e
       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
       LEFT JOIN authorities a ON a.id = e.authority_id
@@ -2621,9 +2654,10 @@ const graphAccess = {
       WHERE (${access.clause})
         AND e.entity_type != 'date'
         AND (e.canonical_name LIKE ? OR ea.alias LIKE ? OR a.canonical_name LIKE ?)
-      ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
+      GROUP BY graph_node_key
+      ORDER BY graph_node_sort_name, graph_node_min_entity_id
       LIMIT ?
-    `, [...access.params, pattern, pattern, pattern, limit * 5])).map(hydrateEntity);
+    `, [...access.params, pattern, pattern, pattern, limit]);
     return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
   },
 
@@ -2635,18 +2669,23 @@ const graphAccess = {
       typeClause = 'AND e.entity_type = ?';
       params.push(entityType);
     }
-    params.push(limit * 5, offset);
-    const rows = (await allAsync(`
-      SELECT DISTINCT e.*
+    params.push(limit, offset);
+    // LIMIT/OFFSET now page over graph *nodes* rather than raw entity rows,
+    // so authority collapse can no longer make a page overlap its neighbour.
+    const rows = await allAsync(`
+      SELECT
+        e.*,
+        ${GRAPH_NODE_GROUP_COLUMNS}
       FROM entities e
       LEFT JOIN authorities a ON a.id = e.authority_id
       INNER JOIN citations c ON c.entity_id = e.id
       WHERE (${access.clause})
         AND e.entity_type != 'date'
         ${typeClause}
-      ORDER BY COALESCE(a.canonical_name, e.canonical_name), e.canonical_name
+      GROUP BY graph_node_key
+      ORDER BY graph_node_sort_name, graph_node_min_entity_id
       LIMIT ? OFFSET ?
-    `, params)).map(hydrateEntity);
+    `, params);
     return await projectGraphNodes(rows, { userId, isAdmin, accessAll, collectionId, limit });
   },
 
@@ -2859,16 +2898,78 @@ async function getVisibleCitationStats(entityIds, opts = {}) {
 async function getVisibleAuthorityMembers(authorityId, opts = {}) {
   const normalizedAuthorityId = normalizePositiveInteger(authorityId);
   if (!normalizedAuthorityId) return [];
+  const byAuthority = await getVisibleAuthorityMembersByIds([normalizedAuthorityId], opts);
+  return byAuthority.get(normalizedAuthorityId) || [];
+}
+
+/**
+ * Batched form of `getVisibleAuthorityMembers`: resolves the visible member
+ * entities for a whole page of authority nodes in one round-trip. Returns a
+ * Map keyed by authority id, each value ordered exactly as the single-id
+ * query orders it (`canonical_name, id`) so the representative entity of a
+ * node is unchanged.
+ *
+ * Carries the same `buildKnowledgeCitationVisibilityFilter` predicate —
+ * including `collectionId` scoping — as the per-authority query, per
+ * docs/development-principles.md (Respect Permissions by Default).
+ */
+async function getVisibleAuthorityMembersByIds(authorityIds, opts = {}) {
+  const ids = Array.from(new Set((authorityIds || []).map(normalizePositiveInteger).filter(Boolean)));
+  const byAuthority = new Map();
+  if (!ids.length) return byAuthority;
+  const placeholders = ids.map(() => '?').join(',');
   const visibility = buildKnowledgeCitationVisibilityFilter(opts, 'c', 'c.document_id');
-  return (await allAsync(`
+  const rows = await allAsync(`
     SELECT DISTINCT e.*
     FROM entities e
     INNER JOIN citations c ON c.entity_id = e.id
-    WHERE e.authority_id = ?
+    WHERE e.authority_id IN (${placeholders})
       AND e.entity_type != 'date'
       AND (${visibility.clause})
     ORDER BY e.canonical_name, e.id
-  `, [normalizedAuthorityId, ...visibility.params])).map(hydrateEntity);
+  `, [...ids, ...visibility.params]);
+  for (const row of rows) {
+    const authorityId = normalizePositiveInteger(row.authority_id);
+    if (!authorityId) continue;
+    if (!byAuthority.has(authorityId)) byAuthority.set(authorityId, []);
+    byAuthority.get(authorityId).push(hydrateEntity(row));
+  }
+  return byAuthority;
+}
+
+/**
+ * Batched form of `getVisibleCitationStats`: one grouped aggregate covering
+ * every member entity on the page. The `GROUP BY` expression reproduces the
+ * graph node key (`authority:<id>` when the entity is authority-backed,
+ * `entity:<id>` otherwise), so `COUNT(DISTINCT …)` is evaluated over exactly
+ * the member set a single-node call would have used — summing per-entity
+ * counts in JavaScript would be wrong for `document_count`, since members of
+ * one authority routinely share documents.
+ */
+async function getVisibleGraphNodeStats(memberEntityIds, opts = {}) {
+  const ids = Array.from(new Set((memberEntityIds || []).map(normalizePositiveInteger).filter(Boolean)));
+  const stats = new Map();
+  if (!ids.length) return stats;
+  const placeholders = ids.map(() => '?').join(',');
+  const visibility = buildKnowledgeCitationVisibilityFilter(opts, 'c', 'c.document_id');
+  const rows = await allAsync(`
+    SELECT
+      ${GRAPH_NODE_KEY_SQL} AS graph_node_key,
+      COUNT(DISTINCT c.id) AS citation_count,
+      COUNT(DISTINCT c.document_id) AS document_count
+    FROM citations c
+    INNER JOIN entities e ON e.id = c.entity_id
+    WHERE c.entity_id IN (${placeholders})
+      AND (${visibility.clause})
+    GROUP BY graph_node_key
+  `, [...ids, ...visibility.params]);
+  for (const row of rows) {
+    stats.set(String(row.graph_node_key), {
+      citationCount: Number(row.citation_count || 0),
+      documentCount: Number(row.document_count || 0)
+    });
+  }
+  return stats;
 }
 
 async function buildEntityGraphNode(entity, opts = {}) {
@@ -2911,33 +3012,108 @@ async function buildAuthorityGraphNode(authorityId, visibleMembers, opts = {}) {
   };
 }
 
-async function projectGraphNodes(entityRows, opts = {}) {
-  const grouped = new Map();
-  for (const row of entityRows || []) {
+/**
+ * Drops the grouping helper columns so a bare-entity node carries exactly the
+ * `entities` columns it did before the queries started grouping in SQL.
+ */
+function stripGroupColumns(row) {
+  const {
+    graph_node_key: _key,
+    graph_node_sort_name: _sortName,
+    graph_node_min_entity_id: _minId,
+    ...entityColumns
+  } = row;
+  return entityColumns;
+}
+
+/**
+ * Turns a page of graph-node group rows (see `GRAPH_NODE_GROUP_COLUMNS`) into
+ * fully-populated graph nodes in a **fixed** number of queries — two stages,
+ * three round-trips — regardless of how many nodes are on the page.
+ *
+ * This replaces a serial `for … await` that cost 1 query per bare-entity node
+ * and 3 per authority-backed node. Follows the `getAdminListView` precedent in
+ * database/models/collections.js, per docs/knowledge-graph-design.md.
+ *
+ * The caller is responsible for applying `LIMIT` in SQL: nodes are no longer
+ * built and then discarded.
+ */
+async function projectGraphNodes(groupRows, opts = {}) {
+  const groups = [];
+  const seen = new Set();
+  for (const row of groupRows || []) {
     if (!row || !row.id) continue;
     const authorityId = normalizePositiveInteger(row.authority_id);
     const key = authorityId ? `authority:${authorityId}` : `entity:${row.id}`;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        authorityId,
-        entities: []
-      });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push({ key, authorityId, entity: authorityId ? null : hydrateEntity(stripGroupColumns(row)) });
+  }
+  if (!groups.length) return [];
+
+  // Stage 1: the authority rows and their visible members. Two queries, in
+  // parallel — a fixed pair, not a fan-out over the page.
+  const authorityIds = groups.map((group) => group.authorityId).filter(Boolean);
+  const [authorityRows, membersByAuthority] = await Promise.all([
+    authorityIds.length ? authorities.getByIds(authorityIds) : [],
+    getVisibleAuthorityMembersByIds(authorityIds, opts)
+  ]);
+  const authorityById = new Map(authorityRows.map((row) => [row.id, row]));
+
+  // Resolve each group's member set before asking for stats, so the stats
+  // query covers the page in one grouped aggregate.
+  const resolved = [];
+  const memberEntityIds = [];
+  for (const group of groups) {
+    if (group.authorityId) {
+      const authority = authorityById.get(group.authorityId);
+      const members = membersByAuthority.get(group.authorityId) || [];
+      // Same drop rule as the per-node builder: a dangling authority_id or an
+      // authority with nothing visible to this viewer yields no node.
+      if (!authority || !members.length) continue;
+      resolved.push({ ...group, authority, members });
+      for (const member of members) memberEntityIds.push(member.id);
+    } else {
+      resolved.push({ ...group, authority: null, members: [group.entity] });
+      memberEntityIds.push(group.entity.id);
     }
-    grouped.get(key).entities.push(row);
   }
+  if (!resolved.length) return [];
 
-  const projected = [];
-  for (const group of grouped.values()) {
-    const node = group.authorityId
-      ? await buildAuthorityGraphNode(group.authorityId, null, opts)
-      : await buildEntityGraphNode(group.entities[0], opts);
-    if (node) projected.push(node);
-  }
+  // Stage 2: one grouped COUNT covering every member entity on the page.
+  const statsByKey = await getVisibleGraphNodeStats(memberEntityIds, opts);
 
-  const limit = Math.max(1, parseInt(opts.limit, 10) || projected.length || 50);
-  return projected
-    .sort((a, b) => String(a.canonical_name || '').localeCompare(String(b.canonical_name || '')))
-    .slice(0, limit);
+  return resolved.map((group) => {
+    const stats = statsByKey.get(group.key) || { citationCount: 0, documentCount: 0 };
+    if (!group.authority) {
+      return {
+        ...group.entity,
+        node_kind: 'entity',
+        graph_node_id: group.key,
+        authority_id: null,
+        member_entity_ids: [group.entity.id],
+        member_count: 1,
+        document_count: stats.documentCount,
+        citation_count: stats.citationCount
+      };
+    }
+    const memberIds = group.members.map((member) => member.id);
+    const representative = group.members[0];
+    return {
+      id: representative.id,
+      entity_type: group.authority.authority_type || representative.entity_type,
+      canonical_name: group.authority.canonical_name || representative.canonical_name,
+      description: group.authority.description || representative.description || '',
+      properties: group.authority.properties || {},
+      authority_id: group.authority.id,
+      node_kind: 'authority',
+      graph_node_id: group.key,
+      member_entity_ids: memberIds,
+      member_count: memberIds.length,
+      document_count: stats.documentCount,
+      citation_count: stats.citationCount
+    };
+  }).sort((a, b) => String(a.canonical_name || '').localeCompare(String(b.canonical_name || '')));
 }
 
 function parseJsonValue(value, fallback) {
