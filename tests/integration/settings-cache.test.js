@@ -119,6 +119,33 @@ describe('public application settings cache', () => {
     await db.getDb().run('DELETE FROM settings WHERE key = ?', ['openai_api_key']);
   });
 
+  it('SETTINGS_CACHE_TTL_MS=0 disables caching entirely', async () => {
+    jest.resetModules();
+    const previous = process.env.SETTINGS_CACHE_TTL_MS;
+    process.env.SETTINGS_CACHE_TTL_MS = '0';
+    try {
+      const uncachedServer = require('../../server');
+      await uncachedServer.initApp();
+      const uncachedDb = require('../../database/db');
+
+      const first = await countMatchingQueries(uncachedDb, SETTINGS_READ, async () => {
+        const res = await request(uncachedServer.app).get('/login');
+        expect(res.status).toBe(200);
+      });
+      const second = await countMatchingQueries(uncachedDb, SETTINGS_READ, async () => {
+        const res = await request(uncachedServer.app).get('/login');
+        expect(res.status).toBe(200);
+      });
+
+      // Every request reads the table when the cache is switched off.
+      expect(first).toBe(1);
+      expect(second).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.SETTINGS_CACHE_TTL_MS;
+      else process.env.SETTINGS_CACHE_TTL_MS = previous;
+    }
+  }, 60_000);
+
   it('hands each caller its own object so res.locals cannot poison the cache', async () => {
     const first = await db.settingsAsync.getAllPublic();
     first.app_name = 'mutated by a caller';

@@ -119,10 +119,16 @@ and stable — usually it isn't.
 
 ## When you add a migration
 
-- Append it to the end of `MIGRATIONS` in `database/migrations.js`.
-  Never insert into the middle of the array — that would renumber
-  every subsequent migration and re-trigger drift on all
-  already-migrated environments.
+- Append it to the end of `database/db.js`'s `MIGRATIONS.push(...)`
+  blocks — **not** to the array literal in `database/migrations.js`,
+  which holds the frozen v1–v50 block. Adding to `migrations.js`
+  inserts mid-array, because `db.js` pushes v51+ onto the same array
+  afterwards. Never insert into the middle of the array — that would
+  renumber every subsequent migration, and on an already-migrated
+  database the renumbered tail is skipped entirely (`user_version`
+  still exceeds your migration's index), so it silently never runs.
+  A fresh database applies everything from zero and looks fine, which
+  is why tests do not catch this on their own.
 - Use idempotent forms (`IF NOT EXISTS`, `ALTER TABLE ADD COLUMN`
   wrapped by the runner's exception-swallowing block) so a partial
   run followed by a full run doesn't corrupt state.

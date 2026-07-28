@@ -506,11 +506,17 @@ const documentsAsync = {
    * drive unbounded full scans by requesting /uploads/* in a loop.
    *
    * Short-circuiting rather than UNION-ing is safe because the two sets are
-   * disjoint by construction: both writers of `additional_pages` store
-   * `pages[0]` as `image_path` and `pages.slice(1)` as `additional_pages`
-   * (utils/import-submission.js, utils/worker-iiif.js), and every upload has
-   * a unique generated filename — so no URL is one document's master and
-   * another's additional page.
+   * disjoint by construction. Both writers that produce `/uploads/*` values —
+   * utils/import-submission.js and routes/import-api.js — store `pages[0]` as
+   * `image_path` and `pages.slice(1)` as `additional_pages`, and every upload
+   * gets a freshly generated unique filename (a collision loop in
+   * utils/storage/local.js, a random suffix in utils/storage/s3.js). So no URL
+   * is one document's master and another's additional page. (utils/worker-iiif.js
+   * writes remote IIIF URLs, which never reach this lookup at all.)
+   *
+   * And if that ever were violated, the short-circuit is fail-closed: it can
+   * only return *fewer* candidate document ids, which gives the caller's
+   * `canAccess` loop fewer chances to grant. It cannot over-permit.
    */
   async getIdsByUploadUrl(uploadUrl) {
     if (!uploadUrl) return [];

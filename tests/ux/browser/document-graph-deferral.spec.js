@@ -19,8 +19,11 @@ async function gotoPublicDocument(page) {
   await page.goto('/');
   const link = page.getByRole('link', { name: new RegExp(PUBLIC_DOCUMENT_TITLE, 'i') }).first();
   await expect(link).toBeVisible();
-  await link.click();
-  await expect(page.locator('#document-detail')).toBeVisible();
+  await Promise.all([
+    page.waitForURL(/\/documents\/\d+/),
+    link.click()
+  ]);
+  await expect(page.locator('#document-detail')).toBeVisible({ timeout: 15_000 });
 }
 
 test('the graph bundle and its request are deferred to first Graph-tab activation', async ({ page }) => {
@@ -33,7 +36,11 @@ test('the graph bundle and its request are deferred to first Graph-tab activatio
   });
 
   await gotoPublicDocument(page);
-  await page.waitForLoadState('networkidle');
+  // Deliberately not `networkidle`: the shell links Google Fonts, which is
+  // unreachable in CI sandboxes, so the network never goes idle. `load` plus a
+  // short settle is enough for a stray request to have shown up if one fired.
+  await page.waitForLoadState('load');
+  await page.waitForTimeout(500);
 
   expect(bundleRequests).toHaveLength(0);
   expect(graphRequests).toHaveLength(0);

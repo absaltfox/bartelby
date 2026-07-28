@@ -49,6 +49,9 @@ async function bootApp() {
 }
 
 const VISIBLE_NEIGHBOR_COUNT = 7;
+// The seven bare neighbours plus the mixed-visibility authority node, which
+// collapses its two member entities into one graph node.
+const EXPECTED_NODE_COUNT = VISIBLE_NEIGHBOR_COUNT + 1;
 
 describe('graph neighbour pagination and visibility', () => {
   let app;
@@ -57,6 +60,10 @@ describe('graph neighbour pagination and visibility', () => {
   let hiddenNeighborId;
   let visibleNeighborIds = [];
   let taggedNeighborIds = [];
+  let privateCollectionId;
+  let mixedAuthorityId;
+  let mixedPrivateMemberId;
+  let mixedPublicMemberId;
 
   beforeAll(async () => {
     ({ app, db } = await bootApp());
@@ -79,7 +86,7 @@ describe('graph neighbour pagination and visibility', () => {
       auto_group_pages: false,
       createdBy: null
     });
-    const privateCollectionId = await db.collectionsAsync.create({
+    privateCollectionId = await db.collectionsAsync.create({
       name: 'Neighbour Pagination Private Collection',
       description: null,
       is_public: false,
@@ -98,6 +105,16 @@ describe('graph neighbour pagination and visibility', () => {
       accessAll: false,
       canUseSystemApiKeys: false
     });
+    const curatorId = await db.usersAsync.create({
+      username: 'neighbour_curator',
+      email: 'neighbour-curator@example.com',
+      passwordHash: bcrypt.hashSync('password123!', 10),
+      role: 'user',
+      status: 'active',
+      accessAll: false,
+      canUseSystemApiKeys: false
+    });
+    await db.userCollectionAccessAsync.grant(curatorId, privateCollectionId, 'viewer');
 
     const makeDocument = async (title, collectionId) => {
       const documentId = await db.documentsAsync.create({
@@ -166,6 +183,9 @@ describe('graph neighbour pagination and visibility', () => {
       properties: {}
     });
     await citeEntity(centerEntityId, publicDoc);
+    // Also cited privately, so a collectionId-scoped request can reach the
+    // center at all — the route authorizes the center under the same scoping.
+    await citeEntity(centerEntityId, privateDoc);
 
     for (let i = 0; i < VISIBLE_NEIGHBOR_COUNT; i += 1) {
       const neighborId = await db.entitiesAsync.create({
@@ -208,6 +228,48 @@ describe('graph neighbour pagination and visibility', () => {
       confidence: 1
     });
     await citeRelationship(hiddenRelationshipId, publicDoc);
+
+    // An authority-grouped neighbour whose members differ in visibility. The
+    // private member sorts first by canonical_name, which is what the old
+    // route-level loop used to pick the group's representative — so this is
+    // exactly the shape that used to drop the whole node.
+    mixedAuthorityId = await db.authoritiesAsync.create({
+      authority_type: 'person',
+      canonical_name: 'Neighbour Pagination Mixed Authority',
+      description: null,
+      properties: {}
+    });
+    mixedPrivateMemberId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Neighbour Pagination Mixed A Private Member',
+      description: null,
+      properties: {},
+      authority_id: mixedAuthorityId
+    });
+    mixedPublicMemberId = await db.entitiesAsync.create({
+      entity_type: 'person',
+      canonical_name: 'Neighbour Pagination Mixed B Public Member',
+      description: null,
+      properties: {},
+      authority_id: mixedAuthorityId
+    });
+    await citeEntity(mixedPrivateMemberId, privateDoc);
+    await citeEntity(mixedPublicMemberId, publicDoc);
+
+    for (const memberId of [mixedPrivateMemberId, mixedPublicMemberId]) {
+      const relationshipId = await db.relationshipsAsync.create({
+        source_entity_id: centerEntityId,
+        target_entity_id: memberId,
+        relationship_type: 'mentioned_in',
+        label: null,
+        properties: {},
+        confidence: 1
+      });
+      await citeRelationship(relationshipId, publicDoc);
+      if (memberId === mixedPrivateMemberId) {
+        await citeRelationship(relationshipId, privateDoc);
+      }
+    }
   }, 60_000);
 
   async function fetchNeighbors(agent, query) {
@@ -223,8 +285,54 @@ describe('graph neighbour pagination and visibility', () => {
     const body = await fetchNeighbors(agent, { limit: 50 });
     const ids = body.neighbors.map((n) => n.id);
     expect(ids).not.toContain(hiddenNeighborId);
-    expect(ids.sort((a, b) => a - b)).toEqual(visibleNeighborIds.slice().sort((a, b) => a - b));
-    expect(body.total).toBe(VISIBLE_NEIGHBOR_COUNT);
+    for (const visibleId of visibleNeighborIds) expect(ids).toContain(visibleId);
+    expect(body.total).toBe(EXPECTED_NODE_COUNT);
+  });
+
+  it('filters an authority-grouped neighbour per member, not by its representative', async () => {
+    // The private member sorts first by canonical_name, so it is the member the
+    // route-level loop this replaced would have tested — and the whole node
+    // would have vanished for the reader. Per-member filtering keeps the node
+    // and reports only what the viewer may see.
+    const readerAgent = request.agent(app);
+    await login(readerAgent, 'neighbour_reader');
+    const readerBody = await fetchNeighbors(readerAgent, { limit: 50 });
+
+    const readerNode = readerBody.neighbors.find((n) => n.graph_node_id === `authority:${mixedAuthorityId}`);
+    expect(readerNode).toBeDefined();
+    expect(readerNode.member_entity_ids).toEqual([mixedPublicMemberId]);
+    expect(readerNode.member_count).toBe(1);
+    expect(readerNode.document_count).toBe(1);
+
+    const curatorAgent = request.agent(app);
+    await login(curatorAgent, 'neighbour_curator');
+    const curatorBody = await fetchNeighbors(curatorAgent, { limit: 50 });
+
+    const curatorNode = curatorBody.neighbors.find((n) => n.graph_node_id === `authority:${mixedAuthorityId}`);
+    expect(curatorNode.member_entity_ids.slice().sort((a, b) => a - b))
+      .toEqual([mixedPrivateMemberId, mixedPublicMemberId].sort((a, b) => a - b));
+    expect(curatorNode.member_count).toBe(2);
+    // `document_count` / `citation_count` on a neighbour describe the
+    // *relationship* evidence tying it to the center, not the neighbour's own
+    // citations: the public member's edge is evidenced only in the public
+    // document, the private member's in both.
+    expect(curatorNode.document_count).toBe(2);
+  });
+
+  it('honours collectionId scoping on the neighbour visibility predicate', async () => {
+    const curatorAgent = request.agent(app);
+    await login(curatorAgent, 'neighbour_curator');
+
+    const scoped = await fetchNeighbors(curatorAgent, { limit: 50, collectionId: privateCollectionId });
+
+    // Scoped to the private collection, only the mixed authority survives —
+    // via its private-only member, the sole neighbour with evidence there.
+    const nodeIds = scoped.neighbors.map((n) => n.graph_node_id);
+    expect(nodeIds).toEqual([`authority:${mixedAuthorityId}`]);
+    expect(scoped.total).toBe(1);
+
+    const scopedNode = scoped.neighbors[0];
+    expect(scopedNode.member_entity_ids).toEqual([mixedPrivateMemberId]);
   });
 
   it('returns a full page when more accessible neighbours exist', async () => {
@@ -233,7 +341,7 @@ describe('graph neighbour pagination and visibility', () => {
 
     const body = await fetchNeighbors(agent, { limit: 3, offset: 0 });
     expect(body.neighbors).toHaveLength(3);
-    expect(body.total).toBe(VISIBLE_NEIGHBOR_COUNT);
+    expect(body.total).toBe(EXPECTED_NODE_COUNT);
     expect(body.hasMore).toBe(true);
     expect(body.nextOffset).toBe(3);
   });
@@ -260,8 +368,8 @@ describe('graph neighbour pagination and visibility', () => {
       expect(guard).toBeLessThan(20);
     }
 
-    expect(total).toBe(VISIBLE_NEIGHBOR_COUNT);
-    expect(seen.size).toBe(VISIBLE_NEIGHBOR_COUNT);
+    expect(total).toBe(EXPECTED_NODE_COUNT);
+    expect(seen.size).toBe(EXPECTED_NODE_COUNT);
   });
 
   it('reports zero overflow once the last page is reached', async () => {
@@ -269,7 +377,7 @@ describe('graph neighbour pagination and visibility', () => {
     await login(agent, 'neighbour_reader');
 
     const firstPage = await fetchNeighbors(agent, { limit: 3, offset: 0 });
-    expect(firstPage.overflow).toBe(VISIBLE_NEIGHBOR_COUNT - 3);
+    expect(firstPage.overflow).toBe(EXPECTED_NODE_COUNT - 3);
 
     const lastPage = await fetchNeighbors(agent, { limit: 50, offset: 0 });
     expect(lastPage.overflow).toBe(0);

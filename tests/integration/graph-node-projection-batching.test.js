@@ -281,6 +281,49 @@ describe('graph node projection batching', () => {
     expect(new Set(nodeIds).size).toBe(nodeIds.length);
   });
 
+  it('pages over nodes, so no node is repeated or skipped across pages', async () => {
+    // Before the collapse moved into SQL, LIMIT/OFFSET counted raw entity rows
+    // while the response returned authority-collapsed nodes, so consecutive
+    // pages could overlap. This walks the whole list in small pages and
+    // asserts the union is exactly the single-page result.
+    const agent = request.agent(app);
+    await login(agent, 'projection_reader');
+
+    const wholeList = await agent.get('/graph/entities').query({ type: 'person', limit: 100 });
+    expect(wholeList.status).toBe(200);
+    const expected = wholeList.body.entities.map((node) => node.graph_node_id);
+    expect(expected.length).toBeGreaterThan(4);
+
+    const PAGE = 3;
+    const seen = [];
+    for (let offset = 0; ; offset += PAGE) {
+      const page = await agent.get('/graph/entities').query({ type: 'person', limit: PAGE, offset });
+      expect(page.status).toBe(200);
+      seen.push(...page.body.entities.map((node) => node.graph_node_id));
+      if (page.body.entities.length < PAGE) break;
+      expect(offset).toBeLessThan(expected.length + PAGE);
+    }
+
+    expect(new Set(seen).size).toBe(seen.length); // no repeats
+    expect(seen.slice().sort()).toEqual(expected.slice().sort()); // nothing skipped
+  });
+
+  it('serves an anonymous viewer the world-public nodes only', async () => {
+    const res = await request(app)
+      .get('/graph/entities')
+      .query({ q: 'Projection Subject', limit: 50 });
+    expect(res.status).toBe(200);
+
+    const nodeIds = res.body.entities.map((node) => node.graph_node_id);
+    expect(nodeIds.length).toBeGreaterThan(0);
+    expect(nodeIds).not.toContain(`entity:${privateOnlyEntityId}`);
+
+    const authorityNode = res.body.entities.find((n) => n.graph_node_id === `authority:${authorityIds[0]}`);
+    expect(authorityNode).toBeDefined();
+    expect(authorityNode.member_count).toBe(1);
+    expect(authorityNode.citation_count).toBe(2);
+  });
+
   it('keeps grouping helper columns out of the API payload', async () => {
     const agent = request.agent(app);
     await login(agent, 'projection_reader');

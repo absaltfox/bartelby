@@ -55,6 +55,13 @@ async function processWithConcurrency(items, concurrency, iteratee) {
 /**
  * `processWithConcurrency` pre-bound to the database fan-out ceiling, so call
  * sites do not each pick their own number.
+ *
+ * There is deliberately **no production caller today**: the fan-out this was
+ * introduced for (the per-neighbour access check in routes/graph.js) was
+ * subsequently collapsed into grouped SQL, which is the outcome this module
+ * asks for. It stays as the sanctioned landing place for a fan-out that
+ * genuinely cannot be collapsed, so the next one does not reach for a bare
+ * `Promise.all`.
  */
 async function mapWithDbConcurrency(items, iteratee) {
   return await processWithConcurrency(items, DB_FANOUT_CONCURRENCY, iteratee);

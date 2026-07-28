@@ -773,21 +773,6 @@ Respond ONLY with a valid JSON object — no markdown fences, no commentary — 
   );
   CREATE INDEX IF NOT EXISTS idx_sentiment_phrase_suppressions_norm
     ON sentiment_phrase_suppressions(target_phrase_normalized);
-  `,
-
-  // v51 — index documents.image_path so the /uploads authorizing proxy can
-  // resolve the common case without scanning the table. The proxy runs
-  // getIdsByUploadUrl *before* any authorization, and the authenticated-user
-  // rate limiter skips it, so an unindexed lookup lets any signed-in reader
-  // drive unbounded full scans. The index is only usable once the query stops
-  // OR-ing an un-indexable json_each() disjunct into the same statement — see
-  // documentsAsync.getIdsByUploadUrl, which now probes this index first and
-  // falls back to the additional_pages scan only on a miss. Per
-  // docs/reviews/2026-07-27-front-end-performance-review.md (findings P12,
-  // P16).
-  `
-  CREATE INDEX IF NOT EXISTS idx_documents_image_path
-    ON documents(image_path);
   `
 ];
 

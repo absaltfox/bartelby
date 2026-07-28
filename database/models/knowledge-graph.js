@@ -2793,6 +2793,16 @@ const graphAccess = {
     // collection, but which appears in a relationship cited in a public
     // document, must stay hidden — per docs/development-principles.md
     // (Respect Permissions by Default).
+    //
+    // Note the granularity: because this is a row predicate on `other.id`, an
+    // authority-grouped neighbour is now filtered *per member*, matching how
+    // `getVisibleAuthorityMembersByIds` treats authority nodes elsewhere in
+    // this model. The route-level loop it replaced tested only the group's
+    // representative entity, so a mixed-visibility authority either vanished
+    // entirely (when its representative was inaccessible) or reported member
+    // and citation counts that included members the viewer could not see.
+    // Both are corrected here; `graph-neighbors-pagination.test.js` pins the
+    // resulting membership and counts.
     const entityVisibility = buildKnowledgeCitationVisibilityFilter({ userId, isAdmin, accessAll, collectionId }, 'ec', 'ec.document_id');
     const centerPlaceholders = centerEntityIds.map(() => '?').join(',');
     const rows = await allAsync(`
