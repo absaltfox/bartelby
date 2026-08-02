@@ -45,7 +45,15 @@ const XSS_PAYLOADS = [
   `</script><script>window.${MARKER} = 1;</script>`,
   `</script><script >window.${MARKER} = 1;</script>`,
   `</script><script type="text/javascript">window.${MARKER} = 1;</script>`,
-  `</script><svg onload="window.${MARKER} = 1">`
+  `</script><svg onload="window.${MARKER} = 1">`,
+  // Types a naive `type === 'text/javascript'` check calls inert but browsers
+  // execute. These are why markerLeaks() is closed-world rather than a list
+  // of known-executable types.
+  `</script><script type="text/javascript; charset=utf-8">window.${MARKER} = 1;</script>`,
+  `</script><script type="application/x-javascript">window.${MARKER} = 1;</script>`,
+  // Non-script vectors entirely.
+  `</script><iframe srcdoc="&lt;script&gt;window.${MARKER}=1&lt;/script&gt;">`,
+  `</script><a href="javascript:window.${MARKER}=1">x</a>`
 ];
 
 // [template path, bootstrap element id]
@@ -114,33 +122,49 @@ function bootstrapText($, elementId) {
 }
 
 /**
- * Every place in the document where `marker` could actually execute: a script
- * element the browser will run (no type, or a JS type), or any inline event
- * handler attribute. Returns human-readable locations so a failure names the
- * vector rather than just asserting false.
+ * Every place the marker leaks out of the one element that is allowed to
+ * contain it.
+ *
+ * This is deliberately a closed-world check rather than a list of execution
+ * vectors. An earlier version enumerated "executable" script types and `on*`
+ * attributes, and quietly failed to flag `type="text/javascript; charset=utf-8"`
+ * and `type="application/x-javascript"` — both of which browsers run — as well
+ * as `srcdoc` and `javascript:` URLs. Enumerating sinks means the test is only
+ * ever as good as the last person's threat model.
+ *
+ * The invariant that actually holds is narrower and checkable: the marker may
+ * appear **only** as text inside the bootstrap element. Anywhere else — another
+ * script body, any attribute, any other text node — is a leak, whether or not
+ * this file can name why it would execute.
+ *
+ * Returns human-readable locations so a failure names the vector.
  */
-function executionSites($, marker) {
-  const sites = [];
+function markerLeaks($, elementId, marker) {
+  const leaks = [];
 
   $('script').each((_i, el) => {
-    const type = String($(el).attr('type') || '').toLowerCase().trim();
-    const executable = type === ''
-      || /^(text|application)\/(java|ecma)script$/.test(type)
-      || type === 'module';
-    const body = $(el).html() || '';
-    if (executable && body.includes(marker)) sites.push(`<script type="${type || '(none)'}">`);
-  });
-
-  $('*').each((_i, el) => {
-    const attribs = (el && el.attribs) || {};
-    for (const [name, value] of Object.entries(attribs)) {
-      if (/^on/i.test(name) && String(value).includes(marker)) {
-        sites.push(`<${el.name} ${name}=...>`);
-      }
+    if ($(el).attr('id') === elementId) return;
+    if (($(el).html() || '').includes(marker)) {
+      leaks.push(`<script type="${$(el).attr('type') || '(none)'}"> body`);
     }
   });
 
-  return sites;
+  $('*').each((_i, el) => {
+    for (const [name, value] of Object.entries((el && el.attribs) || {})) {
+      if (String(value).includes(marker)) leaks.push(`<${el.name} ${name}=...>`);
+    }
+  });
+
+  // Any text node outside the bootstrap element. Catches markup that parsed
+  // into a position this file did not anticipate.
+  const outside = $.root().clone();
+  outside.find(`script#${elementId}`).empty();
+  outside.find('script, style').each((_i, el) => {
+    if (($.html(el) || '').includes(marker)) leaks.push(`<${el.name}> (outside bootstrap)`);
+  });
+  if (outside.text().includes(marker)) leaks.push('text node outside bootstrap');
+
+  return [...new Set(leaks)];
 }
 
 describe('bootstrap payloads: template escape', () => {
@@ -235,7 +259,7 @@ describe('authority suggestions: route allowlist', () => {
     // The real assertion. Substring checks on the raw HTML cannot express
     // this: a correctly escaped page still contains the text `__pwned`,
     // inert, and an executable payload need not match any fixed byte string.
-    expect(executionSites($, MARKER)).toEqual([]);
+    expect(markerLeaks($, 'suggestions-bootstrap', MARKER)).toEqual([]);
   });
 
   it('falls back to pending for an unrecognised status', async () => {
