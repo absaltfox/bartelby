@@ -53,6 +53,14 @@ Then read the subsystem-specific docs that match the task:
   already fits.
 - Keep behavior compatible across local development, Docker, and Fly.
 - Respect collection/document permissions for all derived features.
+- Access predicates fail closed: an identity-free caller gets the world-public
+  subset, never an unfiltered query.
+- Guards must be symmetric. Before shipping one, check its siblings — the other
+  routes in the same router, the inverse operation, the sync/async twin in
+  `database/models/`, and any handler registered directly on `app` rather than
+  on a mounted router. See
+  [docs/development-principles.md](./docs/development-principles.md)
+  § Respect Permissions by Default.
 - Prefer durable, database-backed jobs for restart-sensitive workflows.
 - Do not duplicate existing backend workflows when a canonical path already
   exists.

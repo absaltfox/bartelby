@@ -37,6 +37,96 @@ with its archival, operational, and usability goals.
   permission boundaries
 - Admin-only operations should remain explicit and easy to reason about
 
+The rules below were extracted from a permission-model review (issues #83-#94).
+Each one names a defect class that appeared more than once, so they are worth
+checking against by name rather than rediscovering.
+
+#### Access predicates fail closed
+
+An access-condition builder must **deny** when handed no identity. Anonymous is
+a real case, not a defensive hypothetical — `/collections`, `/graph`,
+`/sentiment`, `/entities`, and `/uploads` all serve unauthenticated readers — and
+it must resolve to the world-public subset, never to an unfiltered query.
+
+These shapes are bugs even when no current caller can reach them:
+
+- an empty `WHERE` clause, or a `{ clause: '1=1' }` fallback, when `opts` carries
+  no identity
+- `return true` when a permission helper is missing from a store
+- a guard written `if (!isAdmin && !accessAll && userId)`, which silently drops
+  the filter for anonymous callers instead of narrowing it
+
+Route callers through the shared builders — `documentsAsync.buildAccessConditions`,
+`buildAccessibleDocumentFilter`, `curatorAccessAsync.*` — rather than hand-rolling
+another copy of the predicate. Admin call sites should pass `{ isAdmin: true }`
+explicitly; an identity-free default must never be the thing that means "allow
+everything."
+
+#### Guards must be symmetric
+
+Most access defects found in review were not a missing check in isolation. They
+were a check present on one side of a pair and absent on the other. Before
+shipping a guard, find its siblings and confirm they agree:
+
+- **Route families** — if three endpoints in a router check ownership, the other
+  three need the same check or a comment saying why not.
+- **Inverse operations** — a precondition on enabling something usually needs its
+  mirror on disabling or clearing it. `/account/mfa/email/enable` refuses without
+  an email address, so `/account/profile` must refuse to remove one while email
+  MFA is active.
+- **Sync/async twins in `database/models/`** — these drift. When you touch one,
+  diff it against the other; several twins already disagree about both access
+  scope and result shape.
+- **Middleware families** — `requireAuth`, `optionalAuth`, and `requireAuthApi`
+  must agree on what an unusable account is. Put the definition in one helper.
+- **Handlers registered outside the router stack** — a route attached directly to
+  `app` (the `/uploads/:filename` proxy in `server.js`) inherits none of the
+  guards that mounted routers apply. Attach them explicitly.
+
+#### Authorization is a check, not a secret
+
+Possession of an identifier is not permission. If an endpoint accepts a filename,
+job id, or asset name from the client, resolve it to an owner and compare.
+
+Unguessable identifiers narrow an attack; they do not authorize it. And
+identifiers built from `Date.now()` plus `Math.random()` are not unguessable —
+`Math.random()` is not a CSPRNG, and V8's generator state is recoverable from
+observed output by anyone who can trigger generation. Use `crypto.randomBytes`
+for anything that names a stored asset.
+
+#### Revoking state must revoke access
+
+Changing a row is not the same as changing what a live session can do. A status
+change meant to remove access has to be enforced where reads happen — in
+`canAccess` and the middleware around it — or paired with explicit invalidation.
+Rejecting a user updates `users.status`, but their existing session keeps working
+until something consults that column.
+
+The same applies in reverse: users need a way to invalidate their own sessions.
+Today the only global-eviction lever (`password_changed_at`) is reachable solely
+through an admin-minted reset token.
+
+#### Rate limits belong on the subject being protected
+
+A limiter keyed only by IP protects the server, not the account. Anything
+guarding a specific account — login, MFA verification, password reset — needs a
+per-account key alongside the per-IP one; use `userOrIpRateLimitKey`
+(`utils/rate-limit.js`), as `utils/rate-limiters.js` and `routes/admin-users.js`
+already do.
+
+Limiter state must also be shared across instances. The default in-memory store
+multiplies every limit by the machine count, and DEPLOY.md's recommended baseline
+is two web machines.
+
+#### Re-authenticate before security-relevant changes
+
+Changing MFA settings, the recovery email, or the password should require proof
+that the current session's owner is present — a password re-entry, or a freshness
+check against `req.session.authenticatedAt` — not merely a valid cookie.
+
+Verifying a value the same request flow just generated (a pending TOTP secret
+minted one request earlier) is a typo check, not authentication.
+
 ### Curator Is the Expert; LLM Is Scaffolding
 
 - The historian/curator is the authoritative expert on the knowledge being

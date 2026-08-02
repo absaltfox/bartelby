@@ -596,6 +596,41 @@ Avoid `<a aria-current="<%= isActive ? 'page' : '' %>">` for attributes whose
 entire presence is conditional — prefer omitting the attribute entirely when
 the condition is false.
 
+### JSON bootstrap payloads must escape `<`
+
+Server data passed into a page through a `<script type="application/json">`
+block — or any inline `<script>` — must have `<` escaped inside the template:
+
+```ejs
+<script id="page-config" type="application/json"><%- JSON.stringify({
+  mode: 'admin',
+  apiBase: apiBase
+}).replace(/</g, '\\u003c') %></script>
+```
+
+The replacement value is a JSON unicode escape for `<` — backslash, `u`, `003c`
+— not a literal `<`. `JSON.parse` turns it back into `<` on the client, so the
+payload the page receives is unchanged while the markup can no longer be broken
+out of.
+
+`JSON.stringify` escapes quotes and backslashes but **not** `<`. Any string in
+the payload containing `</script>` therefore closes the element early, and
+everything after it parses as HTML. The CSP in `server.js` allows
+`'unsafe-inline'` for scripts, so it provides no backstop — this was a live
+admin-session XSS (issue #83).
+
+Escape unconditionally, whether or not the value looks user-controlled. Payload
+contents change: a key holding a module constant today holds `req.query.status`
+after the next feature lands, and the omission is invisible at review time.
+
+Validating the input at the route is a good second layer — allowlist enumerated
+query parameters rather than passing `String(req.query.x || 'default')` straight
+through — but it is not a substitute for escaping at the sink.
+
+Prefer a shared helper over repeating `.replace(...)` at each call site. A
+convention applied by hand at a dozen call sites will eventually be missed at one
+of them, which is exactly how #83 happened.
+
 ## Shared Partials
 
 Shared partials should only contain:
@@ -697,7 +732,9 @@ Page-specific behavior may live in:
 
 Allowed bootstrap example:
 
-- assigning sanitized JSON data to `window.__pageData`
+- assigning sanitized JSON data to `window.__pageData`, or emitting it in a
+  `<script type="application/json">` block — in both cases escaping `<` per
+  § JSON bootstrap payloads must escape `<`
 
 Disallowed patterns:
 
