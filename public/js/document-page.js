@@ -19,6 +19,21 @@
   var comparisonShowAll = false;
   var pendingBanner = document.getElementById('transcription-pending-banner');
 
+  // Panels whose behaviour ships in a bundle we do not want on every document
+  // page view. The panel carries its own script URL in `data-deferred-script`;
+  // the bundle self-initializes on load, so injecting it is all that is needed.
+  var deferredScriptsLoaded = {};
+  function loadDeferredScriptFor(tabName) {
+    var panel = document.getElementById('tab-' + tabName);
+    var src = panel && panel.dataset ? panel.dataset.deferredScript : '';
+    if (!src || deferredScriptsLoaded[src]) return;
+    deferredScriptsLoaded[src] = true;
+    var script = document.createElement('script');
+    script.src = src;
+    script.async = false;
+    document.body.appendChild(script);
+  }
+
   function isHistoryTabActive() {
     var activeTab = document.querySelector('.doc-tab.active');
     return !!(activeTab && activeTab.dataset.tab === 'history');
@@ -195,7 +210,9 @@
     var jobsHref = pendingBanner.dataset.jobsHref;
     if (!jobStatusUrl) return;
 
-    var interval = window.setInterval(async function() {
+    // This poll already clears itself on done/failed; the scheduler adds the
+    // visibility gate so a backgrounded document tab stops asking.
+    var poll = window.PollScheduler.every(async function() {
       try {
         var res = await fetch(jobStatusUrl, {
           headers: { Accept: 'application/json' }
@@ -203,10 +220,10 @@
         if (!res.ok) return;
         var job = await res.json();
         if (job.status === 'done') {
-          window.clearInterval(interval);
+          poll.cancel();
           window.location.reload();
         } else if (job.status === 'failed') {
-          window.clearInterval(interval);
+          poll.cancel();
           pendingBanner.innerHTML = '<span class="transcription-pending-banner-error">&#9888; Transcription failed.</span>' +
             (jobsHref ? ' <a href="' + escapeHtml(jobsHref) + '">View details</a>' : '');
         }
@@ -235,6 +252,7 @@
         panel.classList.add('active');
       }
       updateModeToggleVisibility(target);
+      loadDeferredScriptFor(target);
       if (target === 'history' && !historyLoaded) {
         loadHistory();
       }

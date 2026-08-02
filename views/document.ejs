@@ -28,7 +28,13 @@
     <%- include('partials/document-info-panel') %>
   </div>
 
-  <div class="doc-tab-content is-hidden" id="tab-knowledge">
+  <%
+    // The graph bundle is ~89KB and self-initializes by fetching
+    // /graph/documents/:id/entities as soon as it loads. This tab starts
+    // hidden, so the script URL is handed to document-page.js and injected on
+    // first activation instead of being loaded on every document page view.
+  %>
+  <div class="doc-tab-content is-hidden" id="tab-knowledge" data-deferred-script="/js/graph-explorer.js">
     <%- include('partials/document-knowledge-tab') %>
   </div>
 
@@ -49,7 +55,6 @@
 <%- include('partials/document-new-transcript-modal') %>
 
 <script src="/js/document-page.js"></script>
-<script src="/js/graph-explorer.js"></script>
 <script src="/js/document-selection-prefill.js"></script>
 <% if (hasSentiment) { %>
   <script>

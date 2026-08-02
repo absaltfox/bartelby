@@ -313,23 +313,34 @@ router.get('/entities', asyncHandler(async (req, res) => {
   }
 
   // Decorate with citation/alias counts to keep the table consistent with the
-  // admin entities list. We re-use the lightweight enrichment shape.
-  const enriched = await Promise.all(entities.map(async (entity) => {
-    let aliasCount = 0;
-    let citationCount = 0;
-    try {
-      if (entityAliasesAsync && typeof entityAliasesAsync.getByEntityId === 'function') {
-        const aliases = await entityAliasesAsync.getByEntityId(entity.id);
-        aliasCount = Array.isArray(aliases) ? aliases.length : 0;
+  // admin entities list, which uses these same batch accessors. This replaces
+  // two queries per listed entity — fetching every alias row and every
+  // citation row only to take `.length` — with one batched call each. Both
+  // per-entity calls passed no opts, so the unfiltered batch helpers are
+  // behaviour-preserving.
+  const entityIds = entities.map((entity) => entity.id);
+  const aliasCountByEntity = new Map();
+  const citationCountByEntity = new Map();
+  try {
+    if (entityAliasesAsync && typeof entityAliasesAsync.getByEntityIds === 'function') {
+      for (const alias of (await entityAliasesAsync.getByEntityIds(entityIds)) || []) {
+        const key = Number(alias.entity_id);
+        aliasCountByEntity.set(key, (aliasCountByEntity.get(key) || 0) + 1);
       }
-    } catch (_) { /* leave aliasCount = 0 */ }
-    try {
-      if (citationsAsync && typeof citationsAsync.getByEntityId === 'function') {
-        const cits = await citationsAsync.getByEntityId(entity.id);
-        citationCount = Array.isArray(cits) ? cits.length : 0;
+    }
+  } catch (_) { /* leave alias counts at 0 */ }
+  try {
+    if (citationsAsync && typeof citationsAsync.getCountsByEntityIds === 'function') {
+      for (const row of (await citationsAsync.getCountsByEntityIds(entityIds)) || []) {
+        citationCountByEntity.set(Number(row.entity_id), Number(row.count) || 0);
       }
-    } catch (_) { /* leave citationCount = 0 */ }
-    return { ...entity, alias_count: aliasCount, citation_count: citationCount };
+    }
+  } catch (_) { /* leave citation counts at 0 */ }
+
+  const enriched = entities.map((entity) => ({
+    ...entity,
+    alias_count: aliasCountByEntity.get(Number(entity.id)) || 0,
+    citation_count: citationCountByEntity.get(Number(entity.id)) || 0
   }));
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));

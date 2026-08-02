@@ -50,6 +50,24 @@ async function canAccessEntity(graphAccess, entityId, req) {
   return await graphAccess.canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId);
 }
 
+// Batched companion to canAccessEntity. Keeps the same collectionId scoping
+// the single-entity wrapper applies — the current graph client never sends
+// one, but the endpoint is public and a future caller may. Mirrors
+// canAccessEntity's permissive fallback when the store has no such helper.
+async function filterAccessibleEntityIds(graphAccess, entityIds, req) {
+  if (!graphAccess || typeof graphAccess.filterAccessibleEntityIds !== 'function') {
+    return new Set(entityIds.map((id) => Number(id)));
+  }
+  const collectionId = parseCollectionId(req.query.collectionId);
+  const { userId, isAdmin, accessAll } = accessOpts(req);
+  return await graphAccess.filterAccessibleEntityIds(entityIds, userId, isAdmin, accessAll, collectionId);
+}
+
+async function filterAccessibleEntities(graphAccess, entities, req) {
+  const allowedIds = await filterAccessibleEntityIds(graphAccess, entities.map((entity) => entity.id), req);
+  return entities.filter((entity) => allowedIds.has(entity.id));
+}
+
 async function canManageDocumentKnowledge(req, documentId) {
   if (!req.user) return false;
   if (req.user.role === 'admin') return true;
@@ -58,15 +76,6 @@ async function canManageDocumentKnowledge(req, documentId) {
 
 function collectionFilterId(req) {
   return parseCollectionId(req.query.collectionId);
-}
-
-function safeRelationshipTypes(neighbor) {
-  if (Array.isArray(neighbor && neighbor.relationship_types)) {
-    return neighbor.relationship_types.map((value) => String(value));
-  }
-  const value = String((neighbor && (neighbor.relationship_type || neighbor.type)) || '').trim();
-  if (!value) return [];
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 router.get('/', requireAuth, (req, res) => {
@@ -111,46 +120,59 @@ router.get('/entities', asyncHandler(async (req, res) => {
     rows = await stores.graphAccess.getEntitiesByType(null, userId, isAdmin, accessAll, limit, offset, collectionId);
   }
 
-  if (relType && rows.length && stores.relationships && typeof stores.relationships.getByEntityId === 'function') {
+  // Both post-filters below used to issue one query per *member entity* of
+  // every node on the page, serially. They now make a single batched call and
+  // group the result in memory. `getByEntityIds` already existed for exactly
+  // this; both filters stay best-effort, as before.
+  function memberIdsOf(entity) {
+    return Array.isArray(entity.member_entity_ids) && entity.member_entity_ids.length
+      ? entity.member_entity_ids
+      : [entity.id];
+  }
+
+  function groupByEntityId(records) {
+    const grouped = new Map();
+    for (const record of records) {
+      const key = Number(record.entity_id);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(record);
+    }
+    return grouped;
+  }
+
+  if (relType && rows.length && stores.relationships && typeof stores.relationships.getByEntityIds === 'function') {
     try {
-      const matchIds = new Set();
-      for (const entity of rows) {
-        const sourceIds = Array.isArray(entity.member_entity_ids) && entity.member_entity_ids.length
-          ? entity.member_entity_ids
-          : [entity.id];
-        const rels = [];
-        for (const memberId of sourceIds) {
-          rels.push(...await stores.relationships.getByEntityId(memberId));
-        }
-        if (rels.some(r => r.relationship_type === relType)) {
-          matchIds.add(entity.id);
-        }
+      const allMemberIds = rows.flatMap(memberIdsOf);
+      const relationships = await stores.relationships.getByEntityIds(allMemberIds);
+      const byMember = new Map();
+      const remember = (memberId, relationship) => {
+        const key = Number(memberId);
+        if (!byMember.has(key)) byMember.set(key, []);
+        byMember.get(key).push(relationship);
+      };
+      for (const relationship of relationships) {
+        remember(relationship.source_entity_id, relationship);
+        remember(relationship.target_entity_id, relationship);
       }
-      rows = rows.filter(e => matchIds.has(e.id));
+      rows = rows.filter((entity) => memberIdsOf(entity).some((memberId) =>
+        (byMember.get(Number(memberId)) || []).some((r) => r.relationship_type === relType)
+      ));
     } catch (_) {
       /* relationship filtering is best-effort */
     }
   }
 
-  if ((dateFrom || dateTo) && rows.length && stores.dateExpressions && typeof stores.dateExpressions.getByEntityId === 'function') {
+  if ((dateFrom || dateTo) && rows.length && stores.dateExpressions && typeof stores.dateExpressions.getByEntityIds === 'function') {
     try {
-      const matchIds = new Set();
-      for (const entity of rows) {
-        const sourceIds = Array.isArray(entity.member_entity_ids) && entity.member_entity_ids.length
-          ? entity.member_entity_ids
-          : [entity.id];
-        const dates = [];
-        for (const memberId of sourceIds) {
-          dates.push(...await stores.dateExpressions.getByEntityId(memberId));
-        }
-        const inRange = dates.some(d => {
+      const allMemberIds = rows.flatMap(memberIdsOf);
+      const byMember = groupByEntityId(await stores.dateExpressions.getByEntityIds(allMemberIds));
+      rows = rows.filter((entity) => memberIdsOf(entity).some((memberId) =>
+        (byMember.get(Number(memberId)) || []).some((d) => {
           if (dateFrom && d.latest && d.latest < dateFrom) return false;
           if (dateTo && d.earliest && d.earliest > dateTo) return false;
           return true;
-        });
-        if (inRange) matchIds.add(entity.id);
-      }
-      rows = rows.filter(e => matchIds.has(e.id));
+        })
+      ));
     } catch (_) {
       /* date filtering is best-effort */
     }
@@ -238,24 +260,19 @@ router.get('/entities/:id/neighbors', asyncHandler(async (req, res) => {
   const neighborLimit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
   const neighborOffset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   const { userId, isAdmin, accessAll } = accessOpts(req);
+  // Entity visibility and the relationship-type filter are both applied
+  // inside getNeighbors, ahead of LIMIT/OFFSET. That is what makes `total`,
+  // `hasMore`, and `nextOffset` describe the same set as `neighbors`; it also
+  // removes what used to be a per-neighbour access query — up to 200
+  // simultaneous libsql calls from a single inbound request.
   const neighborResult = stores.graphAccess && typeof stores.graphAccess.getNeighbors === 'function'
     ? await stores.graphAccess.getNeighbors(id, userId, isAdmin, accessAll, collectionId, {
       limit: neighborLimit,
-      offset: neighborOffset
+      offset: neighborOffset,
+      relType
     })
     : { neighbors: [], total: 0, limit: neighborLimit, offset: neighborOffset, hasMore: false, nextOffset: null };
-  const neighbors = Array.isArray(neighborResult) ? neighborResult : neighborResult.neighbors || [];
-
-  const accessChecks = await Promise.all(
-    neighbors.map(async (neighbor) => ({
-      neighbor,
-      allowed: await canAccessEntity(stores.graphAccess, neighbor.id, req)
-    }))
-  );
-  let accessible = accessChecks.filter((c) => c.allowed).map((c) => c.neighbor);
-  if (relType) {
-    accessible = accessible.filter((n) => safeRelationshipTypes(n).includes(relType));
-  }
+  const accessible = Array.isArray(neighborResult) ? neighborResult : neighborResult.neighbors || [];
 
   const total = Number(neighborResult.total != null ? neighborResult.total : accessible.length);
   return res.json({
@@ -513,12 +530,7 @@ router.get('/documents/:id/entities', asyncHandler(async (req, res) => {
   const docEntities = typeof stores.entities.getByDocumentId === 'function'
     ? await stores.entities.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];
-  const accessible = [];
-  for (const entity of docEntities) {
-    if (await canAccessEntity(stores.graphAccess, entity.id, req)) {
-      accessible.push(entity);
-    }
-  }
+  const accessible = await filterAccessibleEntities(stores.graphAccess, docEntities, req);
   const docRelationships = stores.relationships && typeof stores.relationships.getByDocumentId === 'function'
     ? await stores.relationships.getByDocumentId(docId, { approvalStatus: 'approved' })
     : [];
@@ -637,11 +649,18 @@ router.get('/timeline', asyncHandler(async (req, res) => {
     ? await stores.dateExpressions.findInRange(from, to)
     : [];
   const { userId, isAdmin, accessAll } = accessOpts(req);
+  // One batched visibility query instead of one per date expression in the
+  // range; same predicate, same collectionId scoping.
+  const allowedEntityIds = await filterAccessibleEntityIds(
+    stores.graphAccess,
+    expressions.map((expr) => expr.entity_id),
+    req
+  );
   const seen = new Set();
   const ordered = [];
   for (const expr of expressions) {
     if (seen.has(expr.entity_id)) continue;
-    if (!(await canAccessEntity(stores.graphAccess, expr.entity_id, req))) continue;
+    if (!allowedEntityIds.has(expr.entity_id)) continue;
     seen.add(expr.entity_id);
     ordered.push(expr);
   }

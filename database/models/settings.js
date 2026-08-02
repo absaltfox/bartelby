@@ -1,5 +1,6 @@
 'use strict';
 
+const config = require('../../config');
 const { encryptSecret, decryptSecret } = require('../../utils/secrets');
 
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
@@ -10,6 +11,52 @@ const SECRET_SETTING_KEYS = new Set([
   'vertex_api_key',
   'vertex_batch_credentials_json'
 ]);
+
+// ── Public-settings cache ───────────────────────────────────────────────────
+// The page-shell middleware (server.js) calls `settingsAsync.getAllPublic()`
+// on every request that reaches it — every HTML page view and, because
+// /uploads is deliberately excluded from express.static so the authorizing
+// proxy can run, every thumbnail on a browse grid. On remote Turso that is a
+// full network round-trip for a table whose contents change a few times a
+// year.
+//
+// Correctness rests on the single write funnel below: `settings.set` /
+// `settingsAsync.set` are the only runtime writers (the remaining
+// `INSERT OR IGNORE`/`UPDATE settings` statements all run inside
+// `initializeSchema`, before any request is served), so invalidating there
+// makes an admin settings edit visible on the very next render. The TTL only
+// bounds staleness for a write performed by a *different* web machine, which
+// is why it is short rather than unbounded.
+const publicSettingsCache = { value: null, expiresAt: 0 };
+
+function cacheTtlMs() {
+  const ttl = Number(config.database.settingsCacheTtlMs);
+  return Number.isFinite(ttl) && ttl > 0 ? ttl : 0;
+}
+
+function readPublicSettingsCache() {
+  if (!publicSettingsCache.value) return null;
+  if (Date.now() >= publicSettingsCache.expiresAt) {
+    publicSettingsCache.value = null;
+    return null;
+  }
+  // Hand back a copy: callers spread these values into `res.locals` and must
+  // not be able to mutate the shared entry.
+  return { ...publicSettingsCache.value };
+}
+
+function writePublicSettingsCache(value) {
+  const ttl = cacheTtlMs();
+  if (ttl <= 0) return value;
+  publicSettingsCache.value = value;
+  publicSettingsCache.expiresAt = Date.now() + ttl;
+  return { ...value };
+}
+
+function invalidatePublicSettingsCache() {
+  publicSettingsCache.value = null;
+  publicSettingsCache.expiresAt = 0;
+}
 
 const settings = {
   get(key) {
@@ -66,6 +113,7 @@ const settings = {
       ? encryptSecret(value)
       : value;
     run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, storedValue]);
+    invalidatePublicSettingsCache();
   },
 
   hasSystemKeyForProvider(provider) {
@@ -97,11 +145,13 @@ const settingsAsync = {
   },
 
   async getAllPublic() {
+    const cached = readPublicSettingsCache();
+    if (cached) return cached;
     const rows = await allAsync('SELECT key, value FROM settings');
-    return rows.reduce((acc, { key, value }) => {
+    return writePublicSettingsCache(rows.reduce((acc, { key, value }) => {
       if (!SECRET_SETTING_KEYS.has(key)) acc[key] = value;
       return acc;
-    }, {});
+    }, {}));
   },
 
   async getMany(keys) {
@@ -142,6 +192,7 @@ const settingsAsync = {
       ? encryptSecret(normalized)
       : normalized;
     await runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, storedValue]);
+    invalidatePublicSettingsCache();
   },
 
   async hasSystemKeyForProvider(provider) {
@@ -158,6 +209,7 @@ const settingsAsync = {
   return {
     SECRET_SETTING_KEYS,
     settings,
-    settingsAsync
+    settingsAsync,
+    invalidatePublicSettingsCache
   };
 };

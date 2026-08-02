@@ -76,7 +76,13 @@ const config = {
     turso: {
       url: process.env.TURSO_DATABASE_URL || '',
       authToken: process.env.TURSO_AUTH_TOKEN || ''
-    }
+    },
+    // Lifetime of the in-process cache of public application settings, read
+    // by the page-shell middleware on every HTML request and every /uploads
+    // thumbnail. Writes through `settingsAsync.set` invalidate it
+    // immediately, so this only bounds staleness when a *second* web machine
+    // performs the write. Set to 0 to disable the cache entirely.
+    settingsCacheTtlMs: intEnv('SETTINGS_CACHE_TTL_MS', 30000)
   },
   iiif: {
     // Size parameter for IIIF Image API derivatives fetched for transcription

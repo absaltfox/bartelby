@@ -5,6 +5,12 @@ const path = require('path');
 const vm = require('vm');
 
 function loadJobsPageScript(context) {
+  // jobs-page.js schedules its polls through the shared visibility-aware
+  // scheduler, which the footer loads ahead of it on every page. Run it into
+  // the same sandbox so the harness mirrors the real load order.
+  const scheduler = fs.readFileSync(path.join(__dirname, '../../public/js/poll-scheduler.js'), 'utf8');
+  vm.runInNewContext(scheduler, context, { filename: 'public/js/poll-scheduler.js' });
+
   const source = fs.readFileSync(path.join(__dirname, '../../public/js/jobs-page.js'), 'utf8');
   vm.runInNewContext(source, context, { filename: 'public/js/jobs-page.js' });
 }

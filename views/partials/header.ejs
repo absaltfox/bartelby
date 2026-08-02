@@ -24,6 +24,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <meta name="csrf-token" content="<%= resolvedCsrfToken %>">
+  <%
+    // Shared primitives that page-specific scripts call synchronously at load
+    // must be defined before those scripts run. Page JS is loaded in the page
+    // template, ahead of the footer include (see the Page Shell order in
+    // docs/ui-template-standards.md), so the footer is too late for this one:
+    // a classic script here executes during head parsing, before any body
+    // script. Keep it tiny and dependency-free for that reason.
+  %>
+  <script src="/js/poll-scheduler.js"></script>
 </head>
 <body>
   <header class="site-header">

@@ -11,6 +11,7 @@ const { execFileSync, spawn } = require('child_process');
 const sharp = require('sharp');
 const storage = require('./storage');
 const { readTempAsset, deleteTempAssets } = require('./temp-assets');
+const { processWithConcurrency } = require('./concurrency');
 
 const isStandalone = process.env.PDF_WORKER_MODE === '1';
 const PREVIEW_MAX_WIDTH = 960;
@@ -167,26 +168,6 @@ async function buildPageAssetsFromBuffer(sourceBuffer, pageNumber, prefix) {
     previewFilename,
     previewUrl: storage.getTempPreviewUrl(previewFilename)
   };
-}
-
-async function processWithConcurrency(items, concurrency, iteratee) {
-  const results = new Array(items.length);
-  let index = 0;
-
-  async function worker() {
-    while (index < items.length) {
-      const currentIndex = index++;
-      results[currentIndex] = await iteratee(items[currentIndex], currentIndex);
-    }
-  }
-
-  const workers = [];
-  const count = Math.min(concurrency, items.length || 1);
-  for (let i = 0; i < count; i++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-  return results;
 }
 
 function parsePdfImagesList(output) {

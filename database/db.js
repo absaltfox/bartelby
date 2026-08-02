@@ -833,6 +833,20 @@ MIGRATIONS.push(`
      AND deprecated_at IS NULL;
 `);
 
+// v87 — index documents.image_path so the /uploads authorizing proxy can
+// resolve the common case without scanning the table. The proxy runs
+// getIdsByUploadUrl *before* any authorization, and the authenticated-user
+// rate limiter skips it, so an unindexed lookup lets any signed-in reader
+// drive unbounded full scans. The index is only usable once the query stops
+// OR-ing an un-indexable json_each() disjunct into the same statement — see
+// documentsAsync.getIdsByUploadUrl, which now probes this index first and
+// falls back to the additional_pages scan only on a miss. Per
+// docs/reviews/2026-07-27-front-end-performance-review.md (findings P12, P16).
+MIGRATIONS.push(`
+  CREATE INDEX IF NOT EXISTS idx_documents_image_path
+    ON documents(image_path);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1869,7 +1883,7 @@ const { collections, collectionsAsync, documentCollections, documentCollectionsA
 const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs, iiifSourcesAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
 const { entities, entityAliases, dateExpressions, relationships, citations, graphMaintenance, relationshipTypes, authorities, authorityLinkSuggestions, authorityGenericTerms, graphAccess, hydrateEntity, hydrateRelationship, buildAccessibleDocumentFilter, buildCollectionDocumentFilter, buildKnowledgeCitationVisibilityFilter, buildCitationQueryConditions } = require('./models/knowledge-graph')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, () => fts5Available);
 const { collectionAnalyticsAsync, documentEmbeddingsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync } = require('./models/analytics')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
-const { SECRET_SETTING_KEYS, settings, settingsAsync } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
+const { SECRET_SETTING_KEYS, settings, settingsAsync, invalidatePublicSettingsCache } = require('./models/settings')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { appLogsAsync } = require('./models/logs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const {
   sentimentAsync,
@@ -1971,6 +1985,7 @@ module.exports = {
   userCollectionAccess,
   settings,
   settingsAsync,
+  invalidatePublicSettingsCache,
   transcriptionJobs,
   transcriptionJobsAsync,
   importJobs,

@@ -426,17 +426,30 @@ router.get('/collections/:id/graph', asyncHandler(async (req, res) => {
 
 // ── Document detail view ─────────────────────────────────────────────────────
 router.get('/documents/:id', asyncHandler(async (req, res) => {
-  const doc = await documentsAsync.getById(req.params.id);
+  // This is the most-visited page in the app and every read below is a
+  // network round-trip on remote Turso, so the reads run in dependency
+  // stages rather than as one long serial chain. Same shape as the
+  // collections routes above, and each stage is wrapped in
+  // `timedCollectionRead` so slow stages report through the existing
+  // logger.warn('performance', …) channel.
+  const user = req.user;
+  const isAdmin = user ? user.role === 'admin' : false;
+  const accessAll = user ? !!user.access_all : false;
+  const userId = user ? user.id : null;
+
+  // Stage 1 — identity and authorization. `canAccess` takes the same raw id
+  // as `getById`, so the two are independent; a miss on either is handled
+  // below in the original order (404 before 403).
+  const [doc, hasAccess] = await timedCollectionRead(req, 'document-detail:identity', null, () => Promise.all([
+    documentsAsync.getById(req.params.id),
+    documentsAsync.canAccess(req.params.id, userId, isAdmin, accessAll)
+  ]));
 
   if (!doc) {
     return res.status(404).render('error', { message: 'Document not found', error: {} });
   }
 
-  // Check collection access
-  const user = req.user;
-  const isAdmin = user ? user.role === 'admin' : false;
-  const accessAll = user ? !!user.access_all : false;
-  if (!(await documentsAsync.canAccess(doc.id, user ? user.id : null, isAdmin, accessAll))) {
+  if (!hasAccess) {
     if (!user) {
       req.session.returnTo = req.originalUrl;
       return res.redirect('/login');
@@ -444,32 +457,47 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
     return res.status(403).render('error', { message: 'You do not have access to this document.', error: {} });
   }
 
-  const docTranscripts = await transcriptsAsync.getByDocumentId(doc.id);
-  const docCollections = await documentCollectionsAsync.getByDocumentId(doc.id);
-
-  // Default to best transcript, then first
-  const bestTranscript = docTranscripts.find(t => t.is_best) || null;
-  const requestedTranscriptId = req.query.transcript
-    ? parseInt(req.query.transcript)
-    : null;
-
-  const selectedTranscript = (
-    requestedTranscriptId
-      ? (docTranscripts.find((transcript) => transcript.id === requestedTranscriptId) || null)
-      : null
-  ) || bestTranscript || docTranscripts[0] || null;
-
-  const transcriptAnnotations = selectedTranscript
-    ? await annotationsAsync.getByTranscriptId(selectedTranscript.id)
-    : [];
-
-  const pendingJob = await transcriptionJobsAsync.getPendingForDocument(doc.id);
-
-  let backHref = '/';
-  const requestedBack = typeof req.query.back === 'string' ? req.query.back : '';
-  if (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//')) {
-    backHref = requestedBack;
-  }
+  // Stage 2 — everything that depends only on the document. The two role
+  // probes are only issued for a non-admin authenticated user, exactly as
+  // the serial version did.
+  const needsRoleProbe = !!user && !isAdmin && !accessAll;
+  const [
+    docTranscripts,
+    docCollections,
+    pendingJob,
+    editorRole,
+    managerRole,
+    normalizedDoc,
+    relationshipCounts,
+    sentimentPanel
+  ] = await timedCollectionRead(req, 'document-detail:document-scoped', null, () => Promise.all([
+    transcriptsAsync.listByDocumentId(doc.id),
+    documentCollectionsAsync.getByDocumentId(doc.id),
+    transcriptionJobsAsync.getPendingForDocument(doc.id),
+    needsRoleProbe
+      ? userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'editor')
+      : false,
+    needsRoleProbe
+      ? userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'manager')
+      : false,
+    // No I/O in the default production configuration — presigning is off by
+    // default (config/index.js) — but it is async, so it belongs here rather
+    // than adding a stage of its own.
+    normalizeDocumentAssetsForDelivery(doc),
+    relationshipsAsync && typeof relationshipsAsync.countByDocumentId === 'function'
+      ? relationshipsAsync.countByDocumentId(doc.id)
+      : { pending: 0, approved: 0, rejected: 0 },
+    // Phase 4 slice 3: load this document's sentiment summary so the
+    // Sentiment tab renders without an extra round-trip. Per
+    // docs/sentiment-design.md the same approval gate applies — reader-
+    // facing views see only approved annotations. The helper logs and
+    // degrades on failure (won't 500 the doc page over a sentiment bug).
+    loadSentimentEntityPanel(
+      { userId, isAdmin, accessAll },
+      { document_id: doc.id },
+      { limit: 0 }  // we only need the summary for the tab gate
+    )
+  ]));
 
   // Determine user's permission level on this document
   let canEdit = isAdmin;
@@ -479,47 +507,60 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
   if (!user) {
     canEdit = false;
     canManage = false;
-  } else if (!isAdmin && !accessAll) {
-    canEdit = await userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'editor');
-    canManage = await userCollectionAccessAsync.hasRoleOnDocumentCollections(user.id, doc.id, 'manager');
+  } else if (needsRoleProbe) {
+    canEdit = editorRole;
+    canManage = managerRole;
   } else if (accessAll) {
     canEdit = false;
     canManage = false;
   }
 
+  // Default to best transcript, then first. The list carries only selector
+  // columns, so the chosen version's body is fetched in stage 3.
+  const bestTranscript = docTranscripts.find(t => t.is_best) || null;
+  const requestedTranscriptId = req.query.transcript
+    ? parseInt(req.query.transcript)
+    : null;
+
+  const selectedTranscriptRow = (
+    requestedTranscriptId
+      ? (docTranscripts.find((transcript) => transcript.id === requestedTranscriptId) || null)
+      : null
+  ) || bestTranscript || docTranscripts[0] || null;
+
+  const needsManagerCollectionId = !!(pendingJob && !isAdmin && canManage && user);
+
+  // Stage 3 — reads that could not be issued until stage 2 resolved.
+  const [selectedTranscript, transcriptAnnotations, managerCollectionId] =
+    await timedCollectionRead(req, 'document-detail:selection-scoped', null, () => Promise.all([
+      selectedTranscriptRow ? transcriptsAsync.getById(selectedTranscriptRow.id) : null,
+      selectedTranscriptRow ? annotationsAsync.getByTranscriptId(selectedTranscriptRow.id) : [],
+      needsManagerCollectionId
+        ? userCollectionAccessAsync.getManagerCollectionIdForDocument(user.id, doc.id)
+        : null
+    ]));
+
   if (pendingJob) {
     if (isAdmin) {
       jobsHref = '/admin/jobs';
       jobStatusUrl = `/admin/jobs/api/${pendingJob.id}`;
-    } else if (canManage && user) {
-      const managerCollectionId = await userCollectionAccessAsync.getManagerCollectionIdForDocument(user.id, doc.id);
-      if (managerCollectionId) {
-        jobsHref = `/manage/collections/${managerCollectionId}/jobs`;
-        jobStatusUrl = `/manage/collections/${managerCollectionId}/jobs/api/${pendingJob.id}`;
-      }
+    } else if (managerCollectionId) {
+      jobsHref = `/manage/collections/${managerCollectionId}/jobs`;
+      jobStatusUrl = `/manage/collections/${managerCollectionId}/jobs/api/${pendingJob.id}`;
     }
+  }
+
+  let backHref = '/';
+  const requestedBack = typeof req.query.back === 'string' ? req.query.back : '';
+  if (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//')) {
+    backHref = requestedBack;
   }
 
   // Check if export is allowed on any of this document's collections
   const allowExport = docCollections.some(c => c.allow_export);
   const exportEnabledCollections = docCollections.filter(c => c.allow_export).map(c => c.name);
-  const normalizedDoc = await normalizeDocumentAssetsForDelivery(doc);
   const comparisonPages = buildComparisonPages(normalizedDoc, selectedTranscript);
 
-  const relationshipCounts = relationshipsAsync && typeof relationshipsAsync.countByDocumentId === 'function'
-    ? await relationshipsAsync.countByDocumentId(doc.id)
-    : { pending: 0, approved: 0, rejected: 0 };
-
-  // Phase 4 slice 3: load this document's sentiment summary so the
-  // Sentiment tab renders without an extra round-trip. Per
-  // docs/sentiment-design.md the same approval gate applies — reader-
-  // facing views see only approved annotations. The helper logs and
-  // degrades on failure (won't 500 the doc page over a sentiment bug).
-  const sentimentPanel = await loadSentimentEntityPanel(
-    { userId: user ? user.id : null, isAdmin, accessAll },
-    { document_id: doc.id },
-    { limit: 0 }  // we only need the summary for the tab gate
-  );
   const sentimentSummary = sentimentPanel.summary;
 
   res.render('document', {

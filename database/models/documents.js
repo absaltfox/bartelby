@@ -487,19 +487,55 @@ const documentsAsync = {
     return await getAsync('SELECT * FROM documents WHERE id = ?', [id]);
   },
 
+  /**
+   * Resolves the documents an upload URL belongs to, for the authorizing
+   * /uploads proxy.
+   *
+   * Split into two statements deliberately. SQLite's OR-to-index-union
+   * optimization requires *every* OR term to be index-satisfiable, and the
+   * `json_each(... '$.additional_pages')` disjunct is not — so the single
+   * OR-ed statement this replaces full-scanned `documents` no matter what
+   * index existed. Probing the indexed equality first (v51,
+   * `idx_documents_image_path`) means the overwhelmingly common case — a page
+   * master, which is what a browse grid requests — costs an index seek, and
+   * the scan is reached only for an additional-page URL.
+   *
+   * This matters for availability more than latency: the proxy runs this
+   * before any authorization check, and `anonymousUploadLimiter` skips
+   * authenticated requests, so an unindexed lookup let any signed-in reader
+   * drive unbounded full scans by requesting /uploads/* in a loop.
+   *
+   * Short-circuiting rather than UNION-ing is safe because the two sets are
+   * disjoint by construction. Both writers that produce `/uploads/*` values —
+   * utils/import-submission.js and routes/import-api.js — store `pages[0]` as
+   * `image_path` and `pages.slice(1)` as `additional_pages`, and every upload
+   * gets a freshly generated unique filename (a collision loop in
+   * utils/storage/local.js, a random suffix in utils/storage/s3.js). So no URL
+   * is one document's master and another's additional page. (utils/worker-iiif.js
+   * writes remote IIIF URLs, which never reach this lookup at all.)
+   *
+   * And if that ever were violated, the short-circuit is fail-closed: it can
+   * only return *fewer* candidate document ids, which gives the caller's
+   * `canAccess` loop fewer chances to grant. It cannot over-permit.
+   */
   async getIdsByUploadUrl(uploadUrl) {
     if (!uploadUrl) return [];
-    const rows = await allAsync(`
+    const primaryRows = await allAsync(
+      'SELECT id FROM documents WHERE image_path = ?',
+      [uploadUrl]
+    );
+    if (primaryRows.length) return primaryRows.map((row) => row.id);
+
+    const additionalPageRows = await allAsync(`
       SELECT DISTINCT d.id
       FROM documents d
-      WHERE d.image_path = ?
-         OR EXISTS (
-           SELECT 1
-           FROM json_each(COALESCE(d.metadata, '{}'), '$.additional_pages')
-           WHERE value = ?
-         )
-    `, [uploadUrl, uploadUrl]);
-    return rows.map((row) => row.id);
+      WHERE EXISTS (
+        SELECT 1
+        FROM json_each(COALESCE(d.metadata, '{}'), '$.additional_pages')
+        WHERE value = ?
+      )
+    `, [uploadUrl]);
+    return additionalPageRows.map((row) => row.id);
   },
 
   async canAccess(docId, userId, isAdmin, accessAll) {
@@ -1091,6 +1127,27 @@ const transcriptsAsync = {
   async getByDocumentId(documentId) {
     return await allAsync(`
       SELECT * FROM transcripts
+      WHERE document_id = ?
+      ORDER BY is_best DESC, version DESC
+    `, [documentId]);
+  },
+
+  /**
+   * Version-selector projection: everything needed to list a document's
+   * transcript versions and pick one, and nothing else. `getByDocumentId`
+   * returns `content`, `prompt`, and `notes` for *every* version, so a
+   * document with several transcription runs moves hundreds of KB over the
+   * Turso wire per page view to render a `<select>`. Callers that need a
+   * version's body fetch it with `getById` once the selection is known.
+   *
+   * Added alongside `getByDocumentId` rather than narrowing it: the
+   * transcription pipeline and the knowledge-rerun helper both rely on the
+   * full rows.
+   */
+  async listByDocumentId(documentId) {
+    return await allAsync(`
+      SELECT id, document_id, version, transcriber, is_best, created_at
+      FROM transcripts
       WHERE document_id = ?
       ORDER BY is_best DESC, version DESC
     `, [documentId]);

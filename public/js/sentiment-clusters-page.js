@@ -41,22 +41,27 @@
     if (!btn) return;
     var runId = btn.getAttribute('data-in-flight-run-id');
     if (!runId) return; // no in-flight run
+    // Visibility-aware scheduling: the run keeps progressing server-side, so
+    // a backgrounded tab does not need to keep asking. Coming back to the tab
+    // refreshes immediately rather than waiting out the interval.
+    var errorBackoff = window.PollScheduler.createBackoff(10000, 120000);
     function poll() {
       fetch('/admin/knowledge/sentiment/clusters/api/runs/' + runId)
         .then(function(r) { return r.json(); })
         .then(function(body) {
+          errorBackoff.reset();
           if (body.status === 'done' || body.status === 'failed') {
             window.location.reload();
             return;
           }
-          window.setTimeout(poll, 3000);
+          window.PollScheduler.schedule(poll, 3000);
         })
         .catch(function() {
-          // Network blip — try again after a longer interval
-          window.setTimeout(poll, 10000);
+          // Network blip — try again after a longer, growing interval
+          window.PollScheduler.schedule(poll, errorBackoff.next());
         });
     }
-    window.setTimeout(poll, 3000);
+    window.PollScheduler.schedule(poll, 3000);
   }
 
   function initClusterLabelButtons() {

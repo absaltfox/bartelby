@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { transcriptsAsync, documentsAsync, collectionsAsync, graphAccess, citations } = require('../database/db');
+const { transcriptsAsync, documentsAsync, collectionsAsync, graphAccess } = require('../database/db');
 const { requireAuth } = require('../middleware/auth');
 const { normalizeCollectionAssets, normalizeDocumentAssets, normalizeCollectionAssetsForDelivery, normalizeDocumentAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
@@ -49,16 +49,17 @@ router.get('/', asyncHandler(async (req, res) => {
           !!req.user.access_all,
           10
         );
-        entityResults = await Promise.all((matched || []).map(async (entity) => {
-          const citeRows = citations && citations.getByEntityId
-            ? await citations.getByEntityId(entity.id, getSearchOpts(req))
-            : [];
-          const documentIds = new Set((citeRows || []).map((row) => row.document_id).filter(Boolean));
-          return {
-            ...entity,
-            citationCount: citeRows.length,
-            documentCount: documentIds.size
-          };
+        // `searchEntities` already projects `citation_count` and
+        // `document_count` onto every node, under the same visibility
+        // predicate this route would apply — and for an authority-backed node
+        // they cover the whole visible member set, which a lookup keyed on the
+        // representative entity id would miss. Fetching every citation row per
+        // result just to take `.length` was recomputing data the caller had
+        // already been handed.
+        entityResults = (matched || []).map((entity) => ({
+          ...entity,
+          citationCount: Number(entity.citation_count || 0),
+          documentCount: Number(entity.document_count || 0)
         }));
       }
     } catch (err) {
