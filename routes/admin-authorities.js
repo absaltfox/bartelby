@@ -698,8 +698,8 @@ router.get('/generic-terms', requireAdmin, asyncHandler(async (req, res) => {
   // this only through escaped `<%= %>`, so it is not an injection sink. An
   // unknown value reaches `WHERE status = ?` and yields an empty list, which
   // is the pre-existing behaviour. Worth tightening (it round-trips through
-  // hidden form inputs and titles the page), but that is a separate change
-  // from the #83 security fix.
+  // hidden form inputs and reaches an <h2> at views/admin/authority-generic-
+  // terms.ejs:94), but that is a separate change from the #83 security fix.
   const status = String(req.query.status || 'suggested').trim() || 'suggested';
   const terms = await stores.authorityGenericTerms.list(status, { limit: 500 });
   const settings = await getAuthorityGenericTermSettings(stores.settings);

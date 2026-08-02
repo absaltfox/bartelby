@@ -8,16 +8,17 @@
 // not `<`, so a `</script>` in the value closed the element early and the rest
 // parsed as HTML. The CSP allows 'unsafe-inline', so nothing caught it.
 //
-// Two independent defences exist and each needs its own test, because a route
+// Two independent defences exist and each needs its own suite, because a route
 // test cannot reach the template escape while the allowlist is working — with
 // `status` constrained to four literals the payload contains no `<` at all and
 // `.replace(/</g, ...)` is a provable no-op:
 //
-//   * "route allowlist" below drives the real HTTP route.
-//   * "template escape" below renders the bootstrap block straight out of the
-//     .ejs file with a hostile value the route could never produce.
+//   * "template escape" renders each bootstrap block straight out of its .ejs
+//     file with hostile values the routes could never produce.
+//   * "route allowlist" drives the real HTTP route.
 //
-// Deleting either defence must fail at least one test here.
+// Reverting either defence must fail at least one test here. Verified by
+// reverting each independently.
 
 process.env.NODE_ENV = 'test';
 process.env.SESSION_SECRET = 'test-session-secret-for-jest-only-32ch';
@@ -28,74 +29,142 @@ process.env.BOOTSTRAP_ADMIN_TOKEN = 'test-bootstrap-token-for-jest';
 
 const fs = require('fs');
 const path = require('path');
+const cheerio = require('cheerio');
 const ejs = require('ejs');
 const request = require('supertest');
 
-const XSS_PAYLOAD = '</script><script>window.__pwned = 1;</script>';
+// Marker looked for in the parsed DOM. Kept separate from the payloads so
+// editing a payload cannot quietly decouple it from the assertion.
+const MARKER = '__pwned';
 
-const BOOTSTRAP_TEMPLATES = [
-  'views/admin/authority-suggestions.ejs',
-  'views/manage/collections/knowledge/authority-suggestions.ejs'
+// Several shapes, because asserting on one hardcoded byte sequence is how the
+// previous version of this test came to false-pass: `<script >` (extra space),
+// a typed script, and a non-script execution vector all evade a substring
+// check for the literal `<script>window.__pwned`.
+const XSS_PAYLOADS = [
+  `</script><script>window.${MARKER} = 1;</script>`,
+  `</script><script >window.${MARKER} = 1;</script>`,
+  `</script><script type="text/javascript">window.${MARKER} = 1;</script>`,
+  `</script><svg onload="window.${MARKER} = 1">`
 ];
 
-function extractCsrfFromForm(html) {
-  const m = html.match(/name="_csrf"\s+value="([^"]+)"/);
-  return m ? m[1] : null;
-}
+// [template path, bootstrap element id]
+const BOOTSTRAP_TEMPLATES = [
+  ['views/admin/authority-suggestions.ejs', 'suggestions-bootstrap'],
+  ['views/manage/collections/knowledge/authority-suggestions.ejs', 'suggestions-bootstrap'],
+  ['views/admin/sentiment-review.ejs', 'sentiment-bootstrap']
+];
+
+const EJS_INTERNALS = new Set(['escapeFn', 'include', 'rethrow']);
 
 /**
- * Returns the raw text between the bootstrap element's opening tag and the
- * very next `</script>`. If a payload broke out, that boundary lands early and
- * the captured text will not parse as JSON.
+ * Locals that hand back a hostile string for ANY name the template asks for.
+ *
+ * The point is that adding a key to a bootstrap payload cannot silently escape
+ * coverage. Passing a fixed locals object instead would either throw
+ * ReferenceError on the new key, or — with this repo's
+ * `typeof x !== 'undefined' ? x : null` idiom — render it as null and stop
+ * testing it.
+ *
+ * `has` deliberately declines `__`-prefixed names, EJS internals, and anything
+ * resolvable as a global: EJS compiles to `with (locals) { ... }`, so claiming
+ * those would shadow `__append` and `JSON` and break the render.
  */
-function extractBootstrapRaw(html) {
-  const open = '<script type="application/json" id="suggestions-bootstrap">';
-  const start = html.indexOf(open);
-  if (start === -1) return null;
-  const from = start + open.length;
-  const end = html.indexOf('</script>', from);
-  if (end === -1) return null;
-  return html.slice(from, end);
+function hostileLocals(sentinel) {
+  return new Proxy({}, {
+    has(_target, prop) {
+      if (typeof prop !== 'string') return false;
+      if (prop.startsWith('__') || EJS_INTERNALS.has(prop)) return false;
+      return !(prop in globalThis);
+    },
+    get() { return sentinel; }
+  });
 }
 
 /**
- * Pulls the bootstrap block's EJS source out of a template file so it can be
+ * Pulls a bootstrap block's EJS source out of a template file so it can be
  * rendered in isolation, without standing up every partial the page includes.
- * Reading the real file is the point: drop the escape from the template and
- * this fragment changes and the test fails.
+ * Reading the real file is the point: drop the escape and this fragment
+ * changes and the test fails.
+ *
+ * Matching is tolerant of attribute order and quote style — both idioms are in
+ * use across the repo (`type=... id=...` and `id=... type=...`), and neither
+ * has any bearing on whether the payload is escaped.
  */
-function readBootstrapFragment(relPath) {
+function readBootstrapFragment(relPath, elementId) {
   const src = fs.readFileSync(path.join(__dirname, '..', '..', relPath), 'utf8');
-  const m = src.match(
-    /<script type="application\/json" id="suggestions-bootstrap">([\s\S]*?)<\/script>/
+  const block = new RegExp(
+    `<script\\b[^>]*\\bid\\s*=\\s*['"]${elementId}['"][^>]*>([\\s\\S]*?)</script\\s*>`,
+    'i'
   );
+  const m = src.match(block);
   return m ? m[1] : null;
 }
 
-describe('authority suggestions bootstrap: template escape', () => {
-  // Drives the templates directly with a value the allowlisted route can never
-  // produce, which is the only way to exercise the escape.
-  it.each(BOOTSTRAP_TEMPLATES)('%s escapes `<` in the payload', (relPath) => {
-    const fragment = readBootstrapFragment(relPath);
+/**
+ * Returns the text of the named bootstrap element, or null. Parses the DOM
+ * rather than slicing on `</script>`: a substring walk stops at whichever
+ * `</script>` comes first, which is exactly the boundary an injected payload
+ * moves.
+ */
+function bootstrapText($, elementId) {
+  const el = $(`script#${elementId}`);
+  if (el.length !== 1) return null;
+  return el.html();
+}
+
+/**
+ * Every place in the document where `marker` could actually execute: a script
+ * element the browser will run (no type, or a JS type), or any inline event
+ * handler attribute. Returns human-readable locations so a failure names the
+ * vector rather than just asserting false.
+ */
+function executionSites($, marker) {
+  const sites = [];
+
+  $('script').each((_i, el) => {
+    const type = String($(el).attr('type') || '').toLowerCase().trim();
+    const executable = type === ''
+      || /^(text|application)\/(java|ecma)script$/.test(type)
+      || type === 'module';
+    const body = $(el).html() || '';
+    if (executable && body.includes(marker)) sites.push(`<script type="${type || '(none)'}">`);
+  });
+
+  $('*').each((_i, el) => {
+    const attribs = (el && el.attribs) || {};
+    for (const [name, value] of Object.entries(attribs)) {
+      if (/^on/i.test(name) && String(value).includes(marker)) {
+        sites.push(`<${el.name} ${name}=...>`);
+      }
+    }
+  });
+
+  return sites;
+}
+
+describe('bootstrap payloads: template escape', () => {
+  it.each(BOOTSTRAP_TEMPLATES)('%s escapes `<` in every payload value', (relPath, elementId) => {
+    const fragment = readBootstrapFragment(relPath, elementId);
     expect(fragment).not.toBeNull();
 
-    const rendered = ejs.render(fragment, {
-      status: XSS_PAYLOAD,
-      matchMethodFilter: [XSS_PAYLOAD],
-      pageSize: 25
-    });
+    const payload = XSS_PAYLOADS[0];
+    const rendered = ejs.render(fragment, hostileLocals(payload));
 
-    // Nothing that can close the enclosing <script> element may survive.
+    // Nothing that could close the enclosing <script> element may survive.
     expect(rendered).not.toContain('<');
 
-    // The escape must be lossless: the client JSON.parses this back.
+    // The escape must be lossless — the client JSON.parses this back — and
+    // must have been applied to every string the template interpolated, not
+    // just the one we happened to name.
     const parsed = JSON.parse(rendered);
-    expect(parsed.status).toBe(XSS_PAYLOAD);
-    expect(parsed.matchMethodFilter).toEqual([XSS_PAYLOAD]);
+    const strings = Object.values(parsed).filter((v) => typeof v === 'string');
+    expect(strings.length).toBeGreaterThan(0);
+    for (const value of strings) expect(value).toBe(payload);
   });
 });
 
-describe('authority suggestions bootstrap: route allowlist', () => {
+describe('authority suggestions: route allowlist', () => {
   let app;
   let db;
   let agent;
@@ -117,7 +186,7 @@ describe('authority suggestions bootstrap: route allowlist', () => {
         password: 'testpassword99!',
         confirm: 'testpassword99!',
         bootstrap_token: process.env.BOOTSTRAP_ADMIN_TOKEN,
-        _csrf: extractCsrfFromForm(setupPage.text)
+        _csrf: cheerio.load(setupPage.text)('input[name="_csrf"]').first().attr('value')
       });
 
     agent = request.agent(app);
@@ -128,7 +197,7 @@ describe('authority suggestions bootstrap: route allowlist', () => {
       .send({
         username: 'testadmin',
         password: 'testpassword99!',
-        _csrf: extractCsrfFromForm(page.text)
+        _csrf: cheerio.load(page.text)('input[name="_csrf"]').first().attr('value')
       });
     expect(res.status).toBe(302);
 
@@ -148,59 +217,82 @@ describe('authority suggestions bootstrap: route allowlist', () => {
     });
   }, 30_000);
 
-  it('does not let a </script> payload break out of the bootstrap block', async () => {
+  it.each(XSS_PAYLOADS)('leaves no executable payload in the page for %s', async (payload) => {
     const res = await agent
       .get('/admin/knowledge/authorities/suggestions')
-      .query({ status: XSS_PAYLOAD });
+      .query({ status: payload });
 
     expect(res.status).toBe(200);
 
-    const raw = extractBootstrapRaw(res.text);
+    const $ = cheerio.load(res.text);
+
+    // The bootstrap element must still be intact and still be one element —
+    // a breakout splits it, so `length !== 1` is itself the symptom.
+    const raw = bootstrapText($, 'suggestions-bootstrap');
     expect(raw).not.toBeNull();
-    expect(raw.trim()).not.toHaveLength(0);
-    expect(raw).not.toContain('<');
     expect(() => JSON.parse(raw)).not.toThrow();
 
-    // Assert on markup, not on the substring: a correctly escaped page still
-    // contains the text `window.__pwned`, rendered inert as <script>.
-    // What must never appear is the payload as live markup.
-    expect(res.text).not.toContain('<script>window.__pwned');
+    // The real assertion. Substring checks on the raw HTML cannot express
+    // this: a correctly escaped page still contains the text `__pwned`,
+    // inert, and an executable payload need not match any fixed byte string.
+    expect(executionSites($, MARKER)).toEqual([]);
   });
 
   it('falls back to pending for an unrecognised status', async () => {
     const res = await agent
       .get('/admin/knowledge/authorities/suggestions')
-      .query({ status: XSS_PAYLOAD });
+      .query({ status: XSS_PAYLOADS[0] });
 
-    const parsed = JSON.parse(extractBootstrapRaw(res.text));
-    expect(parsed.status).toBe('pending');
-  });
-
-  it('still honours every status the filter tabs offer', async () => {
-    for (const status of ['pending', 'approved', 'rejected', 'all']) {
-      const res = await agent
-        .get('/admin/knowledge/authorities/suggestions')
-        .query({ status });
-
-      expect(res.status).toBe(200);
-      const parsed = JSON.parse(extractBootstrapRaw(res.text));
-      expect(parsed.status).toBe(status);
-    }
+    const raw = bootstrapText(cheerio.load(res.text), 'suggestions-bootstrap');
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw).status).toBe('pending');
   });
 
   it('applies the same allowlist to the JSON endpoint', async () => {
     const [rejected, unknown, pending] = await Promise.all([
       agent.get('/admin/knowledge/authorities/suggestions.json').query({ status: 'rejected' }),
-      agent.get('/admin/knowledge/authorities/suggestions.json').query({ status: XSS_PAYLOAD }),
+      agent.get('/admin/knowledge/authorities/suggestions.json').query({ status: XSS_PAYLOADS[0] }),
       agent.get('/admin/knowledge/authorities/suggestions.json').query({ status: 'pending' })
     ]);
 
-    // The seeded row is pending, so these three are mutually distinguishing:
-    // without the allowlist the unknown status reaches `WHERE als.status = ?`
-    // and comes back empty like the rejected queue, instead of like pending.
+    // The seeded row is pending. Without the allowlist the unknown status
+    // reaches `WHERE als.status = ?` and comes back empty like `rejected`
+    // rather than matching `pending`; `rejected` is the control.
     expect(rejected.body.suggestions).toHaveLength(0);
     expect(pending.body.suggestions).toHaveLength(1);
     expect(unknown.body.suggestions).toHaveLength(1);
     expect(unknown.body.suggestions[0].entity_id).toBe(pending.body.suggestions[0].entity_id);
+  });
+});
+
+// Functional, not security: this passes with or without either defence. It
+// guards the opposite failure — an allowlist tightened so far it drops a
+// status the filter tabs still link to.
+describe('authority suggestions: allowlist is not over-tight', () => {
+  let agent;
+
+  beforeAll(async () => {
+    const { app } = require('../../server');
+    agent = request.agent(app);
+    const page = await agent.get('/login');
+    await agent
+      .post('/login')
+      .type('form')
+      .send({
+        username: 'testadmin',
+        password: 'testpassword99!',
+        _csrf: cheerio.load(page.text)('input[name="_csrf"]').first().attr('value')
+      });
+  }, 30_000);
+
+  it.each(['pending', 'approved', 'rejected', 'all'])('round-trips status=%s', async (status) => {
+    const res = await agent
+      .get('/admin/knowledge/authorities/suggestions')
+      .query({ status });
+
+    expect(res.status).toBe(200);
+    const raw = bootstrapText(cheerio.load(res.text), 'suggestions-bootstrap');
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw).status).toBe(status);
   });
 });
