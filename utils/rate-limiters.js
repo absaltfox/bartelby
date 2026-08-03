@@ -11,8 +11,8 @@
  * development is not throttled.
  */
 
-const rateLimit = require('express-rate-limit');
 const { userOrIpRateLimitKey } = require('./rate-limit');
+const { createLimiter } = require('./rate-limit-store');
 
 /**
  * Dedicated limiter for AI transcription job queueing.
@@ -22,7 +22,8 @@ const { userOrIpRateLimitKey } = require('./rate-limit');
  * generous for legitimate use (one job per document) but tight enough to cap
  * blast radius to a manageable number of LLM calls.
  */
-const aiTranscriptionLimiter = rateLimit({
+const aiTranscriptionLimiter = createLimiter({
+  prefix: 'ai-transcription',
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
   standardHeaders: true,

@@ -116,7 +116,15 @@ fly launch --no-deploy
 When prompted:
 - Choose a name (e.g. `bartelby`) or accept the default
 - Pick a region close to your Turso database
-- Say **No** to Postgres and Redis — we use Turso and R2
+- Say **No** to Postgres — we use Turso for the database and R2 for uploads
+- Say **Yes** to Redis, or provision one separately (see below)
+
+Redis is not optional in production. `validateProductionConfiguration()` in
+`server.js` refuses to boot with `SESSION_STORE=memory` unless you explicitly
+set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1`, and the same connection backs
+the rate limiters. Without it, sessions and rate-limit counters are per-machine:
+users are logged out at random as requests land on different machines, and every
+limit is effectively multiplied by the machine count.
 
 ### Configure fly.toml
 
@@ -364,6 +372,15 @@ Use Full (strict) TLS, keep the Fly ownership TXT record in DNS, and configure:
 Bartelby's Express rate limits are a second line of defense. Cloudflare should
 absorb the obvious automated traffic before it can consume Fly CPU, Turso query
 round trips, or S3-compatible object reads.
+
+Note that the Cloudflare rules above deliberately cover browse traffic, not the
+auth endpoints. `/login`, `/login/mfa`, `/register`, `/setup` and
+`/reset-password` are throttled by Bartelby itself, and those counters are
+shared across machines only when `SESSION_STORE=redis` — setting `REDIS_URL`
+alone does nothing, because the limiters borrow the session store's connection.
+`SESSION_STORE` defaults to `memory`, which production rejects outright, so the
+practical rule is: set both, which is why the launch step above provisions Redis
+rather than declining it.
 
 Set the canonical host once Cloudflare and Fly certificates are working:
 

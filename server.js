@@ -7,7 +7,7 @@ const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const compression = require('compression');
-const rateLimit = require('express-rate-limit');
+const { createLimiter, setRateLimitRedisClient } = require('./utils/rate-limit-store');
 const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
@@ -309,7 +309,8 @@ app.set('trust proxy', proxyTrust);
 app.use(canonicalHostGuard);
 
 // ── Rate limiting (auth endpoints only — general limiter applied after Passport) ─
-const authLimiter = rateLimit({
+const authLimiter = createLimiter({
+  prefix: 'auth',
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
@@ -317,7 +318,8 @@ const authLimiter = rateLimit({
   message: 'Too many login attempts. Please try again later.'
 });
 
-const mfaLimiter = rateLimit({
+const mfaLimiter = createLimiter({
+  prefix: 'mfa-ip',
   windowMs: 10 * 60 * 1000,
   max: 10,
   standardHeaders: true,
@@ -458,6 +460,9 @@ async function createSessionMiddleware() {
     });
 
     await redisClient.connect();
+    // Same connection backs the rate limiters, so their counters are shared
+    // across web machines instead of being per-process (#88).
+    setRateLimitRedisClient(redisClient);
 
     return session(getSessionOptions(new RedisStore({
       client: redisClient,
@@ -495,12 +500,20 @@ app.use(passport.session());
 app.use(locals); // makes currentUser / isAdmin available in all templates
 
 // ── General rate limiting (after Passport so req.isAuthenticated works) ───
-const generalLimiter = rateLimit({
+const generalLimiter = createLimiter({
+  prefix: 'general',
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => process.env.NODE_ENV !== 'production' || (req.isAuthenticated && req.isAuthenticated())
+  // /healthz is exempt for the same reason canonicalHostGuard exempts it: it is
+  // infrastructure, not traffic. It matters more now that counters are shared —
+  // Fly checks each machine every 15s, so at the DEPLOY.md baseline health
+  // checks alone would eat a large share of one anonymous budget, and enough
+  // machines would 429 the check that keeps them in service.
+  skip: (req) => req.path === '/healthz'
+    || process.env.NODE_ENV !== 'production'
+    || (req.isAuthenticated && req.isAuthenticated())
 });
 app.use(generalLimiter);
 
@@ -519,7 +532,8 @@ app.use(generalLimiter);
 // bare 429 instead of an explanatory page. This is the backstop for traffic the
 // lock does not count — page loads, resends, requests that never reach a
 // verification — so it sits well above it.
-const mfaAccountLimiter = rateLimit({
+const mfaAccountLimiter = createLimiter({
+  prefix: 'mfa-account',
   windowMs: 10 * 60 * 1000,
   max: 30,
   standardHeaders: true,
@@ -532,7 +546,8 @@ const mfaAccountLimiter = rateLimit({
 });
 app.use('/login/mfa', mfaAccountLimiter);
 
-const authenticatedApiLimiter = rateLimit({
+const authenticatedApiLimiter = createLimiter({
+  prefix: 'authenticated-api',
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5000,
   standardHeaders: true,
@@ -565,7 +580,8 @@ function isScannerPath(req) {
     .test(req.path);
 }
 
-const anonymousCollectionLimiter = rateLimit({
+const anonymousCollectionLimiter = createLimiter({
+  prefix: 'anon-collections',
   windowMs: 60 * 1000,
   max: 60,
   standardHeaders: true,
@@ -575,7 +591,8 @@ const anonymousCollectionLimiter = rateLimit({
   message: 'Too many collection requests. Please try again shortly.'
 });
 
-const anonymousUploadLimiter = rateLimit({
+const anonymousUploadLimiter = createLimiter({
+  prefix: 'anon-uploads',
   windowMs: 5 * 60 * 1000,
   max: 120,
   standardHeaders: true,
@@ -585,7 +602,8 @@ const anonymousUploadLimiter = rateLimit({
   message: 'Too many upload requests. Please try again shortly.'
 });
 
-const scannerLimiter = rateLimit({
+const scannerLimiter = createLimiter({
+  prefix: 'scanner',
   windowMs: 15 * 60 * 1000,
   max: 30,
   standardHeaders: true,
