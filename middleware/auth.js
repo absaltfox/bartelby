@@ -80,9 +80,15 @@ async function locals(req, res, next) {
       if (Number.isNaN(changedAt)) {
         console.warn(`[auth] Could not parse password_changed_at for user ${req.user.id}.`);
       } else if (changedAt > req.session.authenticatedAt) {
+        // The column doubles as the session-invalidation clock — usersAsync.reject
+        // stamps it too — so the message has to follow the reason, not the column
+        // name. Telling a revoked user their password changed is simply false.
+        const message = isUsableAccount(req.user)
+          ? 'Your password was changed. Please sign in again.'
+          : 'Your account is no longer active.';
         return req.logout((err) => {
           if (err) return next(err);
-          req.session.authError = 'Your password was changed. Please sign in again.';
+          req.session.authError = message;
           return res.redirect('/login');
         });
       }
@@ -110,15 +116,42 @@ async function locals(req, res, next) {
   }
 }
 
+/**
+ * The single definition of "this account may act".
+ *
+ * These three middlewares used to disagree: requireAuthApi demanded
+ * status === 'active' while requireAuth and optionalAuth merely rejected
+ * 'pending' and 'rejected'. With only those three statuses in the schema the
+ * two spellings happened to coincide, but any fourth status ('suspended',
+ * 'locked') would have passed the HTML surface and failed the API surface.
+ * Per docs/development-principles.md § Guards must be symmetric, middleware
+ * families must agree on what an unusable account is — so they share this.
+ */
+function isUsableAccount(user) {
+  return !!user && user.status === 'active';
+}
+
+// Wait for passport's logout to complete before redirecting — it writes the
+// session, and redirecting synchronously alongside it races the store. The
+// message is status-derived: 'rejected' is the only status that means "request
+// declined", and the whole point of routing every guard through
+// isUsableAccount is that a fourth status can appear.
+function endUnusableSession(req, res, next) {
+  const message = req.user && req.user.status === 'rejected'
+    ? 'Your account request was not approved.'
+    : 'Your account is no longer active.';
+  return req.logout((err) => {
+    if (err) return next(err);
+    req.session.authError = message;
+    return res.redirect('/login');
+  });
+}
+
 /** Allow unauthenticated visitors through (for world-public content) */
 function optionalAuth(req, res, next) {
   if (!req.isAuthenticated()) return next();
   if (req.user.status === 'pending') return res.redirect('/pending');
-  if (req.user.status === 'rejected') {
-    req.logout((err) => {});
-    req.session.authError = 'Your account request was not approved.';
-    return res.redirect('/login');
-  }
+  if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
   next();
 }
 
@@ -131,17 +164,13 @@ function requireAuth(req, res, next) {
   if (req.user.status === 'pending') {
     return res.redirect('/pending');
   }
-  if (req.user.status === 'rejected') {
-    req.logout((err) => {});
-    req.session.authError = 'Your account request was not approved.';
-    return res.redirect('/login');
-  }
+  if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
   next();
 }
 
 /** Return 401 JSON for unauthenticated API requests */
 function requireAuthApi(req, res, next) {
-  if (!req.isAuthenticated() || req.user.status !== 'active') {
+  if (!req.isAuthenticated() || !isUsableAccount(req.user)) {
     return res.status(401).json({ error: 'Authentication required.' });
   }
   next();
@@ -149,11 +178,17 @@ function requireAuthApi(req, res, next) {
 
 /** Redirect non-admin requests to / with an error flash */
 function requireAdmin(req, res, next) {
-  if (req.isAuthenticated() && req.user.role === 'admin') return next();
   if (!req.isAuthenticated()) {
     req.session.returnTo = req.originalUrl;
     return res.redirect('/login');
   }
+  // Status as well as role. /admin and /manage are mounted behind only the role
+  // guards, so without this a revoked admin keeps those surfaces — today that
+  // is masked because routes/documents.js is mounted at '/' ahead of them and
+  // its optionalAuth status-gates everything after it, but that is mount order,
+  // not a guarantee.
+  if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
+  if (req.user.role === 'admin') return next();
   res.status(403).render('error', { message: 'Admin access required.', error: {} });
 }
 
@@ -164,6 +199,7 @@ function requireCollectionRole(minRole) {
       req.session.returnTo = req.originalUrl;
       return res.redirect('/login');
     }
+    if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
     if (req.user.role === 'admin') return next();
     const collectionId = parseInt(req.params.collectionId || req.params.id);
     if (isNaN(collectionId)) {
@@ -182,6 +218,7 @@ function requireDocumentRole(minRole) {
       req.session.returnTo = req.originalUrl;
       return res.redirect('/login');
     }
+    if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
     if (req.user.role === 'admin') return next();
     if (req.user.access_all && minRole === 'viewer') return next();
     const docId = parseInt(req.params.id || req.params.documentId);
@@ -200,6 +237,7 @@ const requireAdminOrManager = asyncHandler(async (req, res, next) => {
     req.session.returnTo = req.originalUrl;
     return res.redirect('/login');
   }
+  if (!isUsableAccount(req.user)) return endUnusableSession(req, res, next);
   if (req.user.role === 'admin') return next();
   const ids = await userCollectionAccessAsync.getManagerCollectionIds(req.user.id);
   if (ids.length > 0) {
@@ -215,10 +253,17 @@ const requireAdminOrManager = asyncHandler(async (req, res, next) => {
 // access-all model singly owned.
 function buildAccessOpts(req) {
   const u = (req && req.user) || null;
+  // An unusable account reads as anonymous rather than as itself. Routes behind
+  // requireAuth never reach this with a rejected user, but optionalAuth routes
+  // and any handler registered directly on `app` (the /uploads proxy) do — and
+  // a rejected user must not keep the grants their session was carrying.
+  if (!isUsableAccount(u)) {
+    return { userId: null, isAdmin: false, accessAll: false };
+  }
   return {
-    userId: u ? u.id : null,
-    isAdmin: u ? u.role === 'admin' : false,
-    accessAll: u ? !!u.access_all : false
+    userId: u.id,
+    isAdmin: u.role === 'admin',
+    accessAll: !!u.access_all
   };
 }
 
@@ -226,6 +271,7 @@ module.exports = {
   passport,
   locals,
   parsePasswordChangedTimestamp,
+  isUsableAccount,
   requireAuth,
   optionalAuth,
   requireAuthApi,

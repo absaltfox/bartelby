@@ -70,6 +70,11 @@ describe('auth session timestamp handling', () => {
       user: {
         id: 7,
         role: 'admin',
+        // A real row always carries a status (NOT NULL DEFAULT 'active'), and
+        // the eviction message is now derived from it — password_changed_at
+        // doubles as the session-invalidation clock, so a revoked account must
+        // not be told its password changed.
+        status: 'active',
         password_changed_at: '2026-04-12T01:00:00+00:00'
       },
       session: {
@@ -89,5 +94,32 @@ describe('auth session timestamp handling', () => {
     expect(req.session.authError).toBe('Your password was changed. Please sign in again.');
     expect(res.redirect).toHaveBeenCalledWith('/login');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('tells a revoked account its status changed, not its password', () => {
+    const { locals } = require('../../middleware/auth');
+
+    const req = {
+      isAuthenticated: () => true,
+      user: {
+        id: 8,
+        role: 'user',
+        status: 'rejected',
+        // usersAsync.reject stamps this same column to evict live sessions.
+        password_changed_at: '2026-04-12T01:00:00+00:00'
+      },
+      session: {
+        authenticatedAt: Date.parse('2026-04-12T00:00:00Z')
+      },
+      logout: jest.fn((cb) => cb())
+    };
+    const res = { locals: {}, redirect: jest.fn() };
+    const next = jest.fn();
+
+    locals(req, res, next);
+
+    expect(req.logout).toHaveBeenCalled();
+    expect(req.session.authError).toBe('Your account is no longer active.');
+    expect(res.redirect).toHaveBeenCalledWith('/login');
   });
 });

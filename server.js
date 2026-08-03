@@ -599,7 +599,7 @@ function getUploadContentType(filename) {
 }
 
 // ── Authenticated upload proxy ──────────────────────────────────────────────
-const { requireAuth, requireAdmin, requireAuthApi } = require('./middleware/auth');
+const { requireAuth, requireAdmin, requireAuthApi, buildAccessOpts } = require('./middleware/auth');
 logBootDebug('Authentication middleware loaded');
 
 const storage = require('./utils/storage');
@@ -611,9 +611,12 @@ app.get('/uploads/:filename', async (req, res) => {
     }
 
     const uploadUrl = `/uploads/${safeFilename}`;
-    const userId = req.user ? req.user.id : null;
-    const isAdmin = req.user ? req.user.role === 'admin' : false;
-    const accessAll = req.user ? !!req.user.access_all : false;
+    // Via the shared helper, not hand-derived: this route is registered
+    // directly on `app`, so it inherits none of the status checks the mounted
+    // routers apply. buildAccessOpts downgrades a pending or rejected session
+    // to anonymous, which is what stops a revoked account from continuing to
+    // stream images it was previously granted.
+    const { userId, isAdmin, accessAll } = buildAccessOpts(req);
     const matchingDocIds = await documentsAsync.getIdsByUploadUrl(uploadUrl);
 
     if (matchingDocIds.length === 0) {
