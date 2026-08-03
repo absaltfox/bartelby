@@ -63,8 +63,15 @@ const users = {
     );
   },
 
+  // Sync twin of usersAsync.reject — see the comment there.
   reject(id) {
-    run("UPDATE users SET status = 'rejected' WHERE id = ?", [id]);
+    run(
+      `UPDATE users
+          SET status = 'rejected',
+              password_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+        WHERE id = ?`,
+      [id]
+    );
   },
 
   setRole(id, role) {
@@ -97,7 +104,7 @@ const users = {
   },
 
   updatePasswordChangedAt(id) {
-    run('UPDATE users SET password_changed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+    run(`UPDATE users SET password_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?`, [id]);
   },
 
   setMfaMethod(id, method) {
@@ -407,7 +414,7 @@ const usersAsync = {
   },
 
   async updatePasswordChangedAt(id) {
-    await runAsync('UPDATE users SET password_changed_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+    await runAsync(`UPDATE users SET password_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = ?`, [id]);
   },
 
   async approve(id, { role, accessAll, canUseSystemApiKeys }) {
@@ -417,8 +424,29 @@ const usersAsync = {
     );
   },
 
+  // Stamping the session-invalidation column is what evicts the target's live
+  // sessions: middleware/auth.js logs out any session whose authenticatedAt
+  // predates it. Without it, rejecting a user changed a column and nothing
+  // else — their existing session kept working, and the session store has no
+  // per-user index to delete by.
+  //
+  // Millisecond precision matters. CURRENT_TIMESTAMP floors to the second,
+  // while req.session.authenticatedAt is Date.now() in milliseconds, so a
+  // reject landing in the same wall-clock second as the login writes a stamp
+  // *earlier* than the session it is meant to kill — and never fires for it,
+  // ever. strftime('%f') gives fractional seconds, which
+  // parsePasswordChangedTimestamp already accepts.
+  //
+  // Not retroactive: rows rejected before this shipped have NULL here, and are
+  // covered only by the status checks in middleware/auth.js and buildAccessOpts.
   async reject(id) {
-    await runAsync("UPDATE users SET status = 'rejected' WHERE id = ?", [id]);
+    await runAsync(
+      `UPDATE users
+          SET status = 'rejected',
+              password_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+        WHERE id = ?`,
+      [id]
+    );
   },
 
   async setRole(id, role) {

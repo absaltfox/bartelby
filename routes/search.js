@@ -7,6 +7,18 @@ const { asyncHandler } = require('../utils/async-handler');
 
 router.use(requireAuth);
 
+// Deliberately NOT buildAccessOpts, despite looking like a duplicate of it.
+//
+// buildAccessOpts returns { userId: null } for a non-active account, which is
+// the safe answer everywhere it is used — but transcriptsAsync.search
+// (database/models/documents.js) builds its access clause under
+// `if (!isAdmin && !accessAll && userId)`, so a null userId drops the filter
+// entirely and returns every transcript in the instance. Swapping this for the
+// shared helper without fixing that predicate first would turn a non-active
+// session into unrestricted transcript search. See #84.
+//
+// Safe as written because router.use(requireAuth) above guarantees an active
+// user, so req.user.id is always truthy here.
 function getSearchOpts(req) {
   return {
     userId: req.user.id,

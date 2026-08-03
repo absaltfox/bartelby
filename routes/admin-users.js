@@ -46,7 +46,8 @@ function parseCollectionIds(raw) {
 async function blockLastActiveAdminRemoval(req, {
   targetUserId,
   nextRole = null,
-  deleting = false
+  deleting = false,
+  action = null
 }) {
   const target = await usersAsync.findById(targetUserId);
   if (!target || target.role !== 'admin' || target.status !== 'active') {
@@ -62,10 +63,9 @@ async function blockLastActiveAdminRemoval(req, {
     return false;
   }
 
+  const verb = action || (deleting ? 'delete' : 'demote');
   req.session.adminUsersFlash = {
-    error: deleting
-      ? 'Cannot delete the last active administrator.'
-      : 'Cannot demote the last active administrator.'
+    error: `Cannot ${verb} the last active administrator.`
   };
   return true;
 }
@@ -199,8 +199,23 @@ router.post('/:id/approve', asyncHandler(async (req, res) => {
 }));
 
 // Reject
+//
+// Carries the same two guards as every sibling mutation (/:id/role, /:id/access,
+// /:id/delete). Rejection now evicts the target's live sessions and
+// LocalStrategy refuses a rejected account at login, so a self-reject or a
+// last-admin reject is unrecoverable without direct database access — /setup is
+// gated on there being zero users. Before sessions were evicted this was merely
+// survivable; it no longer is.
 router.post('/:id/reject', asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id);
+  if (id === req.user.id) return res.redirect('/admin/users');
+  if (await blockLastActiveAdminRemoval(req, {
+    targetUserId: id,
+    deleting: true,
+    action: 'reject'
+  })) {
+    return res.redirect('/admin/users');
+  }
   await usersAsync.reject(id);
   audit.log('user.rejected', { ...audit.reqContext(req), targetUserId: id });
   res.redirect('/admin/users');
