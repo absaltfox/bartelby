@@ -26,7 +26,10 @@ const {
   readTempAsset,
   copyTempAssetToUpload,
   promoteQueuedTempAssets,
-  deleteTempAssets
+  deleteTempAssets,
+  rememberTempAssets,
+  rememberImportJob,
+  assertTempAssetsOwned
 } = require('../utils/temp-assets');
 const {
   documentsAsync, transcriptsAsync, settingsAsync, collectionsAsync,
@@ -97,6 +100,7 @@ router.post('/upload', withCsrf(uploadFileMiddleware), asyncHandler(async (req, 
         user_id: req.user?.id || null
       });
 
+      rememberImportJob(req, dbJobId);
       return res.json({
         success: true,
         type: 'pdf_queued',
@@ -110,6 +114,7 @@ router.post('/upload', withCsrf(uploadFileMiddleware), asyncHandler(async (req, 
     // can still find the file. On local/non-S3 storage this is a no-op.
     const [promotedFile] = await promoteQueuedTempAssets([req.file.filename]);
 
+    rememberTempAssets(req, [promotedFile]);
     res.json({
       success: true,
       type: 'image',
@@ -131,6 +136,8 @@ router.get('/import-job/:id', asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'You do not have access to that job.' });
   }
 
+  rememberImportJob(req, job.id);
+
   let pages = [];
   if (job.status === 'done' && job.pages) {
     try {
@@ -150,6 +157,7 @@ router.get('/import-job/:id', asyncHandler(async (req, res) => {
 // ── API: Serve temp page image ─────────────────────────────────────────────
 router.get('/temp-image/:filename', asyncHandler(async (req, res) => {
   const filename = storage.sanitizeTempName(req.params.filename);
+  await assertTempAssetsOwned(req, [filename]);
   const contentType = getTempImageContentType(filename);
 
   // Only use sendFile for files that actually exist locally; on S3-backed
@@ -176,6 +184,7 @@ router.post('/transcribe', express.json(), asyncHandler(async (req, res) => {
   if (!tempFile) return res.status(400).json({ error: 'No temp file specified' });
 
   const safeTempFile = storage.sanitizeTempName(tempFile);
+  await assertTempAssetsOwned(req, [safeTempFile]);
   if (!(await tempAssetExists(safeTempFile))) return res.status(400).json({ error: 'Temp file not found' });
 
   try {
@@ -236,6 +245,7 @@ router.post('/save-document', express.json(), asyncHandler(async (req, res) => {
   }
 
   try {
+    await assertTempAssetsOwned(req, rawFiles);
     const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
     const importJobPreviewMap = Number.isInteger(parseInt(importJobId, 10))
       ? await getImportJobPreviewMap(parseInt(importJobId, 10))
@@ -369,6 +379,13 @@ router.post('/submit-pages', express.json(), asyncHandler(async (req, res) => {
   }
 
   try {
+    // Every page named across every group, before any of it is handed to the
+    // worker — the worker reads the payload directly and performs no further
+    // authorization of its own.
+    await assertTempAssetsOwned(
+      req,
+      groups.flatMap((group) => (Array.isArray(group && group.tempFiles) ? group.tempFiles : []))
+    );
     const authorizedCollectionIds = await getAuthorizedCollectionIds(req, collectionIds);
     const { resolveProviderSelectionAsync } = require('../utils/provider-access');
     const defaultProvider = await settingsAsync.get('default_provider');
@@ -463,6 +480,7 @@ router.post('/grouping-preflight', express.json(), asyncHandler(async (req, res)
     if (sanitized.length === 0) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
     }
+    await assertTempAssetsOwned(req, sanitized);
 
     const { recommendGroupingCropRegion } = require('../utils/grouping-llm');
     const result = await recommendGroupingCropRegion(
@@ -515,10 +533,17 @@ router.post('/suggest-groups', express.json(), asyncHandler(async (req, res) => 
       : null;
     // Validate temp files exist but don't promote to S3 here — the worker does that
     // to avoid blocking the HTTP response for large page sets.
-    const sanitized = require('../utils/temp-assets').sanitizeTempFiles(tempFiles);
+    const sanitized = require('../utils/temp-assets')
+      .sanitizeTempFiles(tempFiles.slice(0, MAX_TEMP_FILE_INPUTS));
     if (sanitized.length === 0) {
       return res.status(400).json({ error: 'Temporary file not found. Please upload again.' });
     }
+    // The optional sourceImportJobId check above is not authorization for these
+    // files — omit that field and it never runs. Without this the worker crops
+    // every named page and ships it to the LLM under the *caller's* credentials
+    // (job.user_id), which reads another manager's documents straight into the
+    // caller's provider console.
+    await assertTempAssetsOwned(req, tempFiles.slice(0, MAX_TEMP_FILE_INPUTS));
 
     const dbJobId = await importJobsAsync.create({
       original_name: `Auto Grouping ${sanitized.length} pages`,
@@ -549,12 +574,18 @@ router.post('/cancel-import', express.json(), asyncHandler(async (req, res) => {
   const files = (tempFiles || (tempFile ? [tempFile] : [])).slice(0, MAX_TEMP_FILE_INPUTS);
 
   try {
+    await assertTempAssetsOwned(req, files);
     const previewMap = Number.isInteger(parsedImportJobId)
       ? await getImportJobPreviewMap(parsedImportJobId)
       : new Map();
     await deleteTempAssets(collectTempCleanupFiles(files, previewMap));
     res.json({ success: true });
   } catch (err) {
+    // Honour a thrown statusCode as the sibling handlers do, so an
+    // authorization refusal surfaces as 403 rather than being flattened to 500.
+    if (err && err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error('Failed to clean up temp files:', err);
     res.status(500).json({ error: 'Failed to clean up temporary files' });
   }

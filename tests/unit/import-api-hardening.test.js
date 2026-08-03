@@ -28,7 +28,13 @@ describe('import api hardening', () => {
       readTempAsset: jest.fn(async () => Buffer.from('temp-asset')),
       copyTempAssetToUpload: jest.fn(async () => ({ url: '/uploads/uploaded.png' })),
       promoteQueuedTempAssets: jest.fn(async (files) => (Array.isArray(files) ? files : [files]).map(String)),
-      deleteTempAssets: jest.fn(async () => {})
+      deleteTempAssets: jest.fn(async () => {}),
+      // Ownership plumbing (#85). These tests cover the input caps rather than
+      // authorization, so the assertion is a permissive stub; cross-user access
+      // is covered in tests/integration/temp-asset-ownership.test.js.
+      rememberTempAssets: jest.fn(),
+      rememberImportJob: jest.fn(),
+      assertTempAssetsOwned: jest.fn(async () => {})
     };
 
     groupingLlmMock = {

@@ -5,6 +5,7 @@
 //
 // Uses pdftoppm (poppler-utils) when available, falls back to pdfjs-dist + canvas.
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
@@ -18,6 +19,20 @@ const PREVIEW_MAX_WIDTH = 960;
 const PREVIEW_QUALITY = 72;
 const PAGE_PROCESSING_CONCURRENCY = 4;
 const RASTER_PROGRESS_INTERVAL_MS = 5000;
+
+// Page-asset filename prefix.
+//
+// Previously Date.now().toString(36) + Math.random().toString(36).slice(2, 6):
+// roughly 20 bits from a NON-cryptographic generator plus a millisecond
+// timestamp, with page numbers appended in sequence. V8's Math.random is
+// xorshift128+, whose internal state is recoverable from observed output — and
+// an attacker can observe output by running their own import in the same
+// process. That made rendered page filenames predictable, which is what turned
+// the missing authorization on the temp-asset endpoints into a reachable
+// attack rather than a theoretical one. See #85, #93.
+function makeAssetPrefix() {
+  return crypto.randomBytes(16).toString('hex');
+}
 
 // ── Progress reporting ──────────────────────────────────────────────────
 
@@ -492,11 +507,15 @@ async function renderRasterizedOutputs(outputFiles, dbJobId, prefix, { reportPro
 
 async function renderWithPdftoppm(pdfBuffer, dbJobId) {
   // Write PDF to a temp file for pdftoppm
-  const pdfTmpName = `pdftoppm_${Date.now()}.pdf`;
+  // Same reasoning as the page prefix: a bare millisecond timestamp is a
+  // guessable name for the whole source PDF, and two renders starting in the
+  // same millisecond would collide and unlink each other's file in the finally
+  // block below.
+  const pdfTmpName = `pdftoppm_${makeAssetPrefix()}.pdf`;
   storage.writeTempFile(pdfTmpName, pdfBuffer);
   const pdfPath = storage.getTempFilePath(pdfTmpName);
 
-  const prefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const prefix = makeAssetPrefix();
   const outDir = path.dirname(pdfPath);
   const outPrefix = path.join(outDir, prefix);
 
@@ -550,7 +569,7 @@ async function renderWithPdfjs(pdfBuffer, dbJobId) {
 
   await reportProgress(dbJobId, pdf.numPages, 0);
 
-  const prefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const prefix = makeAssetPrefix();
   const pages = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -684,6 +703,7 @@ module.exports = {
     renderWithPdfjs,
     runPdfimagesWithProgress,
     collectGeneratedPngs,
-    compareNumericFilename
+    compareNumericFilename,
+    makeAssetPrefix
   }
 };
