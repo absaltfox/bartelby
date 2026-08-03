@@ -847,6 +847,24 @@ MIGRATIONS.push(`
     ON documents(image_path);
 `);
 
+// Remediate accounts stranded by #94. Email MFA sends its OTP to users.email,
+// and POST /account/profile used to accept a blank address without checking
+// mfa_method, so a user who cleared their email while email MFA was on became
+// permanently unable to sign in: sendEmailOtp throws, the admin password-reset
+// flow refuses an account with no email, and no route lets an admin edit
+// another user's email or clear their mfa_method.
+//
+// The route and the model now refuse that write, but prevention does not help
+// anyone already stranded — they cannot log in to fix it themselves. Drop those
+// accounts back to single-factor so they can sign in and re-enable MFA
+// deliberately.
+MIGRATIONS.push(`
+  UPDATE users
+     SET mfa_method = 'none'
+   WHERE mfa_method = 'email'
+     AND (email IS NULL OR TRIM(email) = '');
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent

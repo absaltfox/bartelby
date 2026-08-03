@@ -79,8 +79,17 @@ const users = {
     run('UPDATE users SET can_use_system_api_keys = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
+  // Sync twin of usersAsync.updateEmail — see the comment there. Kept in step
+  // deliberately: docs/development-principles.md § Guards must be symmetric
+  // names sync/async model twins as a recurring drift defect.
   updateEmail(id, email) {
-    run('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+    const next = email || null;
+    if (next !== null) {
+      run('UPDATE users SET email = ? WHERE id = ?', [next, id]);
+      return true;
+    }
+    const result = run(`UPDATE users SET email = NULL WHERE id = ? AND mfa_method <> 'email'`, [id]);
+    return (result && Number(result.changes)) > 0;
   },
 
   updatePassword(id, passwordHash) {
@@ -92,7 +101,16 @@ const users = {
   },
 
   setMfaMethod(id, method) {
-    run('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
+    const next = method || 'none';
+    if (next !== 'email') {
+      run('UPDATE users SET mfa_method = ? WHERE id = ?', [next, id]);
+      return true;
+    }
+    const result = run(
+      `UPDATE users SET mfa_method = 'email' WHERE id = ? AND email IS NOT NULL AND TRIM(email) <> ''`,
+      [id]
+    );
+    return (result && Number(result.changes)) > 0;
   },
 
   setTotpSecret(id, secret) {
@@ -415,8 +433,24 @@ const usersAsync = {
     await runAsync('UPDATE users SET can_use_system_api_keys = ? WHERE id = ?', [enabled ? 1 : 0, id]);
   },
 
+  // Clearing the address is conditional on email MFA being off, in the same
+  // statement as the write. The route checks first for the user-facing message,
+  // but a check-then-write in the route cannot be atomic: two concurrent
+  // requests (enable email MFA in one tab, clear the address in another) can
+  // each pass their own guard against a stale snapshot and still land on
+  // mfa_method='email' with no address — the permanently-locked-out state of
+  // #94. Returns false when the condition rejected the write.
   async updateEmail(id, email) {
-    await runAsync('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+    const next = email || null;
+    if (next !== null) {
+      await runAsync('UPDATE users SET email = ? WHERE id = ?', [next, id]);
+      return true;
+    }
+    const result = await runAsync(
+      `UPDATE users SET email = NULL WHERE id = ? AND mfa_method <> 'email'`,
+      [id]
+    );
+    return (result && Number(result.changes)) > 0;
   },
 
   async updateProfile(id, { username, email }) {
@@ -424,12 +458,25 @@ const usersAsync = {
       await runAsync('UPDATE users SET username = ? WHERE id = ?', [username, id]);
     }
     if (email !== undefined) {
-      await runAsync('UPDATE users SET email = ? WHERE id = ?', [email || null, id]);
+      // Same invariant — do not let a second entry point bypass it.
+      return await this.updateEmail(id, email);
     }
+    return true;
   },
 
+  // Mirror of the condition in updateEmail: email MFA cannot be switched on for
+  // an account with no address to send the code to.
   async setMfaMethod(id, method) {
-    await runAsync('UPDATE users SET mfa_method = ? WHERE id = ?', [method || 'none', id]);
+    const next = method || 'none';
+    if (next !== 'email') {
+      await runAsync('UPDATE users SET mfa_method = ? WHERE id = ?', [next, id]);
+      return true;
+    }
+    const result = await runAsync(
+      `UPDATE users SET mfa_method = 'email' WHERE id = ? AND email IS NOT NULL AND TRIM(email) <> ''`,
+      [id]
+    );
+    return (result && Number(result.changes)) > 0;
   },
 
   async setTotpSecret(id, secret) {

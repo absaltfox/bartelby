@@ -62,14 +62,33 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
+const MFA_EMAIL_REQUIRED_ERROR = 'Turn off email MFA before removing your email address.';
+
 router.post('/profile', asyncHandler(async (req, res) => {
-  const email = (req.body.email || '').trim().toLowerCase() || null;
+  // Not every body shape gives a string: `?email[]=a&email[]=b` yields an array
+  // under express.urlencoded, and a JSON body can carry any type. Coerce before
+  // trimming so a malformed submission is a redirect, not a 500.
+  const raw = req.body.email;
+  const email = (typeof raw === 'string' ? raw : '').trim().toLowerCase() || null;
+
+  // Mirror of the guard on /mfa/email/enable below. Email MFA sends the OTP to
+  // users.email, so clearing the address while that method is active locks the
+  // account out permanently — see docs/development-principles.md § Guards must
+  // be symmetric. Checked here for the message; enforced atomically in
+  // usersAsync.updateEmail, which is what actually closes the race.
+  if (!email && req.user.mfa_method === 'email') {
+    return res.redirect('/account?error=' + encodeURIComponent(MFA_EMAIL_REQUIRED_ERROR));
+  }
+
   const existing = email ? await usersAsync.findByEmail(email) : null;
   if (existing && existing.id !== req.user.id) {
     return res.redirect('/account?error=' + encodeURIComponent('That email address is already in use.'));
   }
 
-  await usersAsync.updateEmail(req.user.id, email);
+  if (!(await usersAsync.updateEmail(req.user.id, email))) {
+    // The conditional write refused: email MFA was switched on concurrently.
+    return res.redirect('/account?error=' + encodeURIComponent(MFA_EMAIL_REQUIRED_ERROR));
+  }
   res.redirect('/account?saved=1');
 }));
 
@@ -146,7 +165,11 @@ router.post('/mfa/email/enable', asyncHandler(async (req, res) => {
     return res.redirect('/account?error=' + encodeURIComponent('SMTP is not configured yet, so email MFA is unavailable.'));
   }
 
-  await usersAsync.setMfaMethod(req.user.id, 'email');
+  // The conditional write is the authority; the check above is for the
+  // message. It refuses if the address was cleared concurrently.
+  if (!(await usersAsync.setMfaMethod(req.user.id, 'email'))) {
+    return res.redirect('/account?error=' + encodeURIComponent('Add an email address before enabling email MFA.'));
+  }
   res.redirect('/account?saved=1');
 }));
 
