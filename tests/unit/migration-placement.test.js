@@ -32,33 +32,43 @@ describe('migration placement', () => {
     await db.initializeSchema({ runStaleJobRecovery: false });
 
     const { MIGRATIONS: withPushes } = require('../../database/migrations');
-    const latestVersion = withPushes.length;
-    expect(latestVersion).toBeGreaterThan(FROZEN_LITERAL_LENGTH);
+    expect(withPushes.length).toBeGreaterThan(FROZEN_LITERAL_LENGTH);
 
     const driver = db.getDb();
     const fresh = await driver.get('PRAGMA user_version');
-    expect(Number(fresh.user_version)).toBe(latestVersion);
+    expect(Number(fresh.user_version)).toBe(withPushes.length);
 
-    // Rewind to the previous release's schema version and recreate the state
-    // the newest migration is meant to fix, reproducing a deployed database on
-    // the prior commit. This probe tracks whichever migration is currently
-    // last — today that is the #94 remediation, which drops accounts stranded
-    // with email MFA and no address back to single-factor.
-    await driver.run(
-      `INSERT INTO users (username, email, password_hash, role, status, mfa_method)
-       VALUES ('stranded-by-94', NULL, 'x', 'user', 'active', 'email')`
-    );
-    await driver.run(`PRAGMA user_version = ${latestVersion - 1}`);
+    // The probe is a sentinel migration this test appends itself, rather than
+    // the side effect of whatever migration happens to be last (#98). Pinning
+    // it to the real tail meant every new migration broke this test with an
+    // opaque failure, and the cheapest repair — drop the artifact assertion,
+    // keep the user_version one — silently guts it: user_version advances even
+    // when a migration's SQL fails, because the runner swallows "already
+    // exists" errors. Asserting a *fresh* artifact keeps that honest.
+    withPushes.push(`
+      CREATE TABLE IF NOT EXISTS migration_probe_sentinel (id INTEGER PRIMARY KEY);
+    `);
+    const latestVersion = withPushes.length;
 
-    await db.initializeSchema({ runStaleJobRecovery: false });
+    try {
+      // Reproduce a database deployed on the prior commit: the sentinel's
+      // artifact absent, user_version one behind.
+      await driver.run('DROP TABLE IF EXISTS migration_probe_sentinel');
+      await driver.run(`PRAGMA user_version = ${latestVersion - 1}`);
 
-    const upgraded = await driver.get('PRAGMA user_version');
-    expect(Number(upgraded.user_version)).toBe(latestVersion);
+      await db.initializeSchema({ runStaleJobRecovery: false });
 
-    const remediated = await driver.get(
-      `SELECT mfa_method FROM users WHERE username = 'stranded-by-94'`
-    );
-    expect(remediated).toBeTruthy();
-    expect(remediated.mfa_method).toBe('none');
+      const upgraded = await driver.get('PRAGMA user_version');
+      expect(Number(upgraded.user_version)).toBe(latestVersion);
+
+      const sentinel = await driver.get(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe_sentinel'`
+      );
+      expect(sentinel).toBeTruthy();
+    } finally {
+      withPushes.pop();
+      await driver.run('DROP TABLE IF EXISTS migration_probe_sentinel');
+      await driver.run(`PRAGMA user_version = ${withPushes.length}`);
+    }
   }, 60_000);
 });

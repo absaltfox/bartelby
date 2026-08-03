@@ -45,9 +45,13 @@ function constantTimeMatches(value, expected) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-function getMfaLockState(pending) {
-  const lockedUntil = pending?.lockedUntil ? Number(pending.lockedUntil) : 0;
-  return lockedUntil > Date.now() ? lockedUntil : 0;
+function formatLockMessage(remainingMs) {
+  const minutes = Math.max(1, Math.ceil(remainingMs / 60000));
+  if (minutes < 60) {
+    return `Too many verification attempts. Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  }
+  const hours = Math.ceil(minutes / 60);
+  return `Too many verification attempts. Try again in about ${hours} hour${hours === 1 ? '' : 's'}.`;
 }
 
 function consumeAuthError(req) {
@@ -121,7 +125,27 @@ router.post('/login',
           const tokenHash = crypto.createHash('sha256').update(req.signedCookies.mfa_remember).digest('hex');
           const remembered = await mfaRememberTokensAsync.verify(user.id, tokenHash);
           if (remembered) {
+            // A valid remember-token is itself a proven second factor from a
+            // device that already passed MFA, so it bypasses an active lock by
+            // design. Clear the lock: the holder has demonstrated possession,
+            // and leaving it armed would strand their other browsers.
+            await usersAsync.clearMfaFailures(user.id);
             return completeLogin(req, res, next, user, returnTo);
+          }
+        }
+
+        // Refuse to mint a code while the account is locked. Without this the
+        // lock is nearly useless: an attacker who has the password (which is
+        // what it takes to get here) re-POSTs this route and gets a fresh live
+        // OTP seconds after the old one was burned — and because the per-IP
+        // limiter is the only cap on this route, a distributed attacker can
+        // also pump unbounded verification email at the victim's mailbox.
+        if (user.mfa_method === 'email' || user.mfa_method === 'totp') {
+          const lockRemaining = await usersAsync.getMfaLockRemaining(user.id);
+          if (lockRemaining > 0) {
+            delete req.session.pendingLogin;
+            req.session.authError = formatLockMessage(lockRemaining);
+            return res.redirect('/login');
           }
         }
 
@@ -147,9 +171,15 @@ router.get('/login/mfa', asyncHandler(async (req, res) => {
   if (req.isAuthenticated()) return res.redirect('/');
   const pending = req.session.pendingLogin;
   if (!pending?.userId) return res.redirect('/login');
-  const lockedUntil = getMfaLockState(pending);
-  if (lockedUntil) {
-    req.session.authError = `Too many verification attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+
+  // A lock ends the sign-in attempt outright, here as on the POST paths — the
+  // pending login is discarded rather than left dangling. Safe to be strict now
+  // that POST /login refuses to start a new attempt while locked, so this
+  // cannot bounce the user into a fresh OTP email.
+  const lockRemaining = await usersAsync.getMfaLockRemaining(pending.userId);
+  if (lockRemaining > 0) {
+    delete req.session.pendingLogin;
+    req.session.authError = formatLockMessage(lockRemaining);
     return res.redirect('/login');
   }
 
@@ -191,10 +221,13 @@ router.post('/login/mfa', asyncHandler(async (req, res, next) => {
 
   const code = (req.body.code || '').trim();
   let valid = false;
-  const lockedUntil = getMfaLockState(pending);
 
-  if (lockedUntil) {
-    req.session.authError = `Too many verification attempts. Try again after ${new Date(lockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+  // Lock state lives on the user row, so dropping the session cookie and
+  // re-authenticating does not reset it.
+  const lockRemaining = await usersAsync.getMfaLockRemaining(user.id);
+  if (lockRemaining > 0) {
+    delete req.session.pendingLogin;
+    req.session.authError = formatLockMessage(lockRemaining);
     return res.redirect('/login');
   }
 
@@ -208,16 +241,17 @@ router.post('/login/mfa', asyncHandler(async (req, res, next) => {
   }
 
   if (!valid) {
-    pending.failedAttempts = Number(pending.failedAttempts || 0) + 1;
-    if (pending.failedAttempts >= 5) {
-      pending.lockedUntil = Date.now() + 10 * 60 * 1000;
-      req.session.authError = 'Too many verification attempts. Please sign in again in 10 minutes.';
+    const { lockedUntil } = await usersAsync.recordMfaFailure(user.id);
+    if (lockedUntil) {
       delete req.session.pendingLogin;
+      req.session.authError = formatLockMessage(lockedUntil - Date.now());
       return res.redirect('/login');
     }
     req.session.authError = 'That verification code was not valid.';
     return res.redirect('/login/mfa');
   }
+
+  await usersAsync.clearMfaFailures(user.id);
 
   // Set "remember this computer" cookie if requested (7-day lifetime)
   if (req.body.remember_device) {
@@ -250,6 +284,15 @@ router.post('/login/mfa/resend', asyncHandler(async (req, res) => {
   if (!user) {
     delete req.session.pendingLogin;
     req.session.authError = 'Your sign-in session expired. Please try again.';
+    return res.redirect('/login');
+  }
+
+  // Same reason as POST /login: a resend during a lock re-mints a live code
+  // and sends another email.
+  const lockRemaining = await usersAsync.getMfaLockRemaining(user.id);
+  if (lockRemaining > 0) {
+    delete req.session.pendingLogin;
+    req.session.authError = formatLockMessage(lockRemaining);
     return res.redirect('/login');
   }
 
@@ -621,6 +664,10 @@ router.post('/reset-password/:token', asyncHandler(async (req, res) => {
   const passwordHash = getBcrypt().hashSync(password, 12);
   await usersAsync.updatePassword(reset.user_id, passwordHash);
   await usersAsync.updatePasswordChangedAt(reset.user_id);
+  // Clear any MFA lock too. A user who fluffed their code, assumed the password
+  // was wrong and reset it would otherwise still be locked out afterwards, with
+  // nothing connecting the two.
+  await usersAsync.clearMfaFailures(reset.user_id);
   await revokeRememberedDevicesForUser(res, reset.user_id);
   await passwordResetTokensAsync.markUsed(reset.id);
   await passwordResetTokensAsync.revokeForUser(reset.user_id);
