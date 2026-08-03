@@ -865,6 +865,20 @@ MIGRATIONS.push(`
      AND (email IS NULL OR TRIM(email) = '');
 `);
 
+// v89 — server-side MFA failure counter. It lived on req.session.pendingLogin,
+// which is the attacker's own session and resettable by dropping a cookie.
+MIGRATIONS.push(`
+  ALTER TABLE users ADD COLUMN mfa_failed_attempts INTEGER NOT NULL DEFAULT 0;
+`);
+
+// v90 — server-side MFA lock expiry, epoch milliseconds so the comparison needs
+// no timestamp parsing. The previous lock never persisted at all: the handler
+// assigned lockedUntil onto the pending-login object and deleted that object on
+// the next line, leaving both of its readers dead code.
+MIGRATIONS.push(`
+  ALTER TABLE users ADD COLUMN mfa_locked_until INTEGER;
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1895,7 +1909,7 @@ function parseJsonValue(value, fallback) {
 
 
 // --- Model Loaders ---
-const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
+const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast, MFA_MAX_ATTEMPTS, MFA_LOCK_BASE_MS, MFA_LOCK_MAX_MS } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs, iiifSourcesAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
@@ -2020,6 +2034,9 @@ module.exports = {
   documentEventsAsync,
   appLogsAsync,
   roleAtLeast,
+  MFA_MAX_ATTEMPTS,
+  MFA_LOCK_BASE_MS,
+  MFA_LOCK_MAX_MS,
   collectionAnalyticsAsync,
   documentEmbeddingsAsync,
   collectionTopicsAsync,

@@ -15,7 +15,7 @@ const { passport, locals } = require('./middleware/auth');
 const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
 const { resolveApplicationSettings } = require('./utils/application-settings');
 const { parseProxyTrust } = require('./utils/proxy-trust');
-const { ipRateLimitKey, userOrIpRateLimitKey } = require('./utils/rate-limit');
+const { ipRateLimitKey, userOrIpRateLimitKey, pendingLoginOrIpRateLimitKey } = require('./utils/rate-limit');
 const logger = require('./utils/logger');
 
 loadEnv();
@@ -503,6 +503,34 @@ const generalLimiter = rateLimit({
   skip: (req) => process.env.NODE_ENV !== 'production' || (req.isAuthenticated && req.isAuthenticated())
 });
 app.use(generalLimiter);
+
+// Per-account cap on MFA verification, alongside the per-IP `mfaLimiter`
+// mounted further up. Per-IP alone means a distributed attacker gets its full
+// budget per source address against one account; this bounds the account
+// regardless of where the attempts come from.
+//
+// It has to live here rather than beside its sibling: keying by account reads
+// req.session.pendingLogin, and the session middleware is not installed until
+// after that earlier block. Safe to key by account because a pendingLogin is
+// only minted once the password check has passed.
+// Deliberately looser than the database lock (5 failures / 10 min), not
+// tighter. The lock is the user-facing control and should be what a legitimate
+// user meets; a limiter set at or below it would fire first and hand them a
+// bare 429 instead of an explanatory page. This is the backstop for traffic the
+// lock does not count — page loads, resends, requests that never reach a
+// verification — so it sits well above it.
+const mfaAccountLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => pendingLoginOrIpRateLimitKey(req, {
+    userPrefix: 'mfa-account',
+    ipPrefix: 'mfa-account-ip'
+  }),
+  message: 'Too many verification attempts. Please try again later.'
+});
+app.use('/login/mfa', mfaAccountLimiter);
 
 const authenticatedApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

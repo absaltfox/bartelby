@@ -24,8 +24,32 @@ function userOrIpRateLimitKey(req, options = {}) {
   });
 }
 
+/**
+ * Key for the MFA verification step, where the caller is not yet logged in so
+ * `req.user` is unset — the account under attack is named by the pending-login
+ * record instead. Falls back to IP when there is no pending login.
+ *
+ * Keying by account is safe here specifically because a pendingLogin is only
+ * minted after the password check succeeds (routes/auth.js), so an attacker
+ * cannot use this to lock an account whose password they do not hold. The same
+ * would NOT be true of a per-username limiter on /login itself.
+ */
+function pendingLoginOrIpRateLimitKey(req, options = {}) {
+  const pendingUserId = req.session && req.session.pendingLogin
+    ? req.session.pendingLogin.userId
+    : null;
+  if (pendingUserId != null) {
+    return `${options.userPrefix || 'mfa-user'}:${pendingUserId}`;
+  }
+  return ipRateLimitKey(req, {
+    prefix: options.ipPrefix || 'mfa-ip',
+    ipv6Subnet: options.ipv6Subnet
+  });
+}
+
 module.exports = {
   DEFAULT_IPV6_SUBNET,
   ipRateLimitKey,
-  userOrIpRateLimitKey
+  userOrIpRateLimitKey,
+  pendingLoginOrIpRateLimitKey
 };

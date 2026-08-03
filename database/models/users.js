@@ -4,6 +4,13 @@ const crypto = require('crypto');
 const { encryptSecret, decryptSecret } = require('../../utils/secrets');
 const { hashOtpCode } = require('../../utils/mfa');
 
+// MFA throttling policy. Defined here, next to the code that enforces it, and
+// exported so routes and tests cannot drift from it — previously the route
+// carried its own copies and changing one left the other silently stale.
+const MFA_MAX_ATTEMPTS = 5;
+const MFA_LOCK_BASE_MS = 10 * 60 * 1000;
+const MFA_LOCK_MAX_MS = 24 * 60 * 60 * 1000;
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
 const users = {
   count() {
@@ -507,6 +514,69 @@ const usersAsync = {
     return (result && Number(result.changes)) > 0;
   },
 
+  // ── MFA failure throttling ────────────────────────────────────────────────
+  //
+  // Server-side, keyed by user id. The counter previously lived on
+  // req.session.pendingLogin — state the attacker controls, resettable by
+  // dropping a cookie — and the lock it set never survived the same request,
+  // because the handler wrote lockedUntil onto the pending object and then
+  // deleted that object. Both readers of it were dead code.
+  //
+  // Reaching this path requires a correct password (a pendingLogin is only
+  // minted after bcrypt succeeds), so locking by account cannot be used to
+  // deny service to someone whose password the attacker does not have.
+
+  /** Milliseconds remaining on an active lock, or 0. */
+  async getMfaLockRemaining(id) {
+    const row = await getAsync('SELECT mfa_locked_until FROM users WHERE id = ?', [id]);
+    const until = row && row.mfa_locked_until != null ? Number(row.mfa_locked_until) : 0;
+    if (!Number.isFinite(until) || until <= Date.now()) return 0;
+    return until - Date.now();
+  },
+
+  /**
+   * Records one failed verification. Returns { attempts, lockedUntil } where
+   * lockedUntil is epoch ms once a threshold trips, else null.
+   *
+   * The counter is NOT reset when a lock trips — it accumulates until a
+   * successful verification clears it, and each successive trip doubles the
+   * lock. Resetting on trip would hand an attacker a fresh five guesses every
+   * ten minutes indefinitely: 720/day against a six-digit email OTP is roughly
+   * a 23% chance of compromise per year for someone who already holds the
+   * password. Doubling collapses that by orders of magnitude, and a non-zero
+   * counter is also the only durable evidence that an account is under attack.
+   */
+  async recordMfaFailure(id, {
+    maxAttempts = MFA_MAX_ATTEMPTS,
+    lockMs = MFA_LOCK_BASE_MS,
+    maxLockMs = MFA_LOCK_MAX_MS
+  } = {}) {
+    await runAsync(
+      'UPDATE users SET mfa_failed_attempts = COALESCE(mfa_failed_attempts, 0) + 1 WHERE id = ?',
+      [id]
+    );
+    const row = await getAsync('SELECT mfa_failed_attempts FROM users WHERE id = ?', [id]);
+    const attempts = row ? Number(row.mfa_failed_attempts || 0) : 0;
+
+    // Trip on every maxAttempts-th failure, not just the first.
+    if (attempts <= 0 || attempts % maxAttempts !== 0) {
+      return { attempts, lockedUntil: null };
+    }
+
+    const trip = attempts / maxAttempts;
+    const duration = Math.min(lockMs * Math.pow(2, trip - 1), maxLockMs);
+    const lockedUntil = Date.now() + duration;
+    await runAsync('UPDATE users SET mfa_locked_until = ? WHERE id = ?', [lockedUntil, id]);
+    return { attempts, lockedUntil };
+  },
+
+  async clearMfaFailures(id) {
+    await runAsync(
+      'UPDATE users SET mfa_failed_attempts = 0, mfa_locked_until = NULL WHERE id = ?',
+      [id]
+    );
+  },
+
   async setTotpSecret(id, secret) {
     const storedSecret = secret ? encryptSecret(secret) : null;
     await runAsync('UPDATE users SET mfa_totp_secret = ? WHERE id = ?', [storedSecret, id]);
@@ -825,6 +895,9 @@ function parseInviteCollectionIds(value) {
     mfaRememberTokensAsync,
     maskSecret,
     ROLE_HIERARCHY,
-    roleAtLeast
+    roleAtLeast,
+    MFA_MAX_ATTEMPTS,
+    MFA_LOCK_BASE_MS,
+    MFA_LOCK_MAX_MS
   };
 };
