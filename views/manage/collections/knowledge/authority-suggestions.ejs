@@ -41,7 +41,7 @@
   collection managers.
 %>
 <script type="application/json" id="suggestions-bootstrap">
-  <%- JSON.stringify({ status: status, matchMethodFilter: matchMethodFilter, pageSize: pageSize }) %>
+  <%- JSON.stringify({ status: status, matchMethodFilter: matchMethodFilter, pageSize: pageSize }).replace(/</g, '\\u003c') %>
 </script>
 <script src="/js/admin-authority-suggestions.js"></script>
 

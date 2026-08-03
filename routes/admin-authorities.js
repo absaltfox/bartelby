@@ -26,6 +26,27 @@ const SUGGESTIONS_PAGE_SIZE = 25;
 
 const KNOWN_MATCH_METHODS = ['exact_canonical', 'embedding', 'fuzzy_canonical', 'member_exact'];
 
+// The only status values the suggestions queue understands, matching the
+// filter tabs in views/admin/authority-suggestions.ejs and the contract
+// documented in views/partials/knowledge/authority-suggestions-list.ejs.
+//
+// routes/manage-knowledge.js:218 hand-maintains the same four values for the
+// collection-scoped twin, and :151 does likewise for citation review. The
+// three copies are not shared code and already normalize differently (this one
+// String()s and trims first), so treat "they agree" as something to re-check
+// when editing, not as something enforced.
+const SUGGESTION_STATUSES = ['pending', 'approved', 'rejected', 'all'];
+
+// Allowlist rather than pass ?status= through. An unknown value used to reach
+// the view verbatim, where the bootstrap payload interpolated it into a
+// <script> block; see docs/ui-template-standards.md § JSON bootstrap payloads
+// must escape `<`. The templates now escape as well — this is the route-side
+// half of that pair, not a substitute for it.
+function parseSuggestionStatus(req) {
+  const raw = String(req.query.status || '').trim();
+  return SUGGESTION_STATUSES.includes(raw) ? raw : 'pending';
+}
+
 function parseMatchMethod(req) {
   // Legacy support: ?nameSignal=exact → matchMethod=exact_canonical
   if (req.query.nameSignal === 'exact' && !req.query.matchMethod) {
@@ -395,7 +416,7 @@ router.post('/backfill', requireAdmin, express.urlencoded({ extended: false }), 
 
 router.get('/suggestions', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
-  const status = String(req.query.status || 'pending').trim();
+  const status = parseSuggestionStatus(req);
   const matchMethodFilter = parseMatchMethod(req);
   const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
 
@@ -488,7 +509,7 @@ router.get('/suggestions.json', requireAdmin, asyncHandler(async (req, res) => {
   const stores = graphStores();
   if (!stores.authorityLinkSuggestions) return res.json({ suggestions: [], nextCursor: null });
 
-  const status = String(req.query.status || 'pending').trim();
+  const status = parseSuggestionStatus(req);
   const matchMethodFilter = parseMatchMethod(req);
   const orderExactFirst = status === 'pending' && (matchMethodFilter.length === 0 || matchMethodFilter.includes('exact_canonical'));
   const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 25, 100));
@@ -672,6 +693,13 @@ router.get('/generic-terms', requireAdmin, asyncHandler(async (req, res) => {
   if (!stores.authorityGenericTerms) {
     return res.status(404).render('error', { pageTitle: 'Not Found', message: 'Generic terms are unavailable.' });
   }
+  // Deliberately not allowlisted, unlike parseSuggestionStatus above:
+  // views/admin/authority-generic-terms.ejs has no <script> block and renders
+  // this only through escaped `<%= %>`, so it is not an injection sink. An
+  // unknown value reaches `WHERE status = ?` and yields an empty list, which
+  // is the pre-existing behaviour. Worth tightening (it round-trips through
+  // hidden form inputs and reaches an <h2> at views/admin/authority-generic-
+  // terms.ejs:94), but that is a separate change from the #83 security fix.
   const status = String(req.query.status || 'suggested').trim() || 'suggested';
   const terms = await stores.authorityGenericTerms.list(status, { limit: 500 });
   const settings = await getAuthorityGenericTermSettings(stores.settings);

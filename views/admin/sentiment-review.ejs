@@ -136,7 +136,7 @@
 </div>
 
 <script type="application/json" id="sentiment-bootstrap">
-  <%- JSON.stringify({ pageSize: pageSize }) %>
+  <%- JSON.stringify({ pageSize: pageSize }).replace(/</g, '\\u003c') %>
 </script>
 <script src="/js/admin-sentiment-review.js"></script>
 
