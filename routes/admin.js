@@ -350,6 +350,10 @@ router.get('/import', asyncHandler(async (req, res) => {
       let parsedPages = null;
       try { parsedPages = JSON.parse(job.pages); } catch (err) {}
       if (Array.isArray(parsedPages)) {
+        // This render discloses the job's page filenames to an already
+        // ownership-checked caller, so it is one of the three points that
+        // establish temp-asset ownership for the session. See utils/temp-assets.
+        require('../utils/temp-assets').rememberImportJob(req, job.id);
         resumeJob = {
           id: job.id,
           originalName: job.original_name,
