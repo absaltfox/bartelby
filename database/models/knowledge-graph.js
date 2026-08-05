@@ -1,6 +1,7 @@
 'use strict';
 const { CITATION_APPROVAL_STATUSES, deriveCitationApproval } = require('../../utils/knowledge-approval');
 const { normalizeGenericTerm } = require('../../utils/authority-suggestion-pipeline');
+const { classifyNameDelta } = require('../../utils/name-delta');
 const REVIEW_KIND_ENTITY_TYPES = new Set([
   'person',
   'place',
@@ -1014,11 +1015,21 @@ const authorityLinkSuggestions = {
       }
       return null;
     }
+
+    // Name-delta lane label for the Authority-Entity Review queue. Pure name
+    // comparison (entity `entity` is already loaded above); assist-only — this
+    // only labels, never filters or auto-decides. Per the near-miss design spec.
+    const authRow = await getAsync('SELECT canonical_name FROM authorities WHERE id = ?', [suggested_authority_id]);
+    const variantClass = (entity && authRow && entity.canonical_name && authRow.canonical_name)
+      ? classifyNameDelta(entity.canonical_name, authRow.canonical_name).laneClass
+      : null;
+
     if (existing) {
       await runAsync(`
         UPDATE authority_link_suggestions
         SET confidence = COALESCE(?, confidence),
             match_method = COALESCE(?, match_method),
+            variant_class = COALESCE(?, variant_class),
             status = CASE WHEN status = 'approved' THEN status ELSE ? END,
             reviewed_at = CASE
               WHEN ? = 'approved' AND reviewed_at IS NULL THEN CURRENT_TIMESTAMP
@@ -1028,6 +1039,7 @@ const authorityLinkSuggestions = {
       `, [
         confidence != null ? confidence : null,
         match_method || null,
+        variantClass,
         normalizedStatus,
         normalizedStatus,
         existing.id
@@ -1037,14 +1049,15 @@ const authorityLinkSuggestions = {
 
     const result = await runAsync(`
       INSERT INTO authority_link_suggestions (
-        entity_id, suggested_authority_id, confidence, match_method, status
-      ) VALUES (?, ?, ?, ?, ?)
+        entity_id, suggested_authority_id, confidence, match_method, status, variant_class
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `, [
       entity_id,
       suggested_authority_id,
       confidence != null ? confidence : null,
       match_method || null,
-      normalizedStatus
+      normalizedStatus,
+      variantClass
     ]);
     if (normalizedStatus === 'approved') {
       await runAsync(`
