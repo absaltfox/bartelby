@@ -144,4 +144,44 @@ function classifyNameDelta(entityName, authorityName) {
   return { laneClass: 'variant', reason: compatReason };
 }
 
-module.exports = { splitName, soundex, ocrEditDistance, nicknameEqual, comparePosition, classifyNameDelta };
+// --- Char-level diff (LCS backtrace) for the review UI highlight ---
+// Returns ordered segments over the raw strings; adjacent delete+insert
+// collapse to 'replace'. insert = present in b only; delete = present in a only.
+function nameDiff(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  const m = s.length;
+  const n = t.length;
+  const lcs = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      lcs[i][j] = s[i] === t[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const raw = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (s[i] === t[j]) { raw.push({ op: 'equal', a: s[i], b: t[j] }); i++; j++; }
+    else if (lcs[i + 1][j] >= lcs[i][j + 1]) { raw.push({ op: 'delete', a: s[i] }); i++; }
+    else { raw.push({ op: 'insert', b: t[j] }); j++; }
+  }
+  while (i < m) { raw.push({ op: 'delete', a: s[i++] }); }
+  while (j < n) { raw.push({ op: 'insert', b: t[j++] }); }
+
+  // Merge adjacent delete+insert into replace, and coalesce same-op runs.
+  const merged = [];
+  for (const seg of raw) {
+    const last = merged[merged.length - 1];
+    if (last && last.op === 'delete' && seg.op === 'insert') {
+      merged[merged.length - 1] = { op: 'replace', a: last.a, b: seg.b };
+    } else if (last && last.op === seg.op) {
+      last.a = (last.a || '') + (seg.a || '') || undefined;
+      last.b = (last.b || '') + (seg.b || '') || undefined;
+    } else {
+      merged.push({ ...seg });
+    }
+  }
+  return merged;
+}
+
+module.exports = { splitName, soundex, ocrEditDistance, nicknameEqual, comparePosition, classifyNameDelta, nameDiff };
