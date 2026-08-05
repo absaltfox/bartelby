@@ -90,4 +90,58 @@ function nicknameEqual(a, b) {
   return Boolean(x && y && x === y);
 }
 
-module.exports = { splitName, soundex, ocrEditDistance, nicknameEqual };
+// --- Position-aligned given-token comparison ---
+// Returns { compatible, reason } for one aligned given position.
+function comparePosition(a, b) {
+  if (a === b) return { compatible: true, reason: 'initial' };
+  const aInit = a.length === 1;
+  const bInit = b.length === 1;
+  if (aInit || bInit) {
+    const full = aInit ? b : a;
+    const init = aInit ? a : b;
+    return full[0] === init
+      ? { compatible: true, reason: 'initial' }
+      : { compatible: false, reason: 'distinct_initial' };
+  }
+  if (soundex(a) === soundex(b)) return { compatible: true, reason: 'phonetic' };
+  if (nicknameEqual(a, b)) return { compatible: true, reason: 'nickname' };
+  if (ocrEditDistance(a, b) <= 1) return { compatible: true, reason: 'ocr' };
+  return { compatible: false, reason: 'distinct_given' };
+}
+
+// Classify an entity-name vs authority-name pair into a review lane.
+// laneClass: 'variant' (Confirm-fast) | 'distinct' (Scrutinize) |
+// 'ambiguous' (Scrutinize). Assist-only: this only labels; nothing is hidden.
+function classifyNameDelta(entityName, authorityName) {
+  const e = splitName(entityName);
+  const a = splitName(authorityName);
+  if (!e.surname || !a.surname) return { laneClass: 'ambiguous', reason: 'mixed' };
+
+  // Exact after normalization.
+  if (e.tokens.join(' ') === a.tokens.join(' ')) {
+    return { laneClass: 'variant', reason: 'normalized' };
+  }
+
+  // Surname must match (allowing OCR/phonetic closeness).
+  const surnameOk = e.surname === a.surname
+    || soundex(e.surname) === soundex(a.surname)
+    || ocrEditDistance(e.surname, a.surname) <= 1;
+  if (!surnameOk) return { laneClass: 'distinct', reason: 'surname' };
+
+  // Position-aligned given comparison.
+  const len = Math.max(e.given.length, a.given.length);
+  let missing = false;
+  let compatReason = 'initial';
+  for (let i = 0; i < len; i++) {
+    const ga = e.given[i];
+    const gb = a.given[i];
+    if (ga === undefined || gb === undefined) { missing = true; continue; }
+    const cmp = comparePosition(ga, gb);
+    if (!cmp.compatible) return { laneClass: 'distinct', reason: cmp.reason };
+    if (cmp.reason !== 'initial') compatReason = cmp.reason;
+  }
+  if (missing) return { laneClass: 'ambiguous', reason: 'underdetermined' };
+  return { laneClass: 'variant', reason: compatReason };
+}
+
+module.exports = { splitName, soundex, ocrEditDistance, nicknameEqual, comparePosition, classifyNameDelta };
