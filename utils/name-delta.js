@@ -1,5 +1,17 @@
 'use strict';
 
+const { normalizeForMatching } = require('./entity-resolution');
+
+// Split a name into ordered tokens via normalizeForMatching (lowercases,
+// maps punctuation to spaces so "S.D." -> ["s","d"], strips honorifics,
+// expands historical abbreviations like "Wm." -> "william"). The last token
+// is the surname; the rest are given tokens/initials.
+function splitName(raw) {
+  const tokens = normalizeForMatching(raw || '').split(' ').filter(Boolean);
+  if (tokens.length === 0) return { given: [], surname: '', tokens: [] };
+  return { given: tokens.slice(0, -1), surname: tokens[tokens.length - 1], tokens };
+}
+
 // --- Soundex (standard 4-char) ---
 const SOUNDEX_CODES = {
   B: '1', F: '1', P: '1', V: '1',
@@ -78,4 +90,4 @@ function nicknameEqual(a, b) {
   return Boolean(x && y && x === y);
 }
 
-module.exports = { soundex, ocrEditDistance, nicknameEqual };
+module.exports = { splitName, soundex, ocrEditDistance, nicknameEqual };
