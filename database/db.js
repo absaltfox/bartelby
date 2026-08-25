@@ -879,6 +879,17 @@ MIGRATIONS.push(`
   ALTER TABLE users ADD COLUMN mfa_locked_until INTEGER;
 `);
 
+// v91 — authority near-miss variant classification. Adds a nullable lane label
+// (variant | distinct | ambiguous) to each authority link suggestion so the
+// Authority-Entity Review queue can be filtered by name-delta lane. Per
+// docs/superpowers/specs/2026-08-04-authority-nearmiss-variant-classification-design.md
+// and docs/knowledge-graph-design.md. Additive/backfillable; NULL = unclassified.
+MIGRATIONS.push(`
+  ALTER TABLE authority_link_suggestions ADD COLUMN variant_class TEXT;
+  CREATE INDEX IF NOT EXISTS idx_authority_link_suggestions_variant_class
+    ON authority_link_suggestions (status, variant_class);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
