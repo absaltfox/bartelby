@@ -72,6 +72,7 @@ function formatBytes(bytes) {
         <div class="analytics-stat-value"><%= analytics.untranscribed_count.toLocaleString() %></div>
         <div class="analytics-stat-label">Untranscribed</div>
       </div>
+      <% if (currentUser) { %>
       <div class="analytics-stat-card">
         <div class="analytics-stat-value">
           <% if (analytics.total_cost_usd != null) { %>
@@ -80,6 +81,7 @@ function formatBytes(bytes) {
         </div>
         <div class="analytics-stat-label">Total Transcription Cost</div>
       </div>
+      <% } %>
       <div class="analytics-stat-card">
         <div class="analytics-stat-value">
           <% if (analytics.avg_confidence != null) { %>
