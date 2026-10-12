@@ -1975,9 +1975,7 @@ const citations = {
   },
 
   async getStatusCounts(opts = {}) {
-    const access = opts.userId || opts.isAdmin || opts.accessAll
-      ? buildAccessibleDocumentFilter(opts, 'c.document_id')
-      : { clause: '1=1', params: [] };
+    const access = buildAccessibleDocumentFilter(opts, 'c.document_id');
     const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
     const kindFilter = buildReviewKindFilter(opts.reviewKind, 'c', 'e');
     const rows = await allAsync(`
@@ -2000,9 +1998,7 @@ const citations = {
   },
 
   async list(status = 'all', limit = 50, offset = 0, opts = {}) {
-    const access = opts.userId || opts.isAdmin || opts.accessAll
-      ? buildAccessibleDocumentFilter(opts, 'c.document_id')
-      : { clause: '1=1', params: [] };
+    const access = buildAccessibleDocumentFilter(opts, 'c.document_id');
     const collection = buildCollectionDocumentFilter(opts.collectionId, 'c.document_id');
     const kindFilter = buildReviewKindFilter(opts.reviewKind, 'c', 'e');
     const params = [...access.params, ...collection.params, ...kindFilter.params];

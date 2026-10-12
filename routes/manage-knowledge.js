@@ -18,7 +18,7 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
 
-const { requireCollectionRole } = require('../middleware/auth');
+const { requireCollectionRole, buildAccessOpts } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/async-handler');
 const {
   collectionsAsync,
@@ -167,6 +167,7 @@ router.get('/review-extractions', asyncHandler(async (req, res) => {
   if (citationsAsync && typeof citationsAsync.list === 'function') {
     try {
       const rows = await citationsAsync.list(status, PAGE_SIZE, offset, {
+        ...buildAccessOpts(req),
         reviewKind: reviewKind === 'all' ? null : reviewKind,
         collectionId
       });

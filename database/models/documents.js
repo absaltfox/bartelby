@@ -1252,14 +1252,28 @@ const transcriptsAsync = {
       params.push(likeTerm, likeTerm, likeTerm);
     });
 
+    // Same three-branch shape as the sync twin above: a caller with no identity
+    // gets the anonymous (world-public) scope, never an unfiltered query.
     let accessClause = '';
-    if (!isAdmin && !accessAll && userId) {
-      accessClause = `AND d.id IN (
-        SELECT dc.document_id FROM document_collections dc
-        INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
-        WHERE uca.user_id = ?
-      )`;
-      params.push(userId);
+    if (!isAdmin && !accessAll) {
+      if (userId) {
+        accessClause = `AND d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN user_collection_access uca ON dc.collection_id = uca.collection_id
+          WHERE uca.user_id = ?
+          UNION
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_public = 1
+        )`;
+        params.push(userId);
+      } else {
+        accessClause = `AND d.id IN (
+          SELECT dc.document_id FROM document_collections dc
+          INNER JOIN collections col ON dc.collection_id = col.id
+          WHERE col.is_world_public = 1
+        )`;
+      }
     }
 
     params.push(limit);

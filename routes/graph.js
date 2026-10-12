@@ -45,7 +45,7 @@ function parseBoundedLimit(value, fallback, max) {
 
 async function canAccessEntity(graphAccess, entityId, req) {
   const collectionId = parseCollectionId(req.query.collectionId);
-  if (!graphAccess || typeof graphAccess.canAccessEntity !== 'function') return true;
+  if (!graphAccess || typeof graphAccess.canAccessEntity !== 'function') return false;
   const { userId, isAdmin, accessAll } = accessOpts(req);
   return await graphAccess.canAccessEntity(entityId, userId, isAdmin, accessAll, collectionId);
 }
@@ -53,10 +53,11 @@ async function canAccessEntity(graphAccess, entityId, req) {
 // Batched companion to canAccessEntity. Keeps the same collectionId scoping
 // the single-entity wrapper applies — the current graph client never sends
 // one, but the endpoint is public and a future caller may. Mirrors
-// canAccessEntity's permissive fallback when the store has no such helper.
+// canAccessEntity in denying when the store has no such helper: these routes
+// serve anonymous callers, so a missing helper must not read as allow-all.
 async function filterAccessibleEntityIds(graphAccess, entityIds, req) {
   if (!graphAccess || typeof graphAccess.filterAccessibleEntityIds !== 'function') {
-    return new Set(entityIds.map((id) => Number(id)));
+    return new Set();
   }
   const collectionId = parseCollectionId(req.query.collectionId);
   const { userId, isAdmin, accessAll } = accessOpts(req);
@@ -369,7 +370,7 @@ router.get('/search', asyncHandler(async (req, res) => {
 
 router.get('/documents/:id/related', asyncHandler(async (req, res) => {
   const stores = graphStores();
-  if (!stores.citations) return graphNotReady(res);
+  if (!stores.citations || !stores.graphAccess) return graphNotReady(res);
 
   const docId = parseInt(req.params.id, 10);
   if (!Number.isInteger(docId)) return res.status(404).json({ error: 'Document not found.' });
@@ -472,7 +473,7 @@ router.get('/documents/:id/related', asyncHandler(async (req, res) => {
 
 router.get('/entities/:id/documents', asyncHandler(async (req, res) => {
   const stores = graphStores();
-  if (!stores.citations || !stores.entities) return graphNotReady(res);
+  if (!stores.citations || !stores.entities || !stores.graphAccess) return graphNotReady(res);
 
   const entityId = parseInt(req.params.id, 10);
   if (!Number.isInteger(entityId) || !(await canAccessEntity(stores.graphAccess, entityId, req))) {

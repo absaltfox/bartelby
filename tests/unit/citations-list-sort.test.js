@@ -33,11 +33,15 @@ beforeAll(async () => {
   await db.runAsync(`INSERT OR IGNORE INTO transcripts (id, document_id, content) VALUES (1, 1, 'sample')`);
 }, 60_000);
 
+// Sorting is under test, not identity, so every query runs as an admin. A
+// caller with no identity gets the anonymous (world-public) scope (issue #84).
+const ADMIN = { isAdmin: true };
+
 describe('citations.list sort options (U1.1)', () => {
   it('rare-type-first sort orders rare frequency before common', async () => {
     const rareId = await seedCitation({ entityType: 'person', relType: 'spouse_of', daysAgo: 10, confidence: 0.8 });
     const commonId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.8 });
-    const rows = await db.citationsAsync.list('pending', 200, 0, { sort: 'rare-type-first' });
+    const rows = await db.citationsAsync.list('pending', 200, 0, { ...ADMIN, sort: 'rare-type-first' });
     const ids = rows.map(r => r.id);
     expect(ids).toContain(rareId);
     expect(ids).toContain(commonId);
@@ -47,7 +51,7 @@ describe('citations.list sort options (U1.1)', () => {
   it('newest sort orders created_at DESC (existing default)', async () => {
     const oldId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 100, confidence: 0.8 });
     const newId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.8 });
-    const rows = await db.citationsAsync.list('pending', 200, 0, { sort: 'newest' });
+    const rows = await db.citationsAsync.list('pending', 200, 0, { ...ADMIN, sort: 'newest' });
     const ids = rows.map(r => r.id);
     expect(ids).toContain(oldId);
     expect(ids).toContain(newId);
@@ -57,7 +61,7 @@ describe('citations.list sort options (U1.1)', () => {
   it('low-confidence-first sort orders by confidence ASC', async () => {
     const lowId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.2 });
     const highId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.95 });
-    const rows = await db.citationsAsync.list('pending', 200, 0, { sort: 'low-confidence-first' });
+    const rows = await db.citationsAsync.list('pending', 200, 0, { ...ADMIN, sort: 'low-confidence-first' });
     const ids = rows.map(r => r.id);
     expect(ids).toContain(lowId);
     expect(ids).toContain(highId);
@@ -84,11 +88,11 @@ describe('citations.list sort options (U1.1)', () => {
     }
 
     for (const sort of ['rare-type-first', 'newest', 'low-confidence-first']) {
-      const all = (await db.citationsAsync.list('pending', 500, 0, { sort }))
+      const all = (await db.citationsAsync.list('pending', 500, 0, { ...ADMIN, sort }))
         .map((r) => r.id).filter((id) => ids.includes(id));
       const paged = [];
       for (let offset = 0; paged.length < all.length; offset += 5) {
-        const page = (await db.citationsAsync.list('pending', 5, offset, { sort }))
+        const page = (await db.citationsAsync.list('pending', 5, offset, { ...ADMIN, sort }))
           .map((r) => r.id).filter((id) => ids.includes(id));
         paged.push(...page);
         if (offset > 500) break;
@@ -103,7 +107,7 @@ describe('citations.list sort options (U1.1)', () => {
   it('default sort (no option) preserves existing behavior (newest first)', async () => {
     const oldId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 200, confidence: 0.8 });
     const newId = await seedCitation({ entityType: 'person', relType: 'mentioned_in', daysAgo: 1, confidence: 0.8 });
-    const rows = await db.citationsAsync.list('pending', 200, 0);
+    const rows = await db.citationsAsync.list('pending', 200, 0, ADMIN);
     const ids = rows.map(r => r.id);
     expect(ids).toContain(oldId);
     expect(ids).toContain(newId);
