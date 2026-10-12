@@ -173,6 +173,12 @@ into that response (`renderOneTimeLink` in `routes/admin-users.js`) rather than
 redirecting through a session flash: a flash nobody returns to read leaves the
 token in the session store for the cookie's whole lifetime.
 
+Answering a POST with a page instead of a redirect means a browser refresh sends
+the POST again. Any form whose result is rendered that way must be single-use:
+`requireUnspentSubmitToken` in the same file spends a per-render token on first
+use and redirects a repeat without creating anything. Otherwise a refresh mints
+a second invitation, or a second reset token that revokes the link just copied.
+
 ### Curator Is the Expert; LLM Is Scaffolding
 
 - The historian/curator is the authoritative expert on the knowledge being

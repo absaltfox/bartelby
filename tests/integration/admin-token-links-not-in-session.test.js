@@ -42,9 +42,20 @@ async function login(username, password) {
   return agent;
 }
 
-async function csrfFor(agent) {
-  return extractCsrfToken((await agent.get('/admin/users/invite')).text);
+function extractSubmitToken(html) {
+  const match = html.match(/name="_once"\s+value="([^"]+)"/);
+  return match ? match[1] : null;
 }
+
+// Hidden fields a real browser would send from the given form page: the CSRF
+// token and the single-use submit token.
+async function formFields(agent, formPage) {
+  const html = (await agent.get(formPage)).text;
+  return { _csrf: extractCsrfToken(html), _once: extractSubmitToken(html) };
+}
+
+const inviteFields = (agent) => formFields(agent, '/admin/users/invite');
+const usersPageFields = (agent) => formFields(agent, '/admin/users');
 
 // The token-generation limiter allows three per admin per hour, so each test
 // acts as its own admin.
@@ -107,7 +118,7 @@ describe('invite link', () => {
   it('without SMTP, is shown once in the response and not on the next page load', async () => {
     const agent = await newAdminAgent('tokenadmin1');
     const res = await agent.post('/admin/users/invite').type('form').send({
-      email: 'invitee1@example.test', role: 'user', _csrf: await csrfFor(agent)
+      email: 'invitee1@example.test', role: 'user', ...(await inviteFields(agent))
     });
     expect(res.status).toBe(200);
     expect(res.text).toMatch(INVITE_LINK);
@@ -121,7 +132,7 @@ describe('invite link', () => {
     email.isSmtpConfigured.mockReturnValue(true);
     const agent = await newAdminAgent('tokenadmin2');
     const res = await agent.post('/admin/users/invite').type('form').send({
-      email: 'invitee2@example.test', role: 'user', _csrf: await csrfFor(agent)
+      email: 'invitee2@example.test', role: 'user', ...(await inviteFields(agent))
     });
     expect(res.status).toBe(302);
     expect(email.sendInviteEmail).toHaveBeenCalledTimes(1);
@@ -136,7 +147,7 @@ describe('invite link', () => {
     email.sendInviteEmail.mockRejectedValue(new Error('smtp down'));
     const agent = await newAdminAgent('tokenadmin3');
     const res = await agent.post('/admin/users/invite').type('form').send({
-      email: 'invitee3@example.test', role: 'user', _csrf: await csrfFor(agent)
+      email: 'invitee3@example.test', role: 'user', ...(await inviteFields(agent))
     });
     expect(res.status).toBe(200);
     expect(res.text).toMatch(INVITE_LINK);
@@ -151,7 +162,7 @@ describe('password reset link', () => {
     const agent = await newAdminAgent('tokenadmin4');
     const targetId = await newActiveUser('resettarget1');
     const res = await agent.post(`/admin/users/${targetId}/password-reset`).type('form').send({
-      _csrf: await csrfFor(agent)
+      ...(await usersPageFields(agent))
     });
     expect(res.status).toBe(200);
     expect(res.text).toMatch(RESET_LINK);
@@ -166,7 +177,7 @@ describe('password reset link', () => {
     const agent = await newAdminAgent('tokenadmin5');
     const targetId = await newActiveUser('resettarget2');
     const res = await agent.post(`/admin/users/${targetId}/password-reset`).type('form').send({
-      _csrf: await csrfFor(agent)
+      ...(await usersPageFields(agent))
     });
     expect(res.status).toBe(302);
     expect(email.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
@@ -174,5 +185,76 @@ describe('password reset link', () => {
     const next = await agent.get('/admin/users');
     expect(next.text).toContain('Password reset email sent to resettarget2@example.test');
     expect(next.text).not.toMatch(RESET_LINK);
+  });
+});
+
+// Rendering the link in the POST response means the POST is the page's last
+// navigation, so a browser refresh sends it again. Each form therefore carries
+// a single-use submit token: a repeat is answered with a redirect and creates
+// nothing. Without it a refresh would mint a second invitation, or a second
+// reset token that revokes the link the admin had just copied.
+describe('resubmitting the form', () => {
+  it('a repeated invite POST creates no second invitation', async () => {
+    const agent = await newAdminAgent('tokenadmin6');
+    const fields = { email: 'invitee6@example.test', role: 'user', ...(await inviteFields(agent)) };
+
+    const first = await agent.post('/admin/users/invite').type('form').send(fields);
+    expect(first.status).toBe(200);
+    expect(first.text).toMatch(INVITE_LINK);
+
+    const repeat = await agent.post('/admin/users/invite').type('form').send(fields);
+    expect(repeat.status).toBe(302);
+    expect(repeat.headers.location).toBe('/admin/users');
+
+    const invites = (await db.userInvitesAsync.getActive()).filter((i) => i.email === 'invitee6@example.test');
+    expect(invites.length).toBe(1);
+
+    const landing = await agent.get('/admin/users');
+    expect(landing.text).toMatch(/class="alert alert-error"[^>]*>\s*<p>That form was already submitted\./);
+    expect(landing.text).not.toMatch(INVITE_LINK);
+  });
+
+  it('a repeated reset POST leaves the first link valid', async () => {
+    const agent = await newAdminAgent('tokenadmin7');
+    const targetId = await newActiveUser('resettarget3');
+    const fields = await usersPageFields(agent);
+
+    const first = await agent.post(`/admin/users/${targetId}/password-reset`).type('form').send(fields);
+    expect(first.status).toBe(200);
+    const link = first.text.match(RESET_LINK)[0];
+
+    const repeat = await agent.post(`/admin/users/${targetId}/password-reset`).type('form').send(fields);
+    expect(repeat.status).toBe(302);
+    expect(repeat.headers.location).toBe('/admin/users');
+
+    expect((await request(app).get(link)).status).toBe(200);
+  });
+
+  // The last two cases share one admin: the shared per-IP limiter on /login
+  // leaves this file no room for another sign-in.
+  let sharedAgent;
+
+  it('the page that shows the link carries a fresh token, so the next action works', async () => {
+    const agent = sharedAgent = await newAdminAgent('tokenadmin8');
+    const firstTarget = await newActiveUser('resettarget4');
+    const secondTarget = await newActiveUser('resettarget5');
+
+    const first = await agent.post(`/admin/users/${firstTarget}/password-reset`).type('form')
+      .send(await usersPageFields(agent));
+    const next = await agent.post(`/admin/users/${secondTarget}/password-reset`).type('form')
+      .send({ _csrf: extractCsrfToken(first.text), _once: extractSubmitToken(first.text) });
+    expect(next.status).toBe(200);
+    expect(next.text).toMatch(RESET_LINK);
+  });
+
+  it('a POST with no submit token creates nothing', async () => {
+    const agent = sharedAgent;
+    const { _csrf } = await inviteFields(agent);
+    const res = await agent.post('/admin/users/invite').type('form').send({
+      email: 'invitee9@example.test', role: 'user', _csrf
+    });
+    expect(res.status).toBe(302);
+    const invites = (await db.userInvitesAsync.getActive()).filter((i) => i.email === 'invitee9@example.test');
+    expect(invites.length).toBe(0);
   });
 });

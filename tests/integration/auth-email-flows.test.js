@@ -16,6 +16,12 @@ function extractCsrfToken(html) {
   return match ? match[1] : null;
 }
 
+// Single-use submit token carried by the invite and password-reset forms.
+function extractSubmitToken(html) {
+  const match = html.match(/name="_once"\s+value="([^"]+)"/);
+  return match ? match[1] : null;
+}
+
 async function bootstrapAdmin(app) {
   const agent = request.agent(app);
   const setupPage = await agent.get('/setup');
@@ -112,6 +118,7 @@ describe('auth and email-driven flows', () => {
       .send({
         email: 'invitee@example.com',
         role: 'user',
+        _once: extractSubmitToken(invitePage.text),
         _csrf: csrf
       });
 
@@ -149,7 +156,7 @@ describe('auth and email-driven flows', () => {
     const res = await adminAgent
       .post(`/admin/users/${resetUserId}/password-reset`)
       .type('form')
-      .send({ _csrf: csrf });
+      .send({ _once: extractSubmitToken(adminUsersPage.text), _csrf: csrf });
 
     expect(res.status).toBe(302);
     expect(email.sendPasswordResetEmail).toHaveBeenCalledWith(expect.objectContaining({

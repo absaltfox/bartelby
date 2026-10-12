@@ -19,6 +19,7 @@
   <div class="settings-section">
     <form method="POST" action="/admin/users/invite">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="_once" value="<%= submitToken %>">
 
       <div class="form-group">
         <label for="email">Invite Email</label>

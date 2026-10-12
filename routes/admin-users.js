@@ -37,6 +37,38 @@ function consumeFlash(req) {
   return flash;
 }
 
+// Single-use submit tokens for the two forms that mint a link. Their result is
+// rendered in the POST response (see renderOneTimeLink), which leaves the POST
+// as the page's last navigation, so a browser refresh sends it again. A repeat
+// would mint a second invitation, or a second reset token that revokes the link
+// the admin had just copied. Each rendered form carries a token that is spent
+// on first use; a repeat is redirected and creates nothing.
+const SUBMIT_TOKEN_LIMIT = 20;
+const ALREADY_SUBMITTED_MESSAGE = 'That form was already submitted. Nothing new was created.';
+
+function issueSubmitToken(req) {
+  const token = crypto.randomBytes(16).toString('hex');
+  const tokens = Array.isArray(req.session.adminUsersSubmitTokens)
+    ? req.session.adminUsersSubmitTokens
+    : [];
+  // Bounded: every page render issues one, and most are never spent.
+  req.session.adminUsersSubmitTokens = [...tokens, token].slice(-SUBMIT_TOKEN_LIMIT);
+  return token;
+}
+
+function requireUnspentSubmitToken(req, res, next) {
+  const supplied = typeof req.body._once === 'string' ? req.body._once : '';
+  const tokens = Array.isArray(req.session.adminUsersSubmitTokens)
+    ? req.session.adminUsersSubmitTokens
+    : [];
+  if (!supplied || !tokens.includes(supplied)) {
+    req.session.adminUsersFlash = { error: ALREADY_SUBMITTED_MESSAGE };
+    return res.redirect('/admin/users');
+  }
+  req.session.adminUsersSubmitTokens = tokens.filter((token) => token !== supplied);
+  next();
+}
+
 function parseCollectionIds(raw) {
   return Array.isArray(raw)
     ? raw.map(Number).filter(Number.isInteger)
@@ -84,6 +116,7 @@ async function renderUsersPage(req, res, flash) {
     invites: await userInvitesAsync.getActive(),
     currentUserId: req.user.id,
     flash,
+    submitToken: issueSubmitToken(req),
     smtpConfigured: isSmtpConfigured()
   });
 }
@@ -108,12 +141,14 @@ router.get('/invite', asyncHandler(async (req, res) => {
     pageTitle: 'Invite User',
     allCollections: await collectionsAsync.getAll(),
     smtpConfigured: isSmtpConfigured(),
+    submitToken: issueSubmitToken(req),
     error: req.session.authError || null
   });
   delete req.session.authError;
 }));
 
-router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
+// The submit-token check runs first so a refresh does not spend limiter budget.
+router.post('/invite', requireUnspentSubmitToken, tokenGenLimiter, asyncHandler(async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const accessAll = req.body.access_all === '1';
@@ -312,7 +347,7 @@ router.post('/invites/:id/revoke', asyncHandler(async (req, res) => {
   res.redirect('/admin/users');
 }));
 
-router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res) => {
+router.post('/:id/password-reset', requireUnspentSubmitToken, tokenGenLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.redirect('/admin/users');
 
