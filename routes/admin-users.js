@@ -70,8 +70,7 @@ async function blockLastActiveAdminRemoval(req, {
   return true;
 }
 
-// List all users (pending + active + rejected)
-router.get('/', asyncHandler(async (req, res) => {
+async function renderUsersPage(req, res, flash) {
   const allUsers = await usersAsync.getAll();
   const pending  = allUsers.filter(u => u.status === 'pending');
   const active   = allUsers.filter(u => u.status === 'active');
@@ -84,9 +83,24 @@ router.get('/', asyncHandler(async (req, res) => {
     rejected,
     invites: await userInvitesAsync.getActive(),
     currentUserId: req.user.id,
-    flash: consumeFlash(req),
+    flash,
     smtpConfigured: isSmtpConfigured()
   });
+}
+
+// A freshly minted invite or reset link is a live bearer token, and the
+// database only keeps its hash, so this response is the one chance to show it.
+// Render it directly instead of redirecting through the session flash: a flash
+// the admin never comes back to read would leave the token in the session
+// store for the cookie's whole lifetime.
+async function renderOneTimeLink(req, res, flash) {
+  res.set('Cache-Control', 'no-store');
+  await renderUsersPage(req, res, flash);
+}
+
+// List all users (pending + active + rejected)
+router.get('/', asyncHandler(async (req, res) => {
+  await renderUsersPage(req, res, consumeFlash(req));
 }));
 
 router.get('/invite', asyncHandler(async (req, res) => {
@@ -137,6 +151,7 @@ router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
 
   const inviteUrl = absoluteAppUrl(req, `/invite/${token}`);
   let message = `Invitation created for ${email}.`;
+  let delivered = false;
 
   if (isSmtpConfigured()) {
     try {
@@ -146,17 +161,20 @@ router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
         invitedBy: req.user.username
       });
       message = `Invitation created and emailed to ${email}.`;
+      delivered = true;
     } catch (err) {
       message = `Invitation created for ${email}, but the email could not be sent: ${err.message}`;
     }
   }
 
   audit.log('user.invite_created', { ...audit.reqContext(req), inviteeEmail: email, role });
+  if (!delivered) {
+    return renderOneTimeLink(req, res, { type: 'invite', inviteId, message, inviteUrl });
+  }
   req.session.adminUsersFlash = {
     type: 'invite',
     inviteId,
-    message,
-    inviteUrl
+    message
   };
   res.redirect('/admin/users');
 }));
@@ -320,6 +338,7 @@ router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res
 
   const resetUrl = absoluteAppUrl(req, `/reset-password/${token}`);
   let message = `Password reset link created for ${user.username}.`;
+  let delivered = false;
 
   if (isSmtpConfigured()) {
     try {
@@ -330,16 +349,19 @@ router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res
         initiatedBy: req.user.username
       });
       message = `Password reset email sent to ${user.email}.`;
+      delivered = true;
     } catch (err) {
       message = `Password reset link created for ${user.username}, but the email could not be sent: ${err.message}`;
     }
   }
 
   audit.log('user.password_reset_initiated', { ...audit.reqContext(req), targetUserId: user.id, targetEmail: user.email });
+  if (!delivered) {
+    return renderOneTimeLink(req, res, { type: 'password-reset', message, resetUrl });
+  }
   req.session.adminUsersFlash = {
     type: 'password-reset',
-    message,
-    resetUrl
+    message
   };
   res.redirect('/admin/users');
 }));
