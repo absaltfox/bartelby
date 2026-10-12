@@ -426,29 +426,17 @@ fly scale vm shared-cpu-2x
   pass in ~1s — before suspecting the code.
 - Run `npm audit --omit=dev` and triage any new high/critical advisory
   before release. A production-only audit gate inside `test:hygiene` is
-  planned but blocked on the pdfjs-dist upgrade, which clears the
-  residual `tar` chain. See "Known open advisories" below for current
+  planned but blocked on the pdfjs-dist upgrade, which clears the last
+  high advisory. See "Known open advisories" below for current
   baseline and mitigations.
 
 ### Known open advisories
 
-The application-reachable advisories from `npm audit --omit=dev` are
-enumerated below; none is practically exploitable in the current
-production configuration, and each has a documented mitigation. Two
-newly-published upstream advisories post-date this list:
-
-- **`node-tar` (critical, GHSA-r292-9mhp-454m — uncontrolled recursion /
-  stack-overflow DoS on a crafted tar).** This is a further advisory in
-  the same install-time `canvas → @mapbox/node-pre-gyp → tar` chain
-  already covered under the `tar` entry below — reached only when npm
-  extracts pinned dependency tarballs at install, never at runtime — so
-  the same mitigation applies and it clears with the `pdfjs-dist`/`canvas`
-  upgrade.
-- **`sharp`/`libvips` (high, CVE-2026-33327/33328/35590/35591).** Runtime
-  image-processing library; pending separate triage.
-
-A non-zero `npm audit` count is therefore expected and is not, by itself,
-a release blocker.
+`npm audit --omit=dev` reports **no critical and one high** advisory. The
+remaining entries are enumerated below; none is practically exploitable in
+the current production configuration, and each has a documented mitigation.
+A non-zero `npm audit` count is therefore expected and is not, by itself, a
+release blocker.
 
 - **`pdfjs-dist` (high, GHSA-wgrm-67xf-hhpq — malicious-PDF JS exec).**
   Reachable only through the dev-only `renderWithPdfjs` fallback in
@@ -461,14 +449,26 @@ a release blocker.
   Upgrading past `pdfjs-dist@3.11.174` requires investigating a prior
   4.x rendering regression and is tracked as a follow-up.
 
-- **`tar` (high, six advisories) via `@mapbox/node-pre-gyp`.**
-  Reached only at `npm install` time through the `canvas` →
-  `@mapbox/node-pre-gyp` → `tar` chain. The vulnerable code paths
-  involve extracting attacker-controlled tarballs, which the
-  application never does at runtime; only npm itself extracts the
-  pinned, integrity-checked dependency tarballs at install. This
-  chain clears automatically once `pdfjs-dist` (which pulls in
-  `canvas`) is upgraded.
+- **`onnxruntime-node` → `global-agent` → `roarr` → `sprintf-js`
+  (moderate, GHSA-hp3w-g68c-fv3c — DoS through an unbounded precision
+  specifier).** Pulled in by `@huggingface/transformers` 3.8.1 for its
+  optional proxy support. The format strings are the library's own, not
+  request input. Clears with the `@huggingface/transformers` 4.x major,
+  which needs the embedding pipeline in
+  [`utils/worker-authority-suggestion.js`](./utils/worker-authority-suggestion.js)
+  re-validated first.
+
+- **AI SDK packages (low, GHSA-866g-f22w-33x8 — uncontrolled resource
+  consumption in `@ai-sdk/provider-utils`).** A fix exists inside the
+  current semver ranges, but taking it moves `ai` and every `@ai-sdk/*`
+  provider forward together. Do that as its own change, verified against
+  the live providers, rather than as a side effect of an audit pass.
+  `ollama-ai-provider` 1.2.0 pins an older `provider-utils` with no fixed
+  release.
+
+Development-only: Jest's coverage tooling pulls a vulnerable `sprintf-js`
+through `js-yaml` (moderate). It is not installed by `npm ci --omit=dev`
+and has no non-breaking fix.
 
 Pre-merge work on this baseline:
 
@@ -490,6 +490,26 @@ Pre-merge work on this baseline:
 - Removed the unused legacy `utils/pdf.js` helper so the only remaining
   `pdfjs-dist` rendering fallback is the hardened, development-only path in
   `utils/pdf-worker.js`.
+- Closed the `tar` chain (critical, GHSA-r292-9mhp-454m and earlier) by
+  removing its only source. `pdfjs-dist` 3.x optionally depended on
+  `canvas` 2.x, which pulled `@mapbox/node-pre-gyp` → `tar` 6.x at install
+  time. An `overrides` entry in `package.json` now points that dependency
+  at the project's own `canvas` 3.x, so a single `canvas` is installed and
+  the `node-pre-gyp`/`tar` 6.x subtree is gone. `canvas` 3.x is what the
+  dev-only pdfjs fallback already creates its surfaces with.
+- Closed `sharp`/`libvips`/`libheif`/`librsvg` (high, CVE-2026-33327,
+  -33328, -35590, -35591 and later) by upgrading to `sharp` 0.35.5. A
+  second `overrides` entry holds `@huggingface/transformers` to the same
+  copy; the app uses it for text embeddings only, never its image path.
+- Closed `nodemailer` (high, addressparser DoS advisories) by upgrading
+  to the 10.x major; `utils/email.js` is unchanged for the same reason as
+  the 9.x move above.
+- Moved `multer` from the retired `1.4.5-lts` line to 2.x, which carries
+  the upload-parser denial-of-service fixes. `npm audit` does not flag the
+  `-lts` versions, so this one will not show up in an audit diff.
+- Closed `proxy-addr` (critical), `compression`, `ip-address`, `nanoid`
+  (high) and `express`, `body-parser`, `qs`, `protobufjs` (moderate) with
+  in-range updates of those packages only.
 
 ### Worker runtime requirements
 
