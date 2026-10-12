@@ -133,6 +133,10 @@ Import workers write a heartbeat timestamp every 30 seconds. The main app requeu
   `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` and
   `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1` explicitly for that single-node Docker
   workflow.
+- `docker-compose.yml` publishes the bundled MinIO API and console on
+  `127.0.0.1` only, because they default to MinIO's well-known
+  `minioadmin`/`minioadmin` credentials. Set `MINIO_BIND_ADDRESS` to expose them
+  more widely, and set `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` first.
 - `TRUST_PROXY=0` is still appropriate for direct local listeners in
   non-production development. It is not a supported production setting for this
   app.

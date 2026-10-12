@@ -1,3 +1,7 @@
+# Single-machine setup for local use and evaluation. It is not a hardened
+# production deployment: sessions are held in process memory, uploads sit on a
+# local volume, and object storage uses default credentials. See DEPLOY.md for a
+# production topology.
 services:
   app:
     # Default local Docker topology: a single process that serves HTTP and runs
@@ -64,12 +68,18 @@ services:
       retries: 3
 
   # MinIO — S3-compatible object storage (only needed when STORAGE_DRIVER=s3)
+  #
+  # Published on loopback only. The app reaches MinIO over the compose network
+  # (http://minio:9000), so these ports exist purely so you can open the console
+  # from this machine. The credentials default to MinIO's well-known
+  # minioadmin/minioadmin: before setting MINIO_BIND_ADDRESS to anything wider,
+  # set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY to real values.
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:9000:9000"   # S3 API
+      - "${MINIO_BIND_ADDRESS:-127.0.0.1}:9001:9001"   # Console
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
