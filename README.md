@@ -1,4 +1,4 @@
-# Transcriber
+# Bartelby
 
 Bartelby is a document transcription and archival workflow app for importing, transcribing, organizing, and exploring historical materials. 
 
@@ -9,7 +9,7 @@ It supports historians engaged in research by making the data and connections co
 - Agent quick-start guide:
   [AGENTS.md](./AGENTS.md)
 - Claude-oriented repo guidance:
-  [Claude.md](./Claude.md)
+  [CLAUDE.md](./CLAUDE.md)
 - Architecture and subsystem overview:
   [docs/architecture.md](./docs/architecture.md)
 - Development principles and decision rules:

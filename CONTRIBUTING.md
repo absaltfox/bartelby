@@ -5,7 +5,7 @@
 Before making changes, read:
 
 - [AGENTS.md](./AGENTS.md)
-- [Claude.md](./Claude.md)
+- [CLAUDE.md](./CLAUDE.md)
 - [README.md](./README.md)
 - [docs/architecture.md](./docs/architecture.md)
 - [docs/development-principles.md](./docs/development-principles.md)
@@ -69,7 +69,7 @@ endings come from `.editorconfig`, which most editors apply automatically. The
 same checks run in CI (`.github/workflows/ci.yml`) on every pull request.
 
 The repository hygiene check allows the committed top-level guidance docs used
-by contributors and agents, including `Claude.md`. Treat unexpected extra
+by contributors and agents, including `CLAUDE.md`. Treat unexpected extra
 top-level files and directories as hygiene failures unless the repo documents
 them intentionally.
 

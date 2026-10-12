@@ -334,7 +334,7 @@ Fly.io has a **hard spending limit** you can set in the dashboard under Billing 
 
 On Fly specifically, this maps naturally to separate process groups. On Docker
 Compose or other schedulers, it maps to separate services using the same image.
-The checked-in [fly.toml](/Users/mleblanc/Documents/code/transcriber/fly.toml)
+The checked-in [fly.toml](./fly.toml)
 defines `web` and `worker` process groups, routes `http_service` traffic only
 to `web`, and relies on `FLY_PROCESS_GROUP=web` to keep the web role from
 starting the in-process worker loop.

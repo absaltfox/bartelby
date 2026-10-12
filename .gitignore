@@ -16,4 +16,8 @@ __pycache__/
 .worktrees/
 .superpowers/
 docs/superpowers/
+docs/reports/
 backups/
+test-results/
+playwright-report/
+.vscode/
