@@ -710,7 +710,7 @@ app.get('/uploads/:filename', async (req, res) => {
 
 // Auth routes get CSRF protection on POST
 app.use('/', loadRoute('./routes/auth', 'auth routes', { tier: 'core' }));
-app.use('/account', loadRoute('./routes/account', 'account routes', { tier: 'core' }));
+app.use('/account', authenticatedApiLimiter, loadRoute('./routes/account', 'account routes', { tier: 'core' }));
 app.use('/', loadRoute('./routes/documents', 'document routes', { tier: 'core' }));
 app.use('/transcripts', authenticatedApiLimiter, loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
 app.use('/api/annotations', authenticatedApiLimiter, requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));

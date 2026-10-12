@@ -253,7 +253,7 @@ describe('auth and email-driven flows', () => {
     const disableRes = await agent
       .post('/account/mfa/disable')
       .type('form')
-      .send({ _csrf: csrf });
+      .send({ current_password: 'password123!', _csrf: csrf });
 
     expect(disableRes.status).toBe(302);
     expect(disableRes.headers['set-cookie'] || []).toEqual(

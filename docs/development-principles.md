@@ -103,8 +103,9 @@ Rejecting a user updates `users.status`, but their existing session keeps workin
 until something consults that column.
 
 The same applies in reverse: users need a way to invalidate their own sessions.
-Today the only global-eviction lever (`password_changed_at`) is reachable solely
-through an admin-minted reset token.
+`POST /account/password` is that lever: it stamps `password_changed_at`, which
+signs out every other session for the account, and moves the changing session's
+own clock forward so it alone survives.
 
 #### Rate limits belong on the subject being protected
 
@@ -118,7 +119,6 @@ Limiter state must also be shared across instances. The default in-memory store
 multiplies every limit by the machine count, and DEPLOY.md's recommended baseline
 is two web machines.
 
-#### Re-authenticate before security-relevant changes
 At the password phase the per-account control is a growing delay, not a lockout
 (`loginThrottlesAsync` in `database/models/users.js`). Anyone can submit any
 username there, so a lockout would let a stranger deny service to a named user;
@@ -143,6 +143,7 @@ email has an account, from either the answer or how long it took.
   delay, must behave identically for names that do not exist, and should store a
   hash of the name rather than what was typed.
 
+#### Re-authenticate before security-relevant changes
 
 Changing MFA settings, the recovery email, or the password should require proof
 that the current session's owner is present — a password re-entry, or a freshness
@@ -150,6 +151,27 @@ check against `req.session.authenticatedAt` — not merely a valid cookie.
 
 Verifying a value the same request flow just generated (a pending TOTP secret
 minted one request earlier) is a typo check, not authentication.
+
+`requireCurrentPassword` in `routes/account.js` is the implementation: it guards
+the email change, MFA disable, authenticator binding, and password change, behind
+a per-account limiter so the password field is not a guessing oracle for whoever
+holds the session.
+
+#### Caller-supplied destinations stay on this site
+
+Any `returnTo` or `back` value that becomes a redirect or a link goes through
+`safeLocalPath` (`utils/safe-redirect.js`). Checking for a leading `/` that is
+not `//` is not enough: browsers treat `\` as `/` and strip tabs and newlines
+from URLs, so `/\host` leaves for another origin.
+
+#### Bearer tokens are shown once and stored hashed
+
+Invite and password-reset links are live credentials. The database keeps only a
+hash of the token, so the link exists in clear only while it is being created.
+If it was emailed, do not display it at all. If it was not, render it straight
+into that response (`renderOneTimeLink` in `routes/admin-users.js`) rather than
+redirecting through a session flash: a flash nobody returns to read leaves the
+token in the session store for the cookie's whole lifetime.
 
 ### Curator Is the Expert; LLM Is Scaffolding
 

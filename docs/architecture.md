@@ -23,6 +23,9 @@ metadata and graph relationships that are built from them over time.
 - Role-aware access for admin, manager, editor, viewer, and access-all users
 - Collection-scoped access controls for documents, transcripts, and graph data
 - CSRF protection on state-changing requests
+- Optional email or authenticator-app MFA, with per-account lockout
+- Per-account escalating delay on repeated password failures
+- Password re-entry before changing email, MFA, or password
 
 ### Document Workflow
 
