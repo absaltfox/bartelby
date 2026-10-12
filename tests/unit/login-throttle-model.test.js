@@ -122,6 +122,40 @@ describe('loginThrottlesAsync', () => {
     expect(await loginThrottlesAsync.getRemainingMs(key, later)).toBe(0);
   });
 
+  // Guesses sent at the same moment must each count. A read-then-write
+  // increment lets every one of them read the same stale count and write the
+  // same low number, so the wait would grow more slowly than the schedule says.
+  test('concurrent failures are all counted', async () => {
+    const key = freshKey();
+    const now = 1_000_000;
+    const burst = LOGIN_THROTTLE_FREE_ATTEMPTS + 3;
+    await Promise.all(Array.from({ length: burst }, () => loginThrottlesAsync.recordFailure(key, now)));
+    expect(await loginThrottlesAsync.getRemainingMs(key, now)).toBe(4000);
+    expect((await loginThrottlesAsync.recordFailure(key, now)).attempts).toBe(burst + 1);
+  });
+
+  test('a concurrent burst after the window has passed starts one fresh run', async () => {
+    const key = freshKey();
+    const now = 1_000_000;
+    await fail(key, LOGIN_THROTTLE_FREE_ATTEMPTS + 3, now);
+    const later = now + LOGIN_THROTTLE_WINDOW_MS + 1;
+    await Promise.all([1, 2].map(() => loginThrottlesAsync.recordFailure(key, later)));
+    expect((await loginThrottlesAsync.recordFailure(key, later)).attempts).toBe(3);
+  });
+
+  // The wait is computed in SQL so the increment can stay atomic; this pins it
+  // to the JavaScript schedule, including the cap.
+  test('the stored wait matches loginThrottleDelayMs for every attempt count', async () => {
+    const key = freshKey();
+    const now = 1_000_000;
+    for (let n = 1; n <= LOGIN_THROTTLE_FREE_ATTEMPTS + 12; n += 1) {
+      const { attempts, throttledUntil } = await loginThrottlesAsync.recordFailure(key, now);
+      const expected = loginThrottleDelayMs(n);
+      expect(attempts).toBe(n);
+      expect(throttledUntil).toBe(expected > 0 ? now + expected : null);
+    }
+  });
+
   test('one key does not affect another', async () => {
     const a = freshKey();
     const b = freshKey();

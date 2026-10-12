@@ -917,29 +917,54 @@ const loginThrottlesAsync = {
     return until - now;
   },
 
-  /** Records one failed attempt. Returns { attempts, throttledUntil } (epoch ms or null). */
+  /**
+   * Records one failed attempt. Returns { attempts, throttledUntil } (epoch ms
+   * or null).
+   *
+   * The increment happens inside one statement, never as a read followed by a
+   * write: guesses sent at the same moment would otherwise all read the same
+   * count and write the same low number, and the wait would grow more slowly
+   * than the schedule says. The second statement derives the wait from the
+   * row's own columns, so it gives the same answer in whatever order
+   * concurrent callers reach it. It mirrors loginThrottleDelayMs in SQL.
+   */
   async recordFailure(key, now = Date.now()) {
-    const row = await getAsync(
-      'SELECT failed_attempts, last_failed_at FROM login_throttles WHERE throttle_key = ?',
-      [key]
-    );
-    const stale = !row || now - Number(row.last_failed_at || 0) > LOGIN_THROTTLE_WINDOW_MS;
-    const attempts = (stale ? 0 : Number(row.failed_attempts || 0)) + 1;
-    const delay = loginThrottleDelayMs(attempts);
-    const throttledUntil = delay > 0 ? now + delay : null;
-
     await runAsync(
       `INSERT INTO login_throttles (throttle_key, failed_attempts, throttled_until, last_failed_at)
-       VALUES (?, ?, ?, ?)
+       VALUES (?, 1, NULL, ?)
        ON CONFLICT(throttle_key) DO UPDATE SET
-         failed_attempts = excluded.failed_attempts,
-         throttled_until = excluded.throttled_until,
+         failed_attempts = CASE
+           WHEN excluded.last_failed_at - login_throttles.last_failed_at > ? THEN 1
+           ELSE login_throttles.failed_attempts + 1
+         END,
          last_failed_at = excluded.last_failed_at`,
-      [key, attempts, throttledUntil, now]
+      [key, now, LOGIN_THROTTLE_WINDOW_MS]
+    );
+    await runAsync(
+      `UPDATE login_throttles SET throttled_until = CASE
+         WHEN failed_attempts > ? THEN
+           last_failed_at + MIN(?, ? * (1 << MIN(failed_attempts - ? - 1, 30)))
+         ELSE NULL
+       END
+       WHERE throttle_key = ?`,
+      [
+        LOGIN_THROTTLE_FREE_ATTEMPTS,
+        LOGIN_THROTTLE_MAX_MS,
+        LOGIN_THROTTLE_BASE_MS,
+        LOGIN_THROTTLE_FREE_ATTEMPTS,
+        key
+      ]
+    );
+    const row = await getAsync(
+      'SELECT failed_attempts, throttled_until FROM login_throttles WHERE throttle_key = ?',
+      [key]
     );
     // Keys are attacker-supplied, so the table is pruned as it is written.
     await runAsync('DELETE FROM login_throttles WHERE last_failed_at < ?', [now - LOGIN_THROTTLE_RETENTION_MS]);
-    return { attempts, throttledUntil };
+    return {
+      attempts: row ? Number(row.failed_attempts) : 0,
+      throttledUntil: row && row.throttled_until != null ? Number(row.throttled_until) : null
+    };
   },
 
   async clear(key) {
