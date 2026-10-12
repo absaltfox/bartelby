@@ -286,9 +286,7 @@
   </div>
 </div>
 
-<script>
-  window.__sentimentResearchData = <%- JSON.stringify(bootstrap).replace(/</g, '\\u003c') %>;
-</script>
+<script id="sentiment-research-config" type="application/json"><%- JSON.stringify(bootstrap).replace(/</g, '\\u003c') %></script>
 <script src="/js/filter-sidebar.js"></script>
 <script src="/js/sentiment-card-renderer.js"></script>
 <script src="/js/sentiment-research.js"></script>

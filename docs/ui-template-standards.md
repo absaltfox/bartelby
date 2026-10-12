@@ -599,7 +599,7 @@ the condition is false.
 ### JSON bootstrap payloads must escape `<`
 
 Server data passed into a page through a `<script type="application/json">`
-block — or any inline `<script>` — must have `<` escaped inside the template:
+block must have `<` escaped inside the template:
 
 ```ejs
 <script id="page-config" type="application/json"><%- JSON.stringify({
@@ -615,9 +615,11 @@ out of.
 
 `JSON.stringify` escapes quotes and backslashes but **not** `<`. Any string in
 the payload containing `</script>` therefore closes the element early, and
-everything after it parses as HTML. The CSP in `server.js` allows
-`'unsafe-inline'` for scripts, so it provides no backstop — this was a live
-admin-session XSS (issue #83).
+everything after it parses as HTML. This was a live admin-session XSS (issue
+#83) while the CSP still allowed inline scripts. The CSP now refuses them (see
+"No inline scripts or event handlers" below), but that is a backstop, not a
+reason to skip the escape: injected markup can still deface the page or post a
+form.
 
 Escape unconditionally, whether or not the value looks user-controlled. Payload
 contents change: a key holding a module constant today holds `req.query.status`
@@ -681,6 +683,23 @@ If logic is reused or hard to scan, move it to:
 - a client-side JS module
 
 ## Script Ownership Standards
+
+### No inline scripts or event handlers
+
+The Content-Security-Policy in `server.js` sets `script-src 'self'`. The browser
+will not run an inline `<script>` body or an inline handler attribute
+(`onclick="..."`), and it fails silently: the page renders and the script simply
+never runs.
+
+- Put behavior in a file under `public/js/` and load it with `<script src>`.
+- Pass server data to it in a `<script type="application/json">` element (see
+  "JSON bootstrap payloads must escape `<`" above) and read it with
+  `JSON.parse(document.getElementById(id).textContent)`. Do not assign to a
+  `window.__something` global from the template.
+- Bind events with `addEventListener` in the page script.
+
+`tests/unit/views-no-inline-script.test.js` scans every view for both and fails
+on either.
 
 ## Shared Behavior
 

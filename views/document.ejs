@@ -57,12 +57,10 @@
 <script src="/js/document-page.js"></script>
 <script src="/js/document-selection-prefill.js"></script>
 <% if (hasSentiment) { %>
-  <script>
-    window.__sentimentDocumentTab = {
-      documentId: <%= document.id %>,
-      isAdmin: <%= (typeof canManage !== 'undefined' && canManage) ? 'true' : 'false' %>
-    };
-  </script>
+  <script id="sentiment-document-tab-config" type="application/json"><%- JSON.stringify({
+    documentId: document.id,
+    isAdmin: Boolean(typeof canManage !== 'undefined' && canManage)
+  }).replace(/</g, '\\u003c') %></script>
   <script src="/js/sentiment-card-renderer.js"></script>
   <script src="/js/sentiment-document-tab.js"></script>
 <% } %>

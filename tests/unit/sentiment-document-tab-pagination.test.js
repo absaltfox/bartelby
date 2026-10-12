@@ -69,7 +69,12 @@ function harness() {
       if (sel === '.doc-tab[data-tab="sentiment"]') return tabBtn;
       return null;
     },
-    getElementById() { return null; },
+    getElementById(id) {
+      if (id === 'sentiment-document-tab-config') {
+        return { textContent: JSON.stringify({ documentId: 1, isAdmin: false }) };
+      }
+      return null;
+    },
     addEventListener() {},
     createTextNode() { return {}; }
   };
@@ -80,15 +85,13 @@ function harness() {
     fetchJson() { return Promise.resolve(responses.shift()); }
   };
 
-  const window = {
-    __sentimentDocumentTab: { documentId: 1, isAdmin: false },
-    SentimentCard
-  };
+  const window = { SentimentCard };
 
   const sandbox = {
     window,
     document,
     console,
+    JSON,
     setTimeout,
     URLSearchParams,
     Number,

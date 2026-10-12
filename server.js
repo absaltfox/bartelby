@@ -287,7 +287,11 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],  // EJS inline scripts
+      // No 'unsafe-inline': templates load page JS from /js and pass data in
+      // non-executing <script type="application/json"> elements, so a markup
+      // injection cannot run script. tests/unit/views-no-inline-script.test.js
+      // keeps the views compatible with this.
+      scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: imgSrcDirectives,

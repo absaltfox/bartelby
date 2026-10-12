@@ -5,7 +5,13 @@
 (function () {
   'use strict';
 
-  var bootstrap = window.__sentimentDocumentTab;
+  var configEl = document.getElementById('sentiment-document-tab-config');
+  var bootstrap = null;
+  try {
+    bootstrap = configEl ? JSON.parse(configEl.textContent) : null;
+  } catch (err) {
+    console.error('Sentiment tab config could not be read.', err);
+  }
   if (!bootstrap || !bootstrap.documentId) return;
 
   var SentimentCard = window.SentimentCard;

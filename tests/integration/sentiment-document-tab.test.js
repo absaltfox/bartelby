@@ -131,9 +131,34 @@ describe('Document Sentiment tab (Phase 4 slice 3)', () => {
   });
 
   describe('bootstrap and script loading', () => {
-    it('emits a window.__sentimentDocumentTab bootstrap with the document id', async () => {
+    it('emits a non-executing JSON config element with the document id', async () => {
       const res = await request(app).get('/documents/1001');
-      expect(res.text).toMatch(/window\.__sentimentDocumentTab\s*=\s*\{[\s\S]*?documentId:\s*1001/);
+      const match = res.text.match(
+        /<script id="sentiment-document-tab-config" type="application\/json">([^<]+)<\/script>/
+      );
+      expect(match).toBeTruthy();
+      expect(JSON.parse(match[1]).documentId).toBe(1001);
+    });
+
+    it('does not turn a hostile ?back= value into an off-site Back link', async () => {
+      for (const hostile of ['/\\evil.example', '//evil.example', '/%09/evil.example']) {
+        const res = await request(app).get('/documents/1001?back=' + encodeURIComponent(hostile).replace('%2509', '%09'));
+        expect(res.status).toBe(200);
+        expect(res.text).toContain('<a href="/" class="back-link">');
+        expect(res.text).not.toContain('evil.example');
+      }
+    });
+
+    it('keeps a local ?back= value as the Back link', async () => {
+      const res = await request(app).get('/documents/1001?back=' + encodeURIComponent('/collections/2'));
+      expect(res.text).toContain('<a href="/collections/2" class="back-link">');
+    });
+
+    it('sends a Content-Security-Policy that refuses inline scripts', async () => {
+      const res = await request(app).get('/documents/1001');
+      const scriptSrc = (res.headers['content-security-policy'] || '')
+        .split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src '));
+      expect(scriptSrc).toBe("script-src 'self'");
     });
 
     it('loads the shared card renderer + the document tab script', async () => {
@@ -145,7 +170,7 @@ describe('Document Sentiment tab (Phase 4 slice 3)', () => {
     it('does not load the document-tab script when the tab is hidden', async () => {
       const res = await request(app).get('/documents/1003');
       expect(res.text).not.toContain('/js/sentiment-document-tab.js');
-      expect(res.text).not.toMatch(/window\.__sentimentDocumentTab/);
+      expect(res.text).not.toContain('sentiment-document-tab-config');
     });
   });
 
