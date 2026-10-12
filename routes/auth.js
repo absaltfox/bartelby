@@ -16,6 +16,7 @@ const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 const { resolveApplicationSettings } = require('../utils/application-settings');
 const { asyncHandler } = require('../utils/async-handler');
+const { safeLocalPath } = require('../utils/safe-redirect');
 
 let bcryptModule = null;
 
@@ -61,12 +62,9 @@ function consumeAuthError(req) {
 }
 
 function safeReturnTo(req) {
-  let returnTo = req.session.returnTo || '/';
+  const returnTo = req.session.returnTo;
   delete req.session.returnTo;
-  if (!returnTo.startsWith('/') || returnTo.startsWith('//')) {
-    returnTo = '/';
-  }
-  return returnTo;
+  return safeLocalPath(returnTo, '/');
 }
 
 function completeLogin(req, res, next, user, returnTo) {

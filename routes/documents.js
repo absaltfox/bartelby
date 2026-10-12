@@ -5,6 +5,7 @@ const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsA
 const { requireAuth, optionalAuth, requireDocumentRole } = require('../middleware/auth');
 const { normalizeDocumentAssets, normalizeDocumentAssetsForDelivery, normalizeCollectionAssetsForDelivery } = require('../utils/document-assets');
 const { asyncHandler } = require('../utils/async-handler');
+const { safeLocalPath } = require('../utils/safe-redirect');
 const { aiTranscriptionLimiter } = require('../utils/rate-limiters');
 const { METADATA_RESERVED_KEYS } = require('../utils/metadata-keys');
 const logger = require('../utils/logger');
@@ -550,11 +551,7 @@ router.get('/documents/:id', asyncHandler(async (req, res) => {
     }
   }
 
-  let backHref = '/';
-  const requestedBack = typeof req.query.back === 'string' ? req.query.back : '';
-  if (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//')) {
-    backHref = requestedBack;
-  }
+  const backHref = safeLocalPath(req.query.back, '/');
 
   // Check if export is allowed on any of this document's collections
   const allowExport = docCollections.some(c => c.allow_export);
@@ -673,11 +670,7 @@ router.post('/documents/:id/metadata', requireDocumentRole('editor'), asyncHandl
   if (req.is('json') || req.headers.accept === 'application/json') {
     return res.json({ ok: true });
   }
-  const requestedBack = typeof req.body.back === 'string' ? req.body.back : '';
-  const back = (requestedBack && requestedBack.startsWith('/') && !requestedBack.startsWith('//'))
-    ? requestedBack
-    : `/documents/${doc.id}`;
-  res.redirect(back);
+  res.redirect(safeLocalPath(req.body.back, `/documents/${doc.id}`));
 }));
 
 // ── Transcript management ─────────────────────────────────────────────────────
