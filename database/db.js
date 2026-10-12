@@ -890,6 +890,22 @@ MIGRATIONS.push(`
     ON authority_link_suggestions (status, variant_class);
 `);
 
+// v92 — password-phase sign-in throttle (issue #101, Phase 1). One row per
+// throttled subject, keyed by a hash of the submitted username rather than by
+// users.id: the delay has to behave identically for usernames that do not
+// exist, or it becomes an account-enumeration oracle. Timestamps are epoch
+// milliseconds so comparisons need no parsing. Rows are pruned by the model.
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS login_throttles (
+    throttle_key TEXT PRIMARY KEY,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    throttled_until INTEGER,
+    last_failed_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_login_throttles_last_failed_at
+    ON login_throttles (last_failed_at);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -1920,7 +1936,7 @@ function parseJsonValue(value, fallback) {
 
 
 // --- Model Loaders ---
-const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, maskSecret, ROLE_HIERARCHY, roleAtLeast, MFA_MAX_ATTEMPTS, MFA_LOCK_BASE_MS, MFA_LOCK_MAX_MS } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
+const { users, userInvites, userApiKeys, passwordResetTokens, usersAsync, userInvitesAsync, userApiKeysAsync, passwordResetTokensAsync, mfaRememberTokensAsync, loginThrottlesAsync, loginThrottleDelayMs, maskSecret, ROLE_HIERARCHY, roleAtLeast, MFA_MAX_ATTEMPTS, MFA_LOCK_BASE_MS, MFA_LOCK_MAX_MS, LOGIN_THROTTLE_FREE_ATTEMPTS, LOGIN_THROTTLE_BASE_MS, LOGIN_THROTTLE_MAX_MS, LOGIN_THROTTLE_WINDOW_MS } = require('./models/users')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { documents, documentsAsync, transcripts, transcriptsAsync, annotations, annotationsAsync, documentEventsAsync } = require('./models/documents')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { collections, collectionsAsync, documentCollections, documentCollectionsAsync, userCollectionAccess, userCollectionAccessAsync, normalizeCollectionIds, parseInviteCollectionIds } = require('./models/collections')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all);
 const { transcriptionJobs, transcriptionJobsAsync, importJobs, importJobsAsync, adminJobsAsync, extractionJobs, authorityResolutionJobs, authorityResolutionJobsAsync, authoritySuggestionJobs, titleBackfillJobs, iiifSourcesAsync } = require('./models/jobs')(db, runAsync, getAsync, allAsync, saveDatabase, run, get, all, runWithoutSave, runAsyncWithoutSave);
@@ -2045,6 +2061,12 @@ module.exports = {
   documentEventsAsync,
   appLogsAsync,
   roleAtLeast,
+  loginThrottlesAsync,
+  loginThrottleDelayMs,
+  LOGIN_THROTTLE_FREE_ATTEMPTS,
+  LOGIN_THROTTLE_BASE_MS,
+  LOGIN_THROTTLE_MAX_MS,
+  LOGIN_THROTTLE_WINDOW_MS,
   MFA_MAX_ATTEMPTS,
   MFA_LOCK_BASE_MS,
   MFA_LOCK_MAX_MS,

@@ -10,22 +10,16 @@ const {
   userCollectionAccessAsync,
   passwordResetTokensAsync,
   mfaRememberTokensAsync,
+  loginThrottlesAsync,
   settingsAsync
 } = require('../database/db');
 const { sendEmailOtp } = require('../utils/email');
 const { generateOtpCode, verifyTotp } = require('../utils/mfa');
 const { resolveApplicationSettings } = require('../utils/application-settings');
 const { asyncHandler } = require('../utils/async-handler');
+const { hashPassword } = require('../utils/passwords');
 const { safeLocalPath } = require('../utils/safe-redirect');
-
-let bcryptModule = null;
-
-function getBcrypt() {
-  if (!bcryptModule) {
-    bcryptModule = require('bcryptjs');
-  }
-  return bcryptModule;
-}
+const { INVALID_CREDENTIALS_MESSAGE } = require('../middleware/auth');
 
 function getBootstrapToken() {
   return String(process.env.BOOTSTRAP_ADMIN_TOKEN || '').trim();
@@ -53,6 +47,11 @@ function formatLockMessage(remainingMs) {
   }
   const hours = Math.ceil(minutes / 60);
   return `Too many verification attempts. Try again in about ${hours} hour${hours === 1 ? '' : 's'}.`;
+}
+
+function formatThrottleMessage(remainingMs) {
+  const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  return `Too many sign-in attempts. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`;
 }
 
 function consumeAuthError(req) {
@@ -105,17 +104,39 @@ router.get('/login', asyncHandler(async (req, res) => {
 }));
 
 router.post('/login',
+  // Escalating delay on repeated failures for one username (#101). Enforced on
+  // arrival and answered at once: sleeping here would hold a socket open per
+  // attempt, and checking before the password is verified means a throttled
+  // attempt spends no bcrypt work. Keyed by the submitted username whether or
+  // not it exists, so the wait says nothing about which accounts are real.
+  asyncHandler(async (req, res, next) => {
+    req.loginThrottleKey = loginThrottlesAsync.keyForUsername(req.body.username);
+    const remaining = await loginThrottlesAsync.getRemainingMs(req.loginThrottleKey);
+    if (remaining > 0) {
+      req.session.authError = formatThrottleMessage(remaining);
+      return res.redirect('/login');
+    }
+    next();
+  }),
   (req, res, next) => {
     passport.authenticate('local', (err, user, info) => {
       void Promise.resolve().then(async () => {
         if (err) throw err;
         if (!user) {
+          // 'pending' and the not-approved message are only produced after the
+          // password has matched, so neither is a failed guess.
           if (info?.message === 'pending') {
+            await loginThrottlesAsync.clear(req.loginThrottleKey);
             return res.redirect('/pending');
+          }
+          if (info?.message === INVALID_CREDENTIALS_MESSAGE) {
+            await loginThrottlesAsync.recordFailure(req.loginThrottleKey);
           }
           req.session.authError = info?.message || 'Invalid credentials.';
           return res.redirect('/login');
         }
+
+        await loginThrottlesAsync.clear(req.loginThrottleKey);
 
         const returnTo = safeReturnTo(req);
 
@@ -430,7 +451,7 @@ router.post('/setup', asyncHandler(async (req, res, next) => {
     return res.redirect('/setup');
   }
 
-  const passwordHash = getBcrypt().hashSync(password, 12);
+  const passwordHash = await hashPassword(password);
   let id;
   try {
     id = await usersAsync.create({
@@ -484,19 +505,17 @@ router.post('/register', asyncHandler(async (req, res, next) => {
     req.session.authError = 'Passwords do not match.';
     return res.redirect('/register');
   }
-  if (await usersAsync.findByUsername(username)) {
-    req.session.authError = 'That username is already taken.';
-    return res.redirect('/register');
-  }
-  if (email && await usersAsync.findByEmail(email)) {
-    req.session.authError = 'That email address is already associated with an account.';
-    return res.redirect('/register');
+  // Registration is public, so it must not confirm which usernames or emails
+  // already have accounts. A collision gets the same redirect as a new request
+  // and creates nothing; the pending page explains that case. The hash is
+  // computed first so both outcomes also cost the same.
+  const passwordHash = await hashPassword(password);
+  if (await usersAsync.findByUsername(username) || (email && await usersAsync.findByEmail(email))) {
+    return res.redirect('/pending');
   }
 
-  const passwordHash = getBcrypt().hashSync(password, 12);
-  let id;
   try {
-    id = await usersAsync.create({
+    await usersAsync.create({
       username,
       email,
       passwordHash,
@@ -506,9 +525,9 @@ router.post('/register', asyncHandler(async (req, res, next) => {
       canUseSystemApiKeys: false
     });
   } catch (err) {
-    if ((err.message || '').includes('users.email')) {
-      req.session.authError = 'That email address is already associated with an account.';
-      return res.redirect('/register');
+    // Lost a race with a concurrent registration for the same name or email.
+    if (/users\.(email|username)/.test(err.message || '')) {
+      return res.redirect('/pending');
     }
     return next(err);
   }
@@ -584,7 +603,7 @@ router.post('/invite/:token', asyncHandler(async (req, res, next) => {
     return res.redirect(`/invite/${token}`);
   }
 
-  const passwordHash = getBcrypt().hashSync(password, 12);
+  const passwordHash = await hashPassword(password);
   let userId;
   try {
     userId = await usersAsync.create({
@@ -659,13 +678,15 @@ router.post('/reset-password/:token', asyncHandler(async (req, res) => {
     return res.redirect(`/reset-password/${token}`);
   }
 
-  const passwordHash = getBcrypt().hashSync(password, 12);
+  const passwordHash = await hashPassword(password);
   await usersAsync.updatePassword(reset.user_id, passwordHash);
   await usersAsync.updatePasswordChangedAt(reset.user_id);
   // Clear any MFA lock too. A user who fluffed their code, assumed the password
   // was wrong and reset it would otherwise still be locked out afterwards, with
   // nothing connecting the two.
   await usersAsync.clearMfaFailures(reset.user_id);
+  // Likewise the sign-in throttle: wrong guesses are usually why they reset.
+  await loginThrottlesAsync.clear(loginThrottlesAsync.keyForUsername(reset.username));
   await revokeRememberedDevicesForUser(res, reset.user_id);
   await passwordResetTokensAsync.markUsed(reset.id);
   await passwordResetTokensAsync.revokeForUser(reset.user_id);

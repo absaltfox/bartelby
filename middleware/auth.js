@@ -4,16 +4,9 @@ const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const { usersAsync, userCollectionAccessAsync, roleAtLeast } = require('../database/db');
 const { asyncHandler } = require('../utils/async-handler');
+const { verifyPassword } = require('../utils/passwords');
 
-let bcryptModule = null;
 const SQLITE_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
-
-function getBcrypt() {
-  if (!bcryptModule) {
-    bcryptModule = require('bcryptjs');
-  }
-  return bcryptModule;
-}
 
 function parsePasswordChangedTimestamp(value) {
   if (value == null) return NaN;
@@ -31,17 +24,20 @@ function parsePasswordChangedTimestamp(value) {
 
 // ── Passport strategy ──────────────────────────────────────────────────────
 
+// The one failure the sign-in throttle counts (routes/auth.js): every other
+// strategy outcome is reached only after the password has matched.
+const INVALID_CREDENTIALS_MESSAGE = 'Invalid username or password.';
+
 passport.use(new LocalStrategy(
   { usernameField: 'username', passwordField: 'password' },
   async (username, password, done) => {
     try {
       const user = await usersAsync.findByUsername(username.trim().toLowerCase());
-      if (!user) {
-        return done(null, false, { message: 'Invalid username or password.' });
-      }
-      const match = getBcrypt().compareSync(password, user.password_hash);
-      if (!match) {
-        return done(null, false, { message: 'Invalid username or password.' });
+      // Verify even when there is no such user, so an unknown username costs
+      // the same as a wrong password and timing does not enumerate accounts.
+      const match = await verifyPassword(password, user ? user.password_hash : null);
+      if (!user || !match) {
+        return done(null, false, { message: INVALID_CREDENTIALS_MESSAGE });
       }
       if (user.status === 'pending') {
         return done(null, false, { message: 'pending' });
@@ -269,6 +265,7 @@ function buildAccessOpts(req) {
 
 module.exports = {
   passport,
+  INVALID_CREDENTIALS_MESSAGE,
   locals,
   parsePasswordChangedTimestamp,
   isUsableAccount,

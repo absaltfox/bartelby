@@ -119,6 +119,30 @@ multiplies every limit by the machine count, and DEPLOY.md's recommended baselin
 is two web machines.
 
 #### Re-authenticate before security-relevant changes
+At the password phase the per-account control is a growing delay, not a lockout
+(`loginThrottlesAsync` in `database/models/users.js`). Anyone can submit any
+username there, so a lockout would let a stranger deny service to a named user;
+MFA can lock by account only because reaching it already took the password. The
+delay is enforced on arrival and answered immediately rather than slept through,
+which would hold a socket open per attempt.
+
+#### Do not reveal which accounts exist
+
+An unauthenticated caller should not be able to learn whether a username or
+email has an account, from either the answer or how long it took.
+
+- **Same cost** — sign-in verifies against a placeholder hash when the username
+  is unknown (`utils/passwords.js`), so a miss costs one bcrypt comparison like
+  a hit. Use the asynchronous bcrypt calls; the synchronous ones block the event
+  loop for the whole hash.
+- **Same answer** — public registration redirects to the pending page whether or
+  not the name was free, and creates nothing on a collision. `/setup` and
+  `/invite/:token` still name a collision: the first runs only before any
+  account exists, and the second is reachable only with an invitation.
+- **Same state** — anything keyed by a submitted username, such as the sign-in
+  delay, must behave identically for names that do not exist, and should store a
+  hash of the name rather than what was typed.
+
 
 Changing MFA settings, the recovery email, or the password should require proof
 that the current session's owner is present — a password re-entry, or a freshness

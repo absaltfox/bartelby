@@ -176,6 +176,13 @@ describe('auth and email-driven flows', () => {
       new Date(Date.now() + 60 * 60 * 1000).toISOString()
     );
 
+    // A run of wrong guesses is usually why someone resets their password, so
+    // the sign-in throttle (#101) must not outlive the reset.
+    const throttleKey = db.loginThrottlesAsync.keyForUsername('token-reset-user');
+    for (let i = 0; i < db.LOGIN_THROTTLE_FREE_ATTEMPTS + 6; i += 1) {
+      await db.loginThrottlesAsync.recordFailure(throttleKey);
+    }
+
     const rawToken = 'manual-reset-token';
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     await db.passwordResetTokensAsync.create({

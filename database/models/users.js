@@ -11,6 +11,24 @@ const MFA_MAX_ATTEMPTS = 5;
 const MFA_LOCK_BASE_MS = 10 * 60 * 1000;
 const MFA_LOCK_MAX_MS = 24 * 60 * 60 * 1000;
 
+// Password-phase sign-in throttle (issue #101). A growing wait, not a lockout:
+// anyone can submit any username here, so refusing outright would let a
+// stranger deny service to a named user. A user who mistypes a couple of times
+// meets nothing; a guesser is held to one attempt per wait per account.
+const LOGIN_THROTTLE_FREE_ATTEMPTS = 3;
+const LOGIN_THROTTLE_BASE_MS = 1000;
+const LOGIN_THROTTLE_MAX_MS = 30 * 1000;
+// A run of failures is forgotten after this long without another one.
+const LOGIN_THROTTLE_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_THROTTLE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Wait imposed after the Nth consecutive failure: 0, 0, 0, 1s, 2s, 4s … capped. */
+function loginThrottleDelayMs(attempts) {
+  const over = Number(attempts) - LOGIN_THROTTLE_FREE_ATTEMPTS;
+  if (!(over > 0)) return 0;
+  return Math.min(LOGIN_THROTTLE_BASE_MS * Math.pow(2, over - 1), LOGIN_THROTTLE_MAX_MS);
+}
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
 const users = {
   count() {
@@ -882,6 +900,52 @@ function parseInviteCollectionIds(value) {
   }
 }
 
+const loginThrottlesAsync = {
+  // Hashed, so the table never holds what was typed into the username field
+  // (people do paste passwords there) and every key has the same shape whether
+  // or not the account exists.
+  keyForUsername(username) {
+    const normalized = String(username == null ? '' : username).trim().toLowerCase();
+    return 'user:' + crypto.createHash('sha256').update(normalized).digest('hex');
+  },
+
+  /** Milliseconds left to wait before another attempt is accepted, or 0. */
+  async getRemainingMs(key, now = Date.now()) {
+    const row = await getAsync('SELECT throttled_until FROM login_throttles WHERE throttle_key = ?', [key]);
+    const until = row && row.throttled_until != null ? Number(row.throttled_until) : 0;
+    if (!Number.isFinite(until) || until <= now) return 0;
+    return until - now;
+  },
+
+  /** Records one failed attempt. Returns { attempts, throttledUntil } (epoch ms or null). */
+  async recordFailure(key, now = Date.now()) {
+    const row = await getAsync(
+      'SELECT failed_attempts, last_failed_at FROM login_throttles WHERE throttle_key = ?',
+      [key]
+    );
+    const stale = !row || now - Number(row.last_failed_at || 0) > LOGIN_THROTTLE_WINDOW_MS;
+    const attempts = (stale ? 0 : Number(row.failed_attempts || 0)) + 1;
+    const delay = loginThrottleDelayMs(attempts);
+    const throttledUntil = delay > 0 ? now + delay : null;
+
+    await runAsync(
+      `INSERT INTO login_throttles (throttle_key, failed_attempts, throttled_until, last_failed_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(throttle_key) DO UPDATE SET
+         failed_attempts = excluded.failed_attempts,
+         throttled_until = excluded.throttled_until,
+         last_failed_at = excluded.last_failed_at`,
+      [key, attempts, throttledUntil, now]
+    );
+    // Keys are attacker-supplied, so the table is pruned as it is written.
+    await runAsync('DELETE FROM login_throttles WHERE last_failed_at < ?', [now - LOGIN_THROTTLE_RETENTION_MS]);
+    return { attempts, throttledUntil };
+  },
+
+  async clear(key) {
+    await runAsync('DELETE FROM login_throttles WHERE throttle_key = ?', [key]);
+  }
+};
 
   return {
     users,
@@ -893,11 +957,17 @@ function parseInviteCollectionIds(value) {
     userApiKeysAsync,
     passwordResetTokensAsync,
     mfaRememberTokensAsync,
+    loginThrottlesAsync,
+    loginThrottleDelayMs,
     maskSecret,
     ROLE_HIERARCHY,
     roleAtLeast,
     MFA_MAX_ATTEMPTS,
     MFA_LOCK_BASE_MS,
-    MFA_LOCK_MAX_MS
+    MFA_LOCK_MAX_MS,
+    LOGIN_THROTTLE_FREE_ATTEMPTS,
+    LOGIN_THROTTLE_BASE_MS,
+    LOGIN_THROTTLE_MAX_MS,
+    LOGIN_THROTTLE_WINDOW_MS
   };
 };
