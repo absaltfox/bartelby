@@ -1,6 +1,8 @@
 {
   "name": "bartelby",
   "version": "1.0.0",
+  "license": "AGPL-3.0-only",
+  "author": "Michael LeBlanc",
   "description": "Bartelby — Historical Document Transcription",
   "main": "server.js",
   "engines": {

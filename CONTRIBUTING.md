@@ -116,3 +116,15 @@ If you change those areas, think through:
 If a feature introduces a new convention, subsystem, or workflow that future
 contributors would need to understand, add or update the corresponding doc in
 `docs/` as part of the same change.
+
+## Licensing
+
+Bartelby is copyright Michael LeBlanc and is licensed under the GNU Affero
+General Public License, version 3 ([LICENSE](./LICENSE),
+[COPYRIGHT](./COPYRIGHT)).
+
+Copyright in the project is held by a single owner. Contributions are accepted
+only on the basis that you assign your copyright in them to Michael LeBlanc, and
+by submitting one you confirm that you have the right to do so. If you cannot
+agree to that, please open an issue describing the change instead of sending
+code.

@@ -50,3 +50,16 @@ changes. That document is the project baseline for:
 - navigation hierarchy
 - forms, tables, tabs, and modals
 - accessibility and usability expectations
+
+## License
+
+Copyright (C) 2026 Michael LeBlanc.
+
+Bartelby is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License, version 3, as published by the
+Free Software Foundation. It is distributed in the hope that it will be useful,
+but without any warranty; see [LICENSE](./LICENSE) for the full text and
+[COPYRIGHT](./COPYRIGHT) for the copyright notice.
+
+Because this is the Affero licence, running a modified copy as a network
+service means offering its users the source of that modified copy.
