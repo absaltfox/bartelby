@@ -24,6 +24,8 @@ It supports historians engaged in research by making the data and connections co
   [docs/db-migrations.md](./docs/db-migrations.md)
 - Contribution workflow:
   [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Reporting a security problem:
+  [SECURITY.md](./SECURITY.md)
 - Deployment notes for Docker and Fly:
   [DEPLOY.md](./DEPLOY.md)
 - Curator UI/UX testing:

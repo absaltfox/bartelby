@@ -58,8 +58,15 @@ Run the checks that match your change:
 
 ```bash
 node --check path/to/file.js
+npm run lint
 npm test -- --runInBand
 ```
+
+`npm run lint` runs ESLint and fails on errors only; `npm run lint:all` also
+prints the warnings. The configuration (`eslint.config.js`) targets defects such
+as undefined names and unreachable code, not formatting. Indentation and line
+endings come from `.editorconfig`, which most editors apply automatically. The
+same checks run in CI (`.github/workflows/ci.yml`) on every pull request.
 
 The repository hygiene check allows the committed top-level guidance docs used
 by contributors and agents, including `Claude.md`. Treat unexpected extra

@@ -60,7 +60,7 @@ function normalizeRequestCharsetAlias(req, res, next) {
   const contentType = req.headers['content-type'];
   if (typeof contentType === 'string' && /;\s*charset\s*=\s*"?utf8"?/i.test(contentType)) {
     req.headers['content-type'] = contentType.replace(
-      /(\;\s*charset\s*=\s*"?)(utf8)("?)/i,
+      /(;\s*charset\s*=\s*"?)(utf8)("?)/i,
       '$1utf-8$3'
     );
   }
