@@ -1,4 +1,4 @@
-const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages } = require('../utils/document-services');
+const { buildTextDiffSummary, trimTranscriptSegment, stripPageMarkers, buildComparisonPages, getTranscriptPageSegments } = require('../utils/document-services');
 const express = require('express');
 const router = express.Router();
 const { documentsAsync, transcriptsAsync, annotationsAsync, documentCollectionsAsync, collectionsAsync, transcriptionJobsAsync, userCollectionAccessAsync, documentEventsAsync, settingsAsync, userApiKeysAsync, saveDatabase, collectionAnalyticsAsync, collectionTopicsAsync, documentTopicAssignmentsAsync, topicEvolutionAsync, topicHierarchyAsync, relationshipsAsync, loadSentimentEntityPanel } = require('../database/db');
