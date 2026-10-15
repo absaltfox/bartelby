@@ -224,6 +224,8 @@ fly secrets set \
 >
 > **Important:** Production now fails closed for non-durable local defaults. `SESSION_STORE=memory` and `STORAGE_DRIVER=local` are rejected unless you set `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` or `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1`. Those overrides are intended only for deliberate single-node deployments.
 >
+> **Important:** Never set `ALLOW_INSECURE_HTTP_IN_PRODUCTION` on a deployment reachable from a network. It exists so the bundled `docker-compose.yml` can run over plain http on `localhost`; it drops the `Secure` flag from session cookies, and boot refuses it when `PUBLIC_APP_URL` is `https`. See [docs/local-development.md](./docs/local-development.md).
+>
 > **Important:** Set `PUBLIC_APP_URL` in production. Invite links, password-reset links, and other absolute URLs now fail fast at boot if this value is missing.
 > Bartelby also uses `PUBLIC_APP_URL` as the canonical production host. Requests
 > for other hosts, including the default `*.fly.dev` hostname, are redirected to

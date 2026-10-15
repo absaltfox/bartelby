@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Migrate local upload files to S3-compatible storage (Cloudflare R2, MinIO, AWS S3).
+ * Migrate local upload files to S3-compatible storage (Cloudflare R2, AWS S3, or any other S3-compatible store).
  *
  * Reads every file from data/uploads/ (with a legacy fallback to public/uploads/)
  * and uploads it to the configured S3 bucket

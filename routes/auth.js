@@ -19,6 +19,7 @@ const { resolveApplicationSettings } = require('../utils/application-settings');
 const { asyncHandler } = require('../utils/async-handler');
 const { hashPassword } = require('../utils/passwords');
 const { safeLocalPath } = require('../utils/safe-redirect');
+const { requiresSecureTransport } = require('../utils/transport-security');
 const { INVALID_CREDENTIALS_MESSAGE } = require('../middleware/auth');
 
 function getBootstrapToken() {
@@ -283,7 +284,7 @@ router.post('/login/mfa', asyncHandler(async (req, res, next) => {
       signed: true,
       httpOnly: true,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: requiresSecureTransport(),
       maxAge: MFA_REMEMBER_MS
     });
   }
