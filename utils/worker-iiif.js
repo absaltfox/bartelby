@@ -2,6 +2,7 @@
 
 const config = require('../config');
 const { isTransientError, sleep } = require('./worker-runtime');
+const { describeError } = require('./error-detail');
 const { parseManifest } = require('./iiif/parser');
 const { fetchIiifJson } = require('./iiif/client');
 const ubcOc = require('./iiif/sources/ubc-oc');
@@ -153,7 +154,7 @@ async function runIiifSyncCycle(deps = {}) {
     await log(`IIIF sync complete: ${imported} of ${seen} manifest(s) imported`);
   } catch (err) {
     if (!source) {
-      console.error('[worker-iiif] cycle error before claim:', err.message);
+      console.error('[worker-iiif] cycle error before claim:', describeError(err));
       return;
     }
     // Transient (5xx/timeout/429) → requeue and resume from cursor next tick.
