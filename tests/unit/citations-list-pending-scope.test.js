@@ -68,6 +68,11 @@ async function seedPendingCitationInCollection() {
   return { userId, collectionId, documentId, transcriptId, entityId, citationId };
 }
 
+// These cases exercise collection scoping, not identity, so they run as an
+// admin. A caller with no identity gets the anonymous (world-public) scope —
+// see identity-free-access-predicates.test.js (issue #84).
+const ADMIN = { isAdmin: true };
+
 describe('citationsAsync.listPending — collectionId scope', () => {
   beforeAll(async () => { await initApp(); });
 
@@ -75,7 +80,7 @@ describe('citationsAsync.listPending — collectionId scope', () => {
     const seedA = await seedPendingCitationInCollection();
     const seedB = await seedPendingCitationInCollection();
 
-    const rows = await citationsAsync.listPending();
+    const rows = await citationsAsync.listPending(ADMIN);
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(seedA.citationId);
     expect(ids).toContain(seedB.citationId);
@@ -85,12 +90,12 @@ describe('citationsAsync.listPending — collectionId scope', () => {
     const seedA = await seedPendingCitationInCollection();
     const seedB = await seedPendingCitationInCollection();
 
-    const rowsA = await citationsAsync.listPending({ collectionId: seedA.collectionId });
+    const rowsA = await citationsAsync.listPending({ ...ADMIN, collectionId: seedA.collectionId });
     const idsA = rowsA.map((r) => r.id);
     expect(idsA).toContain(seedA.citationId);
     expect(idsA).not.toContain(seedB.citationId);
 
-    const rowsB = await citationsAsync.listPending({ collectionId: seedB.collectionId });
+    const rowsB = await citationsAsync.listPending({ ...ADMIN, collectionId: seedB.collectionId });
     const idsB = rowsB.map((r) => r.id);
     expect(idsB).toContain(seedB.citationId);
     expect(idsB).not.toContain(seedA.citationId);
@@ -111,7 +116,7 @@ describe('citationsAsync.listPending — collectionId scope', () => {
       approval_status: 'pending'
     });
 
-    const rows = await citationsAsync.listPending({ collectionId: seed.collectionId });
+    const rows = await citationsAsync.listPending({ ...ADMIN, collectionId: seed.collectionId });
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(newPendingId);
     expect(ids).not.toContain(seed.citationId);

@@ -16,6 +16,12 @@ function extractCsrfToken(html) {
   return match ? match[1] : null;
 }
 
+// Single-use submit token carried by the invite and password-reset forms.
+function extractSubmitToken(html) {
+  const match = html.match(/name="_once"\s+value="([^"]+)"/);
+  return match ? match[1] : null;
+}
+
 async function bootstrapAdmin(app) {
   const agent = request.agent(app);
   const setupPage = await agent.get('/setup');
@@ -112,6 +118,7 @@ describe('auth and email-driven flows', () => {
       .send({
         email: 'invitee@example.com',
         role: 'user',
+        _once: extractSubmitToken(invitePage.text),
         _csrf: csrf
       });
 
@@ -149,7 +156,7 @@ describe('auth and email-driven flows', () => {
     const res = await adminAgent
       .post(`/admin/users/${resetUserId}/password-reset`)
       .type('form')
-      .send({ _csrf: csrf });
+      .send({ _once: extractSubmitToken(adminUsersPage.text), _csrf: csrf });
 
     expect(res.status).toBe(302);
     expect(email.sendPasswordResetEmail).toHaveBeenCalledWith(expect.objectContaining({
@@ -175,6 +182,13 @@ describe('auth and email-driven flows', () => {
       rememberTokenHash,
       new Date(Date.now() + 60 * 60 * 1000).toISOString()
     );
+
+    // A run of wrong guesses is usually why someone resets their password, so
+    // the sign-in throttle (#101) must not outlive the reset.
+    const throttleKey = db.loginThrottlesAsync.keyForUsername('token-reset-user');
+    for (let i = 0; i < db.LOGIN_THROTTLE_FREE_ATTEMPTS + 6; i += 1) {
+      await db.loginThrottlesAsync.recordFailure(throttleKey);
+    }
 
     const rawToken = 'manual-reset-token';
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -246,7 +260,7 @@ describe('auth and email-driven flows', () => {
     const disableRes = await agent
       .post('/account/mfa/disable')
       .type('form')
-      .send({ _csrf: csrf });
+      .send({ current_password: 'password123!', _csrf: csrf });
 
     expect(disableRes.status).toBe(302);
     expect(disableRes.headers['set-cookie'] || []).toEqual(

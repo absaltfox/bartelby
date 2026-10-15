@@ -1,7 +1,18 @@
 {
   "name": "bartelby",
   "version": "1.0.0",
-  "description": "Bartelby — Historical Document Transcription",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "Michael LeBlanc",
+  "description": "Transcribe, organize and explore historical documents, with an evidence-linked knowledge graph.",
+  "homepage": "https://github.com/absaltfox/bartelby#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/absaltfox/bartelby.git"
+  },
+  "bugs": {
+    "url": "https://github.com/absaltfox/bartelby/issues"
+  },
   "main": "server.js",
   "engines": {
     "node": ">=25.9.0 <26"
@@ -14,7 +25,9 @@
     "backfill:exact-authority-suggestions": "node scripts/backfill-exact-authority-suggestions.js",
     "migrate:turso": "node scripts/migrate-to-turso.js",
     "migrate:s3": "node scripts/migrate-uploads-to-s3.js",
-    "test": "npm run test:hygiene && npm run test:unit && npm run test:integration",
+    "lint": "eslint . --quiet",
+    "lint:all": "eslint .",
+    "test": "npm run test:hygiene && npm run lint && npm run test:unit && npm run test:integration",
     "test:hygiene": "node scripts/check-repo-hygiene.js",
     "test:curator-ui": "jest tests/integration/curator-ui-contracts.test.js --runInBand",
     "test:ux": "playwright test",
@@ -78,8 +91,8 @@
     "express-rate-limit": "^8.3.1",
     "express-session": "^1.19.0",
     "helmet": "^8.1.0",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^9.0.3",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.0",
     "ollama-ai-provider": "^1.2.0",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
@@ -88,14 +101,25 @@
     "qrcode": "^1.5.4",
     "rate-limit-redis": "^4.3.1",
     "redis": "^4.7.1",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "sql.js": "^1.10.3",
     "yazl": "^3.3.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.61.0",
     "cheerio": "^1.2.0",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
     "jest": "^30.3.0",
     "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "pdfjs-dist": {
+      "canvas": "$canvas"
+    },
+    "@huggingface/transformers": {
+      "sharp": "$sharp"
+    }
   }
 }

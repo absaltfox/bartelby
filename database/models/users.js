@@ -11,6 +11,24 @@ const MFA_MAX_ATTEMPTS = 5;
 const MFA_LOCK_BASE_MS = 10 * 60 * 1000;
 const MFA_LOCK_MAX_MS = 24 * 60 * 60 * 1000;
 
+// Password-phase sign-in throttle (issue #101). A growing wait, not a lockout:
+// anyone can submit any username here, so refusing outright would let a
+// stranger deny service to a named user. A user who mistypes a couple of times
+// meets nothing; a guesser is held to one attempt per wait per account.
+const LOGIN_THROTTLE_FREE_ATTEMPTS = 3;
+const LOGIN_THROTTLE_BASE_MS = 1000;
+const LOGIN_THROTTLE_MAX_MS = 30 * 1000;
+// A run of failures is forgotten after this long without another one.
+const LOGIN_THROTTLE_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_THROTTLE_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Wait imposed after the Nth consecutive failure: 0, 0, 0, 1s, 2s, 4s … capped. */
+function loginThrottleDelayMs(attempts) {
+  const over = Number(attempts) - LOGIN_THROTTLE_FREE_ATTEMPTS;
+  if (!(over > 0)) return 0;
+  return Math.min(LOGIN_THROTTLE_BASE_MS * Math.pow(2, over - 1), LOGIN_THROTTLE_MAX_MS);
+}
+
 module.exports = (db, runAsync, getAsync, allAsync, saveDatabase, run, get, all) => {
 const users = {
   count() {
@@ -882,6 +900,77 @@ function parseInviteCollectionIds(value) {
   }
 }
 
+const loginThrottlesAsync = {
+  // Hashed, so the table never holds what was typed into the username field
+  // (people do paste passwords there) and every key has the same shape whether
+  // or not the account exists.
+  keyForUsername(username) {
+    const normalized = String(username == null ? '' : username).trim().toLowerCase();
+    return 'user:' + crypto.createHash('sha256').update(normalized).digest('hex');
+  },
+
+  /** Milliseconds left to wait before another attempt is accepted, or 0. */
+  async getRemainingMs(key, now = Date.now()) {
+    const row = await getAsync('SELECT throttled_until FROM login_throttles WHERE throttle_key = ?', [key]);
+    const until = row && row.throttled_until != null ? Number(row.throttled_until) : 0;
+    if (!Number.isFinite(until) || until <= now) return 0;
+    return until - now;
+  },
+
+  /**
+   * Records one failed attempt. Returns { attempts, throttledUntil } (epoch ms
+   * or null).
+   *
+   * The increment happens inside one statement, never as a read followed by a
+   * write: guesses sent at the same moment would otherwise all read the same
+   * count and write the same low number, and the wait would grow more slowly
+   * than the schedule says. The second statement derives the wait from the
+   * row's own columns, so it gives the same answer in whatever order
+   * concurrent callers reach it. It mirrors loginThrottleDelayMs in SQL.
+   */
+  async recordFailure(key, now = Date.now()) {
+    await runAsync(
+      `INSERT INTO login_throttles (throttle_key, failed_attempts, throttled_until, last_failed_at)
+       VALUES (?, 1, NULL, ?)
+       ON CONFLICT(throttle_key) DO UPDATE SET
+         failed_attempts = CASE
+           WHEN excluded.last_failed_at - login_throttles.last_failed_at > ? THEN 1
+           ELSE login_throttles.failed_attempts + 1
+         END,
+         last_failed_at = excluded.last_failed_at`,
+      [key, now, LOGIN_THROTTLE_WINDOW_MS]
+    );
+    await runAsync(
+      `UPDATE login_throttles SET throttled_until = CASE
+         WHEN failed_attempts > ? THEN
+           last_failed_at + MIN(?, ? * (1 << MIN(failed_attempts - ? - 1, 30)))
+         ELSE NULL
+       END
+       WHERE throttle_key = ?`,
+      [
+        LOGIN_THROTTLE_FREE_ATTEMPTS,
+        LOGIN_THROTTLE_MAX_MS,
+        LOGIN_THROTTLE_BASE_MS,
+        LOGIN_THROTTLE_FREE_ATTEMPTS,
+        key
+      ]
+    );
+    const row = await getAsync(
+      'SELECT failed_attempts, throttled_until FROM login_throttles WHERE throttle_key = ?',
+      [key]
+    );
+    // Keys are attacker-supplied, so the table is pruned as it is written.
+    await runAsync('DELETE FROM login_throttles WHERE last_failed_at < ?', [now - LOGIN_THROTTLE_RETENTION_MS]);
+    return {
+      attempts: row ? Number(row.failed_attempts) : 0,
+      throttledUntil: row && row.throttled_until != null ? Number(row.throttled_until) : null
+    };
+  },
+
+  async clear(key) {
+    await runAsync('DELETE FROM login_throttles WHERE throttle_key = ?', [key]);
+  }
+};
 
   return {
     users,
@@ -893,11 +982,17 @@ function parseInviteCollectionIds(value) {
     userApiKeysAsync,
     passwordResetTokensAsync,
     mfaRememberTokensAsync,
+    loginThrottlesAsync,
+    loginThrottleDelayMs,
     maskSecret,
     ROLE_HIERARCHY,
     roleAtLeast,
     MFA_MAX_ATTEMPTS,
     MFA_LOCK_BASE_MS,
-    MFA_LOCK_MAX_MS
+    MFA_LOCK_MAX_MS,
+    LOGIN_THROTTLE_FREE_ATTEMPTS,
+    LOGIN_THROTTLE_BASE_MS,
+    LOGIN_THROTTLE_MAX_MS,
+    LOGIN_THROTTLE_WINDOW_MS
   };
 };

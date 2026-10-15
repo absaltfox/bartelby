@@ -23,7 +23,7 @@ describe('validateS3Endpoint', () => {
       'http://localhost:9000',
       'https://s3.amazonaws.com',
       'https://s3.us-east-1.amazonaws.com',
-      'https://my-minio.example.com:9000',
+      'https://objects.example.com:9000',
       'http://10.0.0.5:9000',
     ];
     valid.forEach(url => {

@@ -10,6 +10,7 @@ const compression = require('compression');
 const { createLimiter, setRateLimitRedisClient } = require('./utils/rate-limit-store');
 const config = require('./config');
 const { loadEnv } = require('./utils/secrets');
+const { allowsInsecureHttp, requiresSecureTransport } = require('./utils/transport-security');
 const { initializeSchema, settingsAsync, documentsAsync } = require('./database/db');
 const { passport, locals } = require('./middleware/auth');
 const { ensureCsrfToken, validateCsrf } = require('./middleware/csrf');
@@ -23,6 +24,9 @@ loadEnv();
 const app = express();
 const PORT = config.runtime.port;
 const isProduction = config.runtime.nodeEnv === 'production';
+// False only for a deliberate plain-http single-node install; see
+// utils/transport-security.js.
+const secureTransport = requiresSecureTransport();
 const bootStartedAt = Date.now();
 const startupDebugEnabled = /^(1|true|yes|on)$/i.test(String(process.env.STARTUP_DEBUG || ''));
 const routeLoadMetrics = [];
@@ -60,7 +64,7 @@ function normalizeRequestCharsetAlias(req, res, next) {
   const contentType = req.headers['content-type'];
   if (typeof contentType === 'string' && /;\s*charset\s*=\s*"?utf8"?/i.test(contentType)) {
     req.headers['content-type'] = contentType.replace(
-      /(\;\s*charset\s*=\s*"?)(utf8)("?)/i,
+      /(;\s*charset\s*=\s*"?)(utf8)("?)/i,
       '$1utf-8$3'
     );
   }
@@ -283,16 +287,20 @@ if (config.storage.driver === 's3') {
 }
 
 app.use(helmet({
-  hsts: isProduction ? undefined : false,
+  hsts: secureTransport ? undefined : false,
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],  // EJS inline scripts
+      // No 'unsafe-inline': templates load page JS from /js and pass data in
+      // non-executing <script type="application/json"> elements, so a markup
+      // injection cannot run script. tests/unit/views-no-inline-script.test.js
+      // keeps the views compatible with this.
+      scriptSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: imgSrcDirectives,
       connectSrc: ["'self'"],
-      upgradeInsecureRequests: isProduction ? [] : null
+      upgradeInsecureRequests: secureTransport ? [] : null
     }
   }
 }));
@@ -383,7 +391,7 @@ function getSessionOptions(store) {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       httpOnly: true,
       sameSite: 'lax',
-      secure: isProduction
+      secure: secureTransport
     }
   };
 }
@@ -427,8 +435,24 @@ function validateProductionConfiguration() {
     );
   }
 
+  const insecureHttp = allowsInsecureHttp();
+  if (insecureHttp) {
+    if (/^https:/i.test(publicAppUrl)) {
+      throw new Error(
+        'ALLOW_INSECURE_HTTP_IN_PRODUCTION must not be set when PUBLIC_APP_URL is https. ' +
+        'It is only for a single machine reached directly over plain http.'
+      );
+    }
+    void logger.warn('boot', 'Production override enabled: serving over plain http. Session cookies are not marked Secure and can be read in transit; do not expose this instance beyond the local machine.', {
+      publicAppUrl,
+      overrideEnv: 'ALLOW_INSECURE_HTTP_IN_PRODUCTION'
+    });
+  }
+
+  // A direct plain-http listener has no proxy in front of it, so trusting
+  // forwarded headers there would let clients spoof their address.
   const trustProxy = String(process.env.TRUST_PROXY || '').trim();
-  if (!trustProxy || trustProxy === '0') {
+  if (!insecureHttp && (!trustProxy || trustProxy === '0')) {
     throw new Error(
       'TRUST_PROXY must be set to a non-zero value in production. ' +
       'Set TRUST_PROXY=1 when running behind Fly.io, nginx, or another TLS-terminating proxy.'
@@ -710,7 +734,7 @@ app.get('/uploads/:filename', async (req, res) => {
 
 // Auth routes get CSRF protection on POST
 app.use('/', loadRoute('./routes/auth', 'auth routes', { tier: 'core' }));
-app.use('/account', loadRoute('./routes/account', 'account routes', { tier: 'core' }));
+app.use('/account', authenticatedApiLimiter, loadRoute('./routes/account', 'account routes', { tier: 'core' }));
 app.use('/', loadRoute('./routes/documents', 'document routes', { tier: 'core' }));
 app.use('/transcripts', authenticatedApiLimiter, loadRoute('./routes/transcripts', 'transcript routes', { tier: 'core' }));
 app.use('/api/annotations', authenticatedApiLimiter, requireAuthApi, loadRoute('./routes/annotations', 'annotation routes', { tier: 'core' }));

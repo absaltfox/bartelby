@@ -103,8 +103,9 @@ Rejecting a user updates `users.status`, but their existing session keeps workin
 until something consults that column.
 
 The same applies in reverse: users need a way to invalidate their own sessions.
-Today the only global-eviction lever (`password_changed_at`) is reachable solely
-through an admin-minted reset token.
+`POST /account/password` is that lever: it stamps `password_changed_at`, which
+signs out every other session for the account, and moves the changing session's
+own clock forward so it alone survives.
 
 #### Rate limits belong on the subject being protected
 
@@ -118,6 +119,30 @@ Limiter state must also be shared across instances. The default in-memory store
 multiplies every limit by the machine count, and DEPLOY.md's recommended baseline
 is two web machines.
 
+At the password phase the per-account control is a growing delay, not a lockout
+(`loginThrottlesAsync` in `database/models/users.js`). Anyone can submit any
+username there, so a lockout would let a stranger deny service to a named user;
+MFA can lock by account only because reaching it already took the password. The
+delay is enforced on arrival and answered immediately rather than slept through,
+which would hold a socket open per attempt.
+
+#### Do not reveal which accounts exist
+
+An unauthenticated caller should not be able to learn whether a username or
+email has an account, from either the answer or how long it took.
+
+- **Same cost** — sign-in verifies against a placeholder hash when the username
+  is unknown (`utils/passwords.js`), so a miss costs one bcrypt comparison like
+  a hit. Use the asynchronous bcrypt calls; the synchronous ones block the event
+  loop for the whole hash.
+- **Same answer** — public registration redirects to the pending page whether or
+  not the name was free, and creates nothing on a collision. `/setup` and
+  `/invite/:token` still name a collision: the first runs only before any
+  account exists, and the second is reachable only with an invitation.
+- **Same state** — anything keyed by a submitted username, such as the sign-in
+  delay, must behave identically for names that do not exist, and should store a
+  hash of the name rather than what was typed.
+
 #### Re-authenticate before security-relevant changes
 
 Changing MFA settings, the recovery email, or the password should require proof
@@ -126,6 +151,33 @@ check against `req.session.authenticatedAt` — not merely a valid cookie.
 
 Verifying a value the same request flow just generated (a pending TOTP secret
 minted one request earlier) is a typo check, not authentication.
+
+`requireCurrentPassword` in `routes/account.js` is the implementation: it guards
+the email change, MFA disable, authenticator binding, and password change, behind
+a per-account limiter so the password field is not a guessing oracle for whoever
+holds the session.
+
+#### Caller-supplied destinations stay on this site
+
+Any `returnTo` or `back` value that becomes a redirect or a link goes through
+`safeLocalPath` (`utils/safe-redirect.js`). Checking for a leading `/` that is
+not `//` is not enough: browsers treat `\` as `/` and strip tabs and newlines
+from URLs, so `/\host` leaves for another origin.
+
+#### Bearer tokens are shown once and stored hashed
+
+Invite and password-reset links are live credentials. The database keeps only a
+hash of the token, so the link exists in clear only while it is being created.
+If it was emailed, do not display it at all. If it was not, render it straight
+into that response (`renderOneTimeLink` in `routes/admin-users.js`) rather than
+redirecting through a session flash: a flash nobody returns to read leaves the
+token in the session store for the cookie's whole lifetime.
+
+Answering a POST with a page instead of a redirect means a browser refresh sends
+the POST again. Any form whose result is rendered that way must be single-use:
+`requireUnspentSubmitToken` in the same file spends a per-render token on first
+use and redirects a repeat without creating anything. Otherwise a refresh mints
+a second invitation, or a second reset token that revokes the link just copied.
 
 ### Curator Is the Expert; LLM Is Scaffolding
 

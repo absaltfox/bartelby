@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const IGNORED_DIRS = new Set([
@@ -31,6 +32,34 @@ function walk(dir) {
     }
   });
 }
+
+// Tracked files or folders whose name ends in a space and a number ("notes 2.md",
+// "fixtures 2/") are copies left behind by a file manager or a sync client, not
+// work anyone meant to commit. The walk above only catches `.js` files on disk;
+// this covers every tracked path. Skipped where git is unavailable.
+function listTrackedFiles() {
+  try {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+const DUPLICATE_SUFFIX = / \d+(\.[^./]+)?$/u;
+const duplicateSuffixed = new Set();
+listTrackedFiles().forEach((file) => {
+  const segments = file.split('/');
+  segments.forEach((segment, index) => {
+    if (DUPLICATE_SUFFIX.test(segment)) {
+      duplicateSuffixed.add(segments.slice(0, index + 1).join('/'));
+    }
+  });
+});
+duplicateSuffixed.forEach((entry) => {
+  problems.push(`Duplicate-suffixed tracked path found: ${entry}`);
+});
 
 FORBIDDEN_TOP_LEVEL.forEach((name) => {
   if (fs.existsSync(path.join(ROOT, name))) {

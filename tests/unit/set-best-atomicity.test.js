@@ -14,7 +14,7 @@ const src = fs.readFileSync(
 describe('setBest', () => {
   it('uses a single UPDATE statement, not two sequential statements', () => {
     // Extract the setBest function body
-    const match = src.match(/async setBest\s*\([^)]*\)\s*\{([\s\S]*?)\n  \}/);
+    const match = src.match(/async setBest\s*\([^)]*\)\s*\{([\s\S]*?)\n {2}\}/);
     expect(match).not.toBeNull();
     const body = match[1];
 

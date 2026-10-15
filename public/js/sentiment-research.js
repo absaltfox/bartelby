@@ -5,7 +5,13 @@
 (function () {
   'use strict';
 
-  var bootstrap = (window.__sentimentResearchData) || {};
+  var configEl = document.getElementById('sentiment-research-config');
+  var bootstrap = {};
+  try {
+    bootstrap = (configEl && JSON.parse(configEl.textContent)) || {};
+  } catch (err) {
+    console.error('Sentiment research config could not be read.', err);
+  }
   var pageSize = bootstrap.pageSize || 25;
   var nextCursor = bootstrap.nextCursor || null;
   var hasMore = Boolean(bootstrap.hasMore);

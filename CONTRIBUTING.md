@@ -5,7 +5,7 @@
 Before making changes, read:
 
 - [AGENTS.md](./AGENTS.md)
-- [Claude.md](./Claude.md)
+- [CLAUDE.md](./CLAUDE.md)
 - [README.md](./README.md)
 - [docs/architecture.md](./docs/architecture.md)
 - [docs/development-principles.md](./docs/development-principles.md)
@@ -58,11 +58,18 @@ Run the checks that match your change:
 
 ```bash
 node --check path/to/file.js
+npm run lint
 npm test -- --runInBand
 ```
 
+`npm run lint` runs ESLint and fails on errors only; `npm run lint:all` also
+prints the warnings. The configuration (`eslint.config.js`) targets defects such
+as undefined names and unreachable code, not formatting. Indentation and line
+endings come from `.editorconfig`, which most editors apply automatically. The
+same checks run in CI (`.github/workflows/ci.yml`) on every pull request.
+
 The repository hygiene check allows the committed top-level guidance docs used
-by contributors and agents, including `Claude.md`. Treat unexpected extra
+by contributors and agents, including `CLAUDE.md`. Treat unexpected extra
 top-level files and directories as hygiene failures unless the repo documents
 them intentionally.
 
@@ -109,3 +116,15 @@ If you change those areas, think through:
 If a feature introduces a new convention, subsystem, or workflow that future
 contributors would need to understand, add or update the corresponding doc in
 `docs/` as part of the same change.
+
+## Licensing
+
+Bartelby is copyright Michael LeBlanc and is licensed under the GNU Affero
+General Public License, version 3 ([LICENSE](./LICENSE),
+[COPYRIGHT](./COPYRIGHT)).
+
+Copyright in the project is held by a single owner. Contributions are accepted
+only on the basis that you assign your copyright in them to Michael LeBlanc, and
+by submitting one you confirm that you have the right to do so. If you cannot
+agree to that, please open an issue describing the change instead of sending
+code.

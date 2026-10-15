@@ -112,7 +112,7 @@ describe('POST /account/profile cannot strand an email-MFA account (#94)', () =>
     return agent
       .post('/account/profile')
       .type('form')
-      .send({ email, _csrf: csrf(account.text) });
+      .send({ email, current_password: PASSWORD, _csrf: csrf(account.text) });
   }
 
   function errorFrom(res) {
@@ -185,7 +185,7 @@ describe('POST /account/profile cannot strand an email-MFA account (#94)', () =>
     const res = await agent
       .post('/account/profile')
       .type('form')
-      .send(`email[]=a&email[]=b&_csrf=${encodeURIComponent(csrf(account.text))}`);
+      .send(`email[]=a&email[]=b&current_password=${encodeURIComponent(PASSWORD)}&_csrf=${encodeURIComponent(csrf(account.text))}`);
 
     expect(res.status).toBe(302);
     // Coerced to empty, so with MFA off this is a legitimate clear.

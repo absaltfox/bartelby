@@ -133,9 +133,27 @@ Import workers write a heartbeat timestamp every 30 seconds. The main app requeu
   `ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION=1` and
   `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=1` explicitly for that single-node Docker
   workflow.
+- `docker-compose.yml` defaults to `DATABASE_DRIVER=better-sqlite3` and local
+  upload storage, so `docker compose up` starts the app container alone. No
+  object store is bundled: to use `STORAGE_DRIVER=s3` under Docker, point the
+  `S3_*` variables at an existing S3-compatible bucket.
+- The `sqljs` driver holds the database in memory and rewrites the whole file
+  on each save. It defers a save requested while a transaction is open, because
+  a sql.js export ends the open transaction; prefer `better-sqlite3` for any
+  file-backed install.
 - `TRUST_PROXY=0` is still appropriate for direct local listeners in
   non-production development. It is not a supported production setting for this
-  app.
+  app, with one exception below.
+- `docker-compose.yml` serves the app over plain http on `localhost` with no
+  proxy in front, so it also sets `ALLOW_INSECURE_HTTP_IN_PRODUCTION=1` and
+  defaults `PUBLIC_APP_URL` to `http://localhost:3000`. That override
+  (`utils/transport-security.js`) stops marking the session and remember-device
+  cookies `Secure`, turns off HSTS and the CSP `upgrade-insecure-requests`
+  directive, and permits `TRUST_PROXY=0`. Sessions are then readable in transit,
+  so it is for a single machine only: boot logs a warning while it is on, and
+  boot fails if it is combined with an `https` `PUBLIC_APP_URL`. Behind a TLS
+  proxy, set the `https` URL, `TRUST_PROXY=1` and
+  `ALLOW_INSECURE_HTTP_IN_PRODUCTION=0` instead.
 
 ## S3 image delivery tuning
 

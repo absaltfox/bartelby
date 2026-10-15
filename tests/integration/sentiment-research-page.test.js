@@ -101,7 +101,9 @@ describe('GET /sentiment (HTML page)', () => {
 
   it('anonymous: bootstrap data exposes filters + isAdmin=false', async () => {
     const res = await request(app).get('/sentiment');
-    const match = res.text.match(/window\.__sentimentResearchData\s*=\s*(\{[^<]+?\});/);
+    const match = res.text.match(
+      /<script id="sentiment-research-config" type="application\/json">([^<]+)<\/script>/
+    );
     expect(match).toBeTruthy();
     const data = JSON.parse(match[1]);
     expect(data.isAdmin).toBe(false);

@@ -11,7 +11,11 @@
     </div>
   </div>
 
-  <% if (flash) { %>
+  <% if (flash && flash.error) { %>
+    <div class="alert alert-error">
+      <p><%= flash.error %></p>
+    </div>
+  <% } else if (flash) { %>
     <div class="alert alert-success">
       <p><%= flash.message %></p>
       <% if (flash.inviteUrl) { %>
@@ -180,6 +184,7 @@
                       <form method="POST" action="/admin/users/<%= u.id %>/password-reset" class="inline-form"
                           data-confirm-message="Create a password reset link for <%= u.username %>?">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="_once" value="<%= submitToken %>">
                         <button type="submit" class="btn-secondary btn-sm">Reset Password</button>
                       </form>
                       <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline-form delete-user-form"

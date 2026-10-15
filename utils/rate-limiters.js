@@ -36,6 +36,29 @@ const aiTranscriptionLimiter = createLimiter({
   message: { error: 'Too many transcription requests. Please wait before queuing more jobs.' }
 });
 
+/**
+ * Limiter for account changes that re-check the current password (email, MFA,
+ * password change).
+ *
+ * Those routes turn a signed-in session into a password oracle: without a cap,
+ * whoever holds the session can guess the password at request speed. Keyed by
+ * account so the budget follows the user rather than the source address.
+ */
+const accountStepUpLimiter = createLimiter({
+  prefix: 'account-step-up',
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => userOrIpRateLimitKey(req, {
+    userPrefix: 'account-step-up-user',
+    ipPrefix: 'account-step-up-ip'
+  }),
+  skip: () => process.env.NODE_ENV !== 'production',
+  message: 'Too many attempts. Please wait before trying again.'
+});
+
 module.exports = {
-  aiTranscriptionLimiter
+  aiTranscriptionLimiter,
+  accountStepUpLimiter
 };

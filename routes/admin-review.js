@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAdmin } = require('../middleware/auth');
+const { requireAdmin, buildAccessOpts } = require('../middleware/auth');
 const { requireCurate, requireCurateAll } = require('../middleware/curator-permissions');
 const db = require('../database/db');
 const { CITATION_APPROVAL_STATUSES, EXTRACTION_METHODS, isValidExtractionMethod } = require('../utils/knowledge-approval');
@@ -747,7 +747,7 @@ async function reviewSuccessResponse(req, res, stores, payload = {}) {
   }
 
   const statusCounts = stores.citations && typeof stores.citations.getStatusCounts === 'function'
-    ? normalizeStatusCounts(await stores.citations.getStatusCounts({ reviewKind }))
+    ? normalizeStatusCounts(await stores.citations.getStatusCounts({ ...buildAccessOpts(req), reviewKind }))
     : normalizeStatusCounts();
 
   return res.json({
@@ -789,19 +789,19 @@ router.get('/review-extractions', requireAdmin, asyncHandler(async (req, res) =>
   const [citations, statusCounts] = stores.citations && typeof stores.citations.getStatusCounts === 'function'
     ? await Promise.all([
       typeof stores.citations.list === 'function'
-        ? stores.citations.list(status, PAGE_SIZE, offset, { reviewKind, sort, source })
+        ? stores.citations.list(status, PAGE_SIZE, offset, { ...buildAccessOpts(req), reviewKind, sort, source })
         : (status === 'all'
-          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { reviewKind, source }).then(async (pending) => {
+          ? stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.PENDING, 5000, { ...buildAccessOpts(req), reviewKind, source }).then(async (pending) => {
             const [approved, rejected] = await Promise.all([
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000, { reviewKind, source }),
-              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000, { reviewKind, source })
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.APPROVED, 5000, { ...buildAccessOpts(req), reviewKind, source }),
+              stores.citations.getByStatus(CITATION_APPROVAL_STATUSES.REJECTED, 5000, { ...buildAccessOpts(req), reviewKind, source })
             ]);
             return [...pending, ...approved, ...rejected].sort((a, b) => {
               return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
             }).slice(offset, offset + PAGE_SIZE);
           })
-          : stores.citations.getByStatus(status, PAGE_SIZE, { reviewKind, source })),
-      stores.citations.getStatusCounts({ reviewKind })
+          : stores.citations.getByStatus(status, PAGE_SIZE, { ...buildAccessOpts(req), reviewKind, source })),
+      stores.citations.getStatusCounts({ ...buildAccessOpts(req), reviewKind })
     ])
     : [[], {
       [CITATION_APPROVAL_STATUSES.PENDING]: 0,

@@ -37,6 +37,38 @@ function consumeFlash(req) {
   return flash;
 }
 
+// Single-use submit tokens for the two forms that mint a link. Their result is
+// rendered in the POST response (see renderOneTimeLink), which leaves the POST
+// as the page's last navigation, so a browser refresh sends it again. A repeat
+// would mint a second invitation, or a second reset token that revokes the link
+// the admin had just copied. Each rendered form carries a token that is spent
+// on first use; a repeat is redirected and creates nothing.
+const SUBMIT_TOKEN_LIMIT = 20;
+const ALREADY_SUBMITTED_MESSAGE = 'That form was already submitted. Nothing new was created.';
+
+function issueSubmitToken(req) {
+  const token = crypto.randomBytes(16).toString('hex');
+  const tokens = Array.isArray(req.session.adminUsersSubmitTokens)
+    ? req.session.adminUsersSubmitTokens
+    : [];
+  // Bounded: every page render issues one, and most are never spent.
+  req.session.adminUsersSubmitTokens = [...tokens, token].slice(-SUBMIT_TOKEN_LIMIT);
+  return token;
+}
+
+function requireUnspentSubmitToken(req, res, next) {
+  const supplied = typeof req.body._once === 'string' ? req.body._once : '';
+  const tokens = Array.isArray(req.session.adminUsersSubmitTokens)
+    ? req.session.adminUsersSubmitTokens
+    : [];
+  if (!supplied || !tokens.includes(supplied)) {
+    req.session.adminUsersFlash = { error: ALREADY_SUBMITTED_MESSAGE };
+    return res.redirect('/admin/users');
+  }
+  req.session.adminUsersSubmitTokens = tokens.filter((token) => token !== supplied);
+  next();
+}
+
 function parseCollectionIds(raw) {
   return Array.isArray(raw)
     ? raw.map(Number).filter(Number.isInteger)
@@ -70,8 +102,7 @@ async function blockLastActiveAdminRemoval(req, {
   return true;
 }
 
-// List all users (pending + active + rejected)
-router.get('/', asyncHandler(async (req, res) => {
+async function renderUsersPage(req, res, flash) {
   const allUsers = await usersAsync.getAll();
   const pending  = allUsers.filter(u => u.status === 'pending');
   const active   = allUsers.filter(u => u.status === 'active');
@@ -84,9 +115,25 @@ router.get('/', asyncHandler(async (req, res) => {
     rejected,
     invites: await userInvitesAsync.getActive(),
     currentUserId: req.user.id,
-    flash: consumeFlash(req),
+    flash,
+    submitToken: issueSubmitToken(req),
     smtpConfigured: isSmtpConfigured()
   });
+}
+
+// A freshly minted invite or reset link is a live bearer token, and the
+// database only keeps its hash, so this response is the one chance to show it.
+// Render it directly instead of redirecting through the session flash: a flash
+// the admin never comes back to read would leave the token in the session
+// store for the cookie's whole lifetime.
+async function renderOneTimeLink(req, res, flash) {
+  res.set('Cache-Control', 'no-store');
+  await renderUsersPage(req, res, flash);
+}
+
+// List all users (pending + active + rejected)
+router.get('/', asyncHandler(async (req, res) => {
+  await renderUsersPage(req, res, consumeFlash(req));
 }));
 
 router.get('/invite', asyncHandler(async (req, res) => {
@@ -94,12 +141,14 @@ router.get('/invite', asyncHandler(async (req, res) => {
     pageTitle: 'Invite User',
     allCollections: await collectionsAsync.getAll(),
     smtpConfigured: isSmtpConfigured(),
+    submitToken: issueSubmitToken(req),
     error: req.session.authError || null
   });
   delete req.session.authError;
 }));
 
-router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
+// The submit-token check runs first so a refresh does not spend limiter budget.
+router.post('/invite', requireUnspentSubmitToken, tokenGenLimiter, asyncHandler(async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const role = req.body.role === 'admin' ? 'admin' : 'user';
   const accessAll = req.body.access_all === '1';
@@ -137,6 +186,7 @@ router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
 
   const inviteUrl = absoluteAppUrl(req, `/invite/${token}`);
   let message = `Invitation created for ${email}.`;
+  let delivered = false;
 
   if (isSmtpConfigured()) {
     try {
@@ -146,17 +196,20 @@ router.post('/invite', tokenGenLimiter, asyncHandler(async (req, res) => {
         invitedBy: req.user.username
       });
       message = `Invitation created and emailed to ${email}.`;
+      delivered = true;
     } catch (err) {
       message = `Invitation created for ${email}, but the email could not be sent: ${err.message}`;
     }
   }
 
   audit.log('user.invite_created', { ...audit.reqContext(req), inviteeEmail: email, role });
+  if (!delivered) {
+    return renderOneTimeLink(req, res, { type: 'invite', inviteId, message, inviteUrl });
+  }
   req.session.adminUsersFlash = {
     type: 'invite',
     inviteId,
-    message,
-    inviteUrl
+    message
   };
   res.redirect('/admin/users');
 }));
@@ -294,7 +347,7 @@ router.post('/invites/:id/revoke', asyncHandler(async (req, res) => {
   res.redirect('/admin/users');
 }));
 
-router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res) => {
+router.post('/:id/password-reset', requireUnspentSubmitToken, tokenGenLimiter, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (id === req.user.id) return res.redirect('/admin/users');
 
@@ -320,6 +373,7 @@ router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res
 
   const resetUrl = absoluteAppUrl(req, `/reset-password/${token}`);
   let message = `Password reset link created for ${user.username}.`;
+  let delivered = false;
 
   if (isSmtpConfigured()) {
     try {
@@ -330,16 +384,19 @@ router.post('/:id/password-reset', tokenGenLimiter, asyncHandler(async (req, res
         initiatedBy: req.user.username
       });
       message = `Password reset email sent to ${user.email}.`;
+      delivered = true;
     } catch (err) {
       message = `Password reset link created for ${user.username}, but the email could not be sent: ${err.message}`;
     }
   }
 
   audit.log('user.password_reset_initiated', { ...audit.reqContext(req), targetUserId: user.id, targetEmail: user.email });
+  if (!delivered) {
+    return renderOneTimeLink(req, res, { type: 'password-reset', message, resetUrl });
+  }
   req.session.adminUsersFlash = {
     type: 'password-reset',
-    message,
-    resetUrl
+    message
   };
   res.redirect('/admin/users');
 }));

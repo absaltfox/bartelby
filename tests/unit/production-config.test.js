@@ -83,6 +83,55 @@ describe('production configuration validation', () => {
     );
   });
 
+  describe('ALLOW_INSECURE_HTTP_IN_PRODUCTION', () => {
+    const singleNode = {
+      SESSION_STORE: 'redis',
+      STORAGE_DRIVER: 's3',
+      PUBLIC_APP_URL: 'http://localhost:3000',
+      TRUST_PROXY: '0',
+      ALLOW_INSECURE_HTTP_IN_PRODUCTION: '1'
+    };
+
+    it('lets a direct plain-HTTP listener boot with TRUST_PROXY=0 and logs a warning', () => {
+      const { server, warn } = loadServerWithEnv(singleNode);
+
+      expect(() => server.validateProductionConfiguration()).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ overrideEnv: 'ALLOW_INSECURE_HTTP_IN_PRODUCTION' })
+      );
+    });
+
+    it('still requires PUBLIC_APP_URL', () => {
+      const { server } = loadServerWithEnv({ ...singleNode, PUBLIC_APP_URL: '' });
+
+      expect(() => server.validateProductionConfiguration()).toThrow(
+        'PUBLIC_APP_URL must be configured in production'
+      );
+    });
+
+    it('refuses to boot when PUBLIC_APP_URL is https, so it cannot be left on behind TLS', () => {
+      const { server } = loadServerWithEnv({
+        ...singleNode,
+        PUBLIC_APP_URL: 'https://bartelby.example.com',
+        TRUST_PROXY: '1'
+      });
+
+      expect(() => server.validateProductionConfiguration()).toThrow(
+        'ALLOW_INSECURE_HTTP_IN_PRODUCTION must not be set when PUBLIC_APP_URL is https'
+      );
+    });
+
+    it('still rejects TRUST_PROXY=0 without the override', () => {
+      const { server } = loadServerWithEnv({
+        ...singleNode,
+        ALLOW_INSECURE_HTTP_IN_PRODUCTION: ''
+      });
+
+      expect(() => server.validateProductionConfiguration()).toThrow(/TRUST_PROXY/);
+    });
+  });
+
   it('redirects direct-origin hosts to the canonical PUBLIC_APP_URL in production', () => {
     const { server } = loadServerWithEnv({
       SESSION_STORE: 'memory',

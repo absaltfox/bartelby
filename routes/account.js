@@ -2,7 +2,9 @@
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, parsePasswordChangedTimestamp } = require('../middleware/auth');
+const { hashPassword, verifyPassword } = require('../utils/passwords');
+const { accountStepUpLimiter } = require('../utils/rate-limiters');
 const { canEncryptSecrets } = require('../utils/secrets');
 const { isSmtpConfigured } = require('../utils/email');
 const {
@@ -29,6 +31,25 @@ async function revokeRememberedDevices(req) {
   await mfaRememberTokensAsync.deleteForUser(req.user.id);
   req.res.clearCookie('mfa_remember');
 }
+
+const CURRENT_PASSWORD_REQUIRED_ERROR = 'Enter your current password to make this change.';
+
+// Step-up authentication for changes that alter how the account is recovered
+// or signed in to: its email, its MFA binding, its password. A session cookie
+// and CSRF token prove only that the browser is signed in, so without this a
+// borrowed session could bind its own authenticator (locking the owner out) or
+// repoint the email that a recovery link would then be sent to. The limiter
+// runs first so the password field is not a guessing oracle for that session.
+const requireCurrentPassword = [
+  accountStepUpLimiter,
+  asyncHandler(async (req, res, next) => {
+    const supplied = typeof req.body.current_password === 'string' ? req.body.current_password : '';
+    if (!supplied || !(await verifyPassword(supplied, req.user.password_hash))) {
+      return res.redirect('/account?error=' + encodeURIComponent(CURRENT_PASSWORD_REQUIRED_ERROR));
+    }
+    next();
+  })
+];
 
 router.get('/', asyncHandler(async (req, res) => {
   const cfg = await settingsAsync.getAllPublic();
@@ -64,7 +85,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
 const MFA_EMAIL_REQUIRED_ERROR = 'Turn off email MFA before removing your email address.';
 
-router.post('/profile', asyncHandler(async (req, res) => {
+router.post('/profile', requireCurrentPassword, asyncHandler(async (req, res) => {
   // Not every body shape gives a string: `?email[]=a&email[]=b` yields an array
   // under express.urlencoded, and a JSON body can carry any type. Coerce before
   // trimming so a malformed submission is a redirect, not a 500.
@@ -89,6 +110,33 @@ router.post('/profile', asyncHandler(async (req, res) => {
     // The conditional write refused: email MFA was switched on concurrently.
     return res.redirect('/account?error=' + encodeURIComponent(MFA_EMAIL_REQUIRED_ERROR));
   }
+  res.redirect('/account?saved=1');
+}));
+
+// Self-serve password change. Stamping password_changed_at signs out every
+// other session for this account (middleware/auth.js `locals`), which is also
+// the only way a user can evict a session they believe was stolen.
+router.post('/password', requireCurrentPassword, asyncHandler(async (req, res) => {
+  const newPassword = typeof req.body.new_password === 'string' ? req.body.new_password : '';
+  const confirm = typeof req.body.confirm_password === 'string' ? req.body.confirm_password : '';
+
+  if (newPassword.length < 8) {
+    return res.redirect('/account?error=' + encodeURIComponent('Password must be at least 8 characters.'));
+  }
+  if (newPassword !== confirm) {
+    return res.redirect('/account?error=' + encodeURIComponent('New passwords do not match.'));
+  }
+
+  await usersAsync.updatePassword(req.user.id, await hashPassword(newPassword));
+  await usersAsync.updatePasswordChangedAt(req.user.id);
+  await revokeRememberedDevices(req);
+
+  // Keep this session: move its clock to the stamp just written rather than to
+  // Date.now(), so a database clock running ahead of this process cannot make
+  // the session that changed the password evict itself.
+  const updated = await usersAsync.findById(req.user.id);
+  const changedAt = parsePasswordChangedTimestamp(updated && updated.password_changed_at);
+  req.session.authenticatedAt = Math.max(Date.now(), Number.isNaN(changedAt) ? 0 : changedAt);
   res.redirect('/account?saved=1');
 }));
 
@@ -148,7 +196,7 @@ router.post('/api-keys/:id/delete', asyncHandler(async (req, res) => {
   res.redirect('/account?saved=1');
 }));
 
-router.post('/mfa/disable', asyncHandler(async (req, res) => {
+router.post('/mfa/disable', requireCurrentPassword, asyncHandler(async (req, res) => {
   await usersAsync.setMfaMethod(req.user.id, 'none');
   await usersAsync.setTotpSecret(req.user.id, null);
   await usersAsync.clearEmailOtp(req.user.id);
@@ -182,7 +230,7 @@ router.post('/mfa/totp/setup', (req, res) => {
   res.redirect('/account');
 });
 
-router.post('/mfa/totp/confirm', asyncHandler(async (req, res) => {
+router.post('/mfa/totp/confirm', requireCurrentPassword, asyncHandler(async (req, res) => {
   const secret = req.session.pendingTotpSecret;
   const code = (req.body.code || '').trim();
 

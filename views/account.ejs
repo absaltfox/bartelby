@@ -26,8 +26,39 @@
         <input type="email" id="email" name="email" value="<%= currentUser.email || '' %>" autocomplete="email">
         <p class="field-hint">Required if you want to use email-based MFA.</p>
       </div>
+      <div class="form-group">
+        <label for="profile-current-password">Current password (required)</label>
+        <input type="password" id="profile-current-password" name="current_password" autocomplete="current-password" required>
+        <p class="field-hint">Confirms it is you before your email address changes.</p>
+      </div>
       <div class="form-actions">
         <button type="submit" class="btn-primary">Save Profile</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section">
+    <h2>Password</h2>
+    <p class="field-hint">Changing your password signs you out everywhere else.</p>
+    <form method="POST" action="/account/password">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-group">
+        <label for="password-current">Current password (required)</label>
+        <input type="password" id="password-current" name="current_password" autocomplete="current-password" required>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="password-new">New password (required)</label>
+          <input type="password" id="password-new" name="new_password" autocomplete="new-password" minlength="8" required>
+          <p class="field-hint">At least 8 characters.</p>
+        </div>
+        <div class="form-group">
+          <label for="password-confirm">Confirm new password (required)</label>
+          <input type="password" id="password-confirm" name="confirm_password" autocomplete="new-password" minlength="8" required>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Change Password</button>
       </div>
     </form>
   </section>
@@ -164,11 +195,21 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <button type="submit" class="btn-secondary" <%= canEncryptSecrets ? '' : 'disabled' %>>Set Up Authenticator App</button>
       </form>
+    </div>
+
+    <% if (currentUser.mfa_method && currentUser.mfa_method !== 'none') { %>
       <form method="POST" action="/account/mfa/disable">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button type="submit" class="btn-danger">Disable MFA</button>
+        <div class="form-group">
+          <label for="mfa-disable-current-password">Current password (required)</label>
+          <input type="password" id="mfa-disable-current-password" name="current_password" autocomplete="current-password" required>
+          <p class="field-hint">Confirms it is you before MFA is turned off.</p>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-danger">Disable MFA</button>
+        </div>
       </form>
-    </div>
+    <% } %>
 
     <% if (!smtpConfigured) { %>
       <p class="field-hint">Email MFA will be available after SMTP is configured in the environment.</p>
@@ -198,6 +239,10 @@
               <div class="form-group">
                 <label for="totp-code">Verification Code</label>
                 <input type="text" id="totp-code" name="code" inputmode="numeric" autocomplete="one-time-code">
+              </div>
+              <div class="form-group">
+                <label for="totp-current-password">Current password (required)</label>
+                <input type="password" id="totp-current-password" name="current_password" autocomplete="current-password" required>
               </div>
             </div>
             <div class="form-actions">

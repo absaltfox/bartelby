@@ -1,3 +1,6 @@
+# Single-machine setup for local use and evaluation. It is not a hardened
+# production deployment: sessions are held in process memory and uploads sit on
+# a local volume. See DEPLOY.md for a production topology.
 services:
   app:
     # Default local Docker topology: a single process that serves HTTP and runs
@@ -12,22 +15,25 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
       BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
-      # Database — use 'turso' for Turso, 'sqljs' for local SQLite
-      DATABASE_DRIVER: ${DATABASE_DRIVER:-sqljs}
+      # Database — 'better-sqlite3' for a local SQLite file (durable per
+      # statement, full-text entity search), 'turso' for Turso. 'sqljs' also
+      # works but rewrites the whole file on each save and has no FTS5.
+      DATABASE_DRIVER: ${DATABASE_DRIVER:-better-sqlite3}
       TURSO_DATABASE_URL: ${TURSO_DATABASE_URL:-}
       TURSO_AUTH_TOKEN: ${TURSO_AUTH_TOKEN:-}
-      # Storage — use 's3' for S3/MinIO, 'local' for local filesystem
+      # Storage — 'local' for the uploads volume below, 's3' for an external
+      # S3-compatible bucket (no object store is bundled; set the S3_* values).
       STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       # Single-node Docker is a deliberate local exception to the production
       # fail-closed defaults for local storage and in-memory sessions.
       ALLOW_LOCAL_STORAGE_IN_PRODUCTION: ${ALLOW_LOCAL_STORAGE_IN_PRODUCTION:-1}
-      S3_BUCKET: ${S3_BUCKET:-bartelby}
+      S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
-      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:3000}
       # Session store — use 'redis' for Redis, 'memory' for in-process
       SESSION_STORE: ${SESSION_STORE:-memory}
       ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION: ${ALLOW_MEMORY_SESSION_STORE_IN_PRODUCTION:-1}
@@ -45,16 +51,19 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_SECURE: ${SMTP_SECURE:-}
       SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-}
+      # Nothing sits in front of the app here, so forwarded headers are not
+      # trusted, and it is served over plain http: without this override the
+      # session cookie is marked Secure and sign-in cannot stick. Putting this
+      # behind a TLS proxy? Set PUBLIC_APP_URL to the https URL, TRUST_PROXY=1
+      # and ALLOW_INSECURE_HTTP_IN_PRODUCTION=0.
       TRUST_PROXY: ${TRUST_PROXY:-0}
+      ALLOW_INSECURE_HTTP_IN_PRODUCTION: ${ALLOW_INSECURE_HTTP_IN_PRODUCTION:-1}
     volumes:
-      # Only needed for DATABASE_DRIVER=sqljs (local SQLite)
+      # The SQLite database file (better-sqlite3 or sqljs); unused with turso
       - app-data:/app/data
       # Only needed for STORAGE_DRIVER=local
       - app-uploads:/app/data/uploads
       - app-temp:/app/temp
-    depends_on:
-      minio:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/healthz').then(r=>{if(!r.ok)throw r.status}).catch(()=>process.exit(1))"]
@@ -63,44 +72,7 @@ services:
       start_period: 15s
       retries: 3
 
-  # MinIO — S3-compatible object storage (only needed when STORAGE_DRIVER=s3)
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  # Auto-create the default bucket on first start
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
-        mc mb local/$${BUCKET_NAME} --ignore-existing;
-        echo 'Bucket ready';
-      "
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
-      BUCKET_NAME: ${S3_BUCKET:-bartelby}
-
 volumes:
   app-data:
   app-uploads:
   app-temp:
-  minio-data:
