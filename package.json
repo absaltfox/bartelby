@@ -1,9 +1,18 @@
 {
   "name": "bartelby",
   "version": "1.0.0",
+  "private": true,
   "license": "AGPL-3.0-only",
   "author": "Michael LeBlanc",
-  "description": "Bartelby — Historical Document Transcription",
+  "description": "Transcribe, organize and explore historical documents, with an evidence-linked knowledge graph.",
+  "homepage": "https://github.com/absaltfox/bartelby#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/absaltfox/bartelby.git"
+  },
+  "bugs": {
+    "url": "https://github.com/absaltfox/bartelby/issues"
+  },
   "main": "server.js",
   "engines": {
     "node": ">=25.9.0 <26"
