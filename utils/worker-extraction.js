@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { describeError } = require('./error-detail');
 const {
   MAX_RETRIES,
   COOLDOWN_MS,
@@ -907,7 +908,7 @@ async function pollRunningExtractionBatches() {
       }
     } catch (err) {
       if (isLostFinalizationClaimError(err)) {
-        console.warn(`[worker] extraction batch finalization ownership changed for job ${job.id}:`, err.message);
+        console.warn(`[worker] extraction batch finalization ownership changed for job ${job.id}:`, describeError(err));
         await logLine(`WARN: ${err.message} Another worker is resuming finalization.`);
         continue;
       }
@@ -915,7 +916,7 @@ async function pollRunningExtractionBatches() {
       // Finalization errors are NOT safe to retry — entities/relationships
       // created before the error are already committed.  Re-running would
       // duplicate them.  Always mark failed to break the loop.
-      console.error(`[worker] extraction batch finalization failed for job ${job.id}:`, err.message);
+      console.error(`[worker] extraction batch finalization failed for job ${job.id}:`, describeError(err));
       await logLine(`ERROR: ${err.message}`);
       await extractionJobs.markFailed(job.id, err.message);
     }
@@ -1023,7 +1024,7 @@ async function runExtractionWorkerCycle() {
         await extractionJobs.markFailed(job.id, message);
       }
     } else {
-      console.error('[worker] extraction job failed before claim:', message);
+      console.error('[worker] extraction job failed before claim:', describeError(err));
     }
   } finally {
     await sleep(COOLDOWN_MS);

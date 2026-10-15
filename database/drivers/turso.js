@@ -2,6 +2,21 @@
 
 const { createClient } = require('@libsql/client');
 const config = require('../../config');
+const { summarizeStatement } = require('../../utils/error-detail');
+
+// Record which statement a failed request was running, so logs can name the
+// query a dropped connection interrupted (see utils/error-detail.js). SQL text
+// only; bound values are never attached. The innermost statement wins.
+async function tagged(statement, request) {
+  try {
+    return await request();
+  } catch (err) {
+    if (err && typeof err === 'object' && !err.dbStatement) {
+      try { err.dbStatement = summarizeStatement(statement); } catch (_) { /* frozen error */ }
+    }
+    throw err;
+  }
+}
 
 async function createDriver() {
   const url = config.database.turso.url;
@@ -47,17 +62,17 @@ async function createDriver() {
     persistent: false,
 
     async transaction(fn) {
-      const tx = await client.transaction('write');
+      const tx = await tagged('BEGIN (write transaction)', () => client.transaction('write'));
       const adapter = {
         async run(sql, params = []) {
-          const result = await tx.execute({ sql, args: params });
+          const result = await tagged(sql, () => tx.execute({ sql, args: params }));
           return {
             lastInsertRowid: Number(result.lastInsertRowid),
             changes: result.rowsAffected
           };
         },
         async all(sql, params = []) {
-          const result = await tx.execute({ sql, args: params });
+          const result = await tagged(sql, () => tx.execute({ sql, args: params }));
           return result.rows.map(row => {
             const obj = {};
             for (const col of result.columns) {
@@ -74,7 +89,7 @@ async function createDriver() {
 
       try {
         const result = await fn(adapter);
-        await tx.commit();
+        await tagged('COMMIT', () => tx.commit());
         return result;
       } catch (err) {
         await tx.rollback().catch(() => {});
@@ -88,7 +103,7 @@ async function createDriver() {
       // but db.js already splits migrations into individual statements
       // and calls run() on each one. exec() is only used by
       // getSchemaVersion/getLastInsertRowid which are single statements.
-      const result = await client.execute(sql);
+      const result = await tagged(sql, () => client.execute(sql));
       // Return in a format compatible with sql.js exec() output:
       // [{ columns: [...], values: [[...], ...] }]
       if (result.rows.length === 0) return [];
@@ -98,7 +113,7 @@ async function createDriver() {
     },
 
     async run(sql, params = []) {
-      const result = await client.execute({ sql, args: params });
+      const result = await tagged(sql, () => client.execute({ sql, args: params }));
       return {
         lastInsertRowid: Number(result.lastInsertRowid),
         changes: result.rowsAffected
@@ -106,7 +121,7 @@ async function createDriver() {
     },
 
     async all(sql, params = []) {
-      const result = await client.execute({ sql, args: params });
+      const result = await tagged(sql, () => client.execute({ sql, args: params }));
       // Convert libsql rows to plain objects
       return result.rows.map(row => {
         const obj = {};

@@ -322,10 +322,17 @@ trail. See docs/superpowers/specs/2026-07-11-title-backfill-design.md.
      if (myDomainBusy) return;
      myDomainBusy = true;
      try { await runMyDomainWorkerCycle(); }
-     catch (err) { /* log */ }
+     catch (err) { console.error('[worker] my domain cycle failed:', describeError(err)); }
      finally { myDomainBusy = false; }
    }, 5000);
    ```
+   Log worker failures with `describeError(err)` from `utils/error-detail.js`,
+   not `err.message`. For a database error it adds the statement that failed
+   (SQL text only, never bound values; the Turso driver attaches it as
+   `err.dbStatement`) and the underlying network cause, such as `ECONNRESET`.
+   Without them a dropped request logs only `socket hang up`, with nothing to
+   say which query or connection failed. Keep `err.message` for the text
+   stored with a job (`markFailed`, job logs), which the admin Jobs UI shows.
 
 5. **Add stale-job recovery** in `initializeSchema()` in `database/db.js` so
    jobs interrupted by a restart are not stuck in `running` forever.

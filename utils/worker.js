@@ -2,6 +2,7 @@
 // and processes one job at a time, with retry for transient errors.
 
 const logger = require('./logger');
+const { describeError } = require('./error-detail');
 const { BATCH_POLL_MS, isTransientError } = require('./worker-runtime');
 const {
   runTranscriptionWorkerCycle,
@@ -75,7 +76,7 @@ function startWorker() {
       // lock (_analyticsRunning in utils/analytics.js).  No local flag needed here.
       await runScheduledAnalytics();
     } catch (err) {
-      void logger.error('worker', 'Scheduled analytics run failed.', { error: err.message });
+      void logger.error('worker', 'Scheduled analytics run failed.', { error: describeError(err) });
     }
   }, ANALYTICS_INTERVAL_MS);
 
@@ -118,7 +119,7 @@ async function tick() {
   try {
     await runTranscriptionWorkerCycle();
   } catch (err) {
-    void logger.error('worker', 'Transcription worker cycle failed.', { error: err.message });
+    void logger.error('worker', 'Transcription worker cycle failed.', { error: describeError(err) });
   } finally {
     busy = false;
   }
@@ -130,7 +131,7 @@ async function pollRunningBatches() {
   try {
     await pollRunningTranscriptionBatches();
   } catch (err) {
-    console.error('[worker] Failed to poll running batch jobs:', err.message);
+    console.error('[worker] Failed to poll running batch jobs:', describeError(err));
   } finally {
     batchPollBusy = false;
   }
@@ -142,7 +143,7 @@ async function pollRunningExtractionBatchesTick() {
   try {
     await pollRunningExtractionBatches();
   } catch (err) {
-    console.error('[worker] Failed to poll running extraction batch jobs:', err.message);
+    console.error('[worker] Failed to poll running extraction batch jobs:', describeError(err));
   } finally {
     extractionBatchPollBusy = false;
   }
@@ -154,7 +155,7 @@ async function tickExtractionJobs() {
   try {
     await runExtractionWorkerCycle();
   } catch (err) {
-    console.error('[worker] extraction worker cycle failed:', err.message);
+    console.error('[worker] extraction worker cycle failed:', describeError(err));
   } finally {
     extractionBusy = false;
   }
@@ -166,7 +167,7 @@ async function tickIiifSyncJobs() {
   try {
     await runIiifSyncCycle();
   } catch (err) {
-    console.error('[worker] IIIF sync cycle failed:', err.message);
+    console.error('[worker] IIIF sync cycle failed:', describeError(err));
   } finally {
     iiifSyncBusy = false;
   }
@@ -178,7 +179,7 @@ async function tickAuthoritySuggestionJobs() {
   try {
     await runAuthoritySuggestionWorkerCycle();
   } catch (err) {
-    console.error('[worker] authority suggestion worker cycle failed:', err.message);
+    console.error('[worker] authority suggestion worker cycle failed:', describeError(err));
   } finally {
     authoritySuggestionBusy = false;
   }
@@ -191,7 +192,7 @@ async function tickTitleBackfillJobs() {
     const { runTitleBackfillCycle } = require('./worker-title-backfill');
     await runTitleBackfillCycle();
   } catch (err) {
-    console.error('[worker] title backfill cycle failed:', err.message);
+    console.error('[worker] title backfill cycle failed:', describeError(err));
   } finally {
     titleBackfillBusy = false;
   }
@@ -204,7 +205,7 @@ async function tickSentimentExtractionJobs() {
     const { runSentimentExtractionCycle } = require('./worker-sentiment');
     await runSentimentExtractionCycle();
   } catch (err) {
-    console.error('[worker] sentiment extraction cycle failed:', err.message);
+    console.error('[worker] sentiment extraction cycle failed:', describeError(err));
   } finally {
     sentimentExtractionBusy = false;
   }
@@ -217,7 +218,7 @@ async function pollRunningSentimentBatchesTick() {
     const { pollRunningSentimentBatches } = require('./worker-sentiment');
     await pollRunningSentimentBatches();
   } catch (err) {
-    console.error('[worker] sentiment batch poll failed:', err.message);
+    console.error('[worker] sentiment batch poll failed:', describeError(err));
   } finally {
     sentimentBatchPollBusy = false;
   }
@@ -230,7 +231,7 @@ async function tickSentimentReconciliation() {
     const { reconcileSentimentBatches } = require('./worker-sentiment-reconciliation');
     await reconcileSentimentBatches({ source: 'tick' });
   } catch (err) {
-    console.error('[worker] sentiment reconciliation tick failed:', err.message);
+    console.error('[worker] sentiment reconciliation tick failed:', describeError(err));
   } finally {
     sentimentReconciliationBusy = false;
   }
@@ -243,7 +244,7 @@ async function tickSentimentClusteringJobs() {
     const { processQueuedClusteringRun } = require('./worker-sentiment-clustering');
     await processQueuedClusteringRun();
   } catch (err) {
-    console.error('[worker] sentiment clustering tick failed:', err.message);
+    console.error('[worker] sentiment clustering tick failed:', describeError(err));
   } finally {
     sentimentClusteringBusy = false;
   }
@@ -255,7 +256,7 @@ async function tickAuthorityResolutionJobs() {
   try {
     await runAuthorityResolutionWorkerCycle();
   } catch (err) {
-    console.error('[worker] authority resolution worker cycle failed:', err.message);
+    console.error('[worker] authority resolution worker cycle failed:', describeError(err));
   } finally {
     authorityResolutionBusy = false;
   }
@@ -277,7 +278,7 @@ async function tickImportSubmissionJobs() {
     await processImportSubmissionJob(job);
     console.log(`[worker] import job ${job.id}: submission processing complete`);
   } catch (err) {
-    console.error('[worker] import submission job failed:', err.message);
+    console.error('[worker] import submission job failed:', describeError(err));
     if (job) {
       await importJobsAsync.markFailed(job.id, err.message);
     }
@@ -360,7 +361,7 @@ async function tickImportRenderJobs() {
       }
     }
   } catch (err) {
-    console.error('[worker] PDF render job failed:', err.message);
+    console.error('[worker] PDF render job failed:', describeError(err));
     if (job && !localRenderHandled) await importJobsAsync.markFailed(job.id, err.message);
   } finally {
     importRenderBusy = false;
@@ -498,7 +499,7 @@ async function tickGroupingJobs() {
     console.log(`[worker] grouping job ${job.id}: complete (${groupingResult.groups.length} groups)`);
 
   } catch (err) {
-    console.error('[worker] grouping job failed:', err.message);
+    console.error('[worker] grouping job failed:', describeError(err));
     if (job) await importJobsAsync.markFailed(job.id, err.message);
   } finally {
     groupingBusy = false;
@@ -632,15 +633,15 @@ async function pollRunningGroupingBatches() {
           // Same policy as the transcription/extraction pollers: a network
           // blip must not abandon a provider batch that may be paid and
           // complete. Retry on the next tick. Review finding R6.
-          console.warn(`[worker] grouping batch poll transient error for job ${job.id}: ${err.message}`);
+          console.warn(`[worker] grouping batch poll transient error for job ${job.id}: ${describeError(err)}`);
           continue;
         }
-        console.error(`[worker] grouping batch poll job ${job.id} error:`, err.message);
+        console.error(`[worker] grouping batch poll job ${job.id} error:`, describeError(err));
         await importJobsAsync.markFailed(job.id, err.message);
       }
     }
   } catch (err) {
-    console.error('[worker] grouping batch poll error:', err.message);
+    console.error('[worker] grouping batch poll error:', describeError(err));
   } finally {
     groupingBatchPollBusy = false;
   }
