@@ -7,13 +7,13 @@ Transcribe, organize and explore historical documents, with an evidence-linked k
 
 Bartelby is a self-hosted web application for people who work with primary sources. The process works like this:
 
-1) You can upload scans of letters, ledgers, diaries and other documents.
+1) You can upload scans of letters, ledgers, diaries and other documents
 2) A vision-capable language model drafts a transcript
-3) You or another curator corrects it, annotates it, and approves the people, places, dates and relationships extracted from it.
+3) You or another curator corrects it, annotates it, and approves the people, places, dates and relationships extracted from it
 
 Every entity and relationship stays linked to the passage it came from, so a researcher can always get from a claim back to the page. Note that entity extraction is under active development, and its efficacy can vary from document to document
 
-Bartelby is built for historians, archivists and small research teams who need to share and work from a common set of transcribed historical documents. Importantly, Bartelby offers flexibility and transparency and aims to be model-agnostic. In addition to native API support for Claude, ChatGPT, and Gemini, it supports access to local models hosted in Ollama and LM Studio. 
+Bartelby is built for historians, archivists and small research teams who need to share and work from a common set of transcribed historical documents. Importantly, Bartelby offers flexibility and transparency and is model-agnostic. In addition to native API support for Claude, ChatGPT, and Gemini, it supports access to local models hosted in Ollama and LM Studio. 
 
 The intention is to provide users of the tool with maximum control over, to the extent possible, over an AI-assisted transcription process. 
 
