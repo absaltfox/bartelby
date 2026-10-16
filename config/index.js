@@ -22,6 +22,8 @@ function flyProcessGroup() {
   return String(process.env.FLY_PROCESS_GROUP || '').trim().toLowerCase();
 }
 
+const startWorker = !boolEnv('DISABLE_BACKGROUND_WORKER', false) && flyProcessGroup() !== 'web';
+
 const config = {
   app: {
     rootDir,
@@ -34,7 +36,7 @@ const config = {
   runtime: {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '3000', 10),
-    startWorker: !boolEnv('DISABLE_BACKGROUND_WORKER', false) && flyProcessGroup() !== 'web'
+    startWorker
   },
   session: {
     store: process.env.SESSION_STORE || 'memory',
@@ -75,7 +77,13 @@ const config = {
     },
     turso: {
       url: process.env.TURSO_DATABASE_URL || '',
-      authToken: process.env.TURSO_AUTH_TOKEN || ''
+      authToken: process.env.TURSO_AUTH_TOKEN || '',
+      // Reuse HTTPS connections between Turso requests. Off by default in
+      // processes that run the background worker, whose bursts of small
+      // queries were failing with ECONNRESET, most likely on reused connections; on by
+      // default for web-only processes, where a new TLS handshake per query
+      // would slow page loads. See DEPLOY.md (Turso connection reuse).
+      keepAlive: boolEnv('TURSO_HTTP_KEEP_ALIVE', !startWorker)
     },
     // Lifetime of the in-process cache of public application settings, read
     // by the page-shell middleware on every HTML request and every /uploads
