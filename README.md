@@ -5,16 +5,18 @@
 
 Transcribe, organize and explore historical documents, with an evidence-linked knowledge graph.
 
-Bartelby is a self-hosted web application for people who work with primary
-sources. You upload scans of letters, ledgers, diaries and other documents; a
-vision-capable language model drafts a transcript; and curators correct it,
-annotate it, and approve the people, places, dates and relationships extracted
-from it. Every entity and relationship stays linked to the passage it came
-from, so a researcher can always get from a claim back to the page.
+Bartelby is a self-hosted web application for people who work with primary sources. The process works like this:
 
-It is built for historians, archivists and small research teams who want the
-connections inside a collection to be discoverable without giving up control
-over what counts as true. The model is an assistant; the curator is the expert.
+1) You can upload scans of letters, ledgers, diaries and other documents.
+2) A vision-capable language model drafts a transcript
+3) You or another curator corrects it, annotates it, and approves the people, places, dates and relationships extracted from it.
+
+Every entity and relationship stays linked to the passage it came from, so a researcher can always get from a claim back to the page. Note that entity extraction is under active development, and its efficacy can vary from document to document
+
+Bartelby is built for historians, archivists and small research teams who need to share and work from a common set of transcribed historical documents. Importantly, Bartelby offers flexibility and transparency and aims to be model-agnostic. In addition to native API support for Claude, ChatGPT, and Gemini, it supports access to local models hosted in Ollama and LM Studio. 
+
+The intention is to provide users of the tool with maximum control over, to the extent possible, over an AI-assisted transcription process. 
+
 
 ## Table of Contents
 
@@ -76,12 +78,9 @@ collection-scoped access control. State-changing requests are CSRF-protected.
 
 ## Background
 
-Large collections of historical documents are hard to use because the
-information in them is locked in page images. Transcription makes the text
-searchable, but the research value is usually in the connections: who wrote to
-whom, who is mentioned where, how a place or a family appears across decades.
+Large collections of historical documents can be difficult to use when the information they contain is locked in page images. Transcription makes the text searchable, but the research value can be in the connections: places, names, artifacts, and institutions named in a document. Sentiment can offer another facet for discovery, by indicating polarity between two items in a document (negative, positive, neutral). 
 
-Bartelby treats that as a curation problem with machine help:
+Bartelby treats that as a curation problem with machine assistance:
 
 - **Transcription** by a vision-capable model, one document or a provider batch
   at a time, with the provider, model and prompt recorded as provenance.
@@ -93,13 +92,12 @@ Bartelby treats that as a curation problem with machine help:
   Smith") onto one identity.
 - **Sentiment annotation** of how people and things are written about, also
   citation-backed and reviewable.
-- **Collection analytics**, including BERTopic topic models.
-- **Export** to PDF and TEI, so the work is not trapped here.
+- **Export** to PDF and TEI.
 
 It is a Node.js and Express application with server-rendered EJS pages, a
 SQLite-compatible database (a local file, or [Turso](https://turso.tech)), and
 local or S3-compatible upload storage. Topic modelling runs in Python. Long
-work runs as database-backed jobs, so it survives restarts.
+work runs as database-backed jobs, as do scheduled jobs.
 [docs/architecture.md](./docs/architecture.md) describes the subsystems, and
 [docs/development-principles.md](./docs/development-principles.md) the rules
 the project holds itself to.
@@ -108,7 +106,7 @@ the project holds itself to.
 
 ### Dependencies
 
-For Docker: Docker with Compose v2. Nothing else.
+For Docker: Docker with Compose v2.
 
 From source:
 
