@@ -138,6 +138,20 @@ and stable — usually it isn't.
 - If the migration adds a table that a route or store queries, add
   or update the corresponding integration test so the missing-table
   case would fail loudly next time.
+- A trigger cannot go in a migration block, because its `BEGIN … END`
+  body contains semicolons the runner would split. Create triggers from
+  `initializeSchema()` with `CREATE TRIGGER IF NOT EXISTS`, as
+  `ensureFts5()` (`FTS_TRIGGERS`) and `ensureDocumentPageUrls()`
+  (`DOCUMENT_PAGE_URL_TRIGGERS`) do, and keep the table they write in
+  the migration.
+- A table derived from other data and kept in step by triggers (for
+  example `document_page_urls`, v93, built from
+  `documents.metadata.additional_pages`) must be filled *after* its
+  triggers exist. That way, rows written mid-rollout by machines still on
+  the old release are not missed. Check whether the table is empty before
+  creating the triggers, then fill it with a single
+  `INSERT OR IGNORE … SELECT`. No application code writes such a table
+  directly.
 - Do NOT create a "backup" file in the repo root as pre-migration
   bookkeeping (e.g., `backup-pre-migration.sql`). Backups belong in
   the storage layer / operator runbook, not in tracked source.
