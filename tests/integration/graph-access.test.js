@@ -280,4 +280,16 @@ describe('Graph citation access control', () => {
     expect(authorizedAuthority.member_count).toBe(2);
     expect(authorizedAuthority.document_count).toBe(2);
   });
+
+  it('timeline responses do not echo the caller\'s identity or privilege flags', async () => {
+    const agent = request.agent(app);
+    await login(agent, authorizedUsername, 'password123!');
+
+    const res = await agent.get('/graph/timeline?from=1800&to=1900');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('results');
+    expect(res.body).not.toHaveProperty('userId');
+    expect(res.body).not.toHaveProperty('isAdmin');
+    expect(res.body).not.toHaveProperty('accessAll');
+  });
 });

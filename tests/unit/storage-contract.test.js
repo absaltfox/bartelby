@@ -28,6 +28,20 @@ describe('storage adapter contract', () => {
     expect(REQUIRED_STORAGE_METHODS.every((methodName) => typeof adapter[methodName] === 'function')).toBe(true);
   });
 
+  it.each([
+    ['local', '../../utils/storage/local'],
+    ['s3', '../../utils/storage/s3']
+  ])('%s adapter rejects temp names that resolve to a directory', (driverName, modulePath) => {
+    const { sanitizeTempName } = require(modulePath);
+
+    expect(sanitizeTempName('.')).toBe('');
+    expect(sanitizeTempName('..')).toBe('');
+    expect(sanitizeTempName('../..')).toBe('');
+    expect(sanitizeTempName('a/b/../..')).toBe('');
+    expect(sanitizeTempName('../page-1.jpg')).toBe('page-1.jpg');
+    expect(sanitizeTempName('..hidden.png')).toBe('..hidden.png');
+  });
+
   it('fails fast when the configured driver is incomplete', () => {
     jest.doMock('../../config', () => ({
       storage: { driver: 'local' }

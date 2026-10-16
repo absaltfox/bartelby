@@ -126,7 +126,9 @@ function buildUploadObjectUrl(key) {
 }
 
 function sanitizeTempName(name) {
-  return path.basename(String(name || '')).replace(/[^a-zA-Z0-9_.-]/g, '');
+  const safe = path.basename(String(name || '')).replace(/[^a-zA-Z0-9_.-]/g, '');
+  // `.` and `..` survive the character filter but name directories, not files.
+  return safe === '.' || safe === '..' ? '' : safe;
 }
 
 function toUploadsUrl(filename) {
