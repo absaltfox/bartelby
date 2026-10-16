@@ -192,6 +192,17 @@ next render regardless of the TTL — the TTL only bounds staleness if a *second
 `auto_start_machines = true` means that is possible under load). Set it to `0`
 to disable the cache and read the table on every request.
 
+`TURSO_HTTP_KEEP_ALIVE` (Turso connection reuse) controls whether Turso
+requests reuse idle HTTPS connections. By default reuse is **off** in any
+process that runs the background worker and **on** in web-only processes
+(`FLY_PROCESS_GROUP=web` or `DISABLE_BACKGROUND_WORKER=1`). Worker processes
+send many small queries in bursts, and with reuse on they were losing requests
+with `socket hang up` / `ECONNRESET`, most likely on connections Turso had
+already closed. Without reuse, each query pays for a new TLS handshake, which
+is acceptable for background work but would slow page loads, so the web role
+keeps reuse. Set `TURSO_HTTP_KEEP_ALIVE=true` or `false` to override the
+default for a process.
+
 `S3_PRESIGNED_GET_TTL_SECONDS` is disabled by default. Set it to a short value
 such as `300` to render already-authorized collection thumbnails and document
 preview images as short-lived S3-compatible signed URLs. This keeps the

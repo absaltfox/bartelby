@@ -1,6 +1,9 @@
 'use strict';
 
+const http = require('http');
+const https = require('https');
 const { createClient } = require('@libsql/client');
+const crossFetch = require('cross-fetch');
 const config = require('../../config');
 const { summarizeStatement } = require('../../utils/error-detail');
 
@@ -18,6 +21,19 @@ async function tagged(statement, request) {
   }
 }
 
+// A fetch for the libsql client that opens a new connection per request
+// instead of reusing idle ones from Node's global agent (keep-alive is on by
+// default since Node 19). The client builds a cross-fetch (node-fetch v2)
+// Request; passing `agent` here overrides the Request's own agent.
+function createNoReuseFetch() {
+  const agents = {
+    'http:': new http.Agent({ keepAlive: false }),
+    'https:': new https.Agent({ keepAlive: false })
+  };
+  const agent = parsedUrl => agents[parsedUrl.protocol] || agents['https:'];
+  return request => crossFetch.fetch(request, { agent });
+}
+
 async function createDriver() {
   const url = config.database.turso.url;
   const authToken = config.database.turso.authToken;
@@ -32,7 +48,8 @@ async function createDriver() {
   try {
     client = createClient({
       url,
-      authToken: authToken || undefined
+      authToken: authToken || undefined,
+      ...(config.database.turso.keepAlive === false ? { fetch: createNoReuseFetch() } : {})
     });
   } catch (err) {
     const safeMsg = err.message
@@ -164,5 +181,6 @@ async function createDriver() {
 }
 
 module.exports = {
-  createDriver
+  createDriver,
+  createNoReuseFetch
 };
