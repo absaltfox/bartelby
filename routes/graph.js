@@ -649,7 +649,6 @@ router.get('/timeline', asyncHandler(async (req, res) => {
   const expressions = typeof stores.dateExpressions.findInRange === 'function'
     ? await stores.dateExpressions.findInRange(from, to)
     : [];
-  const { userId, isAdmin, accessAll } = accessOpts(req);
   // One batched visibility query instead of one per date expression in the
   // range; same predicate, same collectionId scoping.
   const allowedEntityIds = await filterAccessibleEntityIds(
@@ -666,7 +665,7 @@ router.get('/timeline', asyncHandler(async (req, res) => {
     ordered.push(expr);
   }
 
-  return res.json({ from, to, results: ordered, userId, isAdmin, accessAll });
+  return res.json({ from, to, results: ordered });
 }));
 
 module.exports = router;
