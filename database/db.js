@@ -906,6 +906,25 @@ MIGRATIONS.push(`
     ON login_throttles (last_failed_at);
 `);
 
+// v93 — index additional-page upload URLs (issue #75). Upload URLs for a
+// document's later pages live only inside documents.metadata
+// ('$.additional_pages'), so the /uploads authorizing proxy had to json_each()
+// every document on any URL that was not a page master (v87 covers those) —
+// before authorization, and with no rate limit for signed-in readers. This
+// table holds one row per (url, document) so that lookup is an index seek.
+// It is derived data, kept in sync by DOCUMENT_PAGE_URL_TRIGGERS and filled
+// once by ensureDocumentPageUrls(); no code writes it directly. Per
+// docs/reviews/2026-07-27-front-end-performance-review.md (findings P12, P16).
+MIGRATIONS.push(`
+  CREATE TABLE IF NOT EXISTS document_page_urls (
+    url TEXT NOT NULL,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    PRIMARY KEY (url, document_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_page_urls_document_id
+    ON document_page_urls (document_id);
+`);
+
 // FTS5 sync triggers — run as whole statements outside the semicolon-splitting
 // migration runner. Each trigger contains internal semicolons inside BEGIN…END
 // that would be incorrectly split by the migration loop. These are idempotent
@@ -960,6 +979,60 @@ async function ensureFts5() {
 
   fts5Available = true;
   console.log('[db] FTS5 entity search indexes ready.');
+}
+
+// Keep document_page_urls (v93) in step with documents.metadata. Triggers
+// rather than application code, so every writer is covered, including
+// machines still running an older release during a rolling deploy. Created
+// here, like FTS_TRIGGERS, because their BEGIN…END bodies contain semicolons
+// the migration runner would split. A metadata value that is not valid JSON
+// is treated as having no pages instead of failing the write.
+const PAGE_URLS_FROM = (row) => `
+    SELECT value, ${row}.id
+      FROM json_each(
+        CASE WHEN json_valid(${row}.metadata) THEN ${row}.metadata ELSE '{}' END,
+        '$.additional_pages'
+      )
+     WHERE type = 'text'`;
+
+const DOCUMENT_PAGE_URL_TRIGGERS = [
+  `CREATE TRIGGER IF NOT EXISTS document_page_urls_insert AFTER INSERT ON documents BEGIN
+    INSERT OR IGNORE INTO document_page_urls (url, document_id) ${PAGE_URLS_FROM('new')};
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS document_page_urls_update AFTER UPDATE OF metadata ON documents BEGIN
+    DELETE FROM document_page_urls WHERE document_id = old.id;
+    INSERT OR IGNORE INTO document_page_urls (url, document_id) ${PAGE_URLS_FROM('new')};
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS document_page_urls_delete AFTER DELETE ON documents BEGIN
+    DELETE FROM document_page_urls WHERE document_id = old.id;
+  END`
+];
+
+// Creates the sync triggers, then fills the table from existing documents if
+// it is still empty. The emptiness check runs *before* the triggers exist:
+// once they do, writes from other machines start adding rows, and an
+// after-the-fact check would mistake those for a finished fill. The fill is a
+// single INSERT … SELECT, so it either lands whole or not at all, and
+// INSERT OR IGNORE makes a concurrent fill from a second booting machine
+// harmless. Runs on every boot; after the first, it costs one indexed read.
+async function ensureDocumentPageUrls() {
+  const existing = await db.get('SELECT 1 AS present FROM document_page_urls LIMIT 1');
+
+  for (const sql of DOCUMENT_PAGE_URL_TRIGGERS) {
+    await db.run(sql);
+  }
+
+  if (existing) return;
+  await db.run(`
+    INSERT OR IGNORE INTO document_page_urls (url, document_id)
+    SELECT p.value, d.id
+      FROM documents d,
+           json_each(
+             CASE WHEN json_valid(d.metadata) THEN d.metadata ELSE '{}' END,
+             '$.additional_pages'
+           ) p
+     WHERE p.type = 'text'
+  `);
 }
 
 // ── Core database setup ─────────────────────────────────────────────────────
@@ -1115,6 +1188,8 @@ async function initializeSchema(options = {}) {
   // Attempt to set up FTS5 virtual tables and sync triggers (idempotent).
   // Skipped silently on SQLite builds without fts5 (e.g. default sql.js).
   await ensureFts5();
+
+  await ensureDocumentPageUrls();
 
   if (!runStaleJobRecovery) {
     await migrateEncryptedSettings();
@@ -2021,6 +2096,7 @@ async function loadSentimentEntityPanel(opts, queryParams, panelOpts = {}) {
 module.exports = {
   initDatabase,
   initializeSchema,
+  ensureDocumentPageUrls,
   saveDatabase,
   withTransactionAsync,
   allAsync,

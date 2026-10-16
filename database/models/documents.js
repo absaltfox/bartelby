@@ -491,19 +491,14 @@ const documentsAsync = {
    * Resolves the documents an upload URL belongs to, for the authorizing
    * /uploads proxy.
    *
-   * Split into two statements deliberately. SQLite's OR-to-index-union
-   * optimization requires *every* OR term to be index-satisfiable, and the
-   * `json_each(... '$.additional_pages')` disjunct is not — so the single
-   * OR-ed statement this replaces full-scanned `documents` no matter what
-   * index existed. Probing the indexed equality first (v51,
-   * `idx_documents_image_path`) means the overwhelmingly common case — a page
-   * master, which is what a browse grid requests — costs an index seek, and
-   * the scan is reached only for an additional-page URL.
-   *
-   * This matters for availability more than latency: the proxy runs this
-   * before any authorization check, and `anonymousUploadLimiter` skips
-   * authenticated requests, so an unindexed lookup let any signed-in reader
-   * drive unbounded full scans by requesting /uploads/* in a loop.
+   * Both probes are index seeks: a page master through `image_path` (v87,
+   * `idx_documents_image_path`), and any later page through
+   * `document_page_urls` (v93), which triggers in database/db.js keep in step
+   * with `metadata.additional_pages`. This matters for availability more than
+   * latency: the proxy runs this before any authorization check, and
+   * `anonymousUploadLimiter` skips authenticated requests, so a scanning
+   * lookup let any signed-in reader drive unbounded full scans by requesting
+   * /uploads/* in a loop. Issue #75.
    *
    * Short-circuiting rather than UNION-ing is safe because the two sets are
    * disjoint by construction. Both writers that produce `/uploads/*` values —
@@ -526,15 +521,10 @@ const documentsAsync = {
     );
     if (primaryRows.length) return primaryRows.map((row) => row.id);
 
-    const additionalPageRows = await allAsync(`
-      SELECT DISTINCT d.id
-      FROM documents d
-      WHERE EXISTS (
-        SELECT 1
-        FROM json_each(COALESCE(d.metadata, '{}'), '$.additional_pages')
-        WHERE value = ?
-      )
-    `, [uploadUrl]);
+    const additionalPageRows = await allAsync(
+      'SELECT document_id AS id FROM document_page_urls WHERE url = ?',
+      [uploadUrl]
+    );
     return additionalPageRows.map((row) => row.id);
   },
 
