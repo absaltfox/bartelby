@@ -1188,6 +1188,28 @@ Avoid:
 - ad hoc table styles inline
 - mixing multiple table component classes for convenience
 
+### Sortable column headers
+
+A table whose rows are all on the page may sort in the browser. The canonical
+example is the collections shelf list (`views/collections.ejs`,
+`public/js/collections-shelf.js`).
+
+- The server renders plain-text `<th scope="col">` cells carrying
+  `data-sort-key` and `data-sort-first` (`asc` or `desc`), and each row carries
+  the raw values as `data-sort-*` attributes. The page script turns the header
+  text into a `<button type="button">`; a header is never a button in the
+  server-rendered HTML, so a page without the script shows no inert control.
+- The active column's `<th>` carries `aria-sort="ascending"` or
+  `aria-sort="descending"`; every other header omits the attribute.
+- Every sortable header shows a muted direction marker so the affordance is
+  visible before the first click; the active one uses `--accent`.
+- Rows with no value for the sorted column sort last in both directions, and
+  ties fall back to the row's name.
+- Keep the active sort in the URL (`?sort=<key>&dir=<asc|desc>`) with
+  `history.replaceState`, and leave the URL clean for the default sort.
+- Paginated or server-filtered tables must sort on the server instead; do not
+  sort a partial page of rows in the browser.
+
 ## Modal Standards
 
 Modals should use one shared structure:
@@ -1396,12 +1418,16 @@ Pattern:
 - pagination
 - empty state
 
-Collections browsing may use the canonical reading-room homepage composition:
-a server-prepared featured collection, a compact stacks row, and a recent
-documents rail. Keep the template limited to prepared display fields, preserve
-collection/document permission boundaries in the route or model helpers, and do
-not add inert filter/sort/list/activity controls before those routes or
-behaviors exist.
+Collections browsing uses the shelf-list composition: a page header whose meta
+line carries the collection, document and (for admins) uncollected counts, then
+one sortable table row per collection the viewer can see. There is no featured
+collection, ordinal numbering or recent-documents rail; a position in the list
+is not an identity and must not be displayed as one. Keep the template limited
+to prepared display fields and raw sort keys, preserve collection/document
+permission boundaries in the route or model helpers, and omit a cell's content
+rather than print a placeholder when a collection has no dates, description or
+documents (see § List row disambiguation). Do not add inert filter/sort/list/
+activity controls before those routes or behaviors exist.
 
 ## Detail Pages
 

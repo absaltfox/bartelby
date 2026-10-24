@@ -4,10 +4,18 @@
   <div class="page-header-main">
     <div class="page-eyebrow">Reading Room</div>
     <h1>Collections</h1>
-    <p class="subtitle">
-      <%= collections.length %> collection<%= collections.length !== 1 ? 's' : '' %> &middot;
-      <%= totalDocCount.toLocaleString() %> document<%= totalDocCount !== 1 ? 's' : '' %> &middot;
-      <%= dateSpanLabel %>
+    <p class="subtitle collections-meta">
+      <%= collections.length %> collection<%= collections.length !== 1 ? 's' : '' %>
+      <span aria-hidden="true">&middot;</span>
+      <% if (currentUser && collections.length > 1) { %>
+        <a href="/collections/all"><%= totalDocCount.toLocaleString() %> document<%= totalDocCount !== 1 ? 's' : '' %></a>
+      <% } else { %>
+        <%= totalDocCount.toLocaleString() %> document<%= totalDocCount !== 1 ? 's' : '' %>
+      <% } %>
+      <% if (isAdmin && uncollectedCount > 0) { %>
+        <span aria-hidden="true">&middot;</span>
+        <a href="/collections/uncollected"><%= uncollectedCount.toLocaleString() %> uncollected</a>
+      <% } %>
     </p>
   </div>
   <% if (isAdmin) { %>
@@ -17,7 +25,7 @@
   <% } %>
 </div>
 
-<% if (!featured) { %>
+<% if (collections.length === 0) { %>
   <div class="empty-state">
     <h2>No collections yet</h2>
     <% if (isAdmin) { %>
@@ -28,126 +36,56 @@
     <% } %>
   </div>
 <% } else { %>
-  <a href="/collections/<%= featured.id %>" class="featured-band">
-    <div class="featured-plate">
-      <% if (featured.thumbnail) { %>
-        <img class="featured-plate-thumb" src="<%= featured.thumbnail %>" alt="" aria-hidden="true" data-hide-on-image-error fetchpriority="high" decoding="async">
-      <% } %>
-      <div class="featured-plate-frame"></div>
-      <div class="featured-plate-inner">
-        <div class="featured-plate-eyebrow">No. <%= featured.numeral %></div>
-        <div class="featured-plate-num"><%= featured.numeral %></div>
-        <div class="featured-plate-years"><%= featured.years %></div>
-      </div>
-    </div>
-    <div class="featured-body">
-      <div class="featured-eyebrow">Featured collection</div>
-      <h2 class="featured-title"><%= featured.name %></h2>
-      <p class="featured-desc"><%= featured.desc %></p>
-      <dl class="featured-meta">
-        <div><dt>Documents</dt><dd><%= featured.docCount.toLocaleString() %></dd></div>
-        <div><dt>Transcripts</dt><dd><%= featured.transcriptCount.toLocaleString() %></dd></div>
-        <div><dt>Date range</dt><dd><%= featured.years %></dd></div>
-        <div><dt>Last added</dt><dd class="text"><%= featured.lastAddedLabel %></dd></div>
-      </dl>
-      <div class="featured-actions">
-        <span class="primary">Open collection &rarr;</span>
-      </div>
-    </div>
-  </a>
-
-  <% const hasStackCards = (currentUser && collections.length > 1) || rest.length > 0 || (isAdmin && uncollectedCount > 0); %>
-  <% if (hasStackCards) { %>
-    <div class="row-head">
-      <h3>All collections <em><%= collections.length %> available</em></h3>
-    </div>
-
-    <div class="collections-grid collections-grid--stacks">
-      <% if (currentUser && collections.length > 1) { %>
-      <a href="/collections/all" class="stacks-card all" aria-label="All Documents">
-        <div class="stacks-card-plate">
-          <div class="stacks-card-top">
-            <div class="stacks-card-num">※</div>
-            <div class="stacks-card-years"><%= dateSpanLabel %><small>complete span</small></div>
-          </div>
-        </div>
-        <div class="stacks-card-body">
-          <div class="stacks-card-title">All Documents</div>
-          <div class="stacks-card-desc">Every page in every collection, in one searchable index.</div>
-          <div class="stacks-card-foot">
-            <div class="stacks-card-count"><%= totalDocCount.toLocaleString() %><small>documents</small></div>
-            <span class="stacks-card-vis"><span class="dot"></span>Browse</span>
-          </div>
-        </div>
-      </a>
-      <% } %>
-
-      <% rest.forEach(function(c) { %>
-      <a href="/collections/<%= c.id %>" class="stacks-card" aria-label="<%= c.name %>">
-        <div class="stacks-card-plate">
-          <% if (c.thumbnail) { %>
-            <img class="stacks-card-thumb" src="<%= c.thumbnail %>" alt="" aria-hidden="true" data-hide-on-image-error loading="lazy" decoding="async" width="400" height="132">
-            <div class="stacks-card-plate-mask" aria-hidden="true"></div>
-          <% } %>
-          <div class="stacks-card-top">
-            <div class="stacks-card-num"><%= c.numeral %></div>
-            <div class="stacks-card-years"><%= c.years %><small><%= c.lastAddedLabel %></small></div>
-          </div>
-        </div>
-        <div class="stacks-card-body">
-          <div class="stacks-card-title"><%= c.name %></div>
-          <div class="stacks-card-desc"><%= c.desc %></div>
-          <div class="stacks-card-foot">
-            <div class="stacks-card-count"><%= c.docCount.toLocaleString() %><small>docs</small></div>
-            <% if (c.visibility === 'public') { %>
-              <span class="stacks-card-vis"><span class="dot"></span>Public</span>
-            <% } else if (c.visibility === 'shared') { %>
-              <span class="stacks-card-vis"><span class="dot"></span>Shared</span>
-            <% } else { %>
-              <span class="stacks-card-vis muted"><span class="dot"></span>Private</span>
+  <div class="shelf-wrap">
+    <table class="shelf" data-collections-shelf>
+      <thead>
+        <tr>
+          <th class="shelf-thumb-col"><span class="sr-only">Preview</span></th>
+          <th scope="col" data-sort-key="name" data-sort-first="asc">Collection</th>
+          <th scope="col" class="shelf-col-dated" data-sort-key="dated" data-sort-first="asc">Date range</th>
+          <th scope="col" class="shelf-num" data-sort-key="documents" data-sort-first="desc">Documents</th>
+          <th scope="col" class="shelf-num shelf-col-added" data-sort-key="added" data-sort-first="desc">Last added</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% collections.forEach(function(c) { %>
+        <tr <% if (c.docCount === 0) { %>class="is-empty"<% } %>
+            data-sort-name="<%= c.name %>"
+            data-sort-dated="<%= c.sortYear == null ? '' : c.sortYear %>"
+            data-sort-documents="<%= c.docCount %>"
+            data-sort-added="<%= c.sortAdded == null ? '' : c.sortAdded %>">
+          <td class="shelf-thumb-col">
+            <% if (c.thumbnail && c.docCount > 0) { %>
+              <img class="shelf-thumb" src="<%= c.thumbnail %>" alt="" data-hide-on-image-error loading="lazy" decoding="async" width="84" height="56">
             <% } %>
-          </div>
-        </div>
-      </a>
-      <% }) %>
-
-      <% if (isAdmin && uncollectedCount > 0) { %>
-      <a href="/collections/uncollected" class="stacks-card stacks-card--special" aria-label="Uncollected">
-        <div class="stacks-card-plate">
-          <div class="stacks-card-top">
-            <div class="stacks-card-num">+</div>
-            <div class="stacks-card-years">Unsorted<small>admin only</small></div>
-          </div>
-        </div>
-        <div class="stacks-card-body">
-          <div class="stacks-card-title">Uncollected</div>
-          <div class="stacks-card-desc">Documents not yet assigned to any collection.</div>
-          <div class="stacks-card-foot">
-            <div class="stacks-card-count"><%= uncollectedCount.toLocaleString() %><small>docs</small></div>
-            <span class="stacks-card-vis muted"><span class="dot"></span>Review</span>
-          </div>
-        </div>
-      </a>
-      <% } %>
-    </div>
-  <% } %>
-
-  <% if (recentDocs.length > 0) { %>
-    <div class="rail">
-      <div class="rail-head">
-        <h3>Lately added</h3>
-      </div>
-      <div class="rail-grid">
-        <% recentDocs.forEach(function(d) { %>
-          <a href="/documents/<%= d.id %>" class="rail-item">
-            <div class="rail-item-kind"><%= d.kind %></div>
-            <div class="rail-item-title"><%= d.title %></div>
-            <div class="rail-item-meta"><%= d.collectionName %> &middot; <%= d.addedLabel %></div>
-          </a>
+          </td>
+          <th scope="row" class="shelf-main">
+            <a class="shelf-name" href="/collections/<%= c.id %>"><%= c.name %></a>
+            <% if (c.visibility === 'public') { %>
+              <span class="shelf-vis">Public</span>
+            <% } else if (c.visibility === 'shared') { %>
+              <span class="shelf-vis">Shared</span>
+            <% } %>
+            <% if (c.desc) { %>
+              <div class="shelf-desc"><%= c.desc %></div>
+            <% } %>
+          </th>
+          <td class="shelf-col-dated"><%= c.dateRange %></td>
+          <td class="shelf-num">
+            <% if (c.docCount === 0) { %>
+              <span class="shelf-none">None yet</span>
+            <% } else { %>
+              <%= c.docCount.toLocaleString() %>
+            <% } %>
+          </td>
+          <td class="shelf-num shelf-col-added"><%= c.lastAddedLabel %></td>
+        </tr>
         <% }) %>
-      </div>
-    </div>
-  <% } %>
+      </tbody>
+    </table>
+  </div>
 <% } %>
+
+<script src="/js/collections-shelf.js"></script>
 
 <%- include('partials/footer') %>
