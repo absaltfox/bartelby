@@ -98,6 +98,7 @@ describe('collections landing shelf list', () => {
     expect(row).toContain('Open correspondence');
     expect(row).toContain('class="shelf-thumb"');
     expect(row).toContain('data-hide-on-image-error');
+    expect(res.text).toContain('<script src="/js/collections-shelf.js"></script>');
   });
 
   it('drops the featured band, numerals, tiles and rail', async () => {
