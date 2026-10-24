@@ -77,11 +77,6 @@ async function timedCollectionRead(req, label, collectionId, fn) {
   }
 }
 
-const ROMAN_NUMERALS = [
-  'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-  'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX'
-];
-
 function relativeTimeLabel(value) {
   if (!value) return 'No recent additions';
   const timestamp = new Date(value).getTime();
@@ -113,22 +108,11 @@ function relativeTimeLabel(value) {
 function formatYearSpan(minYear, maxYear) {
   const min = minYear == null ? null : Number(minYear);
   const max = maxYear == null ? null : Number(maxYear);
-  if (!Number.isInteger(min) && !Number.isInteger(max)) return 'All years';
+  if (!Number.isInteger(min) && !Number.isInteger(max)) return '';
   if (Number.isInteger(min) && Number.isInteger(max)) {
     return min === max ? String(min) : `${min}\u2013${max}`;
   }
   return String(Number.isInteger(min) ? min : max);
-}
-
-function formatDateSpan(collections) {
-  const years = collections.reduce((acc, collection) => {
-    const min = collection.min_year == null ? null : Number(collection.min_year);
-    const max = collection.max_year == null ? null : Number(collection.max_year);
-    if (Number.isInteger(min)) acc.min = acc.min == null ? min : Math.min(acc.min, min);
-    if (Number.isInteger(max)) acc.max = acc.max == null ? max : Math.max(acc.max, max);
-    return acc;
-  }, { min: null, max: null });
-  return formatYearSpan(years.min, years.max);
 }
 
 function collectionVisibility(collection) {
@@ -137,36 +121,34 @@ function collectionVisibility(collection) {
   return 'private';
 }
 
+// Display fields plus raw sort keys for the collections shelf list
+// (docs/ui-template-standards.md § List Pages). sortYear and sortAdded are
+// null when the collection has no dated or no added documents, so the page
+// script can keep those rows last in either direction.
 function buildCollectionLandingView(collections, totalDocCount) {
-  const viewCollections = collections.map((collection, idx) => ({
-    id: collection.id,
-    name: collection.name,
-    desc: collection.description || 'A collection of primary-source documents ready for transcription and review.',
-    docCount: Number(collection.document_count || 0),
-    transcriptCount: Number(collection.transcript_count || 0),
-    numeral: ROMAN_NUMERALS[idx] || String(idx + 1),
-    years: formatYearSpan(collection.min_year, collection.max_year),
-    lastAddedAt: collection.latest_document_at || null,
-    lastAddedLabel: relativeTimeLabel(collection.latest_document_at),
-    visibility: collectionVisibility(collection),
-    thumbnail: collection.thumbnail || null
-  }));
+  const viewCollections = collections.map((collection) => {
+    const minYear = collection.min_year == null ? null : Number(collection.min_year);
+    const maxYear = collection.max_year == null ? null : Number(collection.max_year);
+    const addedAt = collection.latest_document_at
+      ? new Date(collection.latest_document_at).getTime()
+      : NaN;
+    const sortAdded = Number.isFinite(addedAt) ? addedAt : null;
 
-  const featured = viewCollections
-    .slice()
-    .sort((a, b) => {
-      const bTime = b.lastAddedAt ? new Date(b.lastAddedAt).getTime() : 0;
-      const aTime = a.lastAddedAt ? new Date(a.lastAddedAt).getTime() : 0;
-      return bTime - aTime;
-    })[0] || null;
+    return {
+      id: collection.id,
+      name: collection.name,
+      desc: collection.description || '',
+      docCount: Number(collection.document_count || 0),
+      dateRange: formatYearSpan(collection.min_year, collection.max_year),
+      sortYear: Number.isInteger(minYear) ? minYear : (Number.isInteger(maxYear) ? maxYear : null),
+      sortAdded,
+      lastAddedLabel: sortAdded == null ? '' : relativeTimeLabel(collection.latest_document_at),
+      visibility: collectionVisibility(collection),
+      thumbnail: collection.thumbnail || null
+    };
+  });
 
-  return {
-    collections: viewCollections,
-    featured,
-    rest: featured ? viewCollections.filter((collection) => collection.id !== featured.id) : [],
-    totalDocCount,
-    dateSpanLabel: formatDateSpan(collections)
-  };
+  return { collections: viewCollections, totalDocCount };
 }
 
 // ── Collections landing page ────────────────────────────────────────────────
@@ -178,20 +160,18 @@ router.get('/', asyncHandler(async (req, res) => {
     accessAll: user ? !!user.access_all : false
   };
 
-  const [rawCollections, totalDocCount, uncollectedCount, recentDocs] = await Promise.all([
+  const [rawCollections, totalDocCount, uncollectedCount] = await Promise.all([
     timedCollectionRead(req, 'collections.landing.collections', null, () => collectionsAsync.getLandingView(opts)),
     timedCollectionRead(req, 'collections.landing.total-documents', null, () => documentsAsync.getCount(opts)),
     opts.isAdmin
       ? timedCollectionRead(req, 'collections.landing.uncollected-count', null, () => documentsAsync.getUncollectedCount(opts))
-      : Promise.resolve(0),
-    timedCollectionRead(req, 'collections.landing.recent-documents', null, () => documentsAsync.getRecentForLanding(4, opts))
+      : Promise.resolve(0)
   ]);
   const allCollections = await Promise.all(rawCollections.map(normalizeCollectionAssetsForDelivery));
   const landing = buildCollectionLandingView(allCollections, totalDocCount);
 
   res.render('collections', {
     ...landing,
-    recentDocs,
     uncollectedCount,
     isAdmin: opts.isAdmin
   });
